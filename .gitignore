@@ -1,0 +1,20 @@
+# OS junk
+.DS_Store
+
+# Data
+data/
+raw_data/
+*.mat
+*.bin
+*.npy
+
+# Outputs
+results/
+figures/
+plots/
+
+# Python / MATLAB cruft
+__pycache__/
+*.pyc
+.matlab/
+
