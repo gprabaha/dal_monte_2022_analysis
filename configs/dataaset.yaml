@@ -1,0 +1,27 @@
+# configs/dataset.yaml
+dataset_name: dal_monte_2022
+
+raw_data_root: /gpfs/milgram/project/chang/pg496/data_dir/dal_monte_2022/from_nick/aligned_raw_samples/position
+processed_data_root: ../local_data/dal_monte_2022
+
+agents: ["M1", "M2"]
+
+file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
+
+modalities:
+  gaze_position:
+    fields:
+      - x
+      - y
+  neural_timeline:
+    fields:
+      - t
+  pulil_size:
+    fields:
+      - d
+  roi:
+    fields:
+      - x1
+      - y1
+      - x2
+      - y2
