@@ -12,22 +12,21 @@ processed_data_root: ../local_data/dal_monte_2022
 
 agents: ["M1", "M2"]
 
-file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
-
 modalities:
   gaze_position:
+    folder: aligned_raw_samples/position
+    file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
     fields:
-      - x
-      - y
+
   neural_timeline:
-    fields:
-      - t
+    folder: aligned_raw_samples/time
+    file_pattern: "(?P<date>\\d{8})_time_(?P<session>\\d+)\\.mat"
+
   pupil_size:
-    fields:
-      - d
+    folder: aligned_raw_samples/pupil_size
+    file_pattern: "(?P<date>\\d{8})_pupil_(?P<session>\\d+)\\.mat"
+
   roi_vertices:
-    fields:
-      - x1
-      - y1
-      - x2
-      - y2
+    folder: roi_rects
+    file_pattern: "(?P<date>\\d{8})_roi_(?P<session>\\d+)\\.mat"
+
