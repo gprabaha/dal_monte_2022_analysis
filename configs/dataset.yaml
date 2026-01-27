@@ -12,17 +12,16 @@ modalities:
   gaze_position:
     folder: aligned_raw_samples/position
     file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
-    fields:
 
   neural_timeline:
     folder: aligned_raw_samples/time
-    file_pattern: "(?P<date>\\d{8})_time_(?P<session>\\d+)\\.mat"
+    file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
 
   pupil_size:
     folder: aligned_raw_samples/pupil_size
-    file_pattern: "(?P<date>\\d{8})_pupil_(?P<session>\\d+)\\.mat"
+    file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
 
   roi_vertices:
     folder: roi_rects
-    file_pattern: "(?P<date>\\d{8})_roi_(?P<session>\\d+)\\.mat"
+    file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
 

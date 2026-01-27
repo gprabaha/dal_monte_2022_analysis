@@ -45,6 +45,23 @@ def extract_position(mat_data, context: RecordingContext) -> Optional[PositionDa
 
 
 
+def extract_neural_timeline(mat_data, context: RecordingContext) -> Optional[NeuralTimelineData]:
+    for key in ["time_file", "aligned_position_file", "var"]:
+        if key not in mat_data:
+            continue
+
+        candidate = _unwrap_mat_struct(mat_data[key])
+        pdb.set_trace()
+        if hasattr(candidate, "t"):
+            return NeuralTimelineData(
+                context=context,
+                t=candidate.t.flatten(),
+            )
+
+    return None
+
+
+
 def extract_pupil(mat_data, context: RecordingContext) -> Optional[PupilSizeData]:
     aligned = extract_aligned_struct(mat_data)
     if aligned is None:
@@ -63,23 +80,6 @@ def extract_pupil(mat_data, context: RecordingContext) -> Optional[PupilSizeData
         context=context,
         d=data.flatten(),
     )
-
-
-
-def extract_neural_timeline(mat_data, context: RecordingContext) -> Optional[NeuralTimelineData]:
-    for key in ["time_file", "aligned_position_file", "var"]:
-        if key not in mat_data:
-            continue
-
-        candidate = _unwrap_mat_struct(mat_data[key])
-        pdb.set_trace()
-        if hasattr(candidate, "t"):
-            return NeuralTimelineData(
-                context=context,
-                t=candidate.t.flatten(),
-            )
-
-    return None
 
 
 
