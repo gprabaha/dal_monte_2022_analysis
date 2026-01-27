@@ -72,7 +72,7 @@ def extract_neural_timeline(mat_data, context: RecordingContext) -> Optional[Neu
             continue
 
         candidate = _unwrap_mat_struct(mat_data[key])
-
+        pdb.set_trace()
         if hasattr(candidate, "t"):
             return NeuralTimelineData(
                 context=context,
