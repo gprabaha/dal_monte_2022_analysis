@@ -1,4 +1,5 @@
 import pickle
+import pdb
 from src.config.load import load_dataset_config
 from src.io.index_dataset import index_dataset
 from src.io.load_mat import load_mat_from_path
@@ -13,15 +14,14 @@ def build_agent_dataset(
 ):
     cfg = load_dataset_config(cfg_path)
     index = index_dataset(cfg, modality)
-
+    
     out_root = cfg["processed_data_root"] / modality
     out_root.mkdir(parents=True, exist_ok=True)
 
     for row in index.itertuples():
         mat = load_mat_from_path(row.path)
-
+        
         agents = cfg["agents"] if agent_specific else [None]
-
         for agent in agents:
             ctx = RecordingContext(
                 date=row.date,
@@ -32,7 +32,8 @@ def build_agent_dataset(
             data_obj = extractor_fn(mat, ctx)
             if data_obj is None:
                 continue
-
+            
+            pdb.set_trace()
             out_dir = out_root / f"date={row.date}" / f"session={row.session}"
             out_dir.mkdir(parents=True, exist_ok=True)
 

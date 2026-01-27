@@ -3,16 +3,12 @@ dataset_name: dal_monte_2022
 
 raw_data_root: /gpfs/milgram/project/chang/pg496/data_dir/dal_monte_2022/eyetracking/
 
-positions_folder: aligned_raw_samples/position
-neural_timeline_folder: aligned_raw_samples/time
-pupil_size_folder: aligned_raw_samples/pupil_size
-roi_vertices_folder: roi_rects
-
 processed_data_root: ../local_data/dal_monte_2022
 
-agents: ["M1", "M2"]
+agents: ["m1", "m2"]
 
 modalities:
+
   gaze_position:
     folder: aligned_raw_samples/position
     file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
