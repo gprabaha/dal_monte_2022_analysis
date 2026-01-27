@@ -1,5 +1,4 @@
 import pickle
-import pdb
 from tqdm import tqdm
 
 from src.config.load import load_dataset_config
@@ -17,7 +16,7 @@ def build_agent_dataset(
     cfg = load_dataset_config(cfg_path)
     index = index_dataset(cfg, modality)
 
-    out_root = cfg["processed_data_root"] / modality
+    out_root = cfg["processed_data_root"]
     out_root.mkdir(parents=True, exist_ok=True)
 
     for row in tqdm(
@@ -40,7 +39,7 @@ def build_agent_dataset(
             if data_obj is None:
                 continue
 
-            out_dir = out_root / f"date={row.date}" / f"session={row.session}"
+            out_dir = out_root / f"date={row.date}" / modality / f"session={row.session}"
             out_dir.mkdir(parents=True, exist_ok=True)
 
             suffix = f"agent={agent}" if agent else "shared"
