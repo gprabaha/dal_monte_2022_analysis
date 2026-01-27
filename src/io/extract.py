@@ -51,7 +51,7 @@ def extract_neural_timeline(mat_data, context: RecordingContext) -> Optional[Neu
             continue
 
         candidate = _unwrap_mat_struct(mat_data[key])
-        pdb.set_trace()
+        
         if hasattr(candidate, "t"):
             return NeuralTimelineData(
                 context=context,
@@ -68,7 +68,7 @@ def extract_pupil(mat_data, context: RecordingContext) -> Optional[PupilSizeData
         return None
 
     aligned = _unwrap_mat_struct(aligned)
-
+    
     if not hasattr(aligned, context.agent):
         return None
 
@@ -94,19 +94,30 @@ def extract_roi_rects(mat_data, context: RecordingContext) -> Optional[ROIRectsD
 
     agent_data = _unwrap_mat_struct(getattr(roi_data, context.agent))
 
+    # MATLAB struct metadata, not an ROI
+    fieldnames = getattr(agent_data, "_fieldnames", None)
+    if fieldnames is None:
+        return None
+
     rois = {}
 
-    for roi_name, roi_val in agent_data.__dict__.items():
-        if context.agent == "M2" and "object" in roi_name.lower():
+    for roi_name in fieldnames:
+        if context.agent.lower() == "m2" and "object" in roi_name.lower():
             continue
 
+        roi_val = getattr(agent_data, roi_name)
         roi_val = _unwrap_mat_struct(roi_val)
 
-        # MATLAB nesting: often [[[x1 x2 y1 y2]]]
-        try:
-            rois[roi_name] = roi_val[0][0][0]
-        except Exception:
-            rois[roi_name] = roi_val
+        # Expected format: [x1, y1, x2, y2]
+        roi_val = roi_val.squeeze()
+
+        if roi_val.size != 4:
+            continue
+        
+        rois[roi_name] = roi_val
+
+    if not rois:
+        return None
 
     return ROIRectsData(
         context=context,

@@ -23,7 +23,7 @@ def build_agent_dataset(
     for row in tqdm(
         index.itertuples(),
         total=len(index),
-        desc=f"Processing {modality}",
+        desc=f"Extracting {modality}",
         unit="file",
     ):
         mat = load_mat_from_path(row.path)
