@@ -1,10 +1,44 @@
 import pickle
+from multiprocessing import Pool
 from tqdm import tqdm
 
 from src.config.load import load_dataset_config
 from src.io.index_dataset import index_dataset
 from src.io.load_mat import load_mat_from_path
 from src.data.gaze_data import RecordingContext
+from utils.parallel import get_n_processes
+from utils.paths import build_processed_out_dir
+
+
+def _extract_and_save_row_data(args):
+    row, cfg, modality, extractor_fn, agent_specific = args
+
+    mat = load_mat_from_path(row["path"])
+
+    agents = cfg["agents"] if agent_specific else [None]
+
+    for agent in agents:
+        ctx = RecordingContext(
+            date=row["date"],
+            session=row["session"],
+            agent=agent,
+        )
+
+        data_obj = extractor_fn(mat, ctx)
+        if data_obj is None:
+            continue
+
+        out_dir = build_processed_out_dir(cfg, row, modality)
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        suffix = f"agent={agent}" if agent else "shared"
+        out_file = out_dir / f"{suffix}.pkl"
+
+        with open(out_file, "wb") as f:
+            pickle.dump(data_obj, f)
+
+    return 1
+
 
 
 def build_agent_dataset(
@@ -19,31 +53,19 @@ def build_agent_dataset(
     out_root = cfg["processed_data_root"]
     out_root.mkdir(parents=True, exist_ok=True)
 
-    for row in tqdm(
-        index.itertuples(),
-        total=len(index),
-        desc=f"Extracting {modality}",
-        unit="file",
-    ):
-        mat = load_mat_from_path(row.path)
+    n_proc = get_n_processes(max_procs=8)
 
-        agents = cfg["agents"] if agent_specific else [None]
-        for agent in agents:
-            ctx = RecordingContext(
-                date=row.date,
-                session=row.session,
-                agent=agent,
-            )
+    rows = index.to_dict(orient="records")
+    worker_args = [
+        (row, cfg, modality, extractor_fn, agent_specific)
+        for row in rows
+    ]
 
-            data_obj = extractor_fn(mat, ctx)
-            if data_obj is None:
-                continue
-
-            out_dir = out_root / f"date={row.date}" / modality / f"session={row.session}"
-            out_dir.mkdir(parents=True, exist_ok=True)
-
-            suffix = f"agent={agent}" if agent else "shared"
-            out_file = out_dir / f"{suffix}.pkl"
-
-            with open(out_file, "wb") as f:
-                pickle.dump(data_obj, f)
+    with Pool(processes=n_proc) as pool:
+        for _ in tqdm(
+            pool.imap_unordered(_extract_and_save_row_data, worker_args),
+            total=len(worker_args),
+            desc=f"Extracting {modality} ({n_proc} workers)",
+            unit="file",
+        ):
+            pass

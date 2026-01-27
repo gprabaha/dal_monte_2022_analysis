@@ -25,3 +25,5 @@ modalities:
     folder: roi_rects
     file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
 
+processed_data_layout:
+  pattern: "date={date}/session={session}/{modality}"
