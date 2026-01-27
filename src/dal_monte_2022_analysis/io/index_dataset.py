@@ -1,9 +1,12 @@
+"""Index raw .mat files by session metadata for downstream processing."""
+
 import re
 from pathlib import Path
 import pandas as pd
 
 
 def index_dataset(cfg: dict, modality: str) -> pd.DataFrame:
+    """Return a DataFrame of available files for a given modality."""
     modality_cfg = cfg["modalities"][modality]
 
     root = cfg["raw_data_root"] / modality_cfg["folder"]
@@ -16,6 +19,7 @@ def index_dataset(cfg: dict, modality: str) -> pd.DataFrame:
         if not match:
             continue
 
+        # Extract date/session identifiers from the filename.
         rows.append({
             "date": int(match["date"]),
             "session": int(match["session"]),

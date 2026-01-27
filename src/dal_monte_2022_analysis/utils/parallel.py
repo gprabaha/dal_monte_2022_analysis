@@ -1,3 +1,5 @@
+"""Parallelism helpers for batch processing."""
+
 import os
 import multiprocessing as mp
 

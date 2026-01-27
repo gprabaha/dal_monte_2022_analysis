@@ -1,3 +1,5 @@
+"""Extract modality-specific data objects from MATLAB structs."""
+
 import numpy as np
 import pdb
 from typing import Optional
@@ -16,7 +18,9 @@ def _unwrap_mat_struct(x):
         return x.item()
     return x
 
+
 def extract_aligned_struct(mat_data: dict):
+    """Return the aligned struct location if present, otherwise None."""
     for key in ["var", "aligned_position_file"]:
         if key in mat_data:
             return mat_data[key]
@@ -24,6 +28,7 @@ def extract_aligned_struct(mat_data: dict):
 
 
 def extract_position(mat_data, context: RecordingContext) -> Optional[PositionData]:
+    """Extract aligned gaze position for one agent if present."""
     aligned = extract_aligned_struct(mat_data)
     if aligned is None:
         return None
@@ -46,6 +51,7 @@ def extract_position(mat_data, context: RecordingContext) -> Optional[PositionDa
 
 
 def extract_neural_timeline(mat_data, context: RecordingContext) -> Optional[NeuralTimelineData]:
+    """Extract the shared timeline for a session, if present."""
     for key in ["time_file", "aligned_position_file", "var"]:
         if key not in mat_data:
             continue
@@ -63,6 +69,7 @@ def extract_neural_timeline(mat_data, context: RecordingContext) -> Optional[Neu
 
 
 def extract_pupil(mat_data, context: RecordingContext) -> Optional[PupilSizeData]:
+    """Extract aligned pupil size for one agent if present."""
     aligned = extract_aligned_struct(mat_data)
     if aligned is None:
         return None
@@ -84,6 +91,7 @@ def extract_pupil(mat_data, context: RecordingContext) -> Optional[PupilSizeData
 
 
 def extract_roi_rects(mat_data, context: RecordingContext) -> Optional[ROIRectsData]:
+    """Extract per-agent ROI rectangles from the .mat structure."""
     if "roi_rects" not in mat_data:
         return None
 
@@ -94,7 +102,7 @@ def extract_roi_rects(mat_data, context: RecordingContext) -> Optional[ROIRectsD
 
     agent_data = _unwrap_mat_struct(getattr(roi_data, context.agent))
 
-    # MATLAB struct metadata, not an ROI
+    # MATLAB struct metadata, not an ROI.
     fieldnames = getattr(agent_data, "_fieldnames", None)
     if fieldnames is None:
         return None
@@ -108,7 +116,7 @@ def extract_roi_rects(mat_data, context: RecordingContext) -> Optional[ROIRectsD
         roi_val = getattr(agent_data, roi_name)
         roi_val = _unwrap_mat_struct(roi_val)
 
-        # Expected format: [x1, y1, x2, y2]
+        # Expected format: [x1, y1, x2, y2].
         roi_val = roi_val.squeeze()
 
         if roi_val.size != 4:

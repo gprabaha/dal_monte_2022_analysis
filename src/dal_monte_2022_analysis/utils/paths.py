@@ -1,7 +1,10 @@
+"""Path helpers for derived data products."""
+
 from pathlib import Path
 
 
 def build_processed_out_dir(cfg, index_row, modality):
+    """Build the output directory for a modality given an indexed row."""
     layout = cfg["processed_data_layout"]["pattern"]
     rel_path = layout.format(
         date=index_row["date"],
@@ -12,11 +15,13 @@ def build_processed_out_dir(cfg, index_row, modality):
 
 
 def build_processed_data_path(cfg, index_row, modality, agent):
+    """Return the path to a per-agent (or shared) pickle for a modality."""
     out_dir = build_processed_out_dir(cfg, index_row, modality)
     suffix = f"agent={agent}" if agent else "shared"
     return out_dir / f"{suffix}.pkl"
 
 
 def build_processed_output_path(cfg, index_row, modality, agent, *, output_suffix):
+    """Return the output path with a suffix applied to the modality name."""
     output_modality = f"{modality}{output_suffix}" if output_suffix else modality
     return build_processed_data_path(cfg, index_row, output_modality, agent)

@@ -1,3 +1,5 @@
+"""Extract raw .mat files into per-session pickles for each modality."""
+
 from dal_monte_2022_analysis.io.build_dataset import build_agent_dataset
 from dal_monte_2022_analysis.io.data_extraction import (
     extract_position,
@@ -6,6 +8,7 @@ from dal_monte_2022_analysis.io.data_extraction import (
     extract_roi_rects,
 )
 
+# Position samples (agent-specific).
 build_agent_dataset(
     cfg_path="configs/dataset.yaml",
     modality="gaze_position",
@@ -13,7 +16,7 @@ build_agent_dataset(
     agent_specific=True,
 )
 
-
+# Timeline (shared across agents).
 build_agent_dataset(
     cfg_path="configs/dataset.yaml",
     modality="neural_timeline",
@@ -21,7 +24,7 @@ build_agent_dataset(
     agent_specific=False,
 )
 
-
+# Pupil size samples (agent-specific).
 build_agent_dataset(
     cfg_path="configs/dataset.yaml",
     modality="pupil_size",
@@ -29,7 +32,7 @@ build_agent_dataset(
     agent_specific=True,
 )
 
-
+# ROI rectangles (agent-specific).
 build_agent_dataset(
     cfg_path="configs/dataset.yaml",
     modality="roi_vertices",

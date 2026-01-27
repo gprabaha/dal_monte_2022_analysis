@@ -1,3 +1,5 @@
+"""Dataset construction utilities that run extractors and persist results."""
+
 import pickle
 from multiprocessing import Pool
 from tqdm import tqdm
@@ -11,6 +13,7 @@ from dal_monte_2022_analysis.utils.paths import build_processed_out_dir
 
 
 def _extract_and_save_row_data(args):
+    """Load one .mat file, extract modality data, and persist per-agent outputs."""
     row, cfg, modality, extractor_fn, agent_specific = args
 
     mat = load_mat_from_path(row["path"])
@@ -47,6 +50,7 @@ def build_agent_dataset(
     extractor_fn,
     agent_specific: bool = True,
 ):
+    """Index raw data, apply an extractor, and write per-session outputs."""
     cfg = load_dataset_config(cfg_path)
     index = index_dataset(cfg, modality)
 

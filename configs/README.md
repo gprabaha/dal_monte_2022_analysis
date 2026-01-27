@@ -1,0 +1,12 @@
+# configs
+
+This folder contains dataset-level configuration files. The intent is to keep all
+paths and modality definitions in one place so that scripts stay thin and reusable.
+
+`dataset.yaml` defines:
+- `raw_data_root` and `processed_data_root`
+- `agents` present in the dataset
+- `modalities` with their folder names and file patterns
+- `processed_data_layout` for how outputs are organized on disk
+
+When adding new modalities or changing file naming conventions, update this file first.

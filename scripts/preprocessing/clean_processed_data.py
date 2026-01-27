@@ -1,9 +1,12 @@
+"""CLI wrapper for pruning timelines and interpolating processed data."""
+
 import argparse
 
 from dal_monte_2022_analysis.io.clean_dataset import clean_dataset
 
 
 def main():
+    """Parse CLI arguments and run the cleaning pipeline."""
     parser = argparse.ArgumentParser(
         description="Prune timelines and interpolate gaze/pupil data."
     )

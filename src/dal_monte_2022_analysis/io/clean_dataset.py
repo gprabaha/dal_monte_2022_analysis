@@ -1,3 +1,5 @@
+"""Clean previously extracted data by pruning timelines and interpolating gaps."""
+
 import pickle
 from multiprocessing import Pool
 from pathlib import Path
@@ -15,17 +17,20 @@ from dal_monte_2022_analysis.utils.paths import (
 
 
 def _load_pickle(path: Path):
+    """Load a pickled object from disk."""
     with open(path, "rb") as f:
         return pickle.load(f)
 
 
 def _save_pickle(obj, path: Path):
+    """Serialize an object to a pickle file, creating parent directories."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "wb") as f:
         pickle.dump(obj, f)
 
 
 def _clean_row(args):
+    """Clean one session row and write outputs; returns 1 if written, else 0."""
     row, cfg, agents, output_suffix, window_size, max_nans = args
 
     timeline_path = build_processed_data_path(cfg, row, "neural_timeline", None)
@@ -99,6 +104,7 @@ def clean_dataset(
     window_size: int = 10,
     max_nans: int = 3,
 ):
+    """Clean all sessions by pruning timelines and interpolating position/pupil."""
     cfg = load_dataset_config(cfg_path)
     index = index_dataset(cfg, "neural_timeline")
 
