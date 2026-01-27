@@ -1,5 +1,5 @@
 from dal_monte_2022_analysis.io.build_dataset import build_agent_dataset
-from dal_monte_2022_analysis.io.extract import (
+from dal_monte_2022_analysis.io.data_extraction import (
     extract_position,
     extract_neural_timeline,
     extract_pupil,
