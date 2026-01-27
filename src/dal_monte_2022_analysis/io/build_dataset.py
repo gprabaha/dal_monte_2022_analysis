@@ -2,12 +2,12 @@ import pickle
 from multiprocessing import Pool
 from tqdm import tqdm
 
-from src.config.load import load_dataset_config
-from src.io.index_dataset import index_dataset
-from src.io.load_mat import load_mat_from_path
-from src.data.gaze_data import RecordingContext
-from utils.parallel import get_n_processes
-from utils.paths import build_processed_out_dir
+from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.io.index_dataset import index_dataset
+from dal_monte_2022_analysis.io.load_mat import load_mat_from_path
+from dal_monte_2022_analysis.data.gaze_data import RecordingContext
+from dal_monte_2022_analysis.utils.parallel import get_n_processes
+from dal_monte_2022_analysis.utils.paths import build_processed_out_dir
 
 
 def _extract_and_save_row_data(args):

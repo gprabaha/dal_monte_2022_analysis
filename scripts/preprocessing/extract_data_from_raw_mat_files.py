@@ -1,5 +1,10 @@
-from src.io.build_dataset import build_agent_dataset
-from src.io.extract import extract_position, extract_neural_timeline, extract_pupil, extract_roi_rects
+from dal_monte_2022_analysis.io.build_dataset import build_agent_dataset
+from dal_monte_2022_analysis.io.extract import (
+    extract_position,
+    extract_neural_timeline,
+    extract_pupil,
+    extract_roi_rects,
+)
 
 build_agent_dataset(
     cfg_path="configs/dataset.yaml",

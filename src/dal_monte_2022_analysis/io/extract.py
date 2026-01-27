@@ -1,7 +1,7 @@
 import numpy as np
 import pdb
 from typing import Optional
-from src.data.gaze_data import (
+from dal_monte_2022_analysis.data.gaze_data import (
     RecordingContext,
     PositionData,
     PupilSizeData,
@@ -123,4 +123,3 @@ def extract_roi_rects(mat_data, context: RecordingContext) -> Optional[ROIRectsD
         context=context,
         rois=rois,
     )
-

@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: dal-monte-2022-analysis
+Version: 0.1.0
+Summary: Data extraction and processing for the Dal Monte 2022 analysis.
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: numpy
+Requires-Dist: pandas
+Requires-Dist: pyyaml
+Requires-Dist: scipy
+Requires-Dist: tqdm
