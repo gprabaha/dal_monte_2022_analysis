@@ -1,7 +1,7 @@
 # configs/dataset.yaml
 dataset_name: dal_monte_2022
 
-raw_data_root: /gpfs/milgram/project/chang/pg496/data_dir/dal_monte_2022/eyetracking/
+raw_data_root: /gpfs/milgram/project/chang/pg496/data_dir/dal_monte_2022/
 
 processed_data_root: ../local_data/dal_monte_2022
 
@@ -10,19 +10,19 @@ agents: ["m1", "m2"]
 modalities:
 
   gaze_position:
-    folder: aligned_raw_samples/position
+    folder: eyetracking/aligned_raw_samples/position
     file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
 
   neural_timeline:
-    folder: aligned_raw_samples/time
+    folder: eyetracking/aligned_raw_samples/time
     file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
 
   pupil_size:
-    folder: aligned_raw_samples/pupil_size
+    folder: eyetracking/aligned_raw_samples/pupil_size
     file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
 
   roi_vertices:
-    folder: roi_rects
+    folder: eyetracking/roi_rects
     file_pattern: "(?P<date>\\d{8})_position_(?P<session>\\d+)\\.mat"
 
 processed_data_layout:
