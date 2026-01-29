@@ -15,10 +15,19 @@ def load_dataset_config(path: str) -> dict:
     return cfg
 
 
-def _resolve_paths(cfg: dict, keys, base_dir: Path) -> dict:
+def _resolve_paths(cfg: dict, keys, base_dir: Path, *, alt_base_dir: Path | None = None) -> dict:
     for key in keys:
-        if key in cfg:
-            cfg[key] = (base_dir / cfg[key]).resolve() if not Path(cfg[key]).is_absolute() else Path(cfg[key])
+        if key not in cfg:
+            continue
+        path = Path(cfg[key])
+        if path.is_absolute():
+            cfg[key] = path
+            continue
+        if alt_base_dir is not None:
+            alt_candidate = (alt_base_dir / path).resolve()
+            cfg[key] = alt_candidate
+        else:
+            cfg[key] = (base_dir / path).resolve()
     return cfg
 
 
@@ -34,9 +43,11 @@ def load_hpc_config(path: str) -> dict:
     with open(path, "r") as f:
         cfg = yaml.safe_load(f) or {}
     base_dir = Path(path).resolve().parent
+    repo_root = base_dir.parent
     cfg = _resolve_paths(
         cfg,
-        keys=["job_file_path", "sbatch_script_path", "log_dir"],
+        keys=["job_file_path", "sbatch_script_path", "log_dir", "worker_script_path"],
         base_dir=base_dir,
+        alt_base_dir=repo_root,
     )
     return cfg

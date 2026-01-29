@@ -63,7 +63,7 @@ def _extract_non_nan_chunks(positions: np.ndarray) -> Tuple[List[np.ndarray], Li
 
 def _detect_events_in_chunk(args: Tuple[np.ndarray, int]) -> Tuple[np.ndarray, np.ndarray]:
     position_chunk, start_ind = args
-    print(f"\Detecting fixations for chunk starting at {start_ind}\n")
+    print(f"Detecting fixations for chunk starting at {start_ind}\n")
     fixation_start_stop_indices, saccade_start_stop_indices = detect_fixations_and_saccades(position_chunk)
     fixation_start_stop_indices += start_ind
     saccade_start_stop_indices += start_ind
@@ -162,7 +162,10 @@ def process_and_save_gaze_events_for_row(
     
     if reconcile and fix_df is not None and sacc_df is not None:
         if not fix_df.empty and not sacc_df.empty:
-            fix_df, sacc_df = reconcile_fixation_saccade_label_mismatches(fix_df, sacc_df)
+            fix_df, sacc_df = reconcile_fixation_saccade_label_mismatches_until_stable(
+                fix_df,
+                sacc_df,
+            )
     
     print(f"\n\nFinal dataframes for date={row['date']} session={row['session']} agent={agent}:\n\n")
     print(f"Fixation df head:\n{fix_df.head()}\n")
@@ -328,12 +331,13 @@ def reconcile_fixation_saccade_label_mismatches(
     sacc_df: pd.DataFrame,
     *,
     max_gap: int = 100,
+    return_changes: bool = False,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     fix_df = fix_df.copy()
     sacc_df = sacc_df.copy()
 
     if "location" not in fix_df.columns or "from" not in sacc_df.columns or "to" not in sacc_df.columns:
-        return fix_df, sacc_df
+        return (fix_df, sacc_df, False) if return_changes else (fix_df, sacc_df)
 
     fix_starts = fix_df["start"].tolist()
     fix_stops = fix_df["stop"].tolist()
@@ -344,6 +348,7 @@ def reconcile_fixation_saccade_label_mismatches(
     sacc_tos = sacc_df["to"].tolist()
 
     events = _merge_and_sort_gaze_events(fix_starts, fix_stops, sacc_starts, sacc_stops)
+    changes_made = False
     for i in range(len(events) - 1):
         start1, end1, type1, index1 = events[i]
         start2, end2, type2, index2 = events[i + 1]
@@ -355,20 +360,46 @@ def reconcile_fixation_saccade_label_mismatches(
             if set(fix_lbl) != set(sacc_from_lbl):
                 if "out_of_roi" in fix_lbl:
                     fix_locs[index1] = sacc_from_lbl
+                    changes_made = True
                 elif "out_of_roi" in sacc_from_lbl:
                     sacc_froms[index2] = fix_lbl
+                    changes_made = True
         elif type1 == "saccade" and type2 == "fixation":
             sacc_to_lbl = sacc_tos[index1]
             fix_lbl = fix_locs[index2]
             if set(sacc_to_lbl) != set(fix_lbl):
                 if "out_of_roi" in fix_lbl:
                     fix_locs[index2] = sacc_to_lbl
+                    changes_made = True
                 elif "out_of_roi" in sacc_to_lbl:
                     sacc_tos[index1] = fix_lbl
+                    changes_made = True
 
     fix_df["location"] = fix_locs
     sacc_df["from"] = sacc_froms
     sacc_df["to"] = sacc_tos
+    return (fix_df, sacc_df, changes_made) if return_changes else (fix_df, sacc_df)
+
+
+def reconcile_fixation_saccade_label_mismatches_until_stable(
+    fix_df: pd.DataFrame,
+    sacc_df: pd.DataFrame,
+    *,
+    max_gap: int = 100,
+    max_iters: int = 25,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Iteratively reconcile labels until no more changes (or max_iters reached)."""
+    for i in range(max_iters):
+        print(f"Checking fixation and saccade df mismatcheches for iteration number {i+1}")
+        fix_df, sacc_df, changed = reconcile_fixation_saccade_label_mismatches(
+            fix_df,
+            sacc_df,
+            max_gap=max_gap,
+            return_changes=True,
+        )
+        if not changed:
+            print(f"No clashes found in iteration number {i+1}")
+            break
     return fix_df, sacc_df
 
 

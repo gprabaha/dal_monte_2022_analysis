@@ -1,0 +1,246 @@
+
+CondaError: Run 'conda init' before 'conda deactivate'
+
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 2
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 2
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 2
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 2
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 2
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 4
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 2
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 2
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 2
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 2
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 3
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Optimal k-Means cluster number was found to be: 2
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found fixation indices from global clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Refining fixation start-stop indices using local reclustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Insufficient data points (< 500), returning empty arrays.
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Found not-fixation indices from local re-clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Preprocessing positions data for fixation detection
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Extracting motion parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Normalizing parameters for k-means clustering
+INFO:dal_monte_2022_analysis.utils.fixation_utils:Performing global clustering of points for 2 to 5 cluster sizes

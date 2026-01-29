@@ -1,10 +1,11 @@
 # HPC settings for gaze event (fixation/saccade) detection
-env_name: base
+env_name: gaze_processing
 job_name: gaze_event_detection
-job_file_path: local_data/gaze_event_jobs.txt
-sbatch_script_path: local_data/gaze_event_jobs.sbatch
-log_dir: local_data/gaze_event_logs
-partition: general
+worker_script_path: scripts/gaze_event_detection_worker.py
+job_file_path: hpc/gaze_event_jobs.txt
+sbatch_script_path: hpc/gaze_event_jobs.sh
+log_dir: hpc/gaze_event_logs
+partition: psych_day
 cpus_per_task: 8
 mem_per_cpu: 2G
 time_limit: "02:00:00"
