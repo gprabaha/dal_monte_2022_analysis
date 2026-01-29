@@ -1,5 +1,6 @@
-"""Fixation and saccade detection pipeline."""
+"""Gaze event (fixation/saccade) detection pipeline."""
 
+import pdb
 import logging
 import pickle
 from dataclasses import dataclass
@@ -12,7 +13,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_dataset_config
-from dal_monte_2022_analysis.io.index_dataset import index_dataset
+from dal_monte_2022_analysis.io.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.fixation_utils import detect_fixations_and_saccades
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_processed_data_path
@@ -21,11 +22,14 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class FixationDetectionSettings:
+class GazeEventDetectionSettings:
     cfg_path: str
     input_modality: str = "gaze_position"
     output_fixations_modality: str = "fixations"
     output_saccades_modality: str = "saccades"
+    use_parallel: bool = False
+    test_single: bool = False
+    agents: Optional[List[str]] = None
 
 
 def _load_pickle(path: Path):
@@ -57,8 +61,9 @@ def _extract_non_nan_chunks(positions: np.ndarray) -> Tuple[List[np.ndarray], Li
     return non_nan_chunks, start_indices
 
 
-def _detect_fix_sacc_in_chunk(args: Tuple[np.ndarray, int]) -> Tuple[np.ndarray, np.ndarray]:
+def _detect_events_in_chunk(args: Tuple[np.ndarray, int]) -> Tuple[np.ndarray, np.ndarray]:
     position_chunk, start_ind = args
+    print(f"\nDetection fixations for chunk starting at {start_ind}\n")
     fixation_start_stop_indices, saccade_start_stop_indices = detect_fixations_and_saccades(position_chunk)
     fixation_start_stop_indices += start_ind
     saccade_start_stop_indices += start_ind
@@ -83,8 +88,8 @@ def _load_positions(cfg: dict, row: dict, agent: str, input_modality: str):
     return _load_pickle(pos_path)
 
 
-def detect_fixations_for_row(
-    settings: FixationDetectionSettings,
+def detect_gaze_events_for_row(
+    settings: GazeEventDetectionSettings,
     row: dict,
     agent: str,
 ) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
@@ -98,8 +103,13 @@ def detect_fixations_for_row(
     positions = np.stack([pos_data.x, pos_data.y], axis=1)
     non_nan_chunks, chunk_start_indices = _extract_non_nan_chunks(positions)
     args = [(chunk, start) for chunk, start in zip(non_nan_chunks, chunk_start_indices)]
-
-    results = [_detect_fix_sacc_in_chunk(arg) for arg in args]
+    
+    if settings.use_parallel and len(args) > 1:
+        n_proc = get_n_processes(max_procs=8)
+        with Pool(processes=n_proc) as pool:
+            results = pool.map(_detect_events_in_chunk, args)
+    else:
+        results = [_detect_events_in_chunk(arg) for arg in args]
     if not results:
         return None, None
 
@@ -119,13 +129,15 @@ def detect_fixations_for_row(
     return fix_df, sacc_df
 
 
-def detect_and_save_for_row(
-    settings: FixationDetectionSettings,
+def detect_and_save_gaze_events_for_row(
+    settings: GazeEventDetectionSettings,
     row: dict,
     agent: str,
 ) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     cfg = load_dataset_config(settings.cfg_path)
-    fix_df, sacc_df = detect_fixations_for_row(settings, row, agent)
+    fix_df, sacc_df = detect_gaze_events_for_row(settings, row, agent)
+    print(f"Fixation df head: \n {fix_df.head()}")
+    print(f"Saccade df head: \n {sacc_df.head()}")
     if fix_df is None and sacc_df is None:
         return None, None
     _save_detection_outputs(
@@ -159,45 +171,43 @@ def _save_detection_outputs(
 
 def _detect_and_save_worker(args):
     settings, row, agent = args
-    fix_df, sacc_df = detect_and_save_for_row(settings, row, agent)
+    fix_df, sacc_df = detect_and_save_gaze_events_for_row(settings, row, agent)
     if fix_df is None and sacc_df is None:
         return 0
     return 1
 
 
 def build_tasks(
-    settings: FixationDetectionSettings,
+    settings: GazeEventDetectionSettings,
     *,
-    agents: Optional[Iterable[str]] = None,
     test_single: bool = False,
-) -> List[Tuple[FixationDetectionSettings, dict, str]]:
+) -> List[Tuple[GazeEventDetectionSettings, dict, str]]:
     cfg = load_dataset_config(settings.cfg_path)
-    index_df = index_dataset(cfg, "gaze_position")
+    index_df = index_processed_dataset(cfg, settings.input_modality)
     rows = index_df.to_dict(orient="records")
-    agents = list(agents) if agents is not None else cfg["agents"]
-    tasks: List[Tuple[FixationDetectionSettings, dict, str]] = []
+    tasks: List[Tuple[GazeEventDetectionSettings, dict, str]] = []
     for row in rows:
-        for agent in agents:
-            tasks.append((settings, row, agent))
+        if row.get("agent") is None:
+            continue
+        tasks.append((settings, row, row["agent"]))
     if test_single and tasks:
         return [tasks[0]]
     return tasks
 
 
-def run_detection(
-    settings: FixationDetectionSettings,
+def run_gaze_event_detection(
+    settings: GazeEventDetectionSettings,
     *,
-    agents: Optional[Iterable[str]] = None,
     use_parallel: bool = False,
     test_single: bool = False,
 ) -> None:
-    tasks = build_tasks(settings, agents=agents, test_single=test_single)
+    tasks = build_tasks(settings, test_single=test_single)
     if not tasks:
-        logger.warning("No tasks found for fixation detection.")
+        logger.warning("No tasks found for gaze event detection.")
         return
 
     if not use_parallel:
-        for task in tqdm(tasks, desc="Detecting fixations/saccades (serial)", unit="task"):
+        for task in tqdm(tasks, desc="Detecting gaze events (serial)", unit="task"):
             _detect_and_save_worker(task)
         return
 
@@ -206,7 +216,7 @@ def run_detection(
         for _ in tqdm(
             pool.imap_unordered(_detect_and_save_worker, tasks),
             total=len(tasks),
-            desc=f"Detecting fixations/saccades ({n_proc} workers)",
+            desc=f"Detecting gaze events ({n_proc} workers)",
             unit="task",
         ):
             pass

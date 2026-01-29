@@ -1,5 +1,6 @@
 """Fixation and saccade detection utilities."""
 
+import pdb
 import logging
 import numpy as np
 from sklearn.cluster import KMeans
@@ -25,7 +26,7 @@ def detect_fixations_and_saccades(positions: np.ndarray):
 
     logger.info("Preprocessing positions data for fixation detection")
     x, y = _apply_lowpass_filter(positions)
-
+    
     logger.info("Extracting motion parameters for k-means clustering")
     feature_matrix = _compute_motion_features(x, y)
 
@@ -34,7 +35,7 @@ def detect_fixations_and_saccades(positions: np.ndarray):
 
     logger.info("Performing global clustering of points for 2 to 5 cluster sizes")
     fixation_indices = _extract_fixation_indices_through_global_k_means(feature_matrix)
-
+    
     fixation_start_stop = _extract_behavior_intervals(fixation_indices)
 
     logger.info("Refining fixation start-stop indices using local reclustering")
@@ -49,7 +50,7 @@ def detect_fixations_and_saccades(positions: np.ndarray):
     fixation_start_stop = _filter_behavior_intervals(fixation_start_stop, min_duration=25)
     saccade_start_stop = _extract_behavior_intervals(saccade_indices + 1)
     saccade_start_stop = _filter_behavior_intervals(saccade_start_stop, min_duration=10)
-
+    
     fixation_start_stop = fixation_start_stop if fixation_start_stop.size else np.empty((0, 2), dtype=int)
     saccade_start_stop = saccade_start_stop if saccade_start_stop.size else np.empty((0, 2), dtype=int)
 

@@ -1,0 +1,7 @@
+# Fixation and saccade detection settings
+input_modality: gaze_position
+output_fixations_modality: fixations
+output_saccades_modality: saccades
+
+use_parallel: true
+test_single: true

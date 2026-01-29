@@ -95,3 +95,42 @@ def index_dataset(cfg: dict, modality: str) -> pd.DataFrame:
     index_df = index_df.assign(_sort_date=sort_dates)
     index_df = index_df.sort_values(["_sort_date", "session"]).drop(columns=["_sort_date"])
     return index_df
+
+
+def index_processed_dataset(cfg: dict, modality: str) -> pd.DataFrame:
+    """Return a DataFrame of available processed files for a given modality."""
+    root = Path(cfg["processed_data_root"])
+    pattern = root / "date=*" / "session=*" / modality / "*.pkl"
+
+    rows = []
+    for pkl_path in root.glob(str(pattern.relative_to(root))):
+        parts = pkl_path.parts
+        try:
+            date_part = next(part for part in parts if part.startswith("date="))
+            session_part = next(part for part in parts if part.startswith("session="))
+        except StopIteration:
+            continue
+
+        date = date_part.split("=", 1)[1]
+        session = session_part.split("=", 1)[1]
+
+        agent = None
+        stem = pkl_path.stem
+        if stem.startswith("agent="):
+            agent = stem.split("=", 1)[1]
+        elif stem == "shared":
+            agent = None
+
+        rows.append({
+            "date": date,
+            "session": session,
+            "agent": agent,
+            "path": pkl_path,
+        })
+
+    if not rows:
+        raise RuntimeError(f"No processed files found for modality '{modality}'")
+
+    df = pd.DataFrame(rows)
+    df = df.sort_values(["date", "session", "agent"])
+    return df

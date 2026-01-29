@@ -18,16 +18,14 @@ def write_job_file(job_file_path: Path, commands: Iterable[str]) -> None:
     logger.info("Wrote job file to %s", job_file_path)
 
 
-def generate_fixation_job_file(
+def generate_gaze_event_job_file(
     *,
     tasks: Iterable[tuple],
     job_file_path: Path,
     worker_script: Path,
     env_name: str,
-    cfg_path: str,
-    input_modality: str,
-    output_fixations_modality: str,
-    output_saccades_modality: str,
+    dataset_cfg_path: str,
+    gaze_event_cfg_path: str,
 ) -> None:
     """Generate a job file for fixation detection array jobs."""
     commands: List[str] = []
@@ -37,18 +35,29 @@ def generate_fixation_job_file(
             f"conda activate {env_name}; "
             "python "
             f"{worker_script} "
-            "--mode single "
-            f"--cfg {cfg_path} "
+            f"--dataset-cfg {dataset_cfg_path} "
+            f"--gaze-event-cfg {gaze_event_cfg_path} "
             f"--date {date} "
             f"--session {session} "
-            f"--agent {agent} "
-            f"--input-modality {input_modality} "
-            f"--output-fixations-modality {output_fixations_modality} "
-            f"--output-saccades-modality {output_saccades_modality}"
+            f"--agent {agent}"
         )
         commands.append(cmd)
 
     write_job_file(job_file_path, commands)
+
+
+def generate_fixation_job_file(*, tasks, job_file_path, worker_script, env_name, cfg_path, input_modality,
+                               output_fixations_modality, output_saccades_modality) -> None:
+    """Deprecated: use generate_gaze_event_job_file."""
+    logger.warning("generate_fixation_job_file is deprecated; use generate_gaze_event_job_file.")
+    generate_gaze_event_job_file(
+        tasks=tasks,
+        job_file_path=job_file_path,
+        worker_script=worker_script,
+        env_name=env_name,
+        dataset_cfg_path=cfg_path,
+        gaze_event_cfg_path=cfg_path,
+    )
 
 
 def submit_dsq_array_job(
