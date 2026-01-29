@@ -11,7 +11,7 @@ from dal_monte_2022_analysis.config.load import (
 )
 from dal_monte_2022_analysis.features.gaze_event_detection import (
     GazeEventDetectionSettings,
-    detect_and_save_gaze_events_for_row,
+    process_and_save_gaze_events_for_row,
     run_gaze_event_detection,
 )
 from dal_monte_2022_analysis.io.index_dataset import index_processed_dataset
@@ -67,7 +67,7 @@ def main():
 
     if args.date and args.session and args.agent:
         row = {"date": args.date, "session": args.session}
-        detect_and_save_gaze_events_for_row(settings, row, args.agent)
+        process_and_save_gaze_events_for_row(settings, row, args.agent)
         return
 
     if args.run_hpc:
@@ -108,7 +108,7 @@ def main():
             logger.warning("No data found for single run.")
             return
         row, agent = task
-        detect_and_save_gaze_events_for_row(settings, row, agent)
+        process_and_save_gaze_events_for_row(settings, row, agent)
         return
 
     run_gaze_event_detection(

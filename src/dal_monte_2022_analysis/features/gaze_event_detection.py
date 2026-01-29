@@ -63,7 +63,7 @@ def _extract_non_nan_chunks(positions: np.ndarray) -> Tuple[List[np.ndarray], Li
 
 def _detect_events_in_chunk(args: Tuple[np.ndarray, int]) -> Tuple[np.ndarray, np.ndarray]:
     position_chunk, start_ind = args
-    print(f"\nDetection fixations for chunk starting at {start_ind}\n")
+    print(f"\Detecting fixations for chunk starting at {start_ind}\n")
     fixation_start_stop_indices, saccade_start_stop_indices = detect_fixations_and_saccades(position_chunk)
     fixation_start_stop_indices += start_ind
     saccade_start_stop_indices += start_ind
@@ -129,17 +129,44 @@ def detect_gaze_events_for_row(
     return fix_df, sacc_df
 
 
-def detect_and_save_gaze_events_for_row(
+def process_and_save_gaze_events_for_row(
     settings: GazeEventDetectionSettings,
     row: dict,
     agent: str,
+    *,
+    annotate: bool = True,
+    reconcile: bool = True,
 ) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     cfg = load_dataset_config(settings.cfg_path)
     fix_df, sacc_df = detect_gaze_events_for_row(settings, row, agent)
-    print(f"Fixation df head: \n {fix_df.head()}")
-    print(f"Saccade df head: \n {sacc_df.head()}")
     if fix_df is None and sacc_df is None:
         return None, None
+    
+    if annotate:
+        if fix_df is not None and not fix_df.empty:
+            fix_df = annotate_fixation_locations(
+                settings.cfg_path,
+                row,
+                agent,
+                fix_df,
+                input_modality=settings.input_modality,
+            )
+        if sacc_df is not None and not sacc_df.empty:
+            sacc_df = annotate_saccade_from_to(
+                settings.cfg_path,
+                row,
+                agent,
+                sacc_df,
+                input_modality=settings.input_modality,
+            )
+    
+    if reconcile and fix_df is not None and sacc_df is not None:
+        if not fix_df.empty and not sacc_df.empty:
+            fix_df, sacc_df = reconcile_fixation_saccade_label_mismatches(fix_df, sacc_df)
+    
+    print(f"\n\nFinal dataframes for date={row['date']} session={row['session']} agent={agent}:\n\n")
+    print(f"Fixation df head:\n{fix_df.head()}\n")
+    print(f"Saccade df head:\n{sacc_df.head()}\n")
     _save_detection_outputs(
         cfg,
         row,
@@ -150,6 +177,16 @@ def detect_and_save_gaze_events_for_row(
         settings.output_saccades_modality,
     )
     return fix_df, sacc_df
+
+
+def detect_and_save_gaze_events_for_row(
+    settings: GazeEventDetectionSettings,
+    row: dict,
+    agent: str,
+) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
+    """Deprecated: use process_and_save_gaze_events_for_row."""
+    logger.warning("detect_and_save_gaze_events_for_row is deprecated; use process_and_save_gaze_events_for_row.")
+    return process_and_save_gaze_events_for_row(settings, row, agent)
 
 
 def _save_detection_outputs(
@@ -171,7 +208,7 @@ def _save_detection_outputs(
 
 def _detect_and_save_worker(args):
     settings, row, agent = args
-    fix_df, sacc_df = detect_and_save_gaze_events_for_row(settings, row, agent)
+    fix_df, sacc_df = process_and_save_gaze_events_for_row(settings, row, agent)
     if fix_df is None and sacc_df is None:
         return 0
     return 1
