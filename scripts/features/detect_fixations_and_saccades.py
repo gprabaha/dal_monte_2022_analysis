@@ -1,7 +1,6 @@
 """Run gaze event detection locally or via HPC job arrays."""
 
 import argparse
-import logging
 from pathlib import Path
 
 from dal_monte_2022_analysis.config.load import (
@@ -22,24 +21,20 @@ from dal_monte_2022_analysis.utils.hpc_utils import (
 )
 
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-
-
 def _pick_random_task(settings: GazeEventDetectionSettings):
+    """Pick a random processed row that includes an agent entry."""
     cfg = load_dataset_config(settings.cfg_path)
     index_df = index_processed_dataset(cfg, settings.input_modality)
     index_df = index_df[index_df["agent"].notna()]
     if index_df.empty:
         return None
-    # pick a random row
     row = index_df.sample(n=1).iloc[0].to_dict()
     print(f"Picked task: {row}")
     return row, row["agent"]
 
 
 def main():
+    """Parse CLI args and run gaze event detection locally or via HPC."""
     parser = argparse.ArgumentParser(description="Detect fixations and saccades.")
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
     parser.add_argument("--gaze-event-cfg", default="configs/gaze_event_detection.yaml")
@@ -48,7 +43,7 @@ def main():
     parser.add_argument("--date", default=None)
     parser.add_argument("--session", default=None)
     parser.add_argument("--agent", default=None)
-    # When session/date/agent are provided, this script runs a single task.
+    # When session/date/agent are provided, run exactly one task.
 
     args = parser.parse_args()
 
@@ -110,7 +105,7 @@ def main():
     if settings.test_single:
         task = _pick_random_task(settings)
         if task is None:
-            logger.warning("No data found for single run.")
+            print("No data found for single run.")
             return
         row, agent = task
         process_and_save_gaze_events_for_row(settings, row, agent)

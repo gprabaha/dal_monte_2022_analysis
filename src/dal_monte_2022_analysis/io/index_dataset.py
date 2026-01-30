@@ -1,13 +1,19 @@
-"""Index raw .mat files by session metadata for downstream processing."""
+"""Index raw and processed data files by session metadata."""
 
-import pdb
 import re
 from pathlib import Path
 import pandas as pd
 
 
 def _load_ephys_days(cfg: dict) -> pd.DataFrame:
-    """Load ephys days and monkey names from raw_data_root."""
+    """Load ephys day metadata and monkey names from raw_data_root.
+
+    Args:
+        cfg: Dataset config dictionary containing raw_data_root.
+
+    Returns:
+        DataFrame with columns date, monkey_name_m1, monkey_name_m2.
+    """
     ephys_path = Path(cfg["raw_data_root"]) / "ephys_days_and_monkeys.pkl"
     if not ephys_path.exists():
         raise RuntimeError(f"Missing ephys days file: {ephys_path}")
@@ -42,7 +48,15 @@ def _load_ephys_days(cfg: dict) -> pd.DataFrame:
 
 
 def index_dataset(cfg: dict, modality: str) -> pd.DataFrame:
-    """Return a DataFrame of available files for a given modality."""
+    """Index raw .mat files for a modality into a session-level DataFrame.
+
+    Args:
+        cfg: Dataset config dictionary.
+        modality: Modality key from cfg["modalities"].
+
+    Returns:
+        DataFrame with date/session/monkey fields and file paths.
+    """
     modality_cfg = cfg["modalities"][modality]
 
     root = cfg["raw_data_root"] / modality_cfg["folder"]
@@ -98,7 +112,15 @@ def index_dataset(cfg: dict, modality: str) -> pd.DataFrame:
 
 
 def index_processed_dataset(cfg: dict, modality: str) -> pd.DataFrame:
-    """Return a DataFrame of available processed files for a given modality."""
+    """Index processed pickles for a modality into a DataFrame.
+
+    Args:
+        cfg: Dataset config dictionary.
+        modality: Modality directory name under processed_data_root.
+
+    Returns:
+        DataFrame with date/session/agent/path entries.
+    """
     root = Path(cfg["processed_data_root"])
     pattern = root / "date=*" / "session=*" / modality / "*.pkl"
 

@@ -18,3 +18,5 @@ __pycache__/
 *.pyc
 .matlab/
 
+# HPC files
+hpc/

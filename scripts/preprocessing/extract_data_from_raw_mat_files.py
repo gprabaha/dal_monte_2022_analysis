@@ -1,4 +1,4 @@
-"""Extract raw .mat files into per-session pickles for each modality."""
+"""Extract raw .mat files into per-session pickles per modality using configs/dataset.yaml."""
 
 from dal_monte_2022_analysis.io.build_dataset import build_agent_dataset
 from dal_monte_2022_analysis.io.data_extraction import (
@@ -8,7 +8,7 @@ from dal_monte_2022_analysis.io.data_extraction import (
     extract_roi_rects,
 )
 
-# Toggle for debugging vs full-speed runs.
+# Toggle multiprocessing on/off for debugging versus full-speed runs.
 USE_PARALLEL = True
 
 # Position samples (agent-specific).

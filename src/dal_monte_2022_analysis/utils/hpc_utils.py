@@ -2,20 +2,22 @@
 
 import subprocess
 import time
-import logging
 from pathlib import Path
 from typing import Iterable, List
 
-logger = logging.getLogger(__name__)
-
 
 def write_job_file(job_file_path: Path, commands: Iterable[str]) -> None:
-    """Write one command per line to a job file."""
+    """Write one command per line to a job file.
+
+    Args:
+        job_file_path: Destination path for the job file.
+        commands: Iterable of shell commands to write.
+    """
     job_file_path.parent.mkdir(parents=True, exist_ok=True)
     with open(job_file_path, "w") as f:
         for cmd in commands:
             f.write(cmd + "\n")
-    logger.info("Wrote job file to %s", job_file_path)
+    print(f"Wrote job file to {job_file_path}")
 
 
 def generate_gaze_event_job_file(
@@ -27,7 +29,16 @@ def generate_gaze_event_job_file(
     dataset_cfg_path: str,
     gaze_event_cfg_path: str,
 ) -> None:
-    """Generate a job file for fixation detection array jobs."""
+    """Generate a job file for gaze-event array jobs.
+
+    Args:
+        tasks: Iterable of (date, session, agent) tuples.
+        job_file_path: Output path for the job file.
+        worker_script: Worker script that processes one task.
+        env_name: Conda environment name to activate in each job.
+        dataset_cfg_path: Path to dataset config passed to the worker.
+        gaze_event_cfg_path: Path to gaze-event config passed to the worker.
+    """
     commands: List[str] = []
     for date, session, agent in tasks:
         cmd = (
@@ -46,10 +57,24 @@ def generate_gaze_event_job_file(
     write_job_file(job_file_path, commands)
 
 
-def generate_fixation_job_file(*, tasks, job_file_path, worker_script, env_name, cfg_path, input_modality,
-                               output_fixations_modality, output_saccades_modality) -> None:
-    """Deprecated: use generate_gaze_event_job_file."""
-    logger.warning("generate_fixation_job_file is deprecated; use generate_gaze_event_job_file.")
+def generate_fixation_job_file(
+    *,
+    tasks,
+    job_file_path,
+    worker_script,
+    env_name,
+    cfg_path,
+    input_modality,
+    output_fixations_modality,
+    output_saccades_modality,
+) -> None:
+    """Deprecated: use generate_gaze_event_job_file.
+
+    Note:
+        Parameters are kept for backward compatibility; only dataset cfg path
+        is forwarded to the newer gaze-event job generator.
+    """
+    print("WARNING: generate_fixation_job_file is deprecated; use generate_gaze_event_job_file.")
     generate_gaze_event_job_file(
         tasks=tasks,
         job_file_path=job_file_path,
@@ -71,7 +96,21 @@ def submit_dsq_array_job(
     mem_per_cpu: str,
     time_limit: str,
 ) -> str:
-    """Submit a dSQ array job and return the job ID."""
+    """Submit a dSQ array job and return the job ID.
+
+    Args:
+        job_file_path: Path to the job file with one command per line.
+        sbatch_script_path: Path where dSQ writes the sbatch script.
+        log_dir: Directory for stdout/stderr and status logs.
+        job_name: Name prefix used for the submitted job.
+        partition: SLURM partition to submit to.
+        cpus_per_task: CPU count requested per task.
+        mem_per_cpu: Memory per CPU (e.g., "4G").
+        time_limit: SLURM time limit (e.g., "02:00:00").
+
+    Returns:
+        The SLURM job ID string.
+    """
     log_dir.mkdir(parents=True, exist_ok=True)
 
     subprocess.run(
@@ -100,13 +139,19 @@ def submit_dsq_array_job(
     )
 
     job_id = result.stdout.strip().split()[-1]
-    logger.info("Submitted job array with ID: %s", job_id)
+    print(f"Submitted job array with ID: {job_id}")
     return job_id
 
 
 def track_job_completion(job_id: str, poll_secs: int = 30, log_every_secs: int = 60) -> None:
-    """Track job array status using squeue."""
-    logger.info("Tracking job array with ID: %s", job_id)
+    """Track job array status using squeue until completion.
+
+    Args:
+        job_id: SLURM job ID to track.
+        poll_secs: Poll interval for status checks.
+        log_every_secs: Interval for emitting "still running" logs.
+    """
+    print(f"Tracking job array with ID: {job_id}")
     start = time.time()
     last_log = start
 
@@ -120,16 +165,16 @@ def track_job_completion(job_id: str, poll_secs: int = 30, log_every_secs: int =
         )
 
         if result.returncode != 0:
-            logger.error("Failed to check job status: %s", result.stderr.strip())
+            print(f"ERROR: Failed to check job status: {result.stderr.strip()}")
             break
 
         statuses = result.stdout.strip().split()
         if not statuses or all(s not in {"PENDING", "RUNNING", "CONFIGURING"} for s in statuses):
-            logger.info("Job array %s has completed.", job_id)
+            print(f"Job array {job_id} has completed.")
             break
 
         if time.time() - last_log >= log_every_secs:
-            logger.info("Still running... job array %s", job_id)
+            print(f"Still running... job array {job_id}")
             last_log = time.time()
 
         time.sleep(poll_secs)

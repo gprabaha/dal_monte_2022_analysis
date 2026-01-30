@@ -1,6 +1,5 @@
 """Dataset construction utilities that run extractors and persist results."""
 
-import pdb
 import pickle
 from multiprocessing import Pool
 from tqdm import tqdm
@@ -14,7 +13,14 @@ from dal_monte_2022_analysis.utils.paths import build_processed_out_dir
 
 
 def _extract_and_save_row_data(args):
-    """Load one .mat file, extract modality data, and persist per-agent outputs."""
+    """Load one .mat file, extract modality data, and persist per-agent outputs.
+
+    Args:
+        args: Tuple of (row, cfg, modality, extractor_fn, agent_specific).
+
+    Returns:
+        1 to indicate the row was processed.
+    """
     row, cfg, modality, extractor_fn, agent_specific = args
 
     mat = load_mat_from_path(row["path"])
@@ -38,7 +44,7 @@ def _extract_and_save_row_data(args):
         data_obj = extractor_fn(mat, ctx)
         if data_obj is None:
             continue
-        
+
         out_dir = build_processed_out_dir(cfg, row, modality)
         out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -51,7 +57,6 @@ def _extract_and_save_row_data(args):
     return 1
 
 
-
 def build_agent_dataset(
     cfg_path: str,
     modality: str,
@@ -59,7 +64,18 @@ def build_agent_dataset(
     agent_specific: bool = True,
     use_parallel: bool = False,
 ):
-    """Index raw data, apply an extractor, and write per-session outputs."""
+    """Index raw data, apply an extractor, and write per-session outputs.
+
+    Args:
+        cfg_path: Path to dataset config YAML.
+        modality: Modality key to process.
+        extractor_fn: Callable that returns a data object or None.
+        agent_specific: Whether modality is stored per agent.
+        use_parallel: Whether to use multiprocessing.
+
+    Returns:
+        None. Outputs are written to disk.
+    """
     cfg = load_dataset_config(cfg_path)
     index = index_dataset(cfg, modality)
 

@@ -18,7 +18,7 @@ configs/dataset.yaml
     -> io/load_mat.py (load per file)
       -> io/data_extraction.py (extract Position/Pupil/Timeline/ROI)
         -> io/build_dataset.py (serialize pickles)
-          -> processed_data_root/date=.../session=.../modality/agent=...pkl
+          -> processed_data_root/date=.../session=.../modality/agent=<agent>.pkl or shared.pkl
 ```
 
 Data flow (cleaning)

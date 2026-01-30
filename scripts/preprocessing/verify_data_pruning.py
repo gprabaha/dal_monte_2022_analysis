@@ -8,7 +8,7 @@ from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 
 
 def main():
-    """Sample one session at random and print basic sanity-check stats."""
+    """Sample one session and print simple NaN/length stats for cleaned outputs."""
     cfg = load_dataset_config("configs/dataset.yaml")
     index = index_dataset(cfg, "neural_timeline")
     rng = np.random.default_rng()

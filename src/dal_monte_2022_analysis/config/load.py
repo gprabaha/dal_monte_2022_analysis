@@ -5,7 +5,14 @@ from pathlib import Path
 
 
 def load_dataset_config(path: str) -> dict:
-    """Load the dataset config and normalize path entries."""
+    """Load the dataset config and normalize path entries.
+
+    Args:
+        path: Path to the dataset YAML config file.
+
+    Returns:
+        Parsed config dictionary with Path objects for data roots.
+    """
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
 
@@ -16,6 +23,17 @@ def load_dataset_config(path: str) -> dict:
 
 
 def _resolve_paths(cfg: dict, keys, base_dir: Path, *, alt_base_dir: Path | None = None) -> dict:
+    """Resolve selected keys in a config dict relative to provided base dirs.
+
+    Args:
+        cfg: Config dictionary to update in place.
+        keys: Iterable of keys to resolve to absolute paths.
+        base_dir: Base directory for resolving relative paths.
+        alt_base_dir: Alternate base directory to prefer when provided.
+
+    Returns:
+        The updated config dictionary.
+    """
     for key in keys:
         if key not in cfg:
             continue
@@ -32,14 +50,28 @@ def _resolve_paths(cfg: dict, keys, base_dir: Path, *, alt_base_dir: Path | None
 
 
 def load_gaze_event_config(path: str) -> dict:
-    """Load fixation/saccade detection config and normalize paths."""
+    """Load fixation/saccade detection config (no path normalization).
+
+    Args:
+        path: Path to the YAML config file.
+
+    Returns:
+        Parsed config dictionary (empty if file is empty).
+    """
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
     return cfg or {}
 
 
 def load_hpc_config(path: str) -> dict:
-    """Load HPC config and normalize path entries."""
+    """Load HPC config and normalize relevant path entries.
+
+    Args:
+        path: Path to the YAML config file.
+
+    Returns:
+        Parsed config with resolved paths for job files and scripts.
+    """
     with open(path, "r") as f:
         cfg = yaml.safe_load(f) or {}
     base_dir = Path(path).resolve().parent

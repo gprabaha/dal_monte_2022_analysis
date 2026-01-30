@@ -5,10 +5,13 @@ import multiprocessing as mp
 
 
 def get_n_processes(max_procs: int = 8) -> int:
-    """
-    Determine number of worker processes.
-    Uses SLURM_CPUS_PER_TASK if available, otherwise local CPU count.
-    Caps at max_procs.
+    """Return a safe worker count based on SLURM or local CPU availability.
+
+    Args:
+        max_procs: Upper bound on workers to launch.
+
+    Returns:
+        The number of processes to use (at least 1, at most max_procs).
     """
     slurm_cpus = os.getenv("SLURM_CPUS_PER_TASK")
     if slurm_cpus is not None:

@@ -1,1 +1,0 @@
-module load miniconda; conda activate base; python /gpfs/milgram/pi/chang/pg496/repositories/dal_monte_2022_analysis/scripts/features/detect_fixations_and_saccades.py --dataset-cfg configs/dataset.yaml --gaze-event-cfg configs/gaze_event_detection.yaml --date 01022019 --session 1 --agent m1

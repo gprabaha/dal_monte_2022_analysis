@@ -8,3 +8,4 @@ This folder contains the end-to-end preprocessing pipeline:
 - `verify_data_pruning.py`: sanity-check a random session after cleaning.
 
 Typical order of use is extract → clean → verify.
+Outputs are written under the `processed_data_root` (see `configs/dataset.yaml`).

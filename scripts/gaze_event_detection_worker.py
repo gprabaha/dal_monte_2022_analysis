@@ -1,19 +1,15 @@
 """HPC worker script for gaze event detection on a single task."""
 
 import argparse
-import logging
-
 from dal_monte_2022_analysis.config.load import load_gaze_event_config
 from dal_monte_2022_analysis.features.gaze_event_detection import (
     GazeEventDetectionSettings,
     process_and_save_gaze_events_for_row,
 )
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
 
 def main():
+    """Parse CLI args and run gaze event detection for one session/agent."""
     parser = argparse.ArgumentParser(description="Gaze event detection worker.")
     parser.add_argument("--dataset-cfg", required=True)
     parser.add_argument("--gaze-event-cfg", required=True)

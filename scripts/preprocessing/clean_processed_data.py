@@ -6,7 +6,7 @@ from dal_monte_2022_analysis.io.clean_dataset import clean_dataset
 
 
 def main():
-    """Parse CLI arguments and run the cleaning pipeline."""
+    """Parse CLI arguments and run pruning/interpolation on processed data."""
     parser = argparse.ArgumentParser(
         description="Prune timelines and interpolate gaze/pupil data."
     )

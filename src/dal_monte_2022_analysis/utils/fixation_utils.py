@@ -1,44 +1,41 @@
 """Fixation and saccade detection utilities."""
 
-import pdb
-import logging
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.metrics import silhouette_score
 from scipy import signal
 
-logger = logging.getLogger(__name__)
-
 
 def detect_fixations_and_saccades(positions: np.ndarray):
-    """
-    Detect fixations and saccades using k-means clustering.
+    """Detect fixation and saccade intervals using k-means clustering.
 
     Args:
-        positions: (N, 2) array of [x, y] eye positions.
+        positions: Array of shape (N, 2) containing [x, y] samples. At least
+            500 samples are required; shorter inputs return empty outputs.
 
     Returns:
-        fixation_start_stop, saccade_start_stop arrays of shape (M, 2).
+        Tuple of (fixation_start_stop, saccade_start_stop), each an (M, 2) array
+        of inclusive start/stop indices.
     """
     if positions.shape[0] < 500:
-        logger.info("Insufficient data points (< 500), returning empty arrays.")
+        print("Insufficient data points (< 500), returning empty arrays.")
         return np.empty((0, 2), dtype=int), np.empty((0, 2), dtype=int)
 
-    logger.info("Preprocessing positions data for fixation detection")
+    print("Preprocessing positions data for fixation detection")
     x, y = _apply_lowpass_filter(positions)
-    
-    logger.info("Extracting motion parameters for k-means clustering")
+
+    print("Extracting motion parameters for k-means clustering")
     feature_matrix = _compute_motion_features(x, y)
 
-    logger.info("Normalizing parameters for k-means clustering")
+    print("Normalizing parameters for k-means clustering")
     feature_matrix = _normalize_features(feature_matrix)
 
-    logger.info("Performing global clustering of points for 2 to 5 cluster sizes")
+    print("Performing global clustering of points for 2 to 5 cluster sizes")
     fixation_indices = _extract_fixation_indices_through_global_k_means(feature_matrix)
-    
+
     fixation_start_stop = _extract_behavior_intervals(fixation_indices)
 
-    logger.info("Refining fixation start-stop indices using local reclustering")
+    print("Refining fixation start-stop indices using local reclustering")
     not_fixations = _refine_fixation_classification_to_get_notfix_inds(
         fixation_start_stop,
         feature_matrix,
@@ -50,15 +47,23 @@ def detect_fixations_and_saccades(positions: np.ndarray):
     fixation_start_stop = _filter_behavior_intervals(fixation_start_stop, min_duration=25)
     saccade_start_stop = _extract_behavior_intervals(saccade_indices + 1)
     saccade_start_stop = _filter_behavior_intervals(saccade_start_stop, min_duration=10)
-    
-    fixation_start_stop = fixation_start_stop if fixation_start_stop.size else np.empty((0, 2), dtype=int)
-    saccade_start_stop = saccade_start_stop if saccade_start_stop.size else np.empty((0, 2), dtype=int)
+
+    fixation_start_stop = (
+        fixation_start_stop if fixation_start_stop.size else np.empty((0, 2), dtype=int)
+    )
+    saccade_start_stop = (
+        saccade_start_stop if saccade_start_stop.size else np.empty((0, 2), dtype=int)
+    )
 
     return fixation_start_stop, saccade_start_stop
 
 
 def _apply_lowpass_filter(positions: np.ndarray):
-    """Apply low-pass FIR filter to smooth eye movement data."""
+    """Apply a low-pass FIR filter to smooth eye movement data.
+
+    Returns:
+        Tuple of filtered x and y arrays with the original length.
+    """
     fltord = 60
     lowpass_freq = 30
     nyquist_freq = 500
@@ -74,7 +79,11 @@ def _apply_lowpass_filter(positions: np.ndarray):
 
 
 def _compute_motion_features(xss: np.ndarray, yss: np.ndarray):
-    """Compute velocity, acceleration, angular velocity, and displacement."""
+    """Compute motion features (displacement, velocity, acceleration, rotation).
+
+    Returns:
+        Feature matrix with shape (N-2, 4).
+    """
     velx, vely = np.diff(xss), np.diff(yss)
     vel = np.sqrt(velx**2 + vely**2)
     accel = np.abs(np.diff(vel))
@@ -91,7 +100,11 @@ def _compute_motion_features(xss: np.ndarray, yss: np.ndarray):
 
 
 def _normalize_features(feature_matrix: np.ndarray):
-    """Normalize feature values to [0, 1]."""
+    """Normalize feature values to [0, 1] with simple outlier clipping.
+
+    Note:
+        Normalization is performed in place and the same array is returned.
+    """
     for i in range(feature_matrix.shape[1]):
         threshold = np.mean(feature_matrix[:, i]) + 3 * np.std(feature_matrix[:, i])
         feature_matrix[feature_matrix[:, i] > threshold, i] = threshold
@@ -101,7 +114,7 @@ def _normalize_features(feature_matrix: np.ndarray):
 
 
 def _extract_fixation_indices_through_global_k_means(feature_matrix: np.ndarray):
-    """Perform global clustering to classify fixations and saccades."""
+    """Perform global k-means clustering to classify fixations vs saccades."""
     num_clusters = _determine_optimal_clusters(feature_matrix[:, 1:4])
     labels = KMeans(n_clusters=num_clusters, n_init=5).fit_predict(feature_matrix)
     unique_clusters = np.unique(labels)
@@ -116,7 +129,7 @@ def _extract_fixation_indices_through_global_k_means(feature_matrix: np.ndarray)
     labels[labels != 100] = 2
     labels[labels == 100] = 1
     fixation_indices = np.where(labels == 1)[0]
-    logger.info("Found fixation indices from global clustering")
+    print("Found fixation indices from global clustering")
     return fixation_indices
 
 
@@ -128,7 +141,7 @@ def _determine_optimal_clusters(data: np.ndarray):
         sil_score = silhouette_score(data, kmeans.labels_)
         if sil_score > best_sil:
             best_sil, best_k = sil_score, k
-    logger.info("Optimal k-Means cluster number was found to be: %d", best_k)
+    print(f"Optimal k-Means cluster number was found to be: {best_k}")
     return best_k
 
 
@@ -136,7 +149,7 @@ def _refine_fixation_classification_to_get_notfix_inds(
     fixation_start_stop: np.ndarray,
     feature_matrix: np.ndarray,
 ):
-    """Refine fixation classification using local reclustering."""
+    """Refine fixation classification using local re-clustering windows."""
     non_fixation_indices = []
     for i in range(fixation_start_stop.shape[0]):
         surrounding_indices = np.arange(fixation_start_stop[i, 0] - 50, fixation_start_stop[i, 1] + 50)
@@ -184,12 +197,12 @@ def _refine_fixation_classification_to_get_notfix_inds(
         cluster_labels[cluster_labels != 100] = 2
         cluster_labels[cluster_labels == 100] = 1
         non_fixation_indices.extend(surrounding_indices[cluster_labels == 2])
-    logger.info("Found not-fixation indices from local re-clustering")
+    print("Found not-fixation indices from local re-clustering")
     return np.array(non_fixation_indices)
 
 
 def _extract_behavior_intervals(indices: np.ndarray):
-    """Convert classified index sequences into continuous behavioral periods."""
+    """Convert sorted index sequences into continuous [start, stop] intervals."""
     if len(indices) == 0:
         return np.empty((0, 2), dtype=int)
     diffs = np.diff(indices)
@@ -201,7 +214,7 @@ def _extract_behavior_intervals(indices: np.ndarray):
 
 
 def _filter_behavior_intervals(intervals: np.ndarray, min_duration: int):
-    """Remove intervals shorter than min_duration."""
+    """Remove intervals shorter than the minimum duration."""
     if intervals.size == 0:
         return intervals
     return intervals[np.where((intervals[:, 1] - intervals[:, 0]) >= min_duration)]

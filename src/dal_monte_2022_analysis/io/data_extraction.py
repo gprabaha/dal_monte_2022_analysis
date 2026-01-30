@@ -1,7 +1,6 @@
 """Extract modality-specific data objects from MATLAB structs."""
 
 import numpy as np
-import pdb
 from typing import Optional
 from dal_monte_2022_analysis.data.gaze_data import (
     RecordingContext,
@@ -13,14 +12,21 @@ from dal_monte_2022_analysis.data.gaze_data import (
 
 
 def _unwrap_mat_struct(x):
-    """If MATLAB exported a 1x1 struct array, unwrap it."""
+    """Unwrap MATLAB 1x1 struct arrays into their scalar element."""
     if isinstance(x, np.ndarray) and x.size == 1:
         return x.item()
     return x
 
 
 def extract_aligned_struct(mat_data: dict):
-    """Return the aligned struct location if present, otherwise None."""
+    """Return the aligned struct field if present, otherwise None.
+
+    Args:
+        mat_data: Loaded MATLAB dict.
+
+    Returns:
+        The aligned struct entry or None if missing.
+    """
     for key in ["var", "aligned_position_file"]:
         if key in mat_data:
             return mat_data[key]
@@ -28,20 +34,28 @@ def extract_aligned_struct(mat_data: dict):
 
 
 def extract_position(mat_data, context: RecordingContext) -> Optional[PositionData]:
-    """Extract aligned gaze position for one agent if present."""
+    """Extract aligned gaze position for one agent if present.
+
+    Args:
+        mat_data: Loaded MATLAB dict.
+        context: Recording context (date/session/agent).
+
+    Returns:
+        PositionData if available, otherwise None.
+    """
     aligned = extract_aligned_struct(mat_data)
     if aligned is None:
         return None
 
     aligned = _unwrap_mat_struct(aligned)
-    
+
     if not hasattr(aligned, context.agent):
         return None
-    
+
     data = getattr(aligned, context.agent)
     if data is None or data.size == 0:
         return None
-    
+
     return PositionData(
         context=context,
         x=data[0, :],
@@ -51,13 +65,21 @@ def extract_position(mat_data, context: RecordingContext) -> Optional[PositionDa
 
 
 def extract_neural_timeline(mat_data, context: RecordingContext) -> Optional[NeuralTimelineData]:
-    """Extract the shared timeline for a session, if present."""
+    """Extract the shared timeline for a session, if present.
+
+    Args:
+        mat_data: Loaded MATLAB dict.
+        context: Recording context (date/session/agent).
+
+    Returns:
+        NeuralTimelineData if available, otherwise None.
+    """
     for key in ["time_file", "aligned_position_file", "var"]:
         if key not in mat_data:
             continue
 
         candidate = _unwrap_mat_struct(mat_data[key])
-        
+
         if hasattr(candidate, "t"):
             return NeuralTimelineData(
                 context=context,
@@ -69,13 +91,21 @@ def extract_neural_timeline(mat_data, context: RecordingContext) -> Optional[Neu
 
 
 def extract_pupil(mat_data, context: RecordingContext) -> Optional[PupilSizeData]:
-    """Extract aligned pupil size for one agent if present."""
+    """Extract aligned pupil size for one agent if present.
+
+    Args:
+        mat_data: Loaded MATLAB dict.
+        context: Recording context (date/session/agent).
+
+    Returns:
+        PupilSizeData if available, otherwise None.
+    """
     aligned = extract_aligned_struct(mat_data)
     if aligned is None:
         return None
 
     aligned = _unwrap_mat_struct(aligned)
-    
+
     if not hasattr(aligned, context.agent):
         return None
 
@@ -91,7 +121,15 @@ def extract_pupil(mat_data, context: RecordingContext) -> Optional[PupilSizeData
 
 
 def extract_roi_rects(mat_data, context: RecordingContext) -> Optional[ROIRectsData]:
-    """Extract per-agent ROI rectangles from the .mat structure."""
+    """Extract per-agent ROI rectangles from the .mat structure.
+
+    Args:
+        mat_data: Loaded MATLAB dict.
+        context: Recording context (date/session/agent).
+
+    Returns:
+        ROIRectsData if any ROIs were parsed, otherwise None.
+    """
     if "roi_rects" not in mat_data:
         return None
 
@@ -121,7 +159,7 @@ def extract_roi_rects(mat_data, context: RecordingContext) -> Optional[ROIRectsD
 
         if roi_val.size != 4:
             continue
-        
+
         rois[roi_name] = roi_val
 
     if not rois:
