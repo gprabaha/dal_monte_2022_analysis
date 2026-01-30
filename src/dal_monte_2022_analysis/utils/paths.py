@@ -1,6 +1,7 @@
 """Path helpers for derived data products."""
 
 from pathlib import Path
+from typing import Iterable, Optional, Sequence
 
 
 def build_processed_out_dir(cfg, index_row, modality):
@@ -55,3 +56,83 @@ def build_processed_output_path(cfg, index_row, modality, agent, *, output_suffi
     """
     output_modality = f"{modality}{output_suffix}" if output_suffix else modality
     return build_processed_data_path(cfg, index_row, output_modality, agent)
+
+
+def _normalize_filter(values: Optional[Sequence[str]]) -> Optional[set[str]]:
+    """Normalize optional filter values to a set (or None)."""
+    if values is None:
+        return None
+    if isinstance(values, str):
+        return {values}
+    return {str(v) for v in values}
+
+
+def scan_processed_data_paths(
+    cfg: dict,
+    modality: str,
+    *,
+    dates: Optional[Sequence[str]] = None,
+    sessions: Optional[Sequence[str]] = None,
+    agents: Optional[Sequence[Optional[str]]] = None,
+) -> list[dict]:
+    """Scan processed-data folders and return available paths for a modality.
+
+    Args:
+        cfg: Dataset config dictionary.
+        modality: Modality directory name under processed_data_root.
+        dates: Optional list of date strings to include (MMDDYYYY).
+        sessions: Optional list of session identifiers to include.
+        agents: Optional list of agent IDs to include (e.g., "m1", "m2", or None
+            for shared outputs). The string "shared" is treated as None.
+
+    Returns:
+        List of dicts with keys: date, session, agent, path.
+    """
+    root = Path(cfg["processed_data_root"])
+    dates_filter = _normalize_filter(dates)
+    sessions_filter = _normalize_filter(sessions)
+    agents_filter = None
+    if agents is not None:
+        agents_filter = set()
+        for agent in agents:
+            if agent is None or str(agent).lower() == "shared":
+                agents_filter.add(None)
+            else:
+                agents_filter.add(str(agent))
+
+    pattern = root / "date=*" / "session=*" / modality / "*.pkl"
+    rows: list[dict] = []
+    for pkl_path in root.glob(str(pattern.relative_to(root))):
+        parts = pkl_path.parts
+        try:
+            date_part = next(part for part in parts if part.startswith("date="))
+            session_part = next(part for part in parts if part.startswith("session="))
+        except StopIteration:
+            continue
+
+        date = date_part.split("=", 1)[1]
+        session = session_part.split("=", 1)[1]
+
+        if dates_filter is not None and date not in dates_filter:
+            continue
+        if sessions_filter is not None and session not in sessions_filter:
+            continue
+
+        agent = None
+        stem = pkl_path.stem
+        if stem.startswith("agent="):
+            agent = stem.split("=", 1)[1]
+        elif stem == "shared":
+            agent = None
+
+        if agents_filter is not None and agent not in agents_filter:
+            continue
+
+        rows.append({
+            "date": date,
+            "session": session,
+            "agent": agent,
+            "path": pkl_path,
+        })
+
+    return rows

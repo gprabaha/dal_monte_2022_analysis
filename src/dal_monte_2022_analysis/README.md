@@ -2,7 +2,7 @@
 
 This package holds the reusable core of the project:
 - `config/` loads dataset configuration and normalizes paths.
-- `data/` defines typed data containers and cleaning utilities.
+- `data/` defines typed data containers, cleaning utilities, and a loader in `data/load.py`.
 - `io/` handles indexing, extraction, and cleaning pipelines.
 - `utils/` provides small helpers shared across modules.
 
