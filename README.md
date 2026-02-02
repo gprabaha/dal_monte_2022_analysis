@@ -23,7 +23,7 @@ Processed data layout
   or `../local_data/dal_monte_2022/date=<date>/session=<session>/<modality>/shared.pkl`.
 - Each modality folder contains either `agent=<agent>.pkl` (per-agent) or `shared.pkl`.
 - Example modalities include `gaze_position`, `pupil_size`, `neural_timeline`, `roi_vertices`,
-  `fixations`, and `saccades`.
+  `fixations`, `saccades`, and `fixation_binary_vectors`.
 
 Loading processed outputs
 ```python

@@ -1,7 +1,7 @@
 """Path helpers for derived data products."""
 
 from pathlib import Path
-from typing import Iterable, Optional, Sequence
+from typing import Optional, Sequence
 
 
 def build_processed_out_dir(cfg, index_row, modality):
@@ -136,3 +136,26 @@ def scan_processed_data_paths(
         })
 
     return rows
+
+
+def list_processed_modalities(cfg: dict) -> set[str]:
+    """List modality directory names found under processed_data_root.
+
+    Args:
+        cfg: Dataset config dictionary containing processed_data_root.
+
+    Returns:
+        Set of modality directory names observed in the processed data tree.
+    """
+    root = Path(cfg["processed_data_root"])
+    if not root.exists():
+        return set()
+
+    modalities: set[str] = set()
+    for session_dir in root.glob("date=*/session=*"):
+        if not session_dir.is_dir():
+            continue
+        for modality_dir in session_dir.iterdir():
+            if modality_dir.is_dir():
+                modalities.add(modality_dir.name)
+    return modalities

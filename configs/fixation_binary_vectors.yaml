@@ -1,0 +1,16 @@
+# Fixation binary vector settings
+fixations_modality: fixations
+timeline_modality: neural_timeline
+output_modality: fixation_binary_vectors
+
+roi_groups:
+  face:
+    - face
+    - mouth
+    - eyes_nf
+  object:
+    - right_nonsocial_object
+    - left_nonsocial_object
+
+use_parallel: true
+test_single: false
