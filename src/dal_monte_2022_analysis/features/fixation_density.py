@@ -376,7 +376,7 @@ def run_fixation_density_build(
             _build_and_save_worker(task)
         return
 
-    n_proc = get_n_processes(max_procs=8)
+    n_proc = get_n_processes(max_procs=32)
     with Pool(processes=n_proc) as pool:
         for _ in tqdm(
             pool.imap_unordered(_build_and_save_worker, tasks),

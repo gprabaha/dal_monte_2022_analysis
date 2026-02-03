@@ -1,0 +1,8 @@
+# configs/joint_face_fixation_density.yaml
+input_modality: fixation_density_vectors
+output_modality: joint_face_fixation_density
+face_label: face
+normalize: true
+
+use_parallel: false
+test_single: false

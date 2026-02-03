@@ -19,3 +19,4 @@ Other configs in this folder:
 - `fixation_binary_vectors.yaml` for building fixation binary vectors aligned to the
   neural timeline.
 - `fixation_density.yaml` for building smoothed fixation density vectors.
+- `joint_face_fixation_density.yaml` for joint face fixation density analysis.
