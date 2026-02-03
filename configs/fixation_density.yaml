@@ -24,6 +24,6 @@ truncate_sigmas: 3.0
 inter_fixation_fallback: fixation_duration
 normalize: true
 
-use_parallel: false
+use_parallel: true
 test_single: false
 agents: null

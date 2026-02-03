@@ -4,7 +4,7 @@ import os
 import multiprocessing as mp
 
 
-def get_n_processes(max_procs: int = 8) -> int:
+def get_n_processes(max_procs: int = 16) -> int:
     """Return a safe worker count based on SLURM or local CPU availability.
 
     Args:
