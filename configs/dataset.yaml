@@ -3,7 +3,7 @@ dataset_name: dal_monte_2022
 
 raw_data_root: /gpfs/milgram/project/chang/pg496/data_dir/dal_monte_2022/
 
-processed_data_root: ../local_data/dal_monte_2022
+processed_data_root: ../local_data/dal_monte_2022/date_files/
 
 agents: ["m1", "m2"]
 
