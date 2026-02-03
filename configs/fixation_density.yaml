@@ -1,0 +1,26 @@
+# configs/fixation_density.yaml
+fixations_modality: fixations
+fixation_vectors_modality: fixation_binary_vectors
+output_modality: fixation_density_vectors
+
+roi_groups:
+  face: ["face", "mouth", "eyes_nf"]
+  object: ["right_nonsocial_object", "left_nonsocial_object"]
+
+agent_roi_groups:
+  m1:
+    face: ["face", "mouth", "eyes_nf"]
+    object: ["right_nonsocial_object", "left_nonsocial_object"]
+  m2:
+    face: ["face", "mouth", "eyes_nf"]
+
+# Kernel binwidth is avg fixation duration + avg inter-fixation duration (samples).
+kernel_width_factor: 6.0
+min_kernel_width: 3
+sigma_floor: 1.0
+inter_fixation_fallback: fixation_duration
+normalize: true
+
+use_parallel: false
+test_single: false
+agents: null

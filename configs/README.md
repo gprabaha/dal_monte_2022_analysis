@@ -18,3 +18,4 @@ Other configs in this folder:
 - `gaze_event_detection.yaml` for fixation/saccade detection.
 - `fixation_binary_vectors.yaml` for building fixation binary vectors aligned to the
   neural timeline.
+- `fixation_density.yaml` for building smoothed fixation density vectors.

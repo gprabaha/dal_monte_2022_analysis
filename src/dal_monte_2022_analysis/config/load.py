@@ -97,3 +97,17 @@ def load_fixation_binary_vector_config(path: str) -> dict:
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
     return cfg or {}
+
+
+def load_fixation_density_config(path: str) -> dict:
+    """Load fixation density config (no path normalization).
+
+    Args:
+        path: Path to the YAML config file.
+
+    Returns:
+        Parsed config dictionary (empty if file is empty).
+    """
+    with open(path, "r") as f:
+        cfg = yaml.safe_load(f)
+    return cfg or {}
