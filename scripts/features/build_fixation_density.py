@@ -35,9 +35,12 @@ def main():
         output_modality=density_cfg.get("output_modality", "fixation_density_vectors"),
         roi_groups=density_cfg.get("roi_groups", DEFAULT_ROI_GROUPS),
         agent_roi_groups=density_cfg.get("agent_roi_groups"),
+        binwidth_method=density_cfg.get("binwidth_method", "mean"),
+        sigma_method=density_cfg.get("sigma_method", "binwidth"),
         kernel_width_factor=density_cfg.get("kernel_width_factor", 6.0),
         min_kernel_width=density_cfg.get("min_kernel_width", 3),
         sigma_floor=density_cfg.get("sigma_floor", 1.0),
+        truncate_sigmas=density_cfg.get("truncate_sigmas", 3.0),
         inter_fixation_fallback=density_cfg.get(
             "inter_fixation_fallback", "fixation_duration"
         ),

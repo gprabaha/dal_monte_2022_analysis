@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import pickle
+import random
 from dataclasses import dataclass, field
 from multiprocessing import Pool
 from typing import Dict, Iterable, Optional, Sequence
 
 import numpy as np
 import pandas as pd
+from scipy.ndimage import gaussian_filter1d
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_dataset_config
@@ -39,9 +41,12 @@ class FixationDensitySettings:
         default_factory=lambda: {k: tuple(v) for k, v in DEFAULT_ROI_GROUPS.items()}
     )
     agent_roi_groups: Optional[Dict[str, Dict[str, Sequence[str]]]] = None
+    binwidth_method: str = "mean"
+    sigma_method: str = "binwidth"
     kernel_width_factor: float = 6.0
     min_kernel_width: int = 3
     sigma_floor: float = 1.0
+    truncate_sigmas: float = 3.0
     inter_fixation_fallback: str = "fixation_duration"
     normalize: bool = True
     use_parallel: bool = False
@@ -161,22 +166,6 @@ def _compute_fixation_stats(
     return avg_fix, avg_gap
 
 
-def _gaussian_kernel(sigma: float, size: int) -> np.ndarray:
-    """Build a 1D Gaussian kernel with a fixed size."""
-    size = max(1, int(size))
-    if size % 2 == 0:
-        size += 1
-    if sigma <= 0:
-        return np.ones(1, dtype=float)
-    center = size // 2
-    x = np.arange(size) - center
-    kernel = np.exp(-0.5 * (x / sigma) ** 2)
-    kernel_sum = kernel.sum()
-    if kernel_sum > 0:
-        kernel /= kernel_sum
-    return kernel
-
-
 def _minmax_normalize(values: np.ndarray) -> np.ndarray:
     """Normalize an array between 0 and 1."""
     if values.size == 0:
@@ -201,26 +190,42 @@ def _extract_monkey_name(fix_df: pd.DataFrame) -> Optional[str]:
 def _compute_kernel_for_events(
     events: Sequence[tuple[int, int]],
     settings: FixationDensitySettings,
-) -> tuple[np.ndarray, dict]:
-    """Compute a Gaussian kernel based on fixation event stats."""
+) -> tuple[float, float, dict]:
+    """Compute Gaussian filter parameters based on fixation event stats."""
     avg_fix, avg_gap = _compute_fixation_stats(
         events,
         inter_fixation_fallback=settings.inter_fixation_fallback,
     )
 
-    binwidth = int(round(np.mean(avg_fix, avg_gap)))
+    if settings.binwidth_method == "sum":
+        binwidth = int(round(avg_fix + avg_gap))
+    elif settings.binwidth_method == "mean":
+        binwidth = int(round(np.mean([avg_fix, avg_gap])))
+    else:
+        raise ValueError(
+            "Unsupported binwidth_method. Expected 'mean' or 'sum'."
+        )
     binwidth = max(settings.min_kernel_width, binwidth)
-    width_factor = settings.kernel_width_factor if settings.kernel_width_factor > 0 else 1.0
-    sigma = max(settings.sigma_floor, binwidth / width_factor)
+    if settings.sigma_method == "binwidth_over_factor":
+        width_factor = settings.kernel_width_factor if settings.kernel_width_factor > 0 else 1.0
+        sigma = binwidth / width_factor
+    elif settings.sigma_method == "binwidth":
+        sigma = float(binwidth)
+    else:
+        raise ValueError(
+            "Unsupported sigma_method. Expected 'binwidth' or 'binwidth_over_factor'."
+        )
+    sigma = max(settings.sigma_floor, sigma)
 
-    kernel = _gaussian_kernel(sigma=sigma, size=binwidth)
+    truncate = max(0.0, float(settings.truncate_sigmas))
     stats = {
         "avg_fixation_duration": avg_fix,
         "avg_inter_fixation_duration": avg_gap,
         "kernel_binwidth": binwidth,
         "kernel_sigma": sigma,
+        "kernel_truncate": truncate,
     }
-    return kernel, stats
+    return sigma, truncate, stats
 
 
 def build_fixation_density_for_row(
@@ -259,8 +264,14 @@ def build_fixation_density_for_row(
             continue
         binary_vec = np.asarray(vectors[group]).astype(float)
         events = _extract_fixation_events(fix_df, keywords)
-        kernel, _stats = _compute_kernel_for_events(events, settings)
-        density = np.convolve(binary_vec, kernel, mode="same")
+        sigma, truncate, _stats = _compute_kernel_for_events(events, settings)
+        density = gaussian_filter1d(
+            binary_vec,
+            sigma=sigma,
+            mode="constant",
+            cval=0.0,
+            truncate=truncate,
+        )
         if settings.normalize:
             density = _minmax_normalize(density)
         density_vectors[group] = density.astype(np.float32)
@@ -326,7 +337,7 @@ def build_tasks(
         tasks.append((settings, row, agent))
 
     if test_single and tasks:
-        return [tasks[0]]
+        return [random.choice(tasks)]
     return tasks
 
 
@@ -340,6 +351,24 @@ def run_fixation_density_build(
     tasks = build_tasks(settings, test_single=test_single)
     if not tasks:
         print("No fixation density tasks found.")
+        return
+
+    if test_single:
+        settings, row, agent = tasks[0]
+        print(f"Test single: date={row['date']} session={row['session']} agent={agent}")
+        data = process_fixation_density_for_row(settings, row, agent)
+        if data is None or not data.vectors:
+            print("No density vectors produced.")
+            return
+        for label, vec in data.vectors.items():
+            arr = np.asarray(vec)
+            if arr.size == 0:
+                print(f"{label}: empty")
+                continue
+            print(
+                f"{label}: len={arr.size} min={arr.min():.4f} "
+                f"max={arr.max():.4f} mean={arr.mean():.4f}"
+            )
         return
 
     if not use_parallel:

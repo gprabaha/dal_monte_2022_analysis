@@ -15,9 +15,12 @@ agent_roi_groups:
     face: ["face", "mouth", "eyes_nf"]
 
 # Kernel binwidth is avg fixation duration + avg inter-fixation duration (samples).
+binwidth_method: mean  # mean or sum
+sigma_method: binwidth  # binwidth or binwidth_over_factor
 kernel_width_factor: 6.0
 min_kernel_width: 3
 sigma_floor: 1.0
+truncate_sigmas: 3.0
 inter_fixation_fallback: fixation_duration
 normalize: true
 
