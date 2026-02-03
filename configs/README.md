@@ -20,3 +20,4 @@ Other configs in this folder:
   neural timeline.
 - `fixation_density.yaml` for building smoothed fixation density vectors.
 - `joint_face_fixation_density.yaml` for joint face fixation density analysis.
+- `interactive_periods.yaml` for interactive/non-interactive period detection.

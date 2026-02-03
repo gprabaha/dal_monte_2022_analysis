@@ -4,5 +4,5 @@ output_modality: joint_face_fixation_density
 face_label: face
 normalize: true
 
-use_parallel: false
+use_parallel: true
 test_single: false

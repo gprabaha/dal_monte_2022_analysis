@@ -1,0 +1,10 @@
+# configs/interactive_periods.yaml
+input_modality: joint_face_fixation_density
+output_modality: interactive_periods
+threshold_factor: 0.34
+include_low: true
+high_label: interactive
+low_label: non_interactive
+
+use_parallel: true
+test_single: false
