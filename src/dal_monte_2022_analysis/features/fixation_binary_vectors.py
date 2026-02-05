@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pdb
+import random
 import pickle
 from dataclasses import dataclass, field
 from multiprocessing import Pool
@@ -130,7 +131,20 @@ def build_fixation_binary_vectors_for_row(
     fix_path = build_processed_data_path(cfg, row, settings.fixations_modality, agent)
     timeline_path = build_processed_data_path(cfg, row, settings.timeline_modality, None)
 
+    if settings.test_single:
+        print(
+            "[test-single] Row: "
+            f"date={row.get('date')}, session={row.get('session')}, agent={agent}"
+        )
+        print(f"[test-single] Fixation file: {fix_path}")
+        print(f"[test-single] Timeline file: {timeline_path}")
+
     if not fix_path.exists() or not timeline_path.exists():
+        if settings.test_single:
+            if not fix_path.exists():
+                print(f"[test-single] Missing fixation file: {fix_path}")
+            if not timeline_path.exists():
+                print(f"[test-single] Missing timeline file: {timeline_path}")
         return None
 
     fix_df = _load_pickle(fix_path)
@@ -174,6 +188,29 @@ def build_fixation_binary_vectors_for_row(
         agent=agent,
         monkey_name=monkey_name,
     )
+
+    if settings.test_single:
+        print(f"[test-single] Monkey name: {monkey_name}")
+        expected_groups = sorted(roi_groups.keys())
+        computed_groups = sorted(vectors.keys())
+        missing_groups = [group for group in expected_groups if group not in vectors]
+        wrong_len = [
+            group
+            for group in expected_groups
+            if len(vectors.get(group, [])) != timeline_len
+        ]
+        all_ok = not missing_groups and not wrong_len
+        print(f"[test-single] Expected ROI groups: {expected_groups}")
+        print(f"[test-single] Computed ROI groups: {computed_groups}")
+        print(
+            "[test-single] All expected ROI vectors present and correct length: "
+            f"{all_ok}"
+        )
+        if missing_groups:
+            print(f"[test-single] Missing ROI groups: {missing_groups}")
+        if wrong_len:
+            print(f"[test-single] ROI groups with unexpected length: {wrong_len}")
+
     return FixationBinaryVectorsData(context=context, vectors=vectors)
 
 
@@ -224,7 +261,7 @@ def build_tasks(
         tasks.append((settings, row, agent))
 
     if test_single and tasks:
-        return [tasks[0]]
+        return [random.choice(tasks)]
     return tasks
 
 
