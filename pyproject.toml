@@ -15,6 +15,7 @@ dependencies = [
   "scipy",
   "tqdm",
   "matplotlib",
+  "seaborn",
 ]
 
 [tool.setuptools]

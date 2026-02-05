@@ -9,6 +9,7 @@ from typing import Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from scipy import stats
 
 from dal_monte_2022_analysis.config.load import (
@@ -80,54 +81,52 @@ def _plot_violin_pair(
     joint: np.ndarray,
     *,
     violin_cfg: dict,
-    quantile_cfg: dict,
 ) -> None:
-    """Plot two violins (product vs joint) with quantile overlays."""
+    """Plot two violins (product vs joint) using seaborn."""
     width = float(violin_cfg.get("width", 0.7))
     body_alpha = float(violin_cfg.get("body_alpha", 0.8))
     body_edge = violin_cfg.get("body_edgecolor", "#1f1f1f")
     body_linewidth = float(violin_cfg.get("body_linewidth", 0.8))
+    inner = violin_cfg.get("inner", "quart")
+    cut = float(violin_cfg.get("cut", 0))
     colors = violin_cfg.get("colors", {})
     product_color = colors.get("product", "#6C8EBF")
     joint_color = colors.get("joint", "#E07B39")
 
-    quantiles = quantile_cfg.get("values", [0.25, 0.5, 0.75])
-    quantile_color = quantile_cfg.get("color", "#1f1f1f")
-    quantile_linewidth = float(quantile_cfg.get("linewidth", 1.2))
+    product = np.asarray(product, dtype=float)
+    joint = np.asarray(joint, dtype=float)
+    product = product[np.isfinite(product)]
+    joint = joint[np.isfinite(joint)]
 
-    positions = [1, 2]
-    datasets = [product, joint]
-    colors = [product_color, joint_color]
+    labels = ["P(m1)*P(m2)", "P(m1&m2)"]
+    data = pd.DataFrame({
+        "comparison": [labels[0]] * product.size + [labels[1]] * joint.size,
+        "probability": np.concatenate([product, joint]) if product.size or joint.size else [],
+    })
 
-    for pos, data, color in zip(positions, datasets, colors):
-        if data.size == 0:
-            continue
-        parts = ax.violinplot(
-            [data],
-            positions=[pos],
-            widths=width,
-            showmeans=False,
-            showmedians=False,
-            showextrema=False,
-        )
-        body = parts["bodies"][0]
-        body.set_facecolor(color)
-        body.set_edgecolor(body_edge)
-        body.set_alpha(body_alpha)
-        body.set_linewidth(body_linewidth)
+    if data.empty:
+        ax.set_axis_off()
+        ax.text(0.5, 0.5, "No data", ha="center", va="center")
+        return
 
-        qs = np.quantile(data, quantiles)
-        for q in qs:
-            ax.plot(
-                [pos - width * 0.35, pos + width * 0.35],
-                [q, q],
-                color=quantile_color,
-                linewidth=quantile_linewidth,
-                solid_capstyle="round",
-            )
+    sns.violinplot(
+        ax=ax,
+        data=data,
+        x="comparison",
+        y="probability",
+        order=labels,
+        palette=[product_color, joint_color],
+        width=width,
+        inner=inner,
+        cut=cut,
+        linewidth=body_linewidth,
+    )
 
-    ax.set_xticks(positions)
-    ax.set_xticklabels(["P(m1)*P(m2)", "P(m1&m2)"])
+    for collection in ax.collections:
+        collection.set_edgecolor(body_edge)
+        collection.set_alpha(body_alpha)
+
+    ax.set_xlabel("")
     ax.set_ylim(bottom=0)
 
 
@@ -194,14 +193,12 @@ def plot_face_fixation_probability_violin(
     fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=dpi, sharey=True)
 
     violin_cfg = plot_cfg.get("violin", {})
-    quantile_cfg = plot_cfg.get("quantiles", {})
 
     _plot_violin_pair(
         axes[0],
         within_product,
         within_joint,
         violin_cfg=violin_cfg,
-        quantile_cfg=quantile_cfg,
     )
     axes[0].set_title(_title_with_pvalues("Within session", within_pvals))
     axes[0].set_ylabel("Probability")
@@ -212,7 +209,6 @@ def plot_face_fixation_probability_violin(
             cross_product,
             cross_joint,
             violin_cfg=violin_cfg,
-            quantile_cfg=quantile_cfg,
         )
         axes[1].set_title(_title_with_pvalues("Cross session", cross_pvals))
     else:
