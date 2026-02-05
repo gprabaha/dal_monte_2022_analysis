@@ -63,6 +63,22 @@ def _extract_face_vector(obj, face_label: str) -> Optional[np.ndarray]:
     return vec
 
 
+def _extract_monkey_name(obj) -> Optional[str]:
+    """Extract a monkey name from supported inputs."""
+    if isinstance(obj, FixationBinaryVectorsData):
+        return obj.context.monkey_name
+    if isinstance(obj, dict):
+        context = obj.get("context")
+        if context is not None:
+            if hasattr(context, "monkey_name"):
+                return getattr(context, "monkey_name")
+            if isinstance(context, dict) and "monkey_name" in context:
+                return context.get("monkey_name")
+        if "monkey_name" in obj:
+            return obj.get("monkey_name")
+    return None
+
+
 def _to_bool(vec: np.ndarray) -> np.ndarray:
     """Coerce a vector to a 1D boolean array."""
     return np.asarray(vec).astype(bool, copy=False)
@@ -101,10 +117,13 @@ def _index_agent_paths(cfg: dict, modality: str) -> tuple[dict, dict]:
     return m1_paths, m2_paths
 
 
-def _load_face_vector(path, face_label: str) -> Optional[np.ndarray]:
-    """Load a face fixation vector from a pickle path."""
+def _load_face_vector(
+    path,
+    face_label: str,
+) -> tuple[Optional[np.ndarray], Optional[str]]:
+    """Load a face fixation vector and monkey name from a pickle path."""
     obj = _load_pickle(path)
-    return _extract_face_vector(obj, face_label)
+    return _extract_face_vector(obj, face_label), _extract_monkey_name(obj)
 
 
 def _build_within_session_rows(
@@ -121,8 +140,8 @@ def _build_within_session_rows(
 
     for key in tqdm(shared_keys, desc="Within-session face fixation", unit="session"):
         date, session = key
-        m1_vec = _load_face_vector(m1_paths[key], settings.face_label)
-        m2_vec = _load_face_vector(m2_paths[key], settings.face_label)
+        m1_vec, m1_name = _load_face_vector(m1_paths[key], settings.face_label)
+        m2_vec, m2_name = _load_face_vector(m2_paths[key], settings.face_label)
         if m1_vec is None or m2_vec is None:
             continue
 
@@ -151,6 +170,8 @@ def _build_within_session_rows(
             "date": date,
             "session": session,
             "n_samples": n_samples,
+            "monkey_name_m1": m1_name,
+            "monkey_name_m2": m2_name,
             "m1_face_count": m1_count,
             "m2_face_count": m2_count,
             "joint_face_count": joint_count,
@@ -201,6 +222,8 @@ def _build_cross_session_rows(
 
     m1_cache: dict[tuple[str, str], np.ndarray] = {}
     m2_cache: dict[tuple[str, str], np.ndarray] = {}
+    m1_name_cache: dict[tuple[str, str], Optional[str]] = {}
+    m2_name_cache: dict[tuple[str, str], Optional[str]] = {}
 
     for (date1, session1), (date2, session2) in tqdm(
         pairs,
@@ -211,15 +234,17 @@ def _build_cross_session_rows(
         key2 = (date2, session2)
 
         if key1 not in m1_cache:
-            m1_vec = _load_face_vector(m1_paths[key1], settings.face_label)
+            m1_vec, m1_name = _load_face_vector(m1_paths[key1], settings.face_label)
             if m1_vec is None:
                 continue
             m1_cache[key1] = _to_bool(m1_vec)
+            m1_name_cache[key1] = m1_name
         if key2 not in m2_cache:
-            m2_vec = _load_face_vector(m2_paths[key2], settings.face_label)
+            m2_vec, m2_name = _load_face_vector(m2_paths[key2], settings.face_label)
             if m2_vec is None:
                 continue
             m2_cache[key2] = _to_bool(m2_vec)
+            m2_name_cache[key2] = m2_name
 
         m1_bool = m1_cache[key1]
         m2_bool = m2_cache[key2]
@@ -256,6 +281,8 @@ def _build_cross_session_rows(
             "n_samples_m1": n_samples_m1,
             "n_samples_m2": n_samples_m2,
             "n_samples_joint": n_joint,
+            "monkey_name_m1": m1_name_cache.get(key1),
+            "monkey_name_m2": m2_name_cache.get(key2),
             "m1_face_count_joint": m1_count,
             "m2_face_count_joint": m2_count,
             "joint_face_count": joint_count,

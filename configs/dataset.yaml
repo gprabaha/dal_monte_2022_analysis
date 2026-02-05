@@ -4,7 +4,7 @@ dataset_name: dal_monte_2022
 raw_data_root: /gpfs/milgram/project/chang/pg496/data_dir/dal_monte_2022/
 
 processed_data_root: ../local_data/dal_monte_2022/data_files/
-analysis_output_root: ../local_data/dal_monte_2022/analysis_output/
+analysis_output_root: ../local_data/dal_monte_2022/analysis_outputs/
 
 agents: ["m1", "m2"]
 
