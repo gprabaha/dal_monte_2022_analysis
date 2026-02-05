@@ -11,6 +11,8 @@ roi_groups:
   object:
     - right_nonsocial_object
     - left_nonsocial_object
+  out_of_roi:
+    - out_of_roi
 
 use_parallel: true
 test_single: false

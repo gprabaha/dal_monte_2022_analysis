@@ -23,6 +23,7 @@ from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 DEFAULT_ROI_GROUPS: Dict[str, Sequence[str]] = {
     "face": ("face", "mouth", "eyes_nf"),
     "object": ("right_nonsocial_object", "left_nonsocial_object"),
+    "out_of_roi": ("out_of_roi"),
 }
 
 
