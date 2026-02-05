@@ -114,8 +114,10 @@ def _plot_violin_pair(
         data=data,
         x="comparison",
         y="probability",
+        hue="comparison",
         order=labels,
         palette=[product_color, joint_color],
+        legend=False,
         width=width,
         inner=inner,
         cut=cut,
@@ -170,6 +172,23 @@ def _cross_arrays(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
     return p_product, p_joint
 
 
+def _subsample_pair(
+    product: np.ndarray,
+    joint: np.ndarray,
+    *,
+    target_size: int,
+    seed: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Subsample paired arrays to a target size without replacement."""
+    if target_size <= 0:
+        return np.array([]), np.array([])
+    if product.size <= target_size:
+        return product, joint
+    rng = np.random.default_rng(seed)
+    indices = rng.choice(product.size, size=target_size, replace=False)
+    return product[indices], joint[indices]
+
+
 def plot_face_fixation_probability_violin(
     settings: FaceFixationProbabilityPlotSettings,
 ) -> Path:
@@ -187,6 +206,14 @@ def plot_face_fixation_probability_violin(
     cross_pvals = {"ttest": np.nan, "ranksum": np.nan, "ks": np.nan}
     if cross_df is not None and not cross_df.empty:
         cross_product, cross_joint = _cross_arrays(cross_df)
+        target_size = min(within_product.size, within_joint.size)
+        seed = int(plot_cfg.get("cross_subsample_seed", 42))
+        cross_product, cross_joint = _subsample_pair(
+            cross_product,
+            cross_joint,
+            target_size=target_size,
+            seed=seed,
+        )
         cross_pvals = _compute_tests(cross_product, cross_joint)
 
     figsize, dpi = resolve_figsize(plot_cfg)

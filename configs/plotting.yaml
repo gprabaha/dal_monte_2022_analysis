@@ -22,6 +22,9 @@ figure:
   figsize: [8, 4]
   dpi: 300
 
+# Subsampling seed for cross-session plots to match within-session sample size.
+cross_subsample_seed: 42
+
 violin:
   width: 0.7
   body_alpha: 0.8
