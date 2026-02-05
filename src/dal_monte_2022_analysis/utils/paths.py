@@ -159,3 +159,17 @@ def list_processed_modalities(cfg: dict) -> set[str]:
             if modality_dir.is_dir():
                 modalities.add(modality_dir.name)
     return modalities
+
+
+def build_analysis_output_dir(cfg: dict, subdir: str) -> Path:
+    """Build the analysis output directory for a named analysis subfolder.
+
+    Args:
+        cfg: Dataset config dictionary containing analysis_output_root.
+        subdir: Analysis subfolder name.
+
+    Returns:
+        Path to the analysis output subdirectory.
+    """
+    root = Path(cfg.get("analysis_output_root", cfg["processed_data_root"]))
+    return root / subdir

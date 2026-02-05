@@ -1,0 +1,22 @@
+# configs/face_fixation_probability.yaml
+# Settings for face fixation probability analysis.
+
+input_modality: fixation_binary_vectors
+face_label: face
+output_subdir: face_fixation_probability
+within_filename: within_session_face_fixation_probability.csv
+cross_filename: cross_session_face_fixation_probability.csv
+violin_filename: face_fixation_probability_violin.csv
+
+# Decimal precision used when storing probability strings.
+decimal_precision: 50
+
+# Cross-session pairing behavior.
+# Set to null to evaluate all pairs.
+cross_pairs_max: null
+cross_pairs_seed: 13
+cross_exclude_same_session: true
+cross_exclude_same_date: false
+
+# Optional: limit to a single session/pair for quick testing.
+test_single: false
