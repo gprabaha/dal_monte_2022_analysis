@@ -22,3 +22,4 @@ Other configs in this folder:
 - `joint_face_fixation_density.yaml` for joint face fixation density analysis.
 - `interactive_periods.yaml` for interactive/non-interactive period detection.
 - `face_fixation_probability.yaml` for within- vs cross-session face fixation probability.
+- `plotting.yaml` for global plotting style settings.
