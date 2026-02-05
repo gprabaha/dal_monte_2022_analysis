@@ -11,6 +11,7 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
+from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_dataset_config
 from dal_monte_2022_analysis.data.gaze_data import FixationBinaryVectorsData
@@ -118,7 +119,7 @@ def _build_within_session_rows(
     if settings.test_single and shared_keys:
         shared_keys = [shared_keys[0]]
 
-    for key in shared_keys:
+    for key in tqdm(shared_keys, desc="Within-session face fixation", unit="session"):
         date, session = key
         m1_vec = _load_face_vector(m1_paths[key], settings.face_label)
         m2_vec = _load_face_vector(m2_paths[key], settings.face_label)
@@ -201,7 +202,11 @@ def _build_cross_session_rows(
     m1_cache: dict[tuple[str, str], np.ndarray] = {}
     m2_cache: dict[tuple[str, str], np.ndarray] = {}
 
-    for (date1, session1), (date2, session2) in pairs:
+    for (date1, session1), (date2, session2) in tqdm(
+        pairs,
+        desc="Cross-session face fixation",
+        unit="pair",
+    ):
         key1 = (date1, session1)
         key2 = (date2, session2)
 
