@@ -3,7 +3,7 @@
 
 input_modality: fixation_binary_vectors
 fixation_label: face
-output_subdir: face_fixation_probability
+output_subdir: fixation_probability
 within_filename: within_session_face_fixation_probability.csv
 cross_filename: cross_session_face_fixation_probability.csv
 violin_filename: face_fixation_probability_violin.csv

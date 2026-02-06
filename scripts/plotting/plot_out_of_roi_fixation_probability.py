@@ -1,4 +1,4 @@
-"""Plot face fixation probability violin comparisons."""
+"""Plot out-of-ROI fixation probability violin comparisons."""
 
 import argparse
 
@@ -11,7 +11,7 @@ from dal_monte_2022_analysis.plotting.fixation_probability import (
 def main():
     """Parse CLI args and run the plot."""
     parser = argparse.ArgumentParser(
-        description="Plot face fixation probability violins.",
+        description="Plot out-of-ROI fixation probability violins.",
     )
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
     parser.add_argument("--plotting-cfg", default="configs/plotting.yaml")
@@ -21,15 +21,15 @@ def main():
     )
     parser.add_argument(
         "--within-filename",
-        default="within_session_face_fixation_probability.csv",
+        default="within_session_out_of_roi_fixation_probability.csv",
     )
     parser.add_argument(
         "--cross-filename",
-        default="cross_session_face_fixation_probability.csv",
+        default="cross_session_out_of_roi_fixation_probability.csv",
     )
     parser.add_argument(
         "--output-filename",
-        default="face_fixation_probability_violin.pdf",
+        default="out_of_roi_fixation_probability_violin.pdf",
     )
 
     args = parser.parse_args()

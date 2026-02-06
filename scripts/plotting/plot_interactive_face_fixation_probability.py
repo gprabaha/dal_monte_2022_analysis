@@ -2,9 +2,9 @@
 
 import argparse
 
-from dal_monte_2022_analysis.plotting.face_fixation_probability import (
-    InteractiveFaceFixationProbabilityPlotSettings,
-    plot_interactive_face_fixation_probability_violin,
+from dal_monte_2022_analysis.plotting.fixation_probability import (
+    InteractiveFixationProbabilityPlotSettings,
+    plot_interactive_fixation_probability_violin,
 )
 
 
@@ -17,7 +17,7 @@ def main():
     parser.add_argument("--plotting-cfg", default="configs/plotting.yaml")
     parser.add_argument(
         "--analysis-subdir",
-        default="face_fixation_probability",
+        default="fixation_probability",
     )
     parser.add_argument(
         "--interactive-periods-filename",
@@ -34,7 +34,7 @@ def main():
 
     args = parser.parse_args()
 
-    settings = InteractiveFaceFixationProbabilityPlotSettings(
+    settings = InteractiveFixationProbabilityPlotSettings(
         cfg_path=args.dataset_cfg,
         plotting_cfg_path=args.plotting_cfg,
         analysis_subdir=args.analysis_subdir,
@@ -43,7 +43,7 @@ def main():
         output_filename=args.output_filename,
     )
 
-    plot_interactive_face_fixation_probability_violin(settings)
+    plot_interactive_fixation_probability_violin(settings)
 
 
 if __name__ == "__main__":

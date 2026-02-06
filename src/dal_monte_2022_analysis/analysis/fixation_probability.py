@@ -25,7 +25,7 @@ class FixationProbabilitySettings:
     cfg_path: str
     input_modality: str = "fixation_binary_vectors"
     fixation_label: str = "face"
-    output_subdir: str = "face_fixation_probability"
+    output_subdir: str = "fixation_probability"
     within_filename: str = "within_session_face_fixation_probability.csv"
     cross_filename: str = "cross_session_face_fixation_probability.csv"
     violin_filename: str = "face_fixation_probability_violin.csv"

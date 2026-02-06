@@ -38,7 +38,7 @@ def main():
         cfg_path=args.dataset_cfg,
         input_modality=cfg.get("input_modality", "fixation_binary_vectors"),
         fixation_label=fixation_label,
-        output_subdir=cfg.get("output_subdir", "out_of_roi_fixation_probability"),
+        output_subdir=cfg.get("output_subdir", "fixation_probability"),
         within_filename=cfg.get(
             "within_filename",
             "within_session_out_of_roi_fixation_probability.csv",
