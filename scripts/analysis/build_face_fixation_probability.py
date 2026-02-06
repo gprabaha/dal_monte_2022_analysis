@@ -76,10 +76,10 @@ def main():
     if args.precision is not None:
         settings.decimal_precision = args.precision
 
-    run_face_fixation_probability_analysis(
-        settings,
-        compute_cross=not args.no_cross,
-    )
+    # run_face_fixation_probability_analysis(
+    #     settings,
+    #     compute_cross=not args.no_cross,
+    # )
     run_interactive_face_fixation_probability_analysis(settings)
 
 

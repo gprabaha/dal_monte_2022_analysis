@@ -35,6 +35,21 @@ class FaceFixationProbabilityPlotSettings:
     output_filename: str = "face_fixation_probability_violin.pdf"
 
 
+@dataclass
+class InteractiveFaceFixationProbabilityPlotSettings:
+    """Configuration for interactive-period face fixation probability plotting."""
+    cfg_path: str
+    plotting_cfg_path: str = "configs/plotting.yaml"
+    analysis_subdir: str = "face_fixation_probability"
+    interactive_periods_filename: str = (
+        "within_session_interactive_period_face_fixation_probability.csv"
+    )
+    interactive_concat_filename: str = (
+        "within_session_interactive_concat_face_fixation_probability.csv"
+    )
+    output_filename: str = "interactive_face_fixation_probability_violin.pdf"
+
+
 def _safe_ratio(numer: np.ndarray, denom: np.ndarray) -> np.ndarray:
     """Compute numer/denom with zeros handled as NaN."""
     numer = np.asarray(numer, dtype=float)
@@ -56,12 +71,12 @@ def _compute_tests(a: np.ndarray, b: np.ndarray) -> dict:
 
     ttest_res = stats.ttest_ind(a, b, equal_var=False)
     ranksum_res = stats.ranksums(a, b)
-    # ks_res = stats.ks_2samp(a, b)
+    ks_res = stats.ks_2samp(a, b)
 
     return {
         "ttest": ttest_res.pvalue,
         "ranksum": ranksum_res.pvalue,
-        # "ks": ks_res.pvalue,
+        "ks": ks_res.pvalue,
     }
 
 
@@ -70,8 +85,8 @@ def _title_with_pvalues(title: str, pvals: dict) -> str:
     return (
         f"{title}\n"
         f"t-test p={format_p_value(pvals.get('ttest'))}\n"
-        f"ranksum p={format_p_value(pvals.get('ranksum'))}"
-        # f"KS p={format_p_value(pvals.get('ks'))}"
+        f"ranksum p={format_p_value(pvals.get('ranksum'))}\n"
+        f"KS p={format_p_value(pvals.get('ks'))}"
     )
 
 
@@ -241,6 +256,87 @@ def plot_face_fixation_probability_violin(
     else:
         axes[1].set_axis_off()
         axes[1].text(0.5, 0.5, "No cross-session data", ha="center", va="center")
+
+    fig.tight_layout()
+
+    out_dir = build_analysis_output_dir(cfg, settings.analysis_subdir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / settings.output_filename
+    fig.savefig(out_path, format="pdf")
+    plt.close(fig)
+    return out_path
+
+
+def _load_interactive_probability_frames(
+    cfg: dict,
+    settings: InteractiveFaceFixationProbabilityPlotSettings,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load interactive-period probability tables."""
+    out_dir = build_analysis_output_dir(cfg, settings.analysis_subdir)
+    periods_path = out_dir / settings.interactive_periods_filename
+    concat_path = out_dir / settings.interactive_concat_filename
+
+    if not periods_path.exists():
+        raise FileNotFoundError(f"Missing interactive-period file: {periods_path}")
+    if not concat_path.exists():
+        raise FileNotFoundError(f"Missing interactive-concat file: {concat_path}")
+
+    periods_df = pd.read_csv(periods_path)
+    concat_df = pd.read_csv(concat_path)
+
+    return periods_df, concat_df
+
+
+def _interactive_arrays(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+    """Compute product and joint probabilities for interactive-period data."""
+    denom = df["n_samples"].to_numpy(dtype=float)
+    p_m1 = _safe_ratio(df["m1_face_count"].to_numpy(), denom)
+    p_m2 = _safe_ratio(df["m2_face_count"].to_numpy(), denom)
+    p_product = p_m1 * p_m2
+    p_joint = _safe_ratio(df["joint_face_count"].to_numpy(), denom)
+    return p_product, p_joint
+
+
+def plot_interactive_face_fixation_probability_violin(
+    settings: InteractiveFaceFixationProbabilityPlotSettings,
+) -> Path:
+    """Plot interactive-period face fixation probability violins and save PDF."""
+    cfg = load_dataset_config(settings.cfg_path)
+    plot_cfg = load_plotting_config(settings.plotting_cfg_path)
+    apply_plotting_config(plot_cfg)
+
+    periods_df, concat_df = _load_interactive_probability_frames(cfg, settings)
+    periods_product, periods_joint = _interactive_arrays(periods_df)
+    periods_pvals = _compute_tests(periods_product, periods_joint)
+
+    concat_product, concat_joint = _interactive_arrays(concat_df)
+    concat_pvals = _compute_tests(concat_product, concat_joint)
+
+    figsize, dpi = resolve_figsize(plot_cfg)
+    fig, axes = plt.subplots(1, 2, figsize=figsize, dpi=dpi, sharey=True)
+
+    violin_cfg = plot_cfg.get("violin", {})
+
+    _plot_violin_pair(
+        axes[0],
+        periods_product,
+        periods_joint,
+        violin_cfg=violin_cfg,
+    )
+    axes[0].set_title(
+        _title_with_pvalues("Interactive periods (separate)", periods_pvals)
+    )
+    axes[0].set_ylabel("Probability")
+
+    _plot_violin_pair(
+        axes[1],
+        concat_product,
+        concat_joint,
+        violin_cfg=violin_cfg,
+    )
+    axes[1].set_title(
+        _title_with_pvalues("Interactive periods (concatenated)", concat_pvals)
+    )
 
     fig.tight_layout()
 
