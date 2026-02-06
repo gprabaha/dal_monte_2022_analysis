@@ -4,7 +4,7 @@ import pickle
 from dataclasses import dataclass
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -24,7 +24,7 @@ class GazeEventDetectionSettings:
     input_modality: str = "gaze_position"
     output_fixations_modality: str = "fixations"
     output_saccades_modality: str = "saccades"
-    use_parallel: bool = False
+    use_parallel: bool = True
     test_single: bool = False
     agents: Optional[List[str]] = None
 
@@ -313,14 +313,12 @@ def build_tasks(
 def run_gaze_event_detection(
     settings: GazeEventDetectionSettings,
     *,
-    use_parallel: bool = False,
     test_single: bool = False,
 ) -> None:
     """Run gaze-event detection across all tasks.
 
     Args:
         settings: Gaze-event detection settings.
-        use_parallel: Whether to use multiprocessing.
         test_single: Whether to run only one task.
     """
     tasks = build_tasks(settings, test_single=test_single)
@@ -328,20 +326,8 @@ def run_gaze_event_detection(
         print("No tasks found for gaze event detection.")
         return
 
-    if not use_parallel:
-        for task in tqdm(tasks, desc="Detecting gaze events (serial)", unit="task"):
-            _detect_and_save_worker(task)
-        return
-
-    n_proc = get_n_processes(max_procs=8)
-    with Pool(processes=n_proc) as pool:
-        for _ in tqdm(
-            pool.imap_unordered(_detect_and_save_worker, tasks),
-            total=len(tasks),
-            desc=f"Detecting gaze events ({n_proc} workers)",
-            unit="task",
-        ):
-            pass
+    for task in tqdm(tasks, desc="Detecting gaze events (serial)", unit="task"):
+        _detect_and_save_worker(task)
 
 
 def annotate_fixation_locations(

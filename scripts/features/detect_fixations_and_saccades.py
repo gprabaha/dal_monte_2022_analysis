@@ -39,7 +39,16 @@ def main():
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
     parser.add_argument("--gaze-event-cfg", default="configs/gaze_event_detection.yaml")
     parser.add_argument("--hpc-cfg", default="configs/hpc_gaze_event_detection.yaml")
-    parser.add_argument("--run-hpc", action="store_true")
+    parser.add_argument(
+        "--run-locally",
+        action="store_true",
+        help="Run detection in the current process instead of submitting HPC jobs.",
+    )
+    parser.add_argument(
+        "--run-hpc",
+        action="store_true",
+        help="Force HPC job submission (deprecated; default behavior).",
+    )
     parser.add_argument("--date", default=None)
     parser.add_argument("--session", default=None)
     parser.add_argument("--agent", default=None)
@@ -48,14 +57,13 @@ def main():
     args = parser.parse_args()
 
     detection_cfg = load_gaze_event_config(args.gaze_event_cfg)
-    hpc_cfg = load_hpc_config(args.hpc_cfg)
 
     settings = GazeEventDetectionSettings(
         cfg_path=args.dataset_cfg,
         input_modality=detection_cfg.get("input_modality", "gaze_position"),
         output_fixations_modality=detection_cfg.get("output_fixations_modality", "fixations"),
         output_saccades_modality=detection_cfg.get("output_saccades_modality", "saccades"),
-        use_parallel=detection_cfg.get("use_parallel", False),
+        use_parallel=detection_cfg.get("use_parallel", True),
         test_single=detection_cfg.get("test_single", False),
         agents=detection_cfg.get("agents"),
     )
@@ -65,7 +73,14 @@ def main():
         process_and_save_gaze_events_for_row(settings, row, args.agent)
         return
 
+    run_hpc = detection_cfg.get("run_hpc", True)
     if args.run_hpc:
+        run_hpc = True
+    if args.run_locally:
+        run_hpc = False
+
+    if run_hpc:
+        hpc_cfg = load_hpc_config(args.hpc_cfg)
         cfg = load_dataset_config(settings.cfg_path)
         index_df = index_processed_dataset(cfg, settings.input_modality)
         tasks = []
@@ -113,7 +128,6 @@ def main():
 
     run_gaze_event_detection(
         settings,
-        use_parallel=settings.use_parallel,
         test_single=settings.test_single,
     )
 

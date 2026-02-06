@@ -1,7 +1,7 @@
 # HPC settings for gaze event (fixation/saccade) detection
 env_name: gaze_processing
 job_name: gaze_event_detection
-worker_script_path: scripts/gaze_event_detection_worker.py
+worker_script_path: scripts/features/hpc_fixation_saccade_detection_worker.py
 job_file_path: hpc/gaze_event_jobs.txt
 sbatch_script_path: hpc/gaze_event_jobs.sh
 log_dir: hpc/gaze_event_logs
