@@ -56,12 +56,12 @@ def _compute_tests(a: np.ndarray, b: np.ndarray) -> dict:
 
     ttest_res = stats.ttest_ind(a, b, equal_var=False)
     ranksum_res = stats.ranksums(a, b)
-    ks_res = stats.ks_2samp(a, b)
+    # ks_res = stats.ks_2samp(a, b)
 
     return {
         "ttest": ttest_res.pvalue,
         "ranksum": ranksum_res.pvalue,
-        "ks": ks_res.pvalue,
+        # "ks": ks_res.pvalue,
     }
 
 
@@ -70,8 +70,8 @@ def _title_with_pvalues(title: str, pvals: dict) -> str:
     return (
         f"{title}\n"
         f"t-test p={format_p_value(pvals.get('ttest'))}\n"
-        f"ranksum p={format_p_value(pvals.get('ranksum'))}\n"
-        f"KS p={format_p_value(pvals.get('ks'))}"
+        f"ranksum p={format_p_value(pvals.get('ranksum'))}"
+        # f"KS p={format_p_value(pvals.get('ks'))}"
     )
 
 

@@ -5,6 +5,7 @@ import argparse
 from dal_monte_2022_analysis.analysis.face_fixation_probability import (
     FaceFixationProbabilitySettings,
     run_face_fixation_probability_analysis,
+    run_interactive_face_fixation_probability_analysis,
 )
 from dal_monte_2022_analysis.config.load import load_face_fixation_probability_config
 
@@ -46,6 +47,16 @@ def main():
             "violin_filename",
             "face_fixation_probability_violin.csv",
         ),
+        interactive_modality=cfg.get("interactive_modality", "interactive_periods"),
+        interactive_state_label=cfg.get("interactive_state_label", "interactive"),
+        interactive_periods_filename=cfg.get(
+            "interactive_periods_filename",
+            "within_session_interactive_period_face_fixation_probability.csv",
+        ),
+        interactive_concat_filename=cfg.get(
+            "interactive_concat_filename",
+            "within_session_interactive_concat_face_fixation_probability.csv",
+        ),
         decimal_precision=cfg.get("decimal_precision", 50),
         cross_pairs_max=cfg.get("cross_pairs_max"),
         cross_pairs_seed=cfg.get("cross_pairs_seed", 13),
@@ -69,6 +80,7 @@ def main():
         settings,
         compute_cross=not args.no_cross,
     )
+    run_interactive_face_fixation_probability_analysis(settings)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,10 @@ output_subdir: face_fixation_probability
 within_filename: within_session_face_fixation_probability.csv
 cross_filename: cross_session_face_fixation_probability.csv
 violin_filename: face_fixation_probability_violin.csv
+interactive_modality: interactive_periods
+interactive_state_label: interactive
+interactive_periods_filename: within_session_interactive_period_face_fixation_probability.csv
+interactive_concat_filename: within_session_interactive_concat_face_fixation_probability.csv
 
 # Decimal precision used when storing probability strings.
 decimal_precision: 50
