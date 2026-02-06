@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.analysis.interactive_periods import (
+from dal_monte_2022_analysis.features.interactive_periods import (
     InteractivePeriodsSettings,
     process_interactive_periods_for_row,
     run_interactive_periods_build,

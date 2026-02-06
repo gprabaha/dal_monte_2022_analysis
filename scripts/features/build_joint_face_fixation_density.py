@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.analysis.joint_fixation_density import (
+from dal_monte_2022_analysis.features.joint_fixation_density import (
     JointFixationDensitySettings,
     process_joint_face_density_for_row,
     run_joint_face_density_build,
