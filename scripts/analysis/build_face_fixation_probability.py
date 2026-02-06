@@ -44,10 +44,6 @@ def main():
             "cross_filename",
             "cross_session_face_fixation_probability.csv",
         ),
-        violin_filename=cfg.get(
-            "violin_filename",
-            "face_fixation_probability_violin.csv",
-        ),
         interactive_modality=cfg.get("interactive_modality", "interactive_periods"),
         interactive_state_label=cfg.get("interactive_state_label", "interactive"),
         interactive_periods_filename=cfg.get(

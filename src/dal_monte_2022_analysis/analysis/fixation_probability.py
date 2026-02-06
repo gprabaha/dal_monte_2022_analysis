@@ -28,7 +28,6 @@ class FixationProbabilitySettings:
     output_subdir: str = "fixation_probability"
     within_filename: str = "within_session_face_fixation_probability.csv"
     cross_filename: str = "cross_session_face_fixation_probability.csv"
-    violin_filename: str = "face_fixation_probability_violin.csv"
     interactive_modality: str = "interactive_periods"
     interactive_state_label: str = "interactive"
     interactive_periods_filename: str = (
@@ -513,58 +512,6 @@ def _build_cross_session_rows(
     return rows
 
 
-def _build_violin_rows(
-    within_df: pd.DataFrame,
-    cross_df: Optional[pd.DataFrame],
-) -> pd.DataFrame:
-    """Build a long-form dataframe for violin plotting."""
-    records: list[dict] = []
-
-    if within_df is not None and not within_df.empty:
-        for _, row in within_df.iterrows():
-            records.append({
-                "mode": "within_session",
-                "comparison": "product",
-                "value_decimal": row["p_product_decimal"],
-                "date_m1": row["date"],
-                "session_m1": row["session"],
-                "date_m2": row["date"],
-                "session_m2": row["session"],
-            })
-            records.append({
-                "mode": "within_session",
-                "comparison": "joint",
-                "value_decimal": row["p_joint_decimal"],
-                "date_m1": row["date"],
-                "session_m1": row["session"],
-                "date_m2": row["date"],
-                "session_m2": row["session"],
-            })
-
-    if cross_df is not None and not cross_df.empty:
-        for _, row in cross_df.iterrows():
-            records.append({
-                "mode": "cross_session",
-                "comparison": "product",
-                "value_decimal": row["p_product_decimal"],
-                "date_m1": row["date_m1"],
-                "session_m1": row["session_m1"],
-                "date_m2": row["date_m2"],
-                "session_m2": row["session_m2"],
-            })
-            records.append({
-                "mode": "cross_session",
-                "comparison": "joint",
-                "value_decimal": row["p_joint_decimal"],
-                "date_m1": row["date_m1"],
-                "session_m1": row["session_m1"],
-                "date_m2": row["date_m2"],
-                "session_m2": row["session_m2"],
-            })
-
-    return pd.DataFrame.from_records(records)
-
-
 def run_fixation_probability_analysis(
     settings: FixationProbabilitySettings,
     *,
@@ -588,8 +535,6 @@ def run_fixation_probability_analysis(
         cross_rows = _build_cross_session_rows(settings, m1_paths, m2_paths)
         cross_df = pd.DataFrame.from_records(cross_rows)
 
-    violin_df = _build_violin_rows(within_df, cross_df)
-
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -600,10 +545,7 @@ def run_fixation_probability_analysis(
         cross_path = out_dir / settings.cross_filename
         cross_df.to_csv(cross_path, index=False)
 
-    violin_path = out_dir / settings.violin_filename
-    violin_df.to_csv(violin_path, index=False)
-
-    return within_df, cross_df, violin_df
+    return within_df, cross_df
 
 
 def run_interactive_fixation_probability_analysis(

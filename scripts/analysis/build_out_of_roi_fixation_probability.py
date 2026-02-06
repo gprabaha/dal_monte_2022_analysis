@@ -47,10 +47,6 @@ def main():
             "cross_filename",
             "cross_session_out_of_roi_fixation_probability.csv",
         ),
-        violin_filename=cfg.get(
-            "violin_filename",
-            "out_of_roi_fixation_probability_violin.csv",
-        ),
         decimal_precision=cfg.get("decimal_precision", 50),
         cross_pairs_max=cfg.get("cross_pairs_max"),
         cross_pairs_seed=cfg.get("cross_pairs_seed", 13),
