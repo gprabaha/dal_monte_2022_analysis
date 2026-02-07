@@ -171,6 +171,20 @@ def load_out_of_roi_fixation_probability_config(path: str) -> dict:
     return cfg or {}
 
 
+def load_face_fix_cross_correlation_config(path: str) -> dict:
+    """Load face fixation cross-correlation config (no path normalization).
+
+    Args:
+        path: Path to the YAML config file.
+
+    Returns:
+        Parsed config dictionary (empty if file is empty).
+    """
+    with open(path, "r") as f:
+        cfg = yaml.safe_load(f)
+    return cfg or {}
+
+
 def load_plotting_config(path: str) -> dict:
     """Load plotting configuration (no path normalization).
 

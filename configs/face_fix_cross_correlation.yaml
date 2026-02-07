@@ -1,0 +1,23 @@
+# configs/face_fix_cross_correlation.yaml
+# Settings for face fixation cross-correlation analysis.
+
+input_modality: fixation_binary_vectors
+fixation_label: face
+output_subdir: fix_cross_correlation
+within_filename: within_session_face_fix_cross_correlation.csv
+cross_filename: cross_session_face_fix_cross_correlation.csv
+
+# Max absolute lag (in samples) to keep in the saved cross-correlation arrays.
+# Set to null to keep full lags.
+max_lag: null
+
+# Cross-session pairing behavior.
+# Set to null to evaluate all pairs.
+cross_pairs_max: null
+cross_pairs_seed: 13
+cross_exclude_same_session: true
+cross_exclude_same_date: false
+
+# Optional: limit to a single session/few pairs for quick testing.
+test_single: false
+
