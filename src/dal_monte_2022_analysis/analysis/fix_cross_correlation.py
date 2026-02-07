@@ -128,6 +128,65 @@ def _build_cross_pairs(
     return pairs
 
 
+def _print_test_single_debug(
+    *,
+    mode: str,
+    settings: FixCrossCorrelationSettings,
+    m1_id: tuple[str, str],
+    m2_id: tuple[str, str],
+    m1_vec: np.ndarray,
+    m2_vec: np.ndarray,
+    lags: np.ndarray,
+    corr: np.ndarray,
+) -> None:
+    """Print selected task info and quick sanity checks for test-single mode."""
+    max_allowed = 1.0 + 1e-9
+    finite_ok = bool(np.isfinite(corr).all())
+    in_range_ok = bool(((corr >= -1e-9) & (corr <= max_allowed)).all()) if corr.size else True
+    has_zero_lag = bool(np.any(lags == 0))
+
+    if corr.size:
+        min_corr = float(np.min(corr))
+        max_corr = float(np.max(corr))
+        mean_corr = float(np.mean(corr))
+    else:
+        min_corr = float("nan")
+        max_corr = float("nan")
+        mean_corr = float("nan")
+
+    print("\n[test-single] --------------------------------------------------")
+    print(f"[test-single] mode: {mode}")
+    print(
+        "[test-single] selected pair: "
+        f"m1(date={m1_id[0]}, session={m1_id[1]}) "
+        f"vs m2(date={m2_id[0]}, session={m2_id[1]})"
+    )
+    print(
+        "[test-single] vector sizes/counts: "
+        f"m1_len={m1_vec.size}, m2_len={m2_vec.size}, "
+        f"m1_fix={int(np.count_nonzero(m1_vec))}, m2_fix={int(np.count_nonzero(m2_vec))}"
+    )
+    if lags.size:
+        print(
+            "[test-single] lag window: "
+            f"{int(lags[0])}..{int(lags[-1])} (n_lags={lags.size}, max_lag={settings.max_lag})"
+        )
+    else:
+        print("[test-single] lag window: empty")
+    print(
+        "[test-single] corr summary: "
+        f"min={min_corr:.6f}, max={max_corr:.6f}, mean={mean_corr:.6f}"
+    )
+    print(
+        "[test-single] sanity: "
+        f"finite={finite_ok}, within_[0,1]={in_range_ok}, has_zero_lag={has_zero_lag}"
+    )
+    if corr.size:
+        preview = np.array2string(corr[:10], precision=4, separator=", ")
+        print(f"[test-single] corr preview (first 10): {preview}")
+    print("[test-single] --------------------------------------------------\n")
+
+
 def _fft_cross_correlation(
     x_bool: np.ndarray,
     y_bool: np.ndarray,
@@ -240,7 +299,7 @@ def _build_within_session_rows(
     shared_keys = sorted(set(m1_paths).intersection(m2_paths))
 
     if settings.test_single and shared_keys:
-        shared_keys = [shared_keys[0]]
+        shared_keys = [random.choice(shared_keys)]
 
     for date, session in tqdm(shared_keys, desc="Within-session xcorr", unit="session"):
         key = (date, session)
@@ -260,6 +319,17 @@ def _build_within_session_rows(
             monkey_name_m1=m1_name,
             monkey_name_m2=m2_name,
         )
+        if settings.test_single:
+            _print_test_single_debug(
+                mode="within-session",
+                settings=settings,
+                m1_id=key,
+                m2_id=key,
+                m1_vec=m1_vec,
+                m2_vec=m2_vec,
+                lags=lags,
+                corr=row["cross_correlation"],
+            )
         row.update({
             "fixation_label": settings.fixation_label,
             "date": date,
@@ -282,7 +352,7 @@ def _build_cross_session_rows(
 
     pairs = _build_cross_pairs(settings, m1_keys, m2_keys)
     if settings.test_single and pairs:
-        pairs = pairs[: min(10, len(pairs))]
+        pairs = [random.choice(pairs)]
 
     m1_cache: dict[tuple[str, str], np.ndarray] = {}
     m2_cache: dict[tuple[str, str], np.ndarray] = {}
@@ -324,6 +394,17 @@ def _build_cross_session_rows(
             monkey_name_m1=m1_name_cache.get(key1),
             monkey_name_m2=m2_name_cache.get(key2),
         )
+        if settings.test_single:
+            _print_test_single_debug(
+                mode="cross-session",
+                settings=settings,
+                m1_id=key1,
+                m2_id=key2,
+                m1_vec=m1_vec,
+                m2_vec=m2_vec,
+                lags=lags,
+                corr=row["cross_correlation"],
+            )
         row.update({
             "fixation_label": settings.fixation_label,
             "date_m1": date1,
