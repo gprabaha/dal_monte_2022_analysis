@@ -37,13 +37,13 @@ def main():
         output_subdir=cfg.get("output_subdir", "fix_cross_correlation"),
         within_filename=cfg.get(
             "within_filename",
-            "within_session_face_fix_cross_correlation.csv",
+            "within_session_face_fix_cross_correlation.pkl",
         ),
         cross_filename=cfg.get(
             "cross_filename",
-            "cross_session_face_fix_cross_correlation.csv",
+            "cross_session_face_fix_cross_correlation.pkl",
         ),
-        max_lag=cfg.get("max_lag"),
+        max_lag=cfg.get("max_lag", 60000),
         cross_pairs_max=cfg.get("cross_pairs_max"),
         cross_pairs_seed=cfg.get("cross_pairs_seed", 13),
         cross_exclude_same_session=cfg.get("cross_exclude_same_session", True),
@@ -70,4 +70,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

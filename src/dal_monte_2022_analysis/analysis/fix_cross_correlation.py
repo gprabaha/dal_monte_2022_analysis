@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import pickle
 import random
 from dataclasses import dataclass
@@ -26,9 +25,9 @@ class FixCrossCorrelationSettings:
     input_modality: str = "fixation_binary_vectors"
     fixation_label: str = "face"
     output_subdir: str = "fix_cross_correlation"
-    within_filename: str = "within_session_face_fix_cross_correlation.csv"
-    cross_filename: str = "cross_session_face_fix_cross_correlation.csv"
-    max_lag: Optional[int] = None
+    within_filename: str = "within_session_face_fix_cross_correlation.pkl"
+    cross_filename: str = "cross_session_face_fix_cross_correlation.pkl"
+    max_lag: Optional[int] = 60000
     cross_pairs_max: Optional[int] = None
     cross_pairs_seed: int = 13
     cross_exclude_same_session: bool = True
@@ -168,56 +167,33 @@ def _fft_cross_correlation(
     return lags, corr_full
 
 
-def _serialize_array(arr: np.ndarray) -> str:
-    """Serialize a 1D array as compact JSON text."""
-    return json.dumps(arr.tolist(), separators=(",", ":"))
-
-
 def _summarize_corr(
     lags: np.ndarray,
     corr: np.ndarray,
-    *,
-    x_count: int,
-    y_count: int,
 ) -> dict:
     """Compute summary stats for one cross-correlation trace."""
     if corr.size == 0:
         return {
             "n_lags": 0,
             "zero_lag_correlation": None,
-            "zero_lag_correlation_norm": None,
             "peak_lag": None,
             "peak_correlation": None,
             "peak_lag_abs": None,
             "peak_correlation_abs": None,
-            "peak_correlation_norm": None,
         }
 
     zero_lag_corr = None
     zero_matches = np.where(lags == 0)[0]
     if zero_matches.size > 0:
-        zero_lag_corr = int(corr[int(zero_matches[0])])
+        zero_lag_corr = float(corr[int(zero_matches[0])])
 
     peak_idx = int(np.argmax(corr))
-    peak_abs_idx = int(np.argmax(np.abs(corr)))
-
-    norm_factor = float(np.sqrt(float(x_count) * float(y_count)))
-    zero_norm = None
-    peak_norm = None
-    if norm_factor > 0.0:
-        if zero_lag_corr is not None:
-            zero_norm = float(zero_lag_corr) / norm_factor
-        peak_norm = float(corr[peak_idx]) / norm_factor
 
     return {
         "n_lags": int(corr.size),
         "zero_lag_correlation": zero_lag_corr,
-        "zero_lag_correlation_norm": zero_norm,
         "peak_lag": int(lags[peak_idx]),
-        "peak_correlation": int(corr[peak_idx]),
-        "peak_lag_abs": int(lags[peak_abs_idx]),
-        "peak_correlation_abs": int(np.abs(corr[peak_abs_idx])),
-        "peak_correlation_norm": peak_norm,
+        "peak_correlation": float(corr[peak_idx]),
     }
 
 
@@ -233,6 +209,12 @@ def _build_result_row(
     """Create one output row with metadata and correlation summaries."""
     x_count = int(np.count_nonzero(x_bool))
     y_count = int(np.count_nonzero(y_bool))
+    norm_factor = float(np.sqrt(float(x_count) * float(y_count)))
+    if norm_factor > 0.0:
+        corr_normalized = np.asarray(corr, dtype=np.float64) / norm_factor
+    else:
+        corr_normalized = np.zeros(corr.size, dtype=np.float64)
+
     row = {
         "fixation_label": None,
         "n_samples_m1": int(x_bool.size),
@@ -241,10 +223,10 @@ def _build_result_row(
         "m2_fixation_count": y_count,
         "monkey_name_m1": monkey_name_m1,
         "monkey_name_m2": monkey_name_m2,
-        "lags_json": _serialize_array(lags),
-        "cross_correlation_json": _serialize_array(corr),
+        "lags": lags,
+        "cross_correlation": corr_normalized,
     }
-    row.update(_summarize_corr(lags, corr, x_count=x_count, y_count=y_count))
+    row.update(_summarize_corr(lags, corr_normalized))
     return row
 
 
@@ -381,10 +363,10 @@ def run_fix_cross_correlation_analysis(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     within_path = out_dir / settings.within_filename
-    within_df.to_csv(within_path, index=False)
+    within_df.to_pickle(within_path)
 
     if cross_df is not None:
         cross_path = out_dir / settings.cross_filename
-        cross_df.to_csv(cross_path, index=False)
+        cross_df.to_pickle(cross_path)
 
     return within_df, cross_df

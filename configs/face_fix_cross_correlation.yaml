@@ -4,12 +4,13 @@
 input_modality: fixation_binary_vectors
 fixation_label: face
 output_subdir: fix_cross_correlation
-within_filename: within_session_face_fix_cross_correlation.csv
-cross_filename: cross_session_face_fix_cross_correlation.csv
+within_filename: within_session_face_fix_cross_correlation.pkl
+cross_filename: cross_session_face_fix_cross_correlation.pkl
 
 # Max absolute lag (in samples) to keep in the saved cross-correlation arrays.
-# Set to null to keep full lags.
-max_lag: null
+# 1 minute at 1 kHz => 60,000 samples on each side, so up to 120,001 lags total
+# when both vectors are long enough (-60000..60000, including lag 0).
+max_lag: 60000
 
 # Cross-session pairing behavior.
 # Set to null to evaluate all pairs.
@@ -20,4 +21,3 @@ cross_exclude_same_date: false
 
 # Optional: limit to a single session/few pairs for quick testing.
 test_single: false
-
