@@ -24,6 +24,7 @@ def main():
     parser.add_argument("--max-cross-pairs", type=int, default=None)
     parser.add_argument("--exclude-same-date", action="store_true")
     parser.add_argument("--include-same-session", action="store_true")
+    parser.add_argument("--parallelize-across-crosscorr-pairs", action="store_true")
     parser.add_argument("--max-lag", type=int, default=None)
 
     args = parser.parse_args()
@@ -48,6 +49,10 @@ def main():
         cross_pairs_seed=cfg.get("cross_pairs_seed", 13),
         cross_exclude_same_session=cfg.get("cross_exclude_same_session", True),
         cross_exclude_same_date=cfg.get("cross_exclude_same_date", False),
+        parallelize_across_crosscorr_pairs=cfg.get(
+            "parallelize_across_crosscorr_pairs",
+            False,
+        ),
         test_single=cfg.get("test_single", False),
     )
 
@@ -59,6 +64,8 @@ def main():
         settings.cross_exclude_same_date = True
     if args.include_same_session:
         settings.cross_exclude_same_session = False
+    if args.parallelize_across_crosscorr_pairs:
+        settings.parallelize_across_crosscorr_pairs = True
     if args.max_lag is not None:
         settings.max_lag = max(0, args.max_lag)
 

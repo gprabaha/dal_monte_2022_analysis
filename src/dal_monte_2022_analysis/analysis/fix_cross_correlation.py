@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from multiprocessing import Pool
 import pickle
 import random
 from dataclasses import dataclass
@@ -14,6 +15,7 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_dataset_config
 from dal_monte_2022_analysis.data.gaze_data import FixationBinaryVectorsData
 from dal_monte_2022_analysis.io.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 
@@ -32,6 +34,7 @@ class FixCrossCorrelationSettings:
     cross_pairs_seed: int = 13
     cross_exclude_same_session: bool = True
     cross_exclude_same_date: bool = False
+    parallelize_across_crosscorr_pairs: bool = False
     test_single: bool = False
 
 
@@ -187,6 +190,46 @@ def _print_test_single_debug(
     print("[test-single] --------------------------------------------------\n")
 
 
+def _build_pair_row_worker(
+    args: tuple[str, Optional[int], str, tuple[str, str], tuple[str, str], object, object],
+) -> Optional[dict]:
+    """Build one within/cross-session row for a pair task."""
+    fixation_label, max_lag, mode, key1, key2, m1_path, m2_path = args
+
+    m1_vec, m1_name = _load_fixation_vector(m1_path, fixation_label)
+    if m1_vec is None or m1_vec.size == 0:
+        return None
+    m2_vec, m2_name = _load_fixation_vector(m2_path, fixation_label)
+    if m2_vec is None or m2_vec.size == 0:
+        return None
+
+    lags, corr = _fft_cross_correlation(m1_vec, m2_vec, max_lag=max_lag)
+    row = _build_result_row(
+        lags=lags,
+        corr=corr,
+        x_bool=m1_vec,
+        y_bool=m2_vec,
+        monkey_name_m1=m1_name,
+        monkey_name_m2=m2_name,
+    )
+
+    if mode == "within":
+        row.update({
+            "fixation_label": fixation_label,
+            "date": key1[0],
+            "session": key1[1],
+        })
+    else:
+        row.update({
+            "fixation_label": fixation_label,
+            "date_m1": key1[0],
+            "session_m1": key1[1],
+            "date_m2": key2[0],
+            "session_m2": key2[1],
+        })
+    return row
+
+
 def _fft_cross_correlation(
     x_bool: np.ndarray,
     y_bool: np.ndarray,
@@ -301,6 +344,36 @@ def _build_within_session_rows(
     if settings.test_single and shared_keys:
         shared_keys = [random.choice(shared_keys)]
 
+    use_parallel = (
+        settings.parallelize_across_crosscorr_pairs
+        and not settings.test_single
+        and len(shared_keys) > 1
+    )
+    if use_parallel:
+        n_proc = get_n_processes(max_procs=32)
+        tasks = [
+            (
+                settings.fixation_label,
+                settings.max_lag,
+                "within",
+                key,
+                key,
+                m1_paths[key],
+                m2_paths[key],
+            )
+            for key in shared_keys
+        ]
+        with Pool(processes=n_proc) as pool:
+            for row in tqdm(
+                pool.imap(_build_pair_row_worker, tasks),
+                total=len(tasks),
+                desc=f"Within-session xcorr ({n_proc} workers)",
+                unit="session",
+            ):
+                if row is not None:
+                    rows.append(row)
+        return rows
+
     for date, session in tqdm(shared_keys, desc="Within-session xcorr", unit="session"):
         key = (date, session)
         m1_vec, m1_name = _load_fixation_vector(m1_paths[key], settings.fixation_label)
@@ -353,6 +426,36 @@ def _build_cross_session_rows(
     pairs = _build_cross_pairs(settings, m1_keys, m2_keys)
     if settings.test_single and pairs:
         pairs = [random.choice(pairs)]
+
+    use_parallel = (
+        settings.parallelize_across_crosscorr_pairs
+        and not settings.test_single
+        and len(pairs) > 1
+    )
+    if use_parallel:
+        n_proc = get_n_processes(max_procs=32)
+        tasks = [
+            (
+                settings.fixation_label,
+                settings.max_lag,
+                "cross",
+                key1,
+                key2,
+                m1_paths[key1],
+                m2_paths[key2],
+            )
+            for key1, key2 in pairs
+        ]
+        with Pool(processes=n_proc) as pool:
+            for row in tqdm(
+                pool.imap(_build_pair_row_worker, tasks),
+                total=len(tasks),
+                desc=f"Cross-session xcorr ({n_proc} workers)",
+                unit="pair",
+            ):
+                if row is not None:
+                    rows.append(row)
+        return rows
 
     m1_cache: dict[tuple[str, str], np.ndarray] = {}
     m2_cache: dict[tuple[str, str], np.ndarray] = {}
