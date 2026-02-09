@@ -609,6 +609,73 @@ def _resolve_lags_filename(settings: FixCrossCorrelationSettings) -> str:
     return f"{settings.fixation_label}_crosscorrelation_lags.pkl"
 
 
+def _print_output_sanity_summary(
+    within_df: pd.DataFrame,
+    cross_df: Optional[pd.DataFrame],
+    lag_axis: Optional[np.ndarray],
+) -> None:
+    """Print compact sanity checks for saved outputs."""
+    print("\n[fix-xcorr] Output sanity summary")
+    print("[fix-xcorr] -----------------------------------------------")
+
+    print(f"[fix-xcorr] within rows: {len(within_df)}")
+    if not within_df.empty:
+        if "cross_correlation" in within_df.columns:
+            lengths = within_df["cross_correlation"].map(
+                lambda arr: int(np.asarray(arr).size) if arr is not None else 0
+            )
+            print(
+                "[fix-xcorr] within corr length: "
+                f"min={int(lengths.min())}, max={int(lengths.max())}"
+            )
+        if "peak_correlation" in within_df.columns:
+            peak_vals = pd.to_numeric(within_df["peak_correlation"], errors="coerce")
+            if peak_vals.notna().any():
+                print(
+                    "[fix-xcorr] within peak corr: "
+                    f"min={float(peak_vals.min()):.6f}, max={float(peak_vals.max()):.6f}, "
+                    f"mean={float(peak_vals.mean()):.6f}"
+                )
+
+    if cross_df is None:
+        print("[fix-xcorr] cross rows: not computed")
+    else:
+        print(f"[fix-xcorr] cross rows: {len(cross_df)}")
+        if not cross_df.empty and "n_pairs" in cross_df.columns:
+            n_pairs_vals = pd.to_numeric(cross_df["n_pairs"], errors="coerce")
+            if n_pairs_vals.notna().any():
+                print(
+                    "[fix-xcorr] cross n_pairs: "
+                    f"min={int(n_pairs_vals.min())}, max={int(n_pairs_vals.max())}, "
+                    f"mean={float(n_pairs_vals.mean()):.2f}"
+                )
+        if not cross_df.empty and "cross_correlation_mean" in cross_df.columns:
+            mean_lengths = cross_df["cross_correlation_mean"].map(
+                lambda arr: int(np.asarray(arr).size) if arr is not None else 0
+            )
+            print(
+                "[fix-xcorr] cross mean-corr length: "
+                f"min={int(mean_lengths.min())}, max={int(mean_lengths.max())}"
+            )
+
+    if lag_axis is None:
+        print("[fix-xcorr] lags: missing")
+    else:
+        n_lags = int(lag_axis.size)
+        if n_lags == 0:
+            print("[fix-xcorr] lags: empty")
+        else:
+            preview_left = np.array2string(lag_axis[:5], separator=", ")
+            preview_right = np.array2string(lag_axis[-5:], separator=", ")
+            print(
+                "[fix-xcorr] lags: "
+                f"n={n_lags}, start={int(lag_axis[0])}, stop={int(lag_axis[-1])}"
+            )
+            print(f"[fix-xcorr] lags preview: head={preview_left} tail={preview_right}")
+
+    print("[fix-xcorr] -----------------------------------------------\n")
+
+
 def run_fix_cross_correlation_analysis(
     settings: FixCrossCorrelationSettings,
     *,
@@ -660,5 +727,7 @@ def run_fix_cross_correlation_analysis(
         lags_path = out_dir / _resolve_lags_filename(settings)
         with open(lags_path, "wb") as f:
             pickle.dump(lag_axis, f)
+
+    _print_output_sanity_summary(within_df, cross_df, lag_axis)
 
     return within_df, cross_df
