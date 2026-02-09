@@ -18,7 +18,7 @@ cross_pairs_max: null
 cross_pairs_seed: 13
 cross_exclude_same_session: true
 cross_exclude_same_date: false
-parallelize_across_crosscorr_pairs: false
+parallelize_across_crosscorr_pairs: true
 
 # Optional: limit to a single session/few pairs for quick testing.
 test_single: false
