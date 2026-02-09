@@ -23,11 +23,13 @@ With current settings, processed outputs are written under:
 - `face_fixation_probability.yaml`
 - `out_of_roi_fixation_probability.yaml`
 - `face_fix_cross_correlation.yaml`
+- `out_of_roi_fix_cross_correlation.yaml`
 
 ## HPC configs
 
 - `hpc_gaze_event_detection.yaml`
 - `hpc_fix_cross_correlation_shuffle.yaml`
+- `hpc_out_of_roi_fix_cross_correlation_shuffle.yaml`
 
 ## Plotting config
 

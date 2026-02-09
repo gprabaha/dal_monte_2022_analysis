@@ -19,4 +19,6 @@ __pycache__/
 .matlab/
 
 # HPC files
-hpc/
+hpc/*
+!hpc/README.md
+!hpc/*.sbatch
