@@ -43,6 +43,8 @@ def generate_gaze_event_job_file(
     for date, session, agent in tasks:
         cmd = (
             "module load miniconda; "
+            "conda init; "
+            "conda deactivate; "
             f"conda activate {env_name}; "
             "python "
             f"{worker_script} "

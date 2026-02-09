@@ -51,6 +51,7 @@ def main():
         shuffle_stringent=cfg.get("shuffle_stringent", True),
         shuffle_seed=cfg.get("shuffle_seed", 13),
         shuffle_parallelize_within_pair=cfg.get("shuffle_parallelize_within_pair", True),
+        shuffle_log_every=cfg.get("shuffle_log_every", 100),
         test_single=False,
     )
 
@@ -63,4 +64,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

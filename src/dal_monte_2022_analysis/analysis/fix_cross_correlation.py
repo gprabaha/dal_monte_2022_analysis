@@ -44,6 +44,7 @@ class FixCrossCorrelationSettings:
     shuffle_stringent: bool = True
     shuffle_seed: int = 13
     shuffle_parallelize_within_pair: bool = True
+    shuffle_log_every: int = 100
     test_single: bool = False
 
 
@@ -442,6 +443,8 @@ def _compute_shuffled_pair_summary(
     stringent: bool,
     base_seed: int,
     parallelize_within_pair: bool,
+    log_prefix: Optional[str] = None,
+    log_every: int = 0,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
     """Compute mean/std over shuffled cross-correlation draws for one pair."""
     m1_fix_durs = _extract_fixation_durations(m1_vec)
@@ -477,6 +480,23 @@ def _compute_shuffled_pair_summary(
     sum_sq_corr: Optional[np.ndarray] = None
     n_done = 0
 
+    if log_prefix is not None:
+        mode = "parallel" if use_parallel else "serial"
+        print(
+            f"{log_prefix} shuffle start: n_shuffles={int(n_shuffles)} "
+            f"mode={mode} stringent={bool(stringent)}"
+        )
+
+    def _maybe_log_progress() -> None:
+        if log_prefix is None:
+            return
+        if n_done == 0:
+            return
+        step = int(log_every) if int(log_every) > 0 else max(1, int(n_shuffles) // 10)
+        if (n_done % step == 0) or (n_done == int(n_shuffles)):
+            pct = 100.0 * float(n_done) / float(max(1, int(n_shuffles)))
+            print(f"{log_prefix} shuffle progress: {n_done}/{int(n_shuffles)} ({pct:.1f}%)")
+
     if use_parallel:
         n_proc = get_n_processes(max_procs=min(32, int(n_shuffles)))
         with Pool(processes=n_proc) as pool:
@@ -491,6 +511,7 @@ def _compute_shuffled_pair_summary(
                 sum_corr += corr
                 sum_sq_corr += corr * corr
                 n_done += 1
+                _maybe_log_progress()
     else:
         for task in tasks:
             lags, corr = _single_shuffle_corr_worker(task)
@@ -503,10 +524,13 @@ def _compute_shuffled_pair_summary(
             sum_corr += corr
             sum_sq_corr += corr * corr
             n_done += 1
+            _maybe_log_progress()
 
     if lag_axis is None or sum_corr is None or sum_sq_corr is None or n_done == 0:
         lags, _ = _fft_cross_correlation(m1_vec, m2_vec, max_lag=max_lag)
         empty = np.full(lags.size, np.nan, dtype=np.float32)
+        if log_prefix is not None:
+            print(f"{log_prefix} shuffle done: no valid shuffles completed")
         return lags, empty, empty, 0
 
     mean = sum_corr / float(n_done)
@@ -516,6 +540,13 @@ def _compute_shuffled_pair_summary(
         std = np.sqrt(var)
     else:
         std = np.zeros_like(mean)
+
+    if log_prefix is not None:
+        print(
+            f"{log_prefix} shuffle done: completed={n_done} "
+            f"mean[min,max]=({float(np.min(mean)):.6f}, {float(np.max(mean)):.6f}) "
+            f"std[min,max]=({float(np.min(std)):.6f}, {float(np.max(std)):.6f})"
+        )
 
     return lag_axis, mean.astype(np.float32), std.astype(np.float32), int(n_done)
 
@@ -928,6 +959,7 @@ def _build_within_session_shuffle_row(
     m2_fix_bin_count = int(np.count_nonzero(m2_vec))
 
     pair_seed = _stable_pair_seed(settings.shuffle_seed, key, key)
+    log_prefix = f"[shuffle-pair {key[0]}-{key[1]}]"
     lags, mean_corr, std_corr, n_shuffles_done = _compute_shuffled_pair_summary(
         m1_vec=m1_vec,
         m2_vec=m2_vec,
@@ -936,6 +968,8 @@ def _build_within_session_shuffle_row(
         stringent=settings.shuffle_stringent,
         base_seed=pair_seed,
         parallelize_within_pair=settings.shuffle_parallelize_within_pair,
+        log_prefix=log_prefix,
+        log_every=settings.shuffle_log_every,
     )
 
     return {
@@ -971,6 +1005,12 @@ def process_and_save_within_session_shuffle_pair(
         print(f"[shuffle-worker] missing within-session pair for date={date} session={session}")
         return None
 
+    print(
+        f"[shuffle-worker] start pair date={date} session={session} "
+        f"label={settings.fixation_label} n_shuffles={settings.shuffle_n_shuffles} "
+        f"max_lag={settings.max_lag}"
+    )
+
     row = _build_within_session_shuffle_row(
         settings=settings,
         key=key,
@@ -986,7 +1026,20 @@ def process_and_save_within_session_shuffle_pair(
     out_path = _shuffle_pair_result_path(out_dir, key)
     with open(out_path, "wb") as f:
         pickle.dump(row, f)
-    print(f"[shuffle-worker] wrote: {out_path}")
+    mean_arr = np.asarray(row["cross_correlation_shuffle_mean"])
+    std_arr = np.asarray(row["cross_correlation_shuffle_std"])
+    lags_arr = np.asarray(row["lags"])
+    preview_n = min(5, int(mean_arr.size))
+    lag_preview = np.array2string(lags_arr[:preview_n], separator=", ")
+    mean_preview = np.array2string(mean_arr[:preview_n], precision=4, separator=", ")
+    std_preview = np.array2string(std_arr[:preview_n], precision=4, separator=", ")
+    print(
+        f"[shuffle-worker] wrote: {out_path} | "
+        f"n_shuffles={int(row['n_shuffles'])} n_lags={int(mean_arr.size)} "
+        f"mean[min,max]=({float(np.nanmin(mean_arr)):.6f}, {float(np.nanmax(mean_arr)):.6f}) "
+        f"std[min,max]=({float(np.nanmin(std_arr)):.6f}, {float(np.nanmax(std_arr)):.6f}) "
+        f"preview lags={lag_preview} mean={mean_preview} std={std_preview}"
+    )
     return out_path
 
 
@@ -1038,6 +1091,49 @@ def collate_within_session_shuffle_results(
         print(
             "[shuffle-collate] lags: "
             f"n={int(lag_axis.size)} start={int(lag_axis[0])} stop={int(lag_axis[-1])}"
+        )
+
+    print(f"[shuffle-collate] rows: {len(shuffle_df)}")
+    if not shuffle_df.empty and "n_shuffles" in shuffle_df.columns:
+        n_shuf = pd.to_numeric(shuffle_df["n_shuffles"], errors="coerce")
+        if n_shuf.notna().any():
+            print(
+                "[shuffle-collate] n_shuffles stats: "
+                f"min={int(n_shuf.min())} max={int(n_shuf.max())} mean={float(n_shuf.mean()):.2f}"
+            )
+    if not shuffle_df.empty and "cross_correlation_shuffle_mean" in shuffle_df.columns:
+        lens = shuffle_df["cross_correlation_shuffle_mean"].map(
+            lambda arr: int(np.asarray(arr).size) if arr is not None else 0
+        )
+        print(
+            "[shuffle-collate] mean-array length: "
+            f"min={int(lens.min())} max={int(lens.max())}"
+        )
+        finite_rows = shuffle_df["cross_correlation_shuffle_mean"].map(
+            lambda arr: bool(np.isfinite(np.asarray(arr)).all()) if arr is not None else False
+        )
+        print(
+            "[shuffle-collate] finite mean arrays: "
+            f"{int(finite_rows.sum())}/{len(finite_rows)}"
+        )
+        sample = shuffle_df.iloc[0]
+        sample_mean = np.asarray(sample["cross_correlation_shuffle_mean"])
+        sample_std = np.asarray(sample["cross_correlation_shuffle_std"])
+        n_preview = min(5, int(sample_mean.size))
+        sample_mean_preview = np.array2string(
+            sample_mean[:n_preview],
+            precision=4,
+            separator=", ",
+        )
+        sample_std_preview = np.array2string(
+            sample_std[:n_preview],
+            precision=4,
+            separator=", ",
+        )
+        print(
+            "[shuffle-collate] sample row preview: "
+            f"date={sample.get('date')} session={sample.get('session')} "
+            f"mean={sample_mean_preview} std={sample_std_preview}"
         )
     return shuffle_df, lag_axis
 

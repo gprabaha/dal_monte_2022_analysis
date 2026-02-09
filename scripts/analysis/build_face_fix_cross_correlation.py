@@ -57,6 +57,7 @@ def _build_settings(args) -> FixCrossCorrelationSettings:
         shuffle_stringent=cfg.get("shuffle_stringent", True),
         shuffle_seed=cfg.get("shuffle_seed", 13),
         shuffle_parallelize_within_pair=cfg.get("shuffle_parallelize_within_pair", True),
+        shuffle_log_every=cfg.get("shuffle_log_every", 100),
         test_single=cfg.get("test_single", False),
     )
 
@@ -76,6 +77,8 @@ def _build_settings(args) -> FixCrossCorrelationSettings:
         settings.shuffle_n_shuffles = max(0, args.shuffle_n_shuffles)
     if args.shuffle_seed is not None:
         settings.shuffle_seed = args.shuffle_seed
+    if args.shuffle_log_every is not None:
+        settings.shuffle_log_every = max(1, args.shuffle_log_every)
     if args.shuffle_non_stringent:
         settings.shuffle_stringent = False
     if args.shuffle_no_within_pair_parallel:
@@ -151,6 +154,7 @@ def main():
     parser.add_argument("--max-lag", type=int, default=None)
     parser.add_argument("--shuffle-n-shuffles", type=int, default=None)
     parser.add_argument("--shuffle-seed", type=int, default=None)
+    parser.add_argument("--shuffle-log-every", type=int, default=None)
     parser.add_argument("--shuffle-non-stringent", action="store_true")
     parser.add_argument("--shuffle-no-within-pair-parallel", action="store_true")
 
@@ -199,4 +203,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

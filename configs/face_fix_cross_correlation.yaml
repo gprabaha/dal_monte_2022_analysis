@@ -35,3 +35,5 @@ shuffle_n_shuffles: 1000
 shuffle_stringent: true
 shuffle_seed: 13
 shuffle_parallelize_within_pair: true
+# Worker log cadence for shuffled draws (prints every N shuffles).
+shuffle_log_every: 100
