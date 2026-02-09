@@ -4,8 +4,8 @@
 #SBATCH -c 8
 #SBATCH --mem-per-cpu=8G
 #SBATCH -t 04:00:00
-#SBATCH -o hpc/out_of_roi_fix_crosscorr_shuffle_submit.out
-#SBATCH -e hpc/out_of_roi_fix_crosscorr_shuffle_submit.err
+#SBATCH -o hpc/out_of_roi_fix_crosscorr_shuffle.out
+#SBATCH -e hpc/out_of_roi_fix_crosscorr_shuffle.err
 
 set -euo pipefail
 

@@ -4,10 +4,9 @@
 #SBATCH -c 8
 #SBATCH --mem-per-cpu=8G
 #SBATCH -t 04:00:00
-#SBATCH -o hpc/face_fix_crosscorr_shuffle_submit.out
-#SBATCH -e hpc/face_fix_crosscorr_shuffle_submit.err
+#SBATCH -o hpc/face_fix_crosscorr_shuffle.out
+#SBATCH -e hpc/face_fix_crosscorr_shuffle.err
 
 set -euo pipefail
 
-bash -lc 'module load miniconda; conda init; conda deactivate; conda activate gaze_processing; python scripts/analysis/build_face_fix_cross_correlation.py --mode shuffle_submit_hpc --hpc-cfg configs/hpc_fix_cross_correlation_shuffle.yaml'
-
+bash -lc 'module load miniconda; conda init; conda deactivate; conda activate gaze_processing; python scripts/analysis/build_face_fix_cross_correlation.py --mode shuffle_submit_hpc --hpc-cfg configs/hpc_face_fix_cross_correlation_shuffle.yaml'

@@ -28,7 +28,7 @@ With current settings, processed outputs are written under:
 ## HPC configs
 
 - `hpc_gaze_event_detection.yaml`
-- `hpc_fix_cross_correlation_shuffle.yaml`
+- `hpc_face_fix_cross_correlation_shuffle.yaml`
 - `hpc_out_of_roi_fix_cross_correlation_shuffle.yaml`
 
 ## Plotting config

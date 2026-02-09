@@ -142,7 +142,10 @@ def main():
             "shuffle_local",
         ],
     )
-    parser.add_argument("--hpc-cfg", default="configs/hpc_fix_cross_correlation_shuffle.yaml")
+    parser.add_argument(
+        "--hpc-cfg",
+        default="configs/hpc_face_fix_cross_correlation_shuffle.yaml",
+    )
     parser.add_argument("--date", default=None)
     parser.add_argument("--session", default=None)
     parser.add_argument("--no-cross", action="store_true")
