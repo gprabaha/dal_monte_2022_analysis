@@ -27,3 +27,11 @@ parallelize_across_crosscorr_pairs: true
 
 # Optional: limit to a single session/few pairs for quick testing.
 test_single: false
+
+# Within-session shuffled distribution settings.
+shuffle_output_filename: within_session_face_fix_cross_correlation_shuffle.pkl
+shuffle_pairs_subdir: within_session_shuffle_pair_results
+shuffle_n_shuffles: 1000
+shuffle_stringent: true
+shuffle_seed: 13
+shuffle_parallelize_within_pair: true

@@ -24,4 +24,5 @@ Other configs in this folder:
 - `face_fixation_probability.yaml` for within- vs cross-session face fixation probability.
 - `out_of_roi_fixation_probability.yaml` for within- vs cross-session out-of-ROI fixation probability.
 - `face_fix_cross_correlation.yaml` for within- vs cross-session face fixation cross-correlation.
+- `hpc_fix_cross_correlation_shuffle.yaml` for dSQ array-job submission of per-pair shuffled cross-correlation.
 - `plotting.yaml` for global plotting style settings.

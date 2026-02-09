@@ -85,6 +85,33 @@ def generate_fixation_job_file(
     )
 
 
+def generate_fix_crosscorr_shuffle_job_file(
+    *,
+    tasks: Iterable[tuple[str, str]],
+    job_file_path: Path,
+    worker_script: Path,
+    env_name: str,
+    dataset_cfg_path: str,
+    fix_crosscorr_cfg_path: str,
+) -> None:
+    """Generate a job file for within-session shuffled cross-correlation pairs."""
+    commands: List[str] = []
+    for date, session in tasks:
+        cmd = (
+            "module load miniconda; "
+            f"conda activate {env_name}; "
+            "python "
+            f"{worker_script} "
+            f"--dataset-cfg {dataset_cfg_path} "
+            f"--fix-crosscorr-cfg {fix_crosscorr_cfg_path} "
+            f"--date {date} "
+            f"--session {session}"
+        )
+        commands.append(cmd)
+
+    write_job_file(job_file_path, commands)
+
+
 def submit_dsq_array_job(
     *,
     job_file_path: Path,

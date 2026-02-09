@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from multiprocessing import Pool
+import hashlib
 import pickle
 import random
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -36,6 +38,12 @@ class FixCrossCorrelationSettings:
     cross_exclude_same_session: bool = True
     cross_exclude_same_date: bool = False
     parallelize_across_crosscorr_pairs: bool = False
+    shuffle_output_filename: str = "within_session_face_fix_cross_correlation_shuffle.pkl"
+    shuffle_pairs_subdir: str = "within_session_shuffle_pair_results"
+    shuffle_n_shuffles: int = 1000
+    shuffle_stringent: bool = True
+    shuffle_seed: int = 13
+    shuffle_parallelize_within_pair: bool = True
     test_single: bool = False
 
 
@@ -277,6 +285,239 @@ def _count_fixation_events(vec_bool: np.ndarray) -> int:
         return 0
     starts = vec & ~np.r_[False, vec[:-1]]
     return int(np.count_nonzero(starts))
+
+
+def _extract_fixation_durations(vec_bool: np.ndarray) -> list[int]:
+    """Extract contiguous fixation (1-run) durations from a binary vector."""
+    vec = np.asarray(vec_bool, dtype=bool)
+    if vec.size == 0:
+        return []
+    padded = np.r_[False, vec, False]
+    starts = np.flatnonzero(~padded[:-1] & padded[1:])
+    stops = np.flatnonzero(padded[:-1] & ~padded[1:])
+    return (stops - starts).astype(int).tolist()
+
+
+def _generate_uniform_partitions(total: int, n_parts: int, rng: np.random.Generator) -> list[int]:
+    """Partition `total` into `n_parts` nonnegative integers."""
+    if n_parts <= 0:
+        return []
+    if n_parts == 1:
+        return [int(total)]
+    if total <= 0:
+        return [0] * n_parts
+    probs = np.full(n_parts, 1.0 / n_parts, dtype=np.float64)
+    return rng.multinomial(int(total), probs).astype(int).tolist()
+
+
+def _interleave_segments(
+    fix_durs: list[int],
+    non_fix_durs: list[int],
+    rng: np.random.Generator,
+) -> list[tuple[int, int]]:
+    """Interleave non-fixation and fixation segments."""
+    fix = list(fix_durs)
+    non_fix = list(non_fix_durs)
+    rng.shuffle(fix)
+    rng.shuffle(non_fix)
+    segments: list[tuple[int, int]] = []
+    for idx, dur in enumerate(fix):
+        segments.append((int(non_fix[idx]), 0))
+        segments.append((int(dur), 1))
+    segments.append((int(non_fix[-1]), 0))
+    return segments
+
+
+def _construct_shuffled_vector(segments: list[tuple[int, int]], run_length: int) -> np.ndarray:
+    """Construct a shuffled binary vector from duration/value segments."""
+    vec = np.zeros(int(run_length), dtype=np.uint8)
+    idx = 0
+    for dur, val in segments:
+        if idx >= run_length:
+            break
+        dur = max(0, int(dur))
+        end = min(idx + dur, run_length)
+        if val == 1 and end > idx:
+            vec[idx:end] = 1
+        idx += dur
+    return vec
+
+
+def _generate_single_shuffled_vector(
+    fixation_durations: list[int],
+    non_fixation_total: int,
+    run_length: int,
+    stringent: bool,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Generate one shuffled vector preserving fixation load and (optionally) durations."""
+    if not fixation_durations:
+        return np.zeros(int(run_length), dtype=np.uint8)
+
+    total_fix = int(sum(fixation_durations))
+    run_length = int(run_length)
+    if total_fix <= 0 or run_length <= 0:
+        return np.zeros(run_length, dtype=np.uint8)
+
+    if not stringent:
+        vec = np.zeros(run_length, dtype=np.uint8)
+        vec[: min(total_fix, run_length)] = 1
+        rng.shuffle(vec)
+        return vec
+
+    non_fixation_durations = _generate_uniform_partitions(
+        int(max(0, non_fixation_total)),
+        len(fixation_durations) + 1,
+        rng,
+    )
+    segments = _interleave_segments(fixation_durations, non_fixation_durations, rng)
+    return _construct_shuffled_vector(segments, run_length)
+
+
+def _stable_pair_seed(base_seed: int, key1: tuple[str, str], key2: tuple[str, str]) -> int:
+    """Generate a deterministic per-pair seed."""
+    token = f"{key1[0]}|{key1[1]}|{key2[0]}|{key2[1]}"
+    digest = hashlib.sha1(token.encode("utf-8")).digest()[:8]
+    offset = int.from_bytes(digest, byteorder="little", signed=False)
+    return int((int(base_seed) + offset) % (2**32 - 1))
+
+
+def _single_shuffle_corr_worker(
+    args: tuple[
+        list[int],
+        int,
+        int,
+        list[int],
+        int,
+        int,
+        bool,
+        Optional[int],
+        int,
+    ],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Worker for one shuffled cross-correlation draw."""
+    (
+        m1_fix_durs,
+        m1_non_fix_total,
+        m1_len,
+        m2_fix_durs,
+        m2_non_fix_total,
+        m2_len,
+        stringent,
+        max_lag,
+        seed,
+    ) = args
+
+    rng = np.random.default_rng(int(seed))
+    m1_shuf = _generate_single_shuffled_vector(
+        fixation_durations=m1_fix_durs,
+        non_fixation_total=m1_non_fix_total,
+        run_length=m1_len,
+        stringent=stringent,
+        rng=rng,
+    ).astype(bool)
+    m2_shuf = _generate_single_shuffled_vector(
+        fixation_durations=m2_fix_durs,
+        non_fixation_total=m2_non_fix_total,
+        run_length=m2_len,
+        stringent=stringent,
+        rng=rng,
+    ).astype(bool)
+
+    lags, corr = _fft_cross_correlation(m1_shuf, m2_shuf, max_lag=max_lag)
+    corr_norm = _normalize_corr(
+        corr,
+        x_bin_count=int(np.count_nonzero(m1_shuf)),
+        y_bin_count=int(np.count_nonzero(m2_shuf)),
+    )
+    return lags, corr_norm
+
+
+def _compute_shuffled_pair_summary(
+    *,
+    m1_vec: np.ndarray,
+    m2_vec: np.ndarray,
+    max_lag: Optional[int],
+    n_shuffles: int,
+    stringent: bool,
+    base_seed: int,
+    parallelize_within_pair: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+    """Compute mean/std over shuffled cross-correlation draws for one pair."""
+    m1_fix_durs = _extract_fixation_durations(m1_vec)
+    m2_fix_durs = _extract_fixation_durations(m2_vec)
+    m1_len = int(m1_vec.size)
+    m2_len = int(m2_vec.size)
+    m1_non_fix = int(max(0, m1_len - int(np.sum(m1_fix_durs))))
+    m2_non_fix = int(max(0, m2_len - int(np.sum(m2_fix_durs))))
+
+    if n_shuffles <= 0:
+        lags, _ = _fft_cross_correlation(m1_vec, m2_vec, max_lag=max_lag)
+        empty = np.full(lags.size, np.nan, dtype=np.float32)
+        return lags, empty, empty, 0
+
+    tasks = [
+        (
+            m1_fix_durs,
+            m1_non_fix,
+            m1_len,
+            m2_fix_durs,
+            m2_non_fix,
+            m2_len,
+            bool(stringent),
+            max_lag,
+            int((int(base_seed) + i) % (2**32 - 1)),
+        )
+        for i in range(int(n_shuffles))
+    ]
+
+    use_parallel = bool(parallelize_within_pair and n_shuffles > 1)
+    lag_axis: Optional[np.ndarray] = None
+    sum_corr: Optional[np.ndarray] = None
+    sum_sq_corr: Optional[np.ndarray] = None
+    n_done = 0
+
+    if use_parallel:
+        n_proc = get_n_processes(max_procs=min(32, int(n_shuffles)))
+        with Pool(processes=n_proc) as pool:
+            iterator = pool.imap(_single_shuffle_corr_worker, tasks)
+            for lags, corr in iterator:
+                if lag_axis is None:
+                    lag_axis = lags
+                    sum_corr = np.zeros(corr.size, dtype=np.float64)
+                    sum_sq_corr = np.zeros(corr.size, dtype=np.float64)
+                else:
+                    _assert_lags_match(lag_axis, lags)
+                sum_corr += corr
+                sum_sq_corr += corr * corr
+                n_done += 1
+    else:
+        for task in tasks:
+            lags, corr = _single_shuffle_corr_worker(task)
+            if lag_axis is None:
+                lag_axis = lags
+                sum_corr = np.zeros(corr.size, dtype=np.float64)
+                sum_sq_corr = np.zeros(corr.size, dtype=np.float64)
+            else:
+                _assert_lags_match(lag_axis, lags)
+            sum_corr += corr
+            sum_sq_corr += corr * corr
+            n_done += 1
+
+    if lag_axis is None or sum_corr is None or sum_sq_corr is None or n_done == 0:
+        lags, _ = _fft_cross_correlation(m1_vec, m2_vec, max_lag=max_lag)
+        empty = np.full(lags.size, np.nan, dtype=np.float32)
+        return lags, empty, empty, 0
+
+    mean = sum_corr / float(n_done)
+    if n_done > 1:
+        var = (sum_sq_corr - (sum_corr * sum_corr) / float(n_done)) / float(n_done - 1)
+        var = np.maximum(var, 0.0)
+        std = np.sqrt(var)
+    else:
+        std = np.zeros_like(mean)
+
+    return lag_axis, mean.astype(np.float32), std.astype(np.float32), int(n_done)
 
 
 def _build_pair_result(
@@ -636,6 +877,169 @@ def _build_cross_session_control_rows(
         })
 
     return rows, lag_axis
+
+
+def build_within_session_pair_tasks(
+    settings: FixCrossCorrelationSettings,
+) -> list[tuple[str, str]]:
+    """Return within-session pair keys as (date, session) tuples."""
+    cfg = load_dataset_config(settings.cfg_path)
+    m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
+    shared_keys = sorted(set(m1_paths).intersection(m2_paths))
+    if settings.test_single and shared_keys:
+        shared_keys = [random.choice(shared_keys)]
+    return shared_keys
+
+
+def _shuffle_pair_output_dir(cfg: dict, settings: FixCrossCorrelationSettings) -> Path:
+    """Return output directory for per-pair shuffled results."""
+    return build_analysis_output_dir(
+        cfg,
+        f"{settings.output_subdir}/{settings.shuffle_pairs_subdir}",
+    )
+
+
+def _shuffle_pair_result_path(
+    pair_dir: Path,
+    key: tuple[str, str],
+) -> Path:
+    """Return per-pair shuffled result path."""
+    date, session = key
+    return pair_dir / f"date={date}__session={session}.pkl"
+
+
+def _build_within_session_shuffle_row(
+    settings: FixCrossCorrelationSettings,
+    key: tuple[str, str],
+    m1_path,
+    m2_path,
+) -> Optional[dict]:
+    """Build shuffled-summary row for one within-session pair."""
+    m1_vec, m1_name = _load_fixation_vector(m1_path, settings.fixation_label)
+    if m1_vec is None or m1_vec.size == 0:
+        return None
+    m2_vec, m2_name = _load_fixation_vector(m2_path, settings.fixation_label)
+    if m2_vec is None or m2_vec.size == 0:
+        return None
+
+    m1_fix_event_count = _count_fixation_events(m1_vec)
+    m2_fix_event_count = _count_fixation_events(m2_vec)
+    m1_fix_bin_count = int(np.count_nonzero(m1_vec))
+    m2_fix_bin_count = int(np.count_nonzero(m2_vec))
+
+    pair_seed = _stable_pair_seed(settings.shuffle_seed, key, key)
+    lags, mean_corr, std_corr, n_shuffles_done = _compute_shuffled_pair_summary(
+        m1_vec=m1_vec,
+        m2_vec=m2_vec,
+        max_lag=settings.max_lag,
+        n_shuffles=settings.shuffle_n_shuffles,
+        stringent=settings.shuffle_stringent,
+        base_seed=pair_seed,
+        parallelize_within_pair=settings.shuffle_parallelize_within_pair,
+    )
+
+    return {
+        "fixation_label": settings.fixation_label,
+        "date": key[0],
+        "session": key[1],
+        "monkey_name_m1": m1_name,
+        "monkey_name_m2": m2_name,
+        "n_samples_m1": int(m1_vec.size),
+        "n_samples_m2": int(m2_vec.size),
+        "m1_fixation_count": m1_fix_event_count,
+        "m2_fixation_count": m2_fix_event_count,
+        "m1_fixation_bin_count": m1_fix_bin_count,
+        "m2_fixation_bin_count": m2_fix_bin_count,
+        "shuffle_stringent": bool(settings.shuffle_stringent),
+        "n_shuffles": int(n_shuffles_done),
+        "cross_correlation_shuffle_mean": mean_corr,
+        "cross_correlation_shuffle_std": std_corr,
+        "lags": lags,
+    }
+
+
+def process_and_save_within_session_shuffle_pair(
+    settings: FixCrossCorrelationSettings,
+    date: str,
+    session: str,
+) -> Optional[Path]:
+    """Compute and save shuffled-summary output for one within-session pair."""
+    cfg = load_dataset_config(settings.cfg_path)
+    m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
+    key = (str(date), str(session))
+    if key not in m1_paths or key not in m2_paths:
+        print(f"[shuffle-worker] missing within-session pair for date={date} session={session}")
+        return None
+
+    row = _build_within_session_shuffle_row(
+        settings=settings,
+        key=key,
+        m1_path=m1_paths[key],
+        m2_path=m2_paths[key],
+    )
+    if row is None:
+        print(f"[shuffle-worker] no result for date={date} session={session}")
+        return None
+
+    out_dir = _shuffle_pair_output_dir(cfg, settings)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = _shuffle_pair_result_path(out_dir, key)
+    with open(out_path, "wb") as f:
+        pickle.dump(row, f)
+    print(f"[shuffle-worker] wrote: {out_path}")
+    return out_path
+
+
+def collate_within_session_shuffle_results(
+    settings: FixCrossCorrelationSettings,
+) -> tuple[pd.DataFrame, Optional[np.ndarray]]:
+    """Collate per-pair shuffled outputs into one analysis table."""
+    cfg = load_dataset_config(settings.cfg_path)
+    pair_dir = _shuffle_pair_output_dir(cfg, settings)
+    if not pair_dir.exists():
+        raise RuntimeError(f"No shuffle pair directory found: {pair_dir}")
+
+    pair_paths = sorted(pair_dir.glob("date=*__session=*.pkl"))
+    if not pair_paths:
+        raise RuntimeError(f"No per-pair shuffle files found in: {pair_dir}")
+
+    rows: list[dict] = []
+    lag_axis: Optional[np.ndarray] = None
+
+    for path in tqdm(pair_paths, desc="Collating shuffled pairs", unit="pair"):
+        with open(path, "rb") as f:
+            row = pickle.load(f)
+        lags = np.asarray(row.get("lags"))
+        if lag_axis is None:
+            lag_axis = lags
+        else:
+            _assert_lags_match(lag_axis, lags)
+
+        row = dict(row)
+        row.pop("lags", None)
+        rows.append(row)
+
+    shuffle_df = pd.DataFrame.from_records(rows)
+    if {"date", "session"}.issubset(shuffle_df.columns):
+        shuffle_df = shuffle_df.sort_values(["date", "session"]).reset_index(drop=True)
+
+    out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / settings.shuffle_output_filename
+    shuffle_df.to_pickle(out_path)
+
+    if lag_axis is not None:
+        lags_path = out_dir / _resolve_lags_filename(settings)
+        with open(lags_path, "wb") as f:
+            pickle.dump(lag_axis, f)
+
+    print(f"[shuffle-collate] wrote: {out_path}")
+    if lag_axis is not None:
+        print(
+            "[shuffle-collate] lags: "
+            f"n={int(lag_axis.size)} start={int(lag_axis[0])} stop={int(lag_axis[-1])}"
+        )
+    return shuffle_df, lag_axis
 
 
 def _resolve_lags_filename(settings: FixCrossCorrelationSettings) -> str:

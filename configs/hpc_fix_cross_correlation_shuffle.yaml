@@ -1,0 +1,12 @@
+# HPC settings for shuffled within-session fixation cross-correlation
+env_name: gaze_processing
+job_name: fix_crosscorr_shuffle
+worker_script_path: scripts/analysis/hpc_fix_crosscorr_shuffle_worker.py
+job_file_path: hpc/fix_crosscorr_shuffle_jobs.txt
+sbatch_script_path: hpc/fix_crosscorr_shuffle_jobs.sh
+log_dir: hpc/fix_crosscorr_shuffle_logs
+partition: psych_day
+cpus_per_task: 32
+mem_per_cpu: 4G
+time_limit: "04:00:00"
+
