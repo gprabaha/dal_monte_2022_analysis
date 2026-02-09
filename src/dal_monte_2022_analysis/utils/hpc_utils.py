@@ -101,6 +101,8 @@ def generate_fix_crosscorr_shuffle_job_file(
     for date, session in tasks:
         cmd = (
             "module load miniconda; "
+            "conda init; "
+            "conda deactivate; "
             f"conda activate {env_name}; "
             "python "
             f"{worker_script} "
