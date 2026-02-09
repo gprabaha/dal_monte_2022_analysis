@@ -5,7 +5,7 @@ This package holds the reusable core of the project:
 - `data/` defines typed data containers, cleaning utilities, and a loader in `data/load.py`.
 - `io/` handles indexing, extraction, and cleaning pipelines.
 - `features/` builds fixations, fixation vectors/density, joint density, and interactive periods.
-- `analysis/` computes fixation probability and cross-correlation outputs.
+- `analysis/` computes fixation probability, fixation cross-correlation, and cross-correlation leader-follower outputs.
 - `plotting/` renders analysis figures from saved outputs.
 - `utils/` provides shared helpers (paths, parallelism, fixation detection, and HPC job helpers).
 

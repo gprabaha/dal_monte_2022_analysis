@@ -25,6 +25,10 @@ With current settings, processed outputs are written under:
 - `face_fix_cross_correlation.yaml`
 - `out_of_roi_fix_cross_correlation.yaml`
 
+Cross-correlation configs also hold optional leader-follower settings used by:
+- `scripts/analysis/build_face_fix_crosscorr_leader_follower.py`
+- `scripts/analysis/build_out_of_roi_fix_crosscorr_leader_follower.py`
+
 ## HPC configs
 
 - `hpc_gaze_event_detection.yaml`

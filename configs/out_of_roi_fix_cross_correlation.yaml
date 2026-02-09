@@ -37,3 +37,10 @@ shuffle_seed: 13
 shuffle_parallelize_within_pair: true
 # Worker log cadence for shuffled draws (prints every N shuffles).
 shuffle_log_every: 100
+
+# Optional leader-follower analysis settings (used by
+# scripts/analysis/build_out_of_roi_fix_crosscorr_leader_follower.py).
+leader_follower_tie_epsilon: 0.0
+leader_follower_session_filename: within_session_out_of_roi_fix_crosscorr_leader_follower.csv
+leader_follower_date_summary_filename: date_summary_out_of_roi_fix_crosscorr_leader_follower.csv
+leader_follower_total_summary_filename: total_summary_out_of_roi_fix_crosscorr_leader_follower.csv

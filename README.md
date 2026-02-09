@@ -54,6 +54,9 @@ Analysis outputs are written under `analysis_output_root`.
 - `python scripts/analysis/build_face_fixation_probability.py`
 - `python scripts/analysis/build_out_of_roi_fixation_probability.py`
 - `python scripts/analysis/build_face_fix_cross_correlation.py`
+- `python scripts/analysis/build_out_of_roi_fix_cross_correlation.py`
+- `python scripts/analysis/build_face_fix_crosscorr_leader_follower.py`
+- `python scripts/analysis/build_out_of_roi_fix_crosscorr_leader_follower.py`
 
 4. Plot outputs
 - `python scripts/plotting/plot_face_fixation_probability.py`
@@ -90,5 +93,8 @@ Generated artifacts are written under `hpc/`.
 `python scripts/analysis/build_face_fixation_probability.py`
 `python scripts/analysis/build_out_of_roi_fixation_probability.py`
 `python scripts/analysis/build_face_fix_cross_correlation.py`
+`python scripts/analysis/build_out_of_roi_fix_cross_correlation.py`
+`python scripts/analysis/build_face_fix_crosscorr_leader_follower.py`
+`python scripts/analysis/build_out_of_roi_fix_crosscorr_leader_follower.py`
 7. Plot:
 `python scripts/plotting/plot_face_fixation_probability.py`
