@@ -142,6 +142,8 @@ def _print_test_single_debug(
     m2_len: int,
     m1_fix_count: int,
     m2_fix_count: int,
+    m1_fix_bin_count: int,
+    m2_fix_bin_count: int,
     lags: np.ndarray,
     corr: np.ndarray,
 ) -> None:
@@ -170,7 +172,8 @@ def _print_test_single_debug(
     print(
         "[test-single] vector sizes/counts: "
         f"m1_len={m1_len}, m2_len={m2_len}, "
-        f"m1_fix={m1_fix_count}, m2_fix={m2_fix_count}"
+        f"m1_fix_events={m1_fix_count}, m2_fix_events={m2_fix_count}, "
+        f"m1_fix_bins={m1_fix_bin_count}, m2_fix_bins={m2_fix_bin_count}"
     )
     if lags.size:
         print(
@@ -259,12 +262,21 @@ def _summarize_corr(
     }
 
 
-def _normalize_corr(corr: np.ndarray, x_count: int, y_count: int) -> np.ndarray:
-    """Normalize cross-correlation by sqrt(m1_count * m2_count)."""
-    norm_factor = float(np.sqrt(float(x_count) * float(y_count)))
+def _normalize_corr(corr: np.ndarray, x_bin_count: int, y_bin_count: int) -> np.ndarray:
+    """Normalize cross-correlation by sqrt(m1_fixation_bins * m2_fixation_bins)."""
+    norm_factor = float(np.sqrt(float(x_bin_count) * float(y_bin_count)))
     if norm_factor <= 0.0:
         return np.zeros(corr.size, dtype=np.float32)
     return (np.asarray(corr, dtype=np.float64) / norm_factor).astype(np.float32)
+
+
+def _count_fixation_events(vec_bool: np.ndarray) -> int:
+    """Count contiguous fixation events (islands of 1s) in a binary vector."""
+    vec = np.asarray(vec_bool, dtype=bool)
+    if vec.size == 0:
+        return 0
+    starts = vec & ~np.r_[False, vec[:-1]]
+    return int(np.count_nonzero(starts))
 
 
 def _build_pair_result(
@@ -284,9 +296,11 @@ def _build_pair_result(
         return None
 
     lags, corr = _fft_cross_correlation(m1_vec, m2_vec, max_lag=max_lag)
-    m1_fix_count = int(np.count_nonzero(m1_vec))
-    m2_fix_count = int(np.count_nonzero(m2_vec))
-    corr_normalized = _normalize_corr(corr, m1_fix_count, m2_fix_count)
+    m1_fix_bin_count = int(np.count_nonzero(m1_vec))
+    m2_fix_bin_count = int(np.count_nonzero(m2_vec))
+    m1_fix_event_count = _count_fixation_events(m1_vec)
+    m2_fix_event_count = _count_fixation_events(m2_vec)
+    corr_normalized = _normalize_corr(corr, m1_fix_bin_count, m2_fix_bin_count)
 
     result = {
         "key1": key1,
@@ -295,8 +309,10 @@ def _build_pair_result(
         "cross_correlation": corr_normalized,
         "n_samples_m1": int(m1_vec.size),
         "n_samples_m2": int(m2_vec.size),
-        "m1_fixation_count": m1_fix_count,
-        "m2_fixation_count": m2_fix_count,
+        "m1_fixation_count": m1_fix_event_count,
+        "m2_fixation_count": m2_fix_event_count,
+        "m1_fixation_bin_count": m1_fix_bin_count,
+        "m2_fixation_bin_count": m2_fix_bin_count,
         "monkey_name_m1": m1_name,
         "monkey_name_m2": m2_name,
     }
@@ -387,6 +403,8 @@ def _build_within_session_rows(
                     "n_samples_m2": result["n_samples_m2"],
                     "m1_fixation_count": result["m1_fixation_count"],
                     "m2_fixation_count": result["m2_fixation_count"],
+                    "m1_fixation_bin_count": result["m1_fixation_bin_count"],
+                    "m2_fixation_bin_count": result["m2_fixation_bin_count"],
                     "monkey_name_m1": result["monkey_name_m1"],
                     "monkey_name_m2": result["monkey_name_m2"],
                     "cross_correlation": result["cross_correlation"],
@@ -399,6 +417,10 @@ def _build_within_session_rows(
                 metadata_by_key[key] = {
                     "monkey_name_m1": result["monkey_name_m1"],
                     "monkey_name_m2": result["monkey_name_m2"],
+                    "m1_fixation_count": result["m1_fixation_count"],
+                    "m2_fixation_count": result["m2_fixation_count"],
+                    "m1_fixation_bin_count": result["m1_fixation_bin_count"],
+                    "m2_fixation_bin_count": result["m2_fixation_bin_count"],
                 }
         return rows, metadata_by_key, lag_axis
 
@@ -423,6 +445,8 @@ def _build_within_session_rows(
                 m2_len=result["n_samples_m2"],
                 m1_fix_count=result["m1_fixation_count"],
                 m2_fix_count=result["m2_fixation_count"],
+                m1_fix_bin_count=result["m1_fixation_bin_count"],
+                m2_fix_bin_count=result["m2_fixation_bin_count"],
                 lags=lags,
                 corr=result["cross_correlation"],
             )
@@ -435,6 +459,8 @@ def _build_within_session_rows(
             "n_samples_m2": result["n_samples_m2"],
             "m1_fixation_count": result["m1_fixation_count"],
             "m2_fixation_count": result["m2_fixation_count"],
+            "m1_fixation_bin_count": result["m1_fixation_bin_count"],
+            "m2_fixation_bin_count": result["m2_fixation_bin_count"],
             "monkey_name_m1": result["monkey_name_m1"],
             "monkey_name_m2": result["monkey_name_m2"],
             "cross_correlation": result["cross_correlation"],
@@ -447,6 +473,10 @@ def _build_within_session_rows(
         metadata_by_key[key] = {
             "monkey_name_m1": result["monkey_name_m1"],
             "monkey_name_m2": result["monkey_name_m2"],
+            "m1_fixation_count": result["m1_fixation_count"],
+            "m2_fixation_count": result["m2_fixation_count"],
+            "m1_fixation_bin_count": result["m1_fixation_bin_count"],
+            "m2_fixation_bin_count": result["m2_fixation_bin_count"],
         }
 
     return rows, metadata_by_key, lag_axis
@@ -554,6 +584,8 @@ def _build_cross_session_control_rows(
                     m2_len=result["n_samples_m2"],
                     m1_fix_count=result["m1_fixation_count"],
                     m2_fix_count=result["m2_fixation_count"],
+                    m1_fix_bin_count=result["m1_fixation_bin_count"],
+                    m2_fix_bin_count=result["m2_fixation_bin_count"],
                     lags=lags,
                     corr=corr,
                 )
@@ -594,6 +626,10 @@ def _build_cross_session_control_rows(
             "session": key[1],
             "monkey_name_m1": meta.get("monkey_name_m1"),
             "monkey_name_m2": meta.get("monkey_name_m2"),
+            "m1_fixation_count": meta.get("m1_fixation_count"),
+            "m2_fixation_count": meta.get("m2_fixation_count"),
+            "m1_fixation_bin_count": meta.get("m1_fixation_bin_count"),
+            "m2_fixation_bin_count": meta.get("m2_fixation_bin_count"),
             "n_pairs": n_pairs,
             "cross_correlation_mean": mean_corr,
             "cross_correlation_std": std_corr,
