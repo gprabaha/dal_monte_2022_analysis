@@ -29,6 +29,7 @@ class FixCrossCorrelationSettings:
     output_subdir: str = "fix_cross_correlation"
     within_filename: str = "within_session_face_fix_cross_correlation.pkl"
     cross_filename: str = "cross_session_face_fix_cross_correlation.pkl"
+    lags_filename: Optional[str] = None
     max_lag: Optional[int] = 60000
     cross_pairs_max: Optional[int] = None
     cross_pairs_seed: int = 13
@@ -137,8 +138,10 @@ def _print_test_single_debug(
     settings: FixCrossCorrelationSettings,
     m1_id: tuple[str, str],
     m2_id: tuple[str, str],
-    m1_vec: np.ndarray,
-    m2_vec: np.ndarray,
+    m1_len: int,
+    m2_len: int,
+    m1_fix_count: int,
+    m2_fix_count: int,
     lags: np.ndarray,
     corr: np.ndarray,
 ) -> None:
@@ -166,8 +169,8 @@ def _print_test_single_debug(
     )
     print(
         "[test-single] vector sizes/counts: "
-        f"m1_len={m1_vec.size}, m2_len={m2_vec.size}, "
-        f"m1_fix={int(np.count_nonzero(m1_vec))}, m2_fix={int(np.count_nonzero(m2_vec))}"
+        f"m1_len={m1_len}, m2_len={m2_len}, "
+        f"m1_fix={m1_fix_count}, m2_fix={m2_fix_count}"
     )
     if lags.size:
         print(
@@ -188,46 +191,6 @@ def _print_test_single_debug(
         preview = np.array2string(corr[:10], precision=4, separator=", ")
         print(f"[test-single] corr preview (first 10): {preview}")
     print("[test-single] --------------------------------------------------\n")
-
-
-def _build_pair_row_worker(
-    args: tuple[str, Optional[int], str, tuple[str, str], tuple[str, str], object, object],
-) -> Optional[dict]:
-    """Build one within/cross-session row for a pair task."""
-    fixation_label, max_lag, mode, key1, key2, m1_path, m2_path = args
-
-    m1_vec, m1_name = _load_fixation_vector(m1_path, fixation_label)
-    if m1_vec is None or m1_vec.size == 0:
-        return None
-    m2_vec, m2_name = _load_fixation_vector(m2_path, fixation_label)
-    if m2_vec is None or m2_vec.size == 0:
-        return None
-
-    lags, corr = _fft_cross_correlation(m1_vec, m2_vec, max_lag=max_lag)
-    row = _build_result_row(
-        lags=lags,
-        corr=corr,
-        x_bool=m1_vec,
-        y_bool=m2_vec,
-        monkey_name_m1=m1_name,
-        monkey_name_m2=m2_name,
-    )
-
-    if mode == "within":
-        row.update({
-            "fixation_label": fixation_label,
-            "date": key1[0],
-            "session": key1[1],
-        })
-    else:
-        row.update({
-            "fixation_label": fixation_label,
-            "date_m1": key1[0],
-            "session_m1": key1[1],
-            "date_m2": key2[0],
-            "session_m2": key2[1],
-        })
-    return row
 
 
 def _fft_cross_correlation(
@@ -280,8 +243,6 @@ def _summarize_corr(
             "zero_lag_correlation": None,
             "peak_lag": None,
             "peak_correlation": None,
-            "peak_lag_abs": None,
-            "peak_correlation_abs": None,
         }
 
     zero_lag_corr = None
@@ -290,7 +251,6 @@ def _summarize_corr(
         zero_lag_corr = float(corr[int(zero_matches[0])])
 
     peak_idx = int(np.argmax(corr))
-
     return {
         "n_lags": int(corr.size),
         "zero_lag_correlation": zero_lag_corr,
@@ -299,225 +259,354 @@ def _summarize_corr(
     }
 
 
-def _build_result_row(
-    *,
-    lags: np.ndarray,
-    corr: np.ndarray,
-    x_bool: np.ndarray,
-    y_bool: np.ndarray,
-    monkey_name_m1: Optional[str],
-    monkey_name_m2: Optional[str],
-) -> dict:
-    """Create one output row with metadata and correlation summaries."""
-    x_count = int(np.count_nonzero(x_bool))
-    y_count = int(np.count_nonzero(y_bool))
+def _normalize_corr(corr: np.ndarray, x_count: int, y_count: int) -> np.ndarray:
+    """Normalize cross-correlation by sqrt(m1_count * m2_count)."""
     norm_factor = float(np.sqrt(float(x_count) * float(y_count)))
-    if norm_factor > 0.0:
-        corr_normalized = np.asarray(corr, dtype=np.float64) / norm_factor
-    else:
-        corr_normalized = np.zeros(corr.size, dtype=np.float64)
+    if norm_factor <= 0.0:
+        return np.zeros(corr.size, dtype=np.float32)
+    return (np.asarray(corr, dtype=np.float64) / norm_factor).astype(np.float32)
 
-    row = {
-        "fixation_label": None,
-        "n_samples_m1": int(x_bool.size),
-        "n_samples_m2": int(y_bool.size),
-        "m1_fixation_count": x_count,
-        "m2_fixation_count": y_count,
-        "monkey_name_m1": monkey_name_m1,
-        "monkey_name_m2": monkey_name_m2,
+
+def _build_pair_result(
+    fixation_label: str,
+    max_lag: Optional[int],
+    key1: tuple[str, str],
+    key2: tuple[str, str],
+    m1_path,
+    m2_path,
+) -> Optional[dict]:
+    """Build one pair result, including normalized cross-correlation and metadata."""
+    m1_vec, m1_name = _load_fixation_vector(m1_path, fixation_label)
+    if m1_vec is None or m1_vec.size == 0:
+        return None
+    m2_vec, m2_name = _load_fixation_vector(m2_path, fixation_label)
+    if m2_vec is None or m2_vec.size == 0:
+        return None
+
+    lags, corr = _fft_cross_correlation(m1_vec, m2_vec, max_lag=max_lag)
+    m1_fix_count = int(np.count_nonzero(m1_vec))
+    m2_fix_count = int(np.count_nonzero(m2_vec))
+    corr_normalized = _normalize_corr(corr, m1_fix_count, m2_fix_count)
+
+    result = {
+        "key1": key1,
+        "key2": key2,
         "lags": lags,
         "cross_correlation": corr_normalized,
+        "n_samples_m1": int(m1_vec.size),
+        "n_samples_m2": int(m2_vec.size),
+        "m1_fixation_count": m1_fix_count,
+        "m2_fixation_count": m2_fix_count,
+        "monkey_name_m1": m1_name,
+        "monkey_name_m2": m2_name,
     }
-    row.update(_summarize_corr(lags, corr_normalized))
-    return row
+    result.update(_summarize_corr(lags, corr_normalized))
+    return result
+
+
+def _build_pair_result_worker(
+    args: tuple[str, Optional[int], tuple[str, str], tuple[str, str], object, object],
+) -> Optional[dict]:
+    """Pool worker wrapper for computing one pair result."""
+    fixation_label, max_lag, key1, key2, m1_path, m2_path = args
+    return _build_pair_result(
+        fixation_label=fixation_label,
+        max_lag=max_lag,
+        key1=key1,
+        key2=key2,
+        m1_path=m1_path,
+        m2_path=m2_path,
+    )
+
+
+def _assert_lags_match(expected_lags: np.ndarray, lags: np.ndarray) -> None:
+    """Validate that all results share the same lag axis."""
+    if expected_lags.shape != lags.shape or not np.array_equal(expected_lags, lags):
+        raise RuntimeError(
+            "Encountered mismatched lag vectors across pairs. "
+            "Use a fixed max_lag (e.g., 60000) so lags are consistent."
+        )
 
 
 def _build_within_session_rows(
     settings: FixCrossCorrelationSettings,
     m1_paths: dict,
     m2_paths: dict,
-) -> list[dict]:
-    """Build within-session cross-correlation rows."""
+) -> tuple[list[dict], dict[tuple[str, str], dict], Optional[np.ndarray]]:
+    """Build within-session rows and return per-session metadata + lag axis."""
     rows: list[dict] = []
-    shared_keys = sorted(set(m1_paths).intersection(m2_paths))
+    metadata_by_key: dict[tuple[str, str], dict] = {}
+    lag_axis: Optional[np.ndarray] = None
 
+    shared_keys = sorted(set(m1_paths).intersection(m2_paths))
     if settings.test_single and shared_keys:
         shared_keys = [random.choice(shared_keys)]
+
+    tasks = [
+        (
+            settings.fixation_label,
+            settings.max_lag,
+            key,
+            key,
+            m1_paths[key],
+            m2_paths[key],
+        )
+        for key in shared_keys
+    ]
 
     use_parallel = (
         settings.parallelize_across_crosscorr_pairs
         and not settings.test_single
-        and len(shared_keys) > 1
+        and len(tasks) > 1
     )
+
     if use_parallel:
         n_proc = get_n_processes(max_procs=32)
-        tasks = [
-            (
-                settings.fixation_label,
-                settings.max_lag,
-                "within",
-                key,
-                key,
-                m1_paths[key],
-                m2_paths[key],
-            )
-            for key in shared_keys
-        ]
         with Pool(processes=n_proc) as pool:
-            for row in tqdm(
-                pool.imap(_build_pair_row_worker, tasks),
+            iterator = pool.imap(_build_pair_result_worker, tasks)
+            for result in tqdm(
+                iterator,
                 total=len(tasks),
                 desc=f"Within-session xcorr ({n_proc} workers)",
                 unit="session",
             ):
-                if row is not None:
-                    rows.append(row)
-        return rows
+                if result is None:
+                    continue
+                lags = result["lags"]
+                if lag_axis is None:
+                    lag_axis = lags
+                else:
+                    _assert_lags_match(lag_axis, lags)
 
-    for date, session in tqdm(shared_keys, desc="Within-session xcorr", unit="session"):
-        key = (date, session)
-        m1_vec, m1_name = _load_fixation_vector(m1_paths[key], settings.fixation_label)
-        m2_vec, m2_name = _load_fixation_vector(m2_paths[key], settings.fixation_label)
-        if m1_vec is None or m2_vec is None:
-            continue
-        if m1_vec.size == 0 or m2_vec.size == 0:
-            continue
+                key = result["key1"]
+                row = {
+                    "fixation_label": settings.fixation_label,
+                    "date": key[0],
+                    "session": key[1],
+                    "n_samples_m1": result["n_samples_m1"],
+                    "n_samples_m2": result["n_samples_m2"],
+                    "m1_fixation_count": result["m1_fixation_count"],
+                    "m2_fixation_count": result["m2_fixation_count"],
+                    "monkey_name_m1": result["monkey_name_m1"],
+                    "monkey_name_m2": result["monkey_name_m2"],
+                    "cross_correlation": result["cross_correlation"],
+                    "n_lags": result["n_lags"],
+                    "zero_lag_correlation": result["zero_lag_correlation"],
+                    "peak_lag": result["peak_lag"],
+                    "peak_correlation": result["peak_correlation"],
+                }
+                rows.append(row)
+                metadata_by_key[key] = {
+                    "monkey_name_m1": result["monkey_name_m1"],
+                    "monkey_name_m2": result["monkey_name_m2"],
+                }
+        return rows, metadata_by_key, lag_axis
 
-        lags, corr = _fft_cross_correlation(m1_vec, m2_vec, max_lag=settings.max_lag)
-        row = _build_result_row(
-            lags=lags,
-            corr=corr,
-            x_bool=m1_vec,
-            y_bool=m2_vec,
-            monkey_name_m1=m1_name,
-            monkey_name_m2=m2_name,
-        )
+    for task in tqdm(tasks, desc="Within-session xcorr", unit="session"):
+        result = _build_pair_result_worker(task)
+        if result is None:
+            continue
+        lags = result["lags"]
+        if lag_axis is None:
+            lag_axis = lags
+        else:
+            _assert_lags_match(lag_axis, lags)
+
+        key = result["key1"]
         if settings.test_single:
             _print_test_single_debug(
                 mode="within-session",
                 settings=settings,
                 m1_id=key,
                 m2_id=key,
-                m1_vec=m1_vec,
-                m2_vec=m2_vec,
+                m1_len=result["n_samples_m1"],
+                m2_len=result["n_samples_m2"],
+                m1_fix_count=result["m1_fixation_count"],
+                m2_fix_count=result["m2_fixation_count"],
                 lags=lags,
-                corr=row["cross_correlation"],
+                corr=result["cross_correlation"],
             )
-        row.update({
+
+        row = {
             "fixation_label": settings.fixation_label,
-            "date": date,
-            "session": session,
-        })
+            "date": key[0],
+            "session": key[1],
+            "n_samples_m1": result["n_samples_m1"],
+            "n_samples_m2": result["n_samples_m2"],
+            "m1_fixation_count": result["m1_fixation_count"],
+            "m2_fixation_count": result["m2_fixation_count"],
+            "monkey_name_m1": result["monkey_name_m1"],
+            "monkey_name_m2": result["monkey_name_m2"],
+            "cross_correlation": result["cross_correlation"],
+            "n_lags": result["n_lags"],
+            "zero_lag_correlation": result["zero_lag_correlation"],
+            "peak_lag": result["peak_lag"],
+            "peak_correlation": result["peak_correlation"],
+        }
         rows.append(row)
+        metadata_by_key[key] = {
+            "monkey_name_m1": result["monkey_name_m1"],
+            "monkey_name_m2": result["monkey_name_m2"],
+        }
 
-    return rows
+    return rows, metadata_by_key, lag_axis
 
 
-def _build_cross_session_rows(
+def _build_cross_session_control_rows(
     settings: FixCrossCorrelationSettings,
     m1_paths: dict,
     m2_paths: dict,
-) -> list[dict]:
-    """Build cross-session cross-correlation rows."""
-    rows: list[dict] = []
+    within_keys: list[tuple[str, str]],
+    metadata_by_key: dict[tuple[str, str], dict],
+    lag_axis: Optional[np.ndarray],
+) -> tuple[list[dict], Optional[np.ndarray]]:
+    """Build cross-session control rows aggregated per within-session key.
+
+    For each within-session key K, aggregates all cross-session pairs where
+    K appears as m1 side OR m2 side, and stores mean/std over those pairs.
+    """
     m1_keys = sorted(m1_paths)
     m2_keys = sorted(m2_paths)
-
+    within_key_set = set(within_keys)
     pairs = _build_cross_pairs(settings, m1_keys, m2_keys)
+
     if settings.test_single and pairs:
         pairs = [random.choice(pairs)]
+
+    tasks = [
+        (
+            settings.fixation_label,
+            settings.max_lag,
+            key1,
+            key2,
+            m1_paths[key1],
+            m2_paths[key2],
+        )
+        for key1, key2 in pairs
+    ]
+
+    accum: dict[tuple[str, str], dict] = {}
+
+    def _update_accum(key: tuple[str, str], corr: np.ndarray) -> None:
+        if key not in accum:
+            accum[key] = {
+                "sum": np.zeros(corr.size, dtype=np.float64),
+                "sum_sq": np.zeros(corr.size, dtype=np.float64),
+                "n_pairs": 0,
+            }
+        accum[key]["sum"] += corr
+        accum[key]["sum_sq"] += corr * corr
+        accum[key]["n_pairs"] += 1
 
     use_parallel = (
         settings.parallelize_across_crosscorr_pairs
         and not settings.test_single
-        and len(pairs) > 1
+        and len(tasks) > 1
     )
+
     if use_parallel:
         n_proc = get_n_processes(max_procs=32)
-        tasks = [
-            (
-                settings.fixation_label,
-                settings.max_lag,
-                "cross",
-                key1,
-                key2,
-                m1_paths[key1],
-                m2_paths[key2],
-            )
-            for key1, key2 in pairs
-        ]
         with Pool(processes=n_proc) as pool:
-            for row in tqdm(
-                pool.imap(_build_pair_row_worker, tasks),
+            iterator = pool.imap(_build_pair_result_worker, tasks)
+            for result in tqdm(
+                iterator,
                 total=len(tasks),
                 desc=f"Cross-session xcorr ({n_proc} workers)",
                 unit="pair",
             ):
-                if row is not None:
-                    rows.append(row)
-        return rows
+                if result is None:
+                    continue
+                lags = result["lags"]
+                if lag_axis is None:
+                    lag_axis = lags
+                else:
+                    _assert_lags_match(lag_axis, lags)
 
-    m1_cache: dict[tuple[str, str], np.ndarray] = {}
-    m2_cache: dict[tuple[str, str], np.ndarray] = {}
-    m1_name_cache: dict[tuple[str, str], Optional[str]] = {}
-    m2_name_cache: dict[tuple[str, str], Optional[str]] = {}
-
-    for (date1, session1), (date2, session2) in tqdm(
-        pairs,
-        desc="Cross-session xcorr",
-        unit="pair",
-    ):
-        key1 = (date1, session1)
-        key2 = (date2, session2)
-
-        if key1 not in m1_cache:
-            m1_vec, m1_name = _load_fixation_vector(m1_paths[key1], settings.fixation_label)
-            if m1_vec is None:
+                key1 = result["key1"]
+                key2 = result["key2"]
+                corr = result["cross_correlation"]
+                if key1 in within_key_set:
+                    _update_accum(key1, corr)
+                if key2 in within_key_set and key2 != key1:
+                    _update_accum(key2, corr)
+    else:
+        for task in tqdm(tasks, desc="Cross-session xcorr", unit="pair"):
+            result = _build_pair_result_worker(task)
+            if result is None:
                 continue
-            m1_cache[key1] = m1_vec
-            m1_name_cache[key1] = m1_name
-        if key2 not in m2_cache:
-            m2_vec, m2_name = _load_fixation_vector(m2_paths[key2], settings.fixation_label)
-            if m2_vec is None:
-                continue
-            m2_cache[key2] = m2_vec
-            m2_name_cache[key2] = m2_name
+            lags = result["lags"]
+            if lag_axis is None:
+                lag_axis = lags
+            else:
+                _assert_lags_match(lag_axis, lags)
 
-        m1_vec = m1_cache[key1]
-        m2_vec = m2_cache[key2]
-        if m1_vec.size == 0 or m2_vec.size == 0:
-            continue
+            key1 = result["key1"]
+            key2 = result["key2"]
+            corr = result["cross_correlation"]
 
-        lags, corr = _fft_cross_correlation(m1_vec, m2_vec, max_lag=settings.max_lag)
-        row = _build_result_row(
-            lags=lags,
-            corr=corr,
-            x_bool=m1_vec,
-            y_bool=m2_vec,
-            monkey_name_m1=m1_name_cache.get(key1),
-            monkey_name_m2=m2_name_cache.get(key2),
-        )
-        if settings.test_single:
-            _print_test_single_debug(
-                mode="cross-session",
-                settings=settings,
-                m1_id=key1,
-                m2_id=key2,
-                m1_vec=m1_vec,
-                m2_vec=m2_vec,
-                lags=lags,
-                corr=row["cross_correlation"],
-            )
-        row.update({
+            if settings.test_single:
+                _print_test_single_debug(
+                    mode="cross-session",
+                    settings=settings,
+                    m1_id=key1,
+                    m2_id=key2,
+                    m1_len=result["n_samples_m1"],
+                    m2_len=result["n_samples_m2"],
+                    m1_fix_count=result["m1_fixation_count"],
+                    m2_fix_count=result["m2_fixation_count"],
+                    lags=lags,
+                    corr=corr,
+                )
+
+            if key1 in within_key_set:
+                _update_accum(key1, corr)
+            if key2 in within_key_set and key2 != key1:
+                _update_accum(key2, corr)
+
+    rows: list[dict] = []
+    if lag_axis is None:
+        return rows, lag_axis
+
+    for key in within_keys:
+        meta = metadata_by_key.get(key, {})
+        stats = accum.get(key)
+        if stats is None or stats["n_pairs"] == 0:
+            mean_corr = np.full(lag_axis.size, np.nan, dtype=np.float32)
+            std_corr = np.full(lag_axis.size, np.nan, dtype=np.float32)
+            n_pairs = 0
+        else:
+            n_pairs = int(stats["n_pairs"])
+            mean = stats["sum"] / float(n_pairs)
+            if n_pairs > 1:
+                var = (stats["sum_sq"] - (stats["sum"] * stats["sum"]) / float(n_pairs)) / float(
+                    n_pairs - 1
+                )
+                var = np.maximum(var, 0.0)
+                std = np.sqrt(var)
+            else:
+                std = np.zeros_like(mean)
+            mean_corr = mean.astype(np.float32)
+            std_corr = std.astype(np.float32)
+
+        rows.append({
             "fixation_label": settings.fixation_label,
-            "date_m1": date1,
-            "session_m1": session1,
-            "date_m2": date2,
-            "session_m2": session2,
+            "date": key[0],
+            "session": key[1],
+            "monkey_name_m1": meta.get("monkey_name_m1"),
+            "monkey_name_m2": meta.get("monkey_name_m2"),
+            "n_pairs": n_pairs,
+            "cross_correlation_mean": mean_corr,
+            "cross_correlation_std": std_corr,
         })
-        rows.append(row)
 
-    return rows
+    return rows, lag_axis
+
+
+def _resolve_lags_filename(settings: FixCrossCorrelationSettings) -> str:
+    """Return lag-axis output filename."""
+    if settings.lags_filename:
+        return settings.lags_filename
+    return f"{settings.fixation_label}_crosscorrelation_lags.pkl"
 
 
 def run_fix_cross_correlation_analysis(
@@ -525,7 +614,13 @@ def run_fix_cross_correlation_analysis(
     *,
     compute_cross: bool = True,
 ) -> tuple[pd.DataFrame, Optional[pd.DataFrame]]:
-    """Run fixation cross-correlation analysis and persist outputs."""
+    """Run fixation cross-correlation analysis and persist outputs.
+
+    Output files:
+    - within_filename: per-session within-session cross-correlation vectors.
+    - cross_filename: per-session aggregated cross-session controls (mean/std/n_pairs).
+    - <fixation_label>_crosscorrelation_lags.pkl (or settings.lags_filename): shared lag axis.
+    """
     cfg = load_dataset_config(settings.cfg_path)
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
 
@@ -535,12 +630,20 @@ def run_fix_cross_correlation_analysis(
             f"Found m1={len(m1_paths)} m2={len(m2_paths)}."
         )
 
-    within_rows = _build_within_session_rows(settings, m1_paths, m2_paths)
+    within_rows, metadata_by_key, lag_axis = _build_within_session_rows(settings, m1_paths, m2_paths)
     within_df = pd.DataFrame.from_records(within_rows)
 
     cross_df = None
     if compute_cross:
-        cross_rows = _build_cross_session_rows(settings, m1_paths, m2_paths)
+        within_keys = sorted(metadata_by_key)
+        cross_rows, lag_axis = _build_cross_session_control_rows(
+            settings=settings,
+            m1_paths=m1_paths,
+            m2_paths=m2_paths,
+            within_keys=within_keys,
+            metadata_by_key=metadata_by_key,
+            lag_axis=lag_axis,
+        )
         cross_df = pd.DataFrame.from_records(cross_rows)
 
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
@@ -552,5 +655,10 @@ def run_fix_cross_correlation_analysis(
     if cross_df is not None:
         cross_path = out_dir / settings.cross_filename
         cross_df.to_pickle(cross_path)
+
+    if lag_axis is not None:
+        lags_path = out_dir / _resolve_lags_filename(settings)
+        with open(lags_path, "wb") as f:
+            pickle.dump(lag_axis, f)
 
     return within_df, cross_df

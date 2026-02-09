@@ -44,6 +44,7 @@ def main():
             "cross_filename",
             "cross_session_face_fix_cross_correlation.pkl",
         ),
+        lags_filename=cfg.get("lags_filename"),
         max_lag=cfg.get("max_lag", 60000),
         cross_pairs_max=cfg.get("cross_pairs_max"),
         cross_pairs_seed=cfg.get("cross_pairs_seed", 13),

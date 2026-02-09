@@ -5,7 +5,12 @@ input_modality: fixation_binary_vectors
 fixation_label: face
 output_subdir: fix_cross_correlation
 within_filename: within_session_face_fix_cross_correlation.pkl
+# Cross output now stores per-session cross-control summaries (mean/std/n_pairs),
+# not all raw n*(n-1) pair traces.
 cross_filename: cross_session_face_fix_cross_correlation.pkl
+# Optional override for the shared lag-axis file. If null, defaults to:
+# "<fixation_label>_crosscorrelation_lags.pkl"
+lags_filename: null
 
 # Max absolute lag (in samples) to keep in the saved cross-correlation arrays.
 # 1 minute at 1 kHz => 60,000 samples on each side, so up to 120,001 lags total
