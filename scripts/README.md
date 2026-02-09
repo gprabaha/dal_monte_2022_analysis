@@ -1,10 +1,11 @@
 # scripts
 
-Scripts are thin wrappers around package functions. They provide quick entry points
-for batch processing without hard-coding too much logic in the script itself.
+Thin CLI wrappers over package logic in `src/dal_monte_2022_analysis/`.
 
-If a script grows beyond a few lines, move the logic into `src/` and keep the script
-as a simple CLI shim.
+Subdirectories:
+- `scripts/preprocessing/`: raw extraction, cleaning, and quick verification.
+- `scripts/features/`: fixation/saccade detection and downstream feature products.
+- `scripts/analysis/`: fixation probability and cross-correlation analyses.
+- `scripts/plotting/`: figure generation from analysis outputs.
 
-Plotting scripts live in `scripts/plotting/` and use shared styling from
-`configs/plotting.yaml`.
+Design rule: keep orchestration and argument parsing here, keep data logic in `src/`.

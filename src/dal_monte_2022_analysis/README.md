@@ -4,7 +4,10 @@ This package holds the reusable core of the project:
 - `config/` loads dataset configuration and normalizes paths.
 - `data/` defines typed data containers, cleaning utilities, and a loader in `data/load.py`.
 - `io/` handles indexing, extraction, and cleaning pipelines.
-- `utils/` provides small helpers shared across modules.
+- `features/` builds fixations, fixation vectors/density, joint density, and interactive periods.
+- `analysis/` computes fixation probability and cross-correlation outputs.
+- `plotting/` renders analysis figures from saved outputs.
+- `utils/` provides shared helpers (paths, parallelism, fixation detection, and HPC job helpers).
 
 Design philosophy
 - Keep data objects small and serializable (pickle-friendly).

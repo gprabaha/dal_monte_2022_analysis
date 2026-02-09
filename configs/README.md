@@ -1,28 +1,36 @@
 # configs
 
-This folder contains dataset-level configuration files. The intent is to keep all
-paths and modality definitions in one place so that scripts stay thin and reusable.
+Configuration files for the full pipeline.
 
-`dataset.yaml` defines:
-- `raw_data_root` and `processed_data_root`
-- `agents` present in the dataset
-- `modalities` with their folder names and file patterns
-- `processed_data_layout` for how outputs are organized on disk
+## Core dataset config
 
-With the current config, processed outputs land under
-`../local_data/dal_monte_2022/date=<date>/session=<session>/<modality>/`.
+- `dataset.yaml`
+  Defines dataset roots, agents, modality discovery patterns, and processed output layout.
 
-When adding new modalities or changing file naming conventions, update this file first.
+With current settings, processed outputs are written under:
+`../local_data/dal_monte_2022/data_files/date=<date>/session=<session>/<modality>/`
 
-Other configs in this folder:
-- `gaze_event_detection.yaml` for fixation/saccade detection.
-- `fixation_binary_vectors.yaml` for building fixation binary vectors aligned to the
-  neural timeline.
-- `fixation_density.yaml` for building smoothed fixation density vectors.
-- `joint_face_fixation_density.yaml` for joint face fixation density analysis.
-- `interactive_periods.yaml` for interactive/non-interactive period detection.
-- `face_fixation_probability.yaml` for within- vs cross-session face fixation probability.
-- `out_of_roi_fixation_probability.yaml` for within- vs cross-session out-of-ROI fixation probability.
-- `face_fix_cross_correlation.yaml` for within- vs cross-session face fixation cross-correlation.
-- `hpc_fix_cross_correlation_shuffle.yaml` for dSQ array-job submission of per-pair shuffled cross-correlation.
-- `plotting.yaml` for global plotting style settings.
+## Feature configs
+
+- `gaze_event_detection.yaml`
+- `fixation_binary_vectors.yaml`
+- `fixation_density.yaml`
+- `joint_face_fixation_density.yaml`
+- `interactive_periods.yaml`
+
+## Analysis configs
+
+- `face_fixation_probability.yaml`
+- `out_of_roi_fixation_probability.yaml`
+- `face_fix_cross_correlation.yaml`
+
+## HPC configs
+
+- `hpc_gaze_event_detection.yaml`
+- `hpc_fix_cross_correlation_shuffle.yaml`
+
+## Plotting config
+
+- `plotting.yaml`
+
+When adding a new modality or output product, start by updating `dataset.yaml` and the relevant task-specific config in this directory.
