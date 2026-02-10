@@ -38,6 +38,10 @@ def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
             "leader_follower_total_summary_filename",
             "total_summary_out_of_roi_fix_crosscorr_leader_follower.csv",
         ),
+        global_summary_filename=cfg.get(
+            "leader_follower_global_summary_filename",
+            "global_summary_out_of_roi_fix_crosscorr_leader_follower.csv",
+        ),
         tie_epsilon=float(cfg.get("leader_follower_tie_epsilon", 0.0)),
     )
 
