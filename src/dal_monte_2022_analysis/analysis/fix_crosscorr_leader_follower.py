@@ -53,12 +53,19 @@ class FixCrossCorrLeaderFollowerSettings:
     monkey_role_pupil_summary_filename: str = (
         "summary_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv"
     )
+    monkey_role_fixation_count_session_output_filename: str = (
+        "within_session_face_fix_crosscorr_leader_follower_fixation_count_by_monkey_role.csv"
+    )
+    monkey_role_fixation_count_summary_filename: str = (
+        "summary_face_fix_crosscorr_leader_follower_fixation_count_by_monkey_role.csv"
+    )
     monkey_role_fixation_duration_session_output_filename: str = (
         "within_session_face_fix_crosscorr_leader_follower_fixation_duration_by_monkey_role.csv"
     )
     monkey_role_fixation_duration_summary_filename: str = (
         "summary_face_fix_crosscorr_leader_follower_fixation_duration_by_monkey_role.csv"
     )
+    property_use_all_fixations: bool = True
     pupil_roi_keywords: Optional[list[str]] = None
     pupil_test_alpha: float = 0.05
     pupil_parallelize_sessions: bool = True
@@ -146,6 +153,31 @@ MONKEY_ROLE_PUPIL_SUMMARY_COLUMNS = [
     "n_sessions_as_follower",
     "n_leader_samples",
     "n_follower_samples",
+    "lead_mean",
+    "follow_mean",
+    "mean_diff",
+    "p",
+    "sig",
+    "higher",
+]
+MONKEY_ROLE_FIXATION_COUNT_SESSION_COLUMNS = [
+    "fixation_label",
+    "date",
+    "session",
+    "pair_key",
+    "monkey_name",
+    "role",
+    "fixation_count",
+]
+MONKEY_ROLE_FIXATION_COUNT_SUMMARY_COLUMNS = [
+    "fixation_label",
+    "monkey_name",
+    "n_sessions_as_leader",
+    "n_sessions_as_follower",
+    "n_leader_sessions_compared",
+    "n_follower_sessions_compared",
+    "leader_fixation_count_total",
+    "follower_fixation_count_total",
     "lead_mean",
     "follow_mean",
     "mean_diff",
@@ -286,8 +318,12 @@ def _location_matches_keywords(location_labels: list[str], keywords: tuple[str, 
     return False
 
 
-def _resolve_pupil_roi_keywords(settings: FixCrossCorrLeaderFollowerSettings) -> tuple[str, ...]:
-    """Resolve ROI keywords used for pupil-during-fixation property extraction."""
+def _resolve_pupil_roi_keywords(
+    settings: FixCrossCorrLeaderFollowerSettings,
+) -> Optional[tuple[str, ...]]:
+    """Resolve ROI keywords used for property extraction (or None for all fixations)."""
+    if bool(settings.property_use_all_fixations):
+        return None
     if settings.pupil_roi_keywords:
         return tuple(str(val).lower() for val in settings.pupil_roi_keywords)
     keywords = DEFAULT_ROI_KEYWORDS_BY_FIXATION_LABEL.get(str(settings.fixation_label).lower())
@@ -350,7 +386,7 @@ def _extract_pupil_during_fixations(
     agent: str,
     fixations_modality: str,
     pupil_modality: str,
-    roi_keywords: tuple[str, ...],
+    roi_keywords: Optional[tuple[str, ...]],
     fix_cache: dict[tuple[str, str, str], Optional[pd.DataFrame]],
     pupil_cache: dict[tuple[str, str, str], np.ndarray],
 ) -> np.ndarray:
@@ -383,7 +419,7 @@ def _extract_pupil_during_fixations(
     segments: list[np.ndarray] = []
     for _, fix_row in fix_df.iterrows():
         locations = _coerce_location_labels(fix_row.get("location"))
-        if not _location_matches_keywords(locations, roi_keywords):
+        if roi_keywords is not None and not _location_matches_keywords(locations, roi_keywords):
             continue
         start = pd.to_numeric(fix_row.get("start"), errors="coerce")
         stop = pd.to_numeric(fix_row.get("stop"), errors="coerce")
@@ -414,10 +450,10 @@ def _extract_fixation_duration_bins(
     session: str,
     agent: str,
     fixations_modality: str,
-    roi_keywords: tuple[str, ...],
+    roi_keywords: Optional[tuple[str, ...]],
     fix_cache: dict[tuple[str, str, str], Optional[pd.DataFrame]],
 ) -> int:
-    """Extract total fixation duration in bins for ROI-matching fixations."""
+    """Extract total fixation duration in bins for matching (or all) fixations."""
     key = (str(date), str(session), str(agent))
     row = {"date": str(date), "session": str(session)}
     if key not in fix_cache:
@@ -437,7 +473,7 @@ def _extract_fixation_duration_bins(
     total_bins = 0
     for _, fix_row in fix_df.iterrows():
         locations = _coerce_location_labels(fix_row.get("location"))
-        if not _location_matches_keywords(locations, roi_keywords):
+        if roi_keywords is not None and not _location_matches_keywords(locations, roi_keywords):
             continue
         start = pd.to_numeric(fix_row.get("start"), errors="coerce")
         stop = pd.to_numeric(fix_row.get("stop"), errors="coerce")
@@ -454,12 +490,49 @@ def _extract_fixation_duration_bins(
     return int(total_bins)
 
 
+def _extract_fixation_count(
+    *,
+    cfg: dict,
+    date: str,
+    session: str,
+    agent: str,
+    fixations_modality: str,
+    roi_keywords: Optional[tuple[str, ...]],
+    fix_cache: dict[tuple[str, str, str], Optional[pd.DataFrame]],
+) -> int:
+    """Extract fixation count for matching (or all) fixations."""
+    key = (str(date), str(session), str(agent))
+    row = {"date": str(date), "session": str(session)}
+    if key not in fix_cache:
+        fix_path = build_processed_data_path(cfg, row, fixations_modality, agent)
+        if fix_path.exists():
+            obj = _load_pickle(fix_path)
+            fix_cache[key] = obj if isinstance(obj, pd.DataFrame) else None
+        else:
+            fix_cache[key] = None
+
+    fix_df = fix_cache[key]
+    if fix_df is None or fix_df.empty:
+        return 0
+    if "location" not in fix_df.columns:
+        return 0
+    if roi_keywords is None:
+        return int(len(fix_df))
+
+    n_fix = 0
+    for _, fix_row in fix_df.iterrows():
+        locations = _coerce_location_labels(fix_row.get("location"))
+        if _location_matches_keywords(locations, roi_keywords):
+            n_fix += 1
+    return int(n_fix)
+
+
 def _build_single_session_pupil_property_row(
     session_row: dict,
     *,
     cfg: dict,
     settings: FixCrossCorrLeaderFollowerSettings,
-    roi_keywords: tuple[str, ...],
+    roi_keywords: Optional[tuple[str, ...]],
 ) -> dict:
     """Build one session-level pupil property row."""
     date = str(session_row["date"])
@@ -798,6 +871,147 @@ def _summarize_monkey_role_pupil(
 
     out = pd.DataFrame.from_records(rows).sort_values(["monkey_name"]).reset_index(drop=True)
     return out[MONKEY_ROLE_PUPIL_SUMMARY_COLUMNS]
+
+
+def _build_monkey_role_fixation_count_session_table(
+    *,
+    cfg: dict,
+    settings: FixCrossCorrLeaderFollowerSettings,
+    session_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build per-session fixation-count rows per monkey-role (leader/follower)."""
+    if session_df.empty:
+        return pd.DataFrame(columns=MONKEY_ROLE_FIXATION_COUNT_SESSION_COLUMNS)
+
+    roi_keywords = _resolve_pupil_roi_keywords(settings)
+    fix_cache: dict[tuple[str, str, str], Optional[pd.DataFrame]] = {}
+    rows: list[dict] = []
+    for _, row in session_df.iterrows():
+        date = str(row["date"])
+        session = str(row["session"])
+        leader_agent = str(row.get("leader_agent"))
+        follower_agent = str(row.get("follower_agent"))
+        m1_count = _extract_fixation_count(
+            cfg=cfg,
+            date=date,
+            session=session,
+            agent="m1",
+            fixations_modality=settings.fixations_modality,
+            roi_keywords=roi_keywords,
+            fix_cache=fix_cache,
+        )
+        m2_count = _extract_fixation_count(
+            cfg=cfg,
+            date=date,
+            session=session,
+            agent="m2",
+            fixations_modality=settings.fixations_modality,
+            roi_keywords=roi_keywords,
+            fix_cache=fix_cache,
+        )
+
+        if leader_agent == "m1":
+            leader_monkey = row["monkey_name_m1"]
+            leader_fixation_count = int(m1_count)
+        elif leader_agent == "m2":
+            leader_monkey = row["monkey_name_m2"]
+            leader_fixation_count = int(m2_count)
+        else:
+            leader_monkey = None
+            leader_fixation_count = np.nan
+
+        if follower_agent == "m1":
+            follower_monkey = row["monkey_name_m1"]
+            follower_fixation_count = int(m1_count)
+        elif follower_agent == "m2":
+            follower_monkey = row["monkey_name_m2"]
+            follower_fixation_count = int(m2_count)
+        else:
+            follower_monkey = None
+            follower_fixation_count = np.nan
+
+        for role, monkey_name, fixation_count in (
+            ("leader", leader_monkey, leader_fixation_count),
+            ("follower", follower_monkey, follower_fixation_count),
+        ):
+            if monkey_name is None:
+                continue
+            rows.append(
+                {
+                    "fixation_label": row["fixation_label"],
+                    "date": date,
+                    "session": session,
+                    "pair_key": row["pair_key"],
+                    "monkey_name": monkey_name,
+                    "role": role,
+                    "fixation_count": fixation_count,
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(columns=MONKEY_ROLE_FIXATION_COUNT_SESSION_COLUMNS)
+    out = pd.DataFrame.from_records(rows).sort_values(
+        ["monkey_name", "date", "session", "role"]
+    ).reset_index(drop=True)
+    return out
+
+
+def _summarize_monkey_role_fixation_count(
+    monkey_role_fixation_count_df: pd.DataFrame,
+    *,
+    alpha: float,
+) -> pd.DataFrame:
+    """Compare, for each monkey, fixation count as leader vs follower."""
+    if monkey_role_fixation_count_df.empty:
+        return pd.DataFrame(columns=MONKEY_ROLE_FIXATION_COUNT_SUMMARY_COLUMNS)
+
+    rows: list[dict] = []
+    group_cols = ["fixation_label", "monkey_name"]
+    for group_values, group_df in monkey_role_fixation_count_df.groupby(group_cols, dropna=False, sort=False):
+        if not isinstance(group_values, tuple):
+            group_values = (group_values,)
+        fixation_label, monkey_name = group_values
+
+        leader_rows = group_df.loc[group_df["role"] == "leader"]
+        follower_rows = group_df.loc[group_df["role"] == "follower"]
+        leader_values = pd.to_numeric(leader_rows["fixation_count"], errors="coerce").to_numpy(dtype=np.float64)
+        follower_values = pd.to_numeric(
+            follower_rows["fixation_count"],
+            errors="coerce",
+        ).to_numpy(dtype=np.float64)
+        leader_values = leader_values[np.isfinite(leader_values)]
+        follower_values = follower_values[np.isfinite(follower_values)]
+        compare = _compare_pupil_samples(
+            leader_values,
+            follower_values,
+            alpha=alpha,
+        )
+
+        rows.append(
+            {
+                "fixation_label": fixation_label,
+                "monkey_name": monkey_name,
+                "n_sessions_as_leader": int(len(leader_rows)),
+                "n_sessions_as_follower": int(len(follower_rows)),
+                "n_leader_sessions_compared": int(compare["n_lead"]),
+                "n_follower_sessions_compared": int(compare["n_follow"]),
+                "leader_fixation_count_total": float(np.sum(leader_values))
+                if leader_values.size > 0
+                else 0.0,
+                "follower_fixation_count_total": float(np.sum(follower_values))
+                if follower_values.size > 0
+                else 0.0,
+                "lead_mean": compare["lead_mean"],
+                "follow_mean": compare["follow_mean"],
+                "mean_diff": compare["mean_diff"],
+                "p": compare["p"],
+                "sig": compare["sig"],
+                "higher": compare["higher"],
+            }
+        )
+
+    out = pd.DataFrame.from_records(rows).sort_values(["monkey_name"]).reset_index(drop=True)
+    return out[MONKEY_ROLE_FIXATION_COUNT_SUMMARY_COLUMNS]
 
 
 def _build_monkey_role_fixation_duration_session_table(
@@ -1222,7 +1436,7 @@ def _print_pupil_property_summaries(
     """Print pupil-size-during-fixation property summaries from leader/follower labels."""
     print("\n[leader-follower] -----------------------------------------------")
     print(f"[leader-follower] fixation_label={fixation_label}")
-    print("[leader-follower] Pupil properties during ROI fixations")
+    print("[leader-follower] Pupil properties during fixations")
     print("[leader-follower] -----------------------------------------------")
     print(f"[leader-follower] pupil session rows: {len(pupil_session_df)}")
 
@@ -1294,6 +1508,20 @@ def _print_monkey_role_fixation_duration_summary(
     print("[leader-follower] -----------------------------------------------\n")
 
 
+def _print_monkey_role_fixation_count_summary(
+    monkey_role_fixation_count_summary_df: pd.DataFrame,
+) -> None:
+    """Print monkey-level fixation-count comparison by role."""
+    print("\n[leader-follower] -----------------------------------------------")
+    print("[leader-follower] Monkey-level fixation count by role (leader vs follower)")
+    print("[leader-follower] -----------------------------------------------")
+    if monkey_role_fixation_count_summary_df.empty:
+        print("[leader-follower] No monkey-level fixation-count rows found.")
+    else:
+        print(monkey_role_fixation_count_summary_df.to_string(index=False))
+    print("[leader-follower] -----------------------------------------------\n")
+
+
 def run_fix_crosscorr_leader_follower_analysis(
     settings: FixCrossCorrLeaderFollowerSettings,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -1332,6 +1560,15 @@ def run_fix_crosscorr_leader_follower_analysis(
         monkey_role_session_df,
         alpha=settings.pupil_test_alpha,
     )
+    monkey_role_fixation_count_session_df = _build_monkey_role_fixation_count_session_table(
+        cfg=cfg,
+        settings=settings,
+        session_df=session_df,
+    )
+    monkey_role_fixation_count_summary_df = _summarize_monkey_role_fixation_count(
+        monkey_role_fixation_count_session_df,
+        alpha=settings.pupil_test_alpha,
+    )
     monkey_role_fixation_duration_session_df = _build_monkey_role_fixation_duration_session_table(
         cfg=cfg,
         settings=settings,
@@ -1353,6 +1590,12 @@ def run_fix_crosscorr_leader_follower_analysis(
     pupil_global_out = out_dir / settings.pupil_global_summary_filename
     monkey_role_session_out = out_dir / settings.monkey_role_pupil_session_output_filename
     monkey_role_summary_out = out_dir / settings.monkey_role_pupil_summary_filename
+    monkey_role_fixation_count_session_out = (
+        out_dir / settings.monkey_role_fixation_count_session_output_filename
+    )
+    monkey_role_fixation_count_summary_out = (
+        out_dir / settings.monkey_role_fixation_count_summary_filename
+    )
     monkey_role_fixation_duration_session_out = (
         out_dir / settings.monkey_role_fixation_duration_session_output_filename
     )
@@ -1373,6 +1616,11 @@ def run_fix_crosscorr_leader_follower_analysis(
         index=False,
     )
     monkey_role_summary_df.to_csv(monkey_role_summary_out, index=False)
+    monkey_role_fixation_count_session_df[MONKEY_ROLE_FIXATION_COUNT_SESSION_COLUMNS].to_csv(
+        monkey_role_fixation_count_session_out,
+        index=False,
+    )
+    monkey_role_fixation_count_summary_df.to_csv(monkey_role_fixation_count_summary_out, index=False)
     monkey_role_fixation_duration_session_df[MONKEY_ROLE_FIXATION_DURATION_SESSION_COLUMNS].to_csv(
         monkey_role_fixation_duration_session_out,
         index=False,
@@ -1390,6 +1638,14 @@ def run_fix_crosscorr_leader_follower_analysis(
     print(f"[leader-follower] wrote monkey-role pupil session table: {monkey_role_session_out}")
     print(f"[leader-follower] wrote monkey-role pupil summary: {monkey_role_summary_out}")
     print(
+        "[leader-follower] wrote monkey-role fixation-count session table: "
+        f"{monkey_role_fixation_count_session_out}"
+    )
+    print(
+        "[leader-follower] wrote monkey-role fixation-count summary: "
+        f"{monkey_role_fixation_count_summary_out}"
+    )
+    print(
         "[leader-follower] wrote monkey-role fixation-duration session table: "
         f"{monkey_role_fixation_duration_session_out}"
     )
@@ -1405,6 +1661,8 @@ def run_fix_crosscorr_leader_follower_analysis(
         f"pupil_pair={len(pupil_pair_df)} pupil_global={len(pupil_global_df)} "
         f"monkey_role_session={len(monkey_role_session_df)} "
         f"monkey_role_summary={len(monkey_role_summary_df)} "
+        f"monkey_role_fix_cnt_session={len(monkey_role_fixation_count_session_df)} "
+        f"monkey_role_fix_cnt_summary={len(monkey_role_fixation_count_summary_df)} "
         f"monkey_role_fix_dur_session={len(monkey_role_fixation_duration_session_df)} "
         f"monkey_role_fix_dur_summary={len(monkey_role_fixation_duration_summary_df)}"
     )
@@ -1428,6 +1686,7 @@ def run_fix_crosscorr_leader_follower_analysis(
         pupil_global_df=pupil_global_df,
     )
     _print_monkey_role_pupil_summary(monkey_role_summary_df)
+    _print_monkey_role_fixation_count_summary(monkey_role_fixation_count_summary_df)
     _print_monkey_role_fixation_duration_summary(monkey_role_fixation_duration_summary_df)
 
     return session_df, date_summary_df, pair_summary_df
