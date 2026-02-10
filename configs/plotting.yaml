@@ -35,3 +35,5 @@ violin:
   colors:
     product: "#6C8EBF"
     joint: "#E07B39"
+    leader: "#4C72B0"
+    follower: "#DD8452"

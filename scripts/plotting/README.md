@@ -9,6 +9,8 @@ Scripts:
   Violin plots for interactive-period fixation probability summaries.
 - `plot_out_of_roi_fixation_probability.py`
   Violin plots for within-session and cross-session out-of-ROI probabilities.
+- `plot_face_fix_crosscorr_leader_follower_monkey_role_pupil.py`
+  Violin panels comparing each monkey's pupil size as leader vs follower using face leader-follower analysis outputs.
 
 Inputs:
 - analysis CSV outputs in `analysis_output_root`

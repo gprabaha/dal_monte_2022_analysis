@@ -36,3 +36,4 @@ Leader-follower outputs:
 - session-level CSV with per-session leader labels and lead scores.
 - fixation-count property summaries at date/pair/global levels (`n_pos`, `n_neg`, `n_zero`, `mean_delta`, `delta_consistency`).
 - pupil-during-fixation property summaries at session/date/pair/global levels (`n_lead`, `n_follow`, `lead_mean`, `follow_mean`, `mean_diff`, `p`, `sig`, `higher`).
+- monkey-role pupil tables (`within_session_*_pupil_by_monkey_role.csv`, `summary_*_pupil_by_monkey_role.csv`) for plotting in `scripts/plotting`.

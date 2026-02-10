@@ -6,7 +6,6 @@ import multiprocessing as mp
 import pickle
 from dataclasses import dataclass
 from functools import partial
-from math import ceil
 from pathlib import Path
 from typing import Optional
 
@@ -54,11 +53,6 @@ class FixCrossCorrLeaderFollowerSettings:
     monkey_role_pupil_summary_filename: str = (
         "summary_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv"
     )
-    monkey_role_pupil_violin_filename: str = (
-        "summary_face_fix_crosscorr_leader_follower_pupil_by_monkey_role_violin.pdf"
-    )
-    monkey_role_pupil_plot_max_samples_per_role: int = 20000
-    monkey_role_pupil_make_violin_plot: bool = True
     pupil_roi_keywords: Optional[list[str]] = None
     pupil_test_alpha: float = 0.05
     pupil_parallelize_sessions: bool = True
@@ -144,8 +138,8 @@ MONKEY_ROLE_PUPIL_SUMMARY_COLUMNS = [
     "monkey_name",
     "n_sessions_as_leader",
     "n_sessions_as_follower",
-    "n_leader",
-    "n_follower",
+    "n_leader_samples",
+    "n_follower_samples",
     "lead_mean",
     "follow_mean",
     "mean_diff",
@@ -701,145 +695,31 @@ def _summarize_monkey_role_pupil(
             follower_values,
             alpha=alpha,
         )
+        leader_rows = group_df.loc[group_df["role"] == "leader"]
+        follower_rows = group_df.loc[group_df["role"] == "follower"]
+        n_leader_samples = int(pd.to_numeric(leader_rows["n_samples"], errors="coerce").fillna(0).sum())
+        n_follower_samples = int(
+            pd.to_numeric(follower_rows["n_samples"], errors="coerce").fillna(0).sum()
+        )
         rows.append(
             {
                 "fixation_label": fixation_label,
                 "monkey_name": monkey_name,
-                "n_sessions_as_leader": int((group_df["role"] == "leader").sum()),
-                "n_sessions_as_follower": int((group_df["role"] == "follower").sum()),
-                **compare,
+                "n_sessions_as_leader": int(len(leader_rows)),
+                "n_sessions_as_follower": int(len(follower_rows)),
+                "n_leader_samples": n_leader_samples,
+                "n_follower_samples": n_follower_samples,
+                "lead_mean": compare["lead_mean"],
+                "follow_mean": compare["follow_mean"],
+                "mean_diff": compare["mean_diff"],
+                "p": compare["p"],
+                "sig": compare["sig"],
+                "higher": compare["higher"],
             }
         )
 
     out = pd.DataFrame.from_records(rows).sort_values(["monkey_name"]).reset_index(drop=True)
     return out[MONKEY_ROLE_PUPIL_SUMMARY_COLUMNS]
-
-
-def _subsample_for_violin_plot(
-    values: np.ndarray,
-    *,
-    max_samples: int,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """Subsample large arrays for faster violin plotting."""
-    values = np.asarray(values, dtype=np.float64).reshape(-1)
-    if max_samples <= 0 or values.size <= max_samples:
-        return values
-    idx = rng.choice(values.size, size=int(max_samples), replace=False)
-    return values[idx]
-
-
-def _plot_monkey_role_pupil_violin(
-    monkey_role_session_df: pd.DataFrame,
-    monkey_role_summary_df: pd.DataFrame,
-    *,
-    output_path: Path,
-    max_samples_per_role: int,
-) -> None:
-    """Plot one leader-vs-follower violin panel per monkey."""
-    import matplotlib.pyplot as plt
-
-    if monkey_role_summary_df.empty:
-        return
-
-    monkey_order = monkey_role_summary_df["monkey_name"].astype(str).tolist()
-    n_monkeys = len(monkey_order)
-    n_cols = min(4, n_monkeys)
-    n_rows = int(ceil(n_monkeys / n_cols))
-    fig, axes = plt.subplots(
-        n_rows,
-        n_cols,
-        figsize=(4.2 * n_cols, 3.6 * n_rows),
-        squeeze=False,
-    )
-    color_by_role = {"leader": "#4C72B0", "follower": "#DD8452"}
-
-    for i, monkey_name in enumerate(monkey_order):
-        ax = axes.flat[i]
-        monkey_rows = monkey_role_session_df[monkey_role_session_df["monkey_name"] == monkey_name]
-
-        leader_values = _concat_pupil_segments(
-            [
-                np.asarray(arr, dtype=np.float64)
-                for arr in monkey_rows.loc[monkey_rows["role"] == "leader", "_vals"].to_list()
-            ]
-        )
-        follower_values = _concat_pupil_segments(
-            [
-                np.asarray(arr, dtype=np.float64)
-                for arr in monkey_rows.loc[monkey_rows["role"] == "follower", "_vals"].to_list()
-            ]
-        )
-        rng = np.random.default_rng(13 + i)
-        leader_plot = _subsample_for_violin_plot(
-            leader_values,
-            max_samples=max_samples_per_role,
-            rng=rng,
-        )
-        follower_plot = _subsample_for_violin_plot(
-            follower_values,
-            max_samples=max_samples_per_role,
-            rng=rng,
-        )
-
-        datasets: list[np.ndarray] = []
-        positions: list[int] = []
-        if leader_plot.size > 0:
-            datasets.append(leader_plot)
-            positions.append(1)
-        if follower_plot.size > 0:
-            datasets.append(follower_plot)
-            positions.append(2)
-
-        if datasets:
-            parts = ax.violinplot(
-                datasets,
-                positions=positions,
-                widths=0.75,
-                showmedians=True,
-                showextrema=False,
-            )
-            for body, pos in zip(parts["bodies"], positions):
-                role = "leader" if pos == 1 else "follower"
-                body.set_facecolor(color_by_role[role])
-                body.set_edgecolor("#222222")
-                body.set_alpha(0.82)
-            if "cmedians" in parts:
-                parts["cmedians"].set_color("#111111")
-                parts["cmedians"].set_linewidth(1.0)
-        else:
-            ax.text(
-                0.5,
-                0.5,
-                "No data",
-                ha="center",
-                va="center",
-                transform=ax.transAxes,
-                fontsize=10,
-            )
-
-        ax.set_xlim(0.5, 2.5)
-        ax.set_xticks([1, 2])
-        ax.set_xticklabels(["leader", "follower"])
-        ax.set_ylabel("Pupil size")
-        ax.grid(axis="y", alpha=0.25, linewidth=0.6)
-
-        summary_row = monkey_role_summary_df[monkey_role_summary_df["monkey_name"] == monkey_name].iloc[0]
-        p_value = summary_row["p"]
-        mean_diff = summary_row["mean_diff"]
-        sig = bool(summary_row["sig"])
-        p_text = f"{p_value:.3g}" if np.isfinite(p_value) else "nan"
-        diff_text = f"{mean_diff:.3f}" if np.isfinite(mean_diff) else "nan"
-        sig_text = " *" if sig else ""
-        ax.set_title(f"{monkey_name}\nmean_diff={diff_text}, p={p_text}{sig_text}", fontsize=10)
-
-    for j in range(n_monkeys, n_rows * n_cols):
-        axes.flat[j].axis("off")
-
-    fig.tight_layout()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output_path, dpi=180, bbox_inches="tight")
-    plt.close(fig)
 
 def _determine_session_leader_follower(
     within_df: pd.DataFrame,
@@ -1223,7 +1103,6 @@ def run_fix_crosscorr_leader_follower_analysis(
     pupil_global_out = out_dir / settings.pupil_global_summary_filename
     monkey_role_session_out = out_dir / settings.monkey_role_pupil_session_output_filename
     monkey_role_summary_out = out_dir / settings.monkey_role_pupil_summary_filename
-    monkey_role_violin_out = out_dir / settings.monkey_role_pupil_violin_filename
 
     session_df.to_csv(session_out, index=False)
     date_summary_df.to_csv(date_out, index=False)
@@ -1239,14 +1118,6 @@ def run_fix_crosscorr_leader_follower_analysis(
     )
     monkey_role_summary_df.to_csv(monkey_role_summary_out, index=False)
 
-    if settings.monkey_role_pupil_make_violin_plot:
-        _plot_monkey_role_pupil_violin(
-            monkey_role_session_df,
-            monkey_role_summary_df,
-            output_path=monkey_role_violin_out,
-            max_samples_per_role=int(settings.monkey_role_pupil_plot_max_samples_per_role),
-        )
-
     print(f"[leader-follower] wrote session-level table: {session_out}")
     print(f"[leader-follower] wrote date-level summary: {date_out}")
     print(f"[leader-follower] wrote pair-level summary: {pair_out}")
@@ -1257,8 +1128,6 @@ def run_fix_crosscorr_leader_follower_analysis(
     print(f"[leader-follower] wrote pupil global summary: {pupil_global_out}")
     print(f"[leader-follower] wrote monkey-role pupil session table: {monkey_role_session_out}")
     print(f"[leader-follower] wrote monkey-role pupil summary: {monkey_role_summary_out}")
-    if settings.monkey_role_pupil_make_violin_plot:
-        print(f"[leader-follower] wrote monkey-role pupil violin plot: {monkey_role_violin_out}")
     print(
         "[leader-follower] rows: "
         f"session={len(session_df)} date={len(date_summary_df)} "
