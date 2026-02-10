@@ -43,25 +43,25 @@ class LeaderFollowerMonkeyRolePupilPlotSettings:
 
 
 @dataclass
-class LeaderFollowerMonkeyRoleFixationCountPlotSettings:
-    """Configuration for monkey-level leader/follower fixation-count violin plotting."""
+class LeaderFollowerMonkeyRoleFixationDurationPlotSettings:
+    """Configuration for monkey-level leader/follower fixation-duration violin plotting."""
 
     cfg_path: str
     plotting_cfg_path: str = "configs/plotting.yaml"
     analysis_subdir: str = "fix_cross_correlation"
     monkey_role_session_filename: str = (
-        "within_session_face_fix_crosscorr_leader_follower_fixation_count_by_monkey_role.csv"
+        "within_session_face_fix_crosscorr_leader_follower_fixation_duration_by_monkey_role.csv"
     )
     monkey_role_summary_filename: str = (
-        "summary_face_fix_crosscorr_leader_follower_fixation_count_by_monkey_role.csv"
+        "summary_face_fix_crosscorr_leader_follower_fixation_duration_by_monkey_role.csv"
     )
     output_filename: str = (
-        "summary_face_fix_crosscorr_leader_follower_fixation_count_by_monkey_role_violin.pdf"
+        "summary_face_fix_crosscorr_leader_follower_fixation_duration_by_monkey_role_violin.pdf"
     )
     max_samples_per_role: int = 20000
     n_cols: int = 4
-    value_column: str = "fixation_count"
-    y_label: str = "Session fixation count"
+    value_column: str = "fixation_duration_bins"
+    y_label: str = "Session fixation duration (bins)"
 
 
 def _subsample_for_plot(
@@ -248,8 +248,8 @@ def plot_leader_follower_monkey_role_pupil_violin(
     return _plot_leader_follower_monkey_role_violin(settings)
 
 
-def plot_leader_follower_monkey_role_fixation_count_violin(
-    settings: LeaderFollowerMonkeyRoleFixationCountPlotSettings,
+def plot_leader_follower_monkey_role_fixation_duration_violin(
+    settings: LeaderFollowerMonkeyRoleFixationDurationPlotSettings,
 ) -> Path:
-    """Plot monkey-level leader-vs-follower fixation-count violins and save PDF."""
+    """Plot monkey-level leader-vs-follower fixation-duration violins and save PDF."""
     return _plot_leader_follower_monkey_role_violin(settings)

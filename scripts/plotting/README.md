@@ -11,8 +11,8 @@ Scripts:
   Violin plots for within-session and cross-session out-of-ROI probabilities.
 - `plot_face_fix_crosscorr_leader_follower_monkey_role_pupil.py`
   Violin panels comparing each monkey's pupil size as leader vs follower using face leader-follower analysis outputs.
-- `plot_face_fix_crosscorr_leader_follower_monkey_role_fixation_count.py`
-  Violin panels comparing each monkey's fixation count as leader vs follower using face leader-follower analysis outputs.
+- `plot_face_fix_crosscorr_leader_follower_monkey_role_fixation_duration.py`
+  Violin panels comparing each monkey's fixation duration (in bins) as leader vs follower using face leader-follower analysis outputs.
 
 Inputs:
 - analysis CSV outputs in `analysis_output_root`
