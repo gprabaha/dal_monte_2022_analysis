@@ -60,11 +60,12 @@ def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
             "global_summary_face_fix_crosscorr_leader_follower_pupil_during_fixation.csv",
         ),
         pupil_roi_keywords=cfg.get("leader_follower_pupil_roi_keywords"),
-        pupil_test_n_permutations=int(cfg.get("leader_follower_pupil_test_n_permutations", 2000)),
-        pupil_test_seed=int(cfg.get("leader_follower_pupil_test_seed", 13)),
         pupil_test_alpha=float(cfg.get("leader_follower_pupil_test_alpha", 0.05)),
-        pupil_test_max_samples_per_group=int(
-            cfg.get("leader_follower_pupil_test_max_samples_per_group", 5000)
+        pupil_parallelize_sessions=bool(
+            cfg.get("leader_follower_pupil_parallelize_sessions", True)
+        ),
+        pupil_parallel_max_procs=int(
+            cfg.get("leader_follower_pupil_parallel_max_procs", 16)
         ),
         tie_epsilon=float(cfg.get("leader_follower_tie_epsilon", 0.0)),
     )

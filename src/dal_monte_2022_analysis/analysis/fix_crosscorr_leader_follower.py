@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-import hashlib
+import multiprocessing as mp
 import pickle
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+from scipy.stats import ttest_ind
 
 from dal_monte_2022_analysis.config.load import load_dataset_config
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir, build_processed_data_path
+from dal_monte_2022_analysis.utils.parallel import get_n_processes
 
 
 @dataclass
@@ -45,10 +48,9 @@ class FixCrossCorrLeaderFollowerSettings:
         "global_summary_face_fix_crosscorr_leader_follower_pupil_during_fixation.csv"
     )
     pupil_roi_keywords: Optional[list[str]] = None
-    pupil_test_n_permutations: int = 2000
-    pupil_test_seed: int = 13
     pupil_test_alpha: float = 0.05
-    pupil_test_max_samples_per_group: int = 5000
+    pupil_parallelize_sessions: bool = True
+    pupil_parallel_max_procs: int = 16
     tie_epsilon: float = 0.0
 
 
@@ -233,70 +235,13 @@ def _resolve_pupil_roi_keywords(settings: FixCrossCorrLeaderFollowerSettings) ->
     return (str(settings.fixation_label).lower(),)
 
 
-def _stable_int_seed(base_seed: int, *parts: object) -> int:
-    """Build deterministic seed for reproducible subsampling/permutation tests."""
-    token = "|".join(str(part) for part in parts)
-    digest = hashlib.sha1(token.encode("utf-8")).digest()[:8]
-    offset = int.from_bytes(digest, byteorder="little", signed=False)
-    return int((int(base_seed) + offset) % (2**32 - 1))
-
-
-def _subsample_for_test(
-    values: np.ndarray,
-    *,
-    max_samples: int,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    """Randomly subsample values when sample sizes are too large for permutation testing."""
-    values = np.asarray(values, dtype=np.float64)
-    if max_samples <= 0 or values.size <= max_samples:
-        return values
-    idx = rng.choice(values.size, size=max_samples, replace=False)
-    return values[idx]
-
-
-def _permutation_p_value_mean_diff(
-    lead_values: np.ndarray,
-    follow_values: np.ndarray,
-    *,
-    n_permutations: int,
-    rng: np.random.Generator,
-) -> float:
-    """Two-sided permutation p-value for mean difference."""
-    if n_permutations <= 0:
-        return float("nan")
-
-    x = np.asarray(lead_values, dtype=np.float64)
-    y = np.asarray(follow_values, dtype=np.float64)
-    if x.size == 0 or y.size == 0:
-        return float("nan")
-
-    observed = float(np.mean(x) - np.mean(y))
-    pooled = np.concatenate([x, y])
-    n_x = int(x.size)
-    n_total = int(pooled.size)
-    if n_total <= 1:
-        return float("nan")
-
-    extreme = 0
-    for _ in range(int(n_permutations)):
-        perm_idx = rng.permutation(n_total)
-        diff = float(np.mean(pooled[perm_idx[:n_x]]) - np.mean(pooled[perm_idx[n_x:]]))
-        if abs(diff) >= abs(observed):
-            extreme += 1
-    return float((extreme + 1) / (int(n_permutations) + 1))
-
-
 def _compare_pupil_samples(
     lead_values: np.ndarray,
     follow_values: np.ndarray,
     *,
-    n_permutations: int,
     alpha: float,
-    max_samples_per_group: int,
-    seed: int,
 ) -> dict:
-    """Compare leader vs follower pupil arrays and report direction + significance."""
+    """Compare leader vs follower pupil arrays using a Welch two-sample t-test."""
     lead_values = np.asarray(lead_values, dtype=np.float64)
     follow_values = np.asarray(follow_values, dtype=np.float64)
     lead_values = lead_values[np.isfinite(lead_values)]
@@ -318,26 +263,10 @@ def _compare_pupil_samples(
     else:
         higher = "equal"
 
-    if n_lead == 0 or n_follow == 0:
+    if n_lead < 2 or n_follow < 2:
         p_value = np.nan
     else:
-        rng = np.random.default_rng(int(seed))
-        lead_for_test = _subsample_for_test(
-            lead_values,
-            max_samples=int(max_samples_per_group),
-            rng=rng,
-        )
-        follow_for_test = _subsample_for_test(
-            follow_values,
-            max_samples=int(max_samples_per_group),
-            rng=rng,
-        )
-        p_value = _permutation_p_value_mean_diff(
-            lead_for_test,
-            follow_for_test,
-            n_permutations=int(n_permutations),
-            rng=rng,
-        )
+        p_value = float(ttest_ind(lead_values, follow_values, equal_var=False).pvalue)
     is_significant = bool(np.isfinite(p_value) and p_value < float(alpha))
 
     return {
@@ -417,6 +346,77 @@ def _extract_pupil_during_fixations(
     return np.concatenate(segments)
 
 
+def _build_single_session_pupil_property_row(
+    session_row: dict,
+    *,
+    cfg: dict,
+    settings: FixCrossCorrLeaderFollowerSettings,
+    roi_keywords: tuple[str, ...],
+) -> dict:
+    """Build one session-level pupil property row."""
+    date = str(session_row["date"])
+    session = str(session_row["session"])
+    leader_agent = str(session_row["leader_agent"])
+    follower_agent = str(session_row["follower_agent"])
+    fix_cache: dict[tuple[str, str, str], Optional[pd.DataFrame]] = {}
+    pupil_cache: dict[tuple[str, str, str], np.ndarray] = {}
+
+    m1_vals = _extract_pupil_during_fixations(
+        cfg=cfg,
+        date=date,
+        session=session,
+        agent="m1",
+        fixations_modality=settings.fixations_modality,
+        pupil_modality=settings.pupil_modality,
+        roi_keywords=roi_keywords,
+        fix_cache=fix_cache,
+        pupil_cache=pupil_cache,
+    )
+    m2_vals = _extract_pupil_during_fixations(
+        cfg=cfg,
+        date=date,
+        session=session,
+        agent="m2",
+        fixations_modality=settings.fixations_modality,
+        pupil_modality=settings.pupil_modality,
+        roi_keywords=roi_keywords,
+        fix_cache=fix_cache,
+        pupil_cache=pupil_cache,
+    )
+
+    if leader_agent == "m1" and follower_agent == "m2":
+        lead_vals = m1_vals
+        follow_vals = m2_vals
+    elif leader_agent == "m2" and follower_agent == "m1":
+        lead_vals = m2_vals
+        follow_vals = m1_vals
+    else:
+        lead_vals = np.asarray([], dtype=np.float64)
+        follow_vals = np.asarray([], dtype=np.float64)
+
+    compare = _compare_pupil_samples(
+        lead_vals,
+        follow_vals,
+        alpha=settings.pupil_test_alpha,
+    )
+
+    return {
+        "fixation_label": settings.fixation_label,
+        "date": date,
+        "session": session,
+        "pair_key": session_row["pair_key"],
+        "monkey_name_m1": session_row["monkey_name_m1"],
+        "monkey_name_m2": session_row["monkey_name_m2"],
+        "leader_agent": leader_agent,
+        "follower_agent": follower_agent,
+        "n_sessions": 1,
+        "n_comp_sessions": int(compare["n_lead"] > 0 and compare["n_follow"] > 0),
+        **compare,
+        "_lead_vals": lead_vals,
+        "_follow_vals": follow_vals,
+    }
+
+
 def _build_session_pupil_property_table(
     *,
     cfg: dict,
@@ -425,83 +425,24 @@ def _build_session_pupil_property_table(
 ) -> pd.DataFrame:
     """Build session-level pupil property table from known leader/follower calls."""
     roi_keywords = _resolve_pupil_roi_keywords(settings)
-    fix_cache: dict[tuple[str, str, str], Optional[pd.DataFrame]] = {}
-    pupil_cache: dict[tuple[str, str, str], np.ndarray] = {}
-
-    rows: list[dict] = []
-    for _, session_row in session_df.iterrows():
-        date = str(session_row["date"])
-        session = str(session_row["session"])
-        leader_agent = str(session_row["leader_agent"])
-        follower_agent = str(session_row["follower_agent"])
-
-        m1_vals = _extract_pupil_during_fixations(
-            cfg=cfg,
-            date=date,
-            session=session,
-            agent="m1",
-            fixations_modality=settings.fixations_modality,
-            pupil_modality=settings.pupil_modality,
-            roi_keywords=roi_keywords,
-            fix_cache=fix_cache,
-            pupil_cache=pupil_cache,
-        )
-        m2_vals = _extract_pupil_during_fixations(
-            cfg=cfg,
-            date=date,
-            session=session,
-            agent="m2",
-            fixations_modality=settings.fixations_modality,
-            pupil_modality=settings.pupil_modality,
-            roi_keywords=roi_keywords,
-            fix_cache=fix_cache,
-            pupil_cache=pupil_cache,
-        )
-
-        if leader_agent == "m1" and follower_agent == "m2":
-            lead_vals = m1_vals
-            follow_vals = m2_vals
-        elif leader_agent == "m2" and follower_agent == "m1":
-            lead_vals = m2_vals
-            follow_vals = m1_vals
-        else:
-            lead_vals = np.asarray([], dtype=np.float64)
-            follow_vals = np.asarray([], dtype=np.float64)
-
-        compare = _compare_pupil_samples(
-            lead_vals,
-            follow_vals,
-            n_permutations=settings.pupil_test_n_permutations,
-            alpha=settings.pupil_test_alpha,
-            max_samples_per_group=settings.pupil_test_max_samples_per_group,
-            seed=_stable_int_seed(
-                settings.pupil_test_seed,
-                "session",
-                settings.fixation_label,
-                date,
-                session,
-            ),
-        )
-        rows.append(
-            {
-                "fixation_label": settings.fixation_label,
-                "date": date,
-                "session": session,
-                "pair_key": session_row["pair_key"],
-                "monkey_name_m1": session_row["monkey_name_m1"],
-                "monkey_name_m2": session_row["monkey_name_m2"],
-                "leader_agent": leader_agent,
-                "follower_agent": follower_agent,
-                "n_sessions": 1,
-                "n_comp_sessions": int(compare["n_lead"] > 0 and compare["n_follow"] > 0),
-                **compare,
-                "_lead_vals": lead_vals,
-                "_follow_vals": follow_vals,
-            }
-        )
-
-    if not rows:
+    session_records = session_df.to_dict(orient="records")
+    if not session_records:
         return pd.DataFrame(columns=PUPIL_PROPERTY_SESSION_COLUMNS)
+
+    worker = partial(
+        _build_single_session_pupil_property_row,
+        cfg=cfg,
+        settings=settings,
+        roi_keywords=roi_keywords,
+    )
+    use_parallel = bool(settings.pupil_parallelize_sessions) and len(session_records) > 1
+    n_procs = get_n_processes(max_procs=max(1, int(settings.pupil_parallel_max_procs)))
+    if use_parallel and n_procs > 1:
+        with mp.Pool(processes=n_procs) as pool:
+            rows = pool.map(worker, session_records)
+    else:
+        rows = [worker(row) for row in session_records]
+
     out = pd.DataFrame.from_records(rows)
     out = out.sort_values(["pair_key", "date", "session"]).reset_index(drop=True)
     return out
@@ -512,8 +453,7 @@ def _summarize_pupil_property_table(
     *,
     group_cols: list[str],
     sort_cols: list[str],
-    seed_token: str,
-    settings: FixCrossCorrLeaderFollowerSettings,
+    alpha: float,
 ) -> pd.DataFrame:
     """Aggregate session-level pupil samples and test leader vs follower by group."""
     if session_pupil_df.empty:
@@ -543,16 +483,7 @@ def _summarize_pupil_property_table(
         compare = _compare_pupil_samples(
             lead_values,
             follow_values,
-            n_permutations=settings.pupil_test_n_permutations,
-            alpha=settings.pupil_test_alpha,
-            max_samples_per_group=settings.pupil_test_max_samples_per_group,
-            seed=_stable_int_seed(
-                settings.pupil_test_seed,
-                "summary",
-                seed_token,
-                settings.fixation_label,
-                *group_values,
-            ),
+            alpha=alpha,
         )
 
         row = {
@@ -586,8 +517,7 @@ def _summarize_pupil_property_by_date(
         session_pupil_df,
         group_cols=group_cols,
         sort_cols=["pair_key", "date"],
-        seed_token="date",
-        settings=settings,
+        alpha=settings.pupil_test_alpha,
     )
 
 
@@ -603,8 +533,7 @@ def _summarize_pupil_property_by_pair(
         session_pupil_df,
         group_cols=group_cols,
         sort_cols=["pair_key"],
-        seed_token="pair",
-        settings=settings,
+        alpha=settings.pupil_test_alpha,
     )
 
 
@@ -629,8 +558,7 @@ def _summarize_pupil_property_global(
         session_pupil_df,
         group_cols=group_cols,
         sort_cols=["fixation_label"],
-        seed_token="global",
-        settings=settings,
+        alpha=settings.pupil_test_alpha,
     )
     out = key_counts.merge(prop, how="inner", on="fixation_label")
     return out[PUPIL_PROPERTY_GLOBAL_PREFIX_COLUMNS + PUPIL_PROPERTY_SUMMARY_COLUMNS]

@@ -54,7 +54,8 @@ leader_follower_pupil_global_summary_filename: global_summary_face_fix_crosscorr
 # Optional explicit ROI keywords for pupil-during-fixation extraction.
 # If null, defaults are inferred from fixation_label (face -> face/eyes_nf/mouth).
 leader_follower_pupil_roi_keywords: null
-leader_follower_pupil_test_n_permutations: 2000
-leader_follower_pupil_test_seed: 13
+# Pupil leader-vs-follower test settings (Welch t-test).
 leader_follower_pupil_test_alpha: 0.05
-leader_follower_pupil_test_max_samples_per_group: 5000
+# Parallel processing settings for per-session pupil extraction.
+leader_follower_pupil_parallelize_sessions: true
+leader_follower_pupil_parallel_max_procs: 16
