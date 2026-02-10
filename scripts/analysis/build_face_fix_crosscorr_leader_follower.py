@@ -41,6 +41,31 @@ def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
             "leader_follower_global_summary_filename",
             "global_summary_face_fix_crosscorr_leader_follower.csv",
         ),
+        fixations_modality=cfg.get("leader_follower_fixations_modality", "fixations"),
+        pupil_modality=cfg.get("leader_follower_pupil_modality", "pupil_size"),
+        pupil_session_output_filename=cfg.get(
+            "leader_follower_pupil_session_filename",
+            "within_session_face_fix_crosscorr_leader_follower_pupil_during_fixation.csv",
+        ),
+        pupil_date_summary_filename=cfg.get(
+            "leader_follower_pupil_date_summary_filename",
+            "date_summary_face_fix_crosscorr_leader_follower_pupil_during_fixation.csv",
+        ),
+        pupil_pair_summary_filename=cfg.get(
+            "leader_follower_pupil_pair_summary_filename",
+            "pair_summary_face_fix_crosscorr_leader_follower_pupil_during_fixation.csv",
+        ),
+        pupil_global_summary_filename=cfg.get(
+            "leader_follower_pupil_global_summary_filename",
+            "global_summary_face_fix_crosscorr_leader_follower_pupil_during_fixation.csv",
+        ),
+        pupil_roi_keywords=cfg.get("leader_follower_pupil_roi_keywords"),
+        pupil_test_n_permutations=int(cfg.get("leader_follower_pupil_test_n_permutations", 2000)),
+        pupil_test_seed=int(cfg.get("leader_follower_pupil_test_seed", 13)),
+        pupil_test_alpha=float(cfg.get("leader_follower_pupil_test_alpha", 0.05)),
+        pupil_test_max_samples_per_group=int(
+            cfg.get("leader_follower_pupil_test_max_samples_per_group", 5000)
+        ),
         tie_epsilon=float(cfg.get("leader_follower_tie_epsilon", 0.0)),
     )
 

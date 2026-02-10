@@ -34,10 +34,5 @@ Leader-follower scripts reuse the corresponding cross-correlation configs above 
 
 Leader-follower outputs:
 - session-level CSV with per-session leader labels and lead scores.
-- date-summary CSV grouped by `monkey_name_m1`, `monkey_name_m2`, and `date`, with:
-  - `n_sessions` (number of sessions for that pair on that date)
-  - `m1_leader_sessions`
-  - `m2_leader_sessions`
-  - `m1_lead_fraction = m1_leader_sessions / (m1_leader_sessions + m2_leader_sessions)`
-- pair-summary CSV grouped by `monkey_name_m1` and `monkey_name_m2` across all sessions/dates with the same columns above.
-- global-summary CSV collapsed across all sessions regardless of date or monkey pair.
+- fixation-count property summaries at date/pair/global levels (`n_pos`, `n_neg`, `n_zero`, `mean_delta`, `delta_consistency`).
+- pupil-during-fixation property summaries at session/date/pair/global levels (`n_lead`, `n_follow`, `lead_mean`, `follow_mean`, `mean_diff`, `p`, `sig`, `higher`).
