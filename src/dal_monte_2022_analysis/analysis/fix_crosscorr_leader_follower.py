@@ -6,6 +6,7 @@ import multiprocessing as mp
 import pickle
 from dataclasses import dataclass
 from functools import partial
+from math import ceil
 from pathlib import Path
 from typing import Optional
 
@@ -47,6 +48,17 @@ class FixCrossCorrLeaderFollowerSettings:
     pupil_global_summary_filename: str = (
         "global_summary_face_fix_crosscorr_leader_follower_pupil_during_fixation.csv"
     )
+    monkey_role_pupil_session_output_filename: str = (
+        "within_session_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv"
+    )
+    monkey_role_pupil_summary_filename: str = (
+        "summary_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv"
+    )
+    monkey_role_pupil_violin_filename: str = (
+        "summary_face_fix_crosscorr_leader_follower_pupil_by_monkey_role_violin.pdf"
+    )
+    monkey_role_pupil_plot_max_samples_per_role: int = 20000
+    monkey_role_pupil_make_violin_plot: bool = True
     pupil_roi_keywords: Optional[list[str]] = None
     pupil_test_alpha: float = 0.05
     pupil_parallelize_sessions: bool = True
@@ -117,6 +129,30 @@ PUPIL_PROPERTY_SESSION_COLUMNS = [
 ]
 PUPIL_PROPERTY_SUMMARY_COLUMNS = PUPIL_PROPERTY_BASE_COLUMNS
 PUPIL_PROPERTY_GLOBAL_PREFIX_COLUMNS = ["fixation_label", "n_pairs", "n_dates"]
+MONKEY_ROLE_PUPIL_SESSION_COLUMNS = [
+    "fixation_label",
+    "date",
+    "session",
+    "pair_key",
+    "monkey_name",
+    "role",
+    "n_samples",
+    "mean_pupil",
+]
+MONKEY_ROLE_PUPIL_SUMMARY_COLUMNS = [
+    "fixation_label",
+    "monkey_name",
+    "n_sessions_as_leader",
+    "n_sessions_as_follower",
+    "n_leader",
+    "n_follower",
+    "lead_mean",
+    "follow_mean",
+    "mean_diff",
+    "p",
+    "sig",
+    "higher",
+]
 DEFAULT_ROI_KEYWORDS_BY_FIXATION_LABEL = {
     "face": ("face", "eyes_nf", "mouth"),
     "out_of_roi": ("out_of_roi",),
@@ -563,6 +599,248 @@ def _summarize_pupil_property_global(
     out = key_counts.merge(prop, how="inner", on="fixation_label")
     return out[PUPIL_PROPERTY_GLOBAL_PREFIX_COLUMNS + PUPIL_PROPERTY_SUMMARY_COLUMNS]
 
+
+def _concat_pupil_segments(segments: list[np.ndarray]) -> np.ndarray:
+    """Concatenate non-empty numeric pupil segments."""
+    if not segments:
+        return np.asarray([], dtype=np.float64)
+    non_empty: list[np.ndarray] = []
+    for seg in segments:
+        arr = np.asarray(seg, dtype=np.float64).reshape(-1)
+        if arr.size > 0:
+            non_empty.append(arr)
+    if not non_empty:
+        return np.asarray([], dtype=np.float64)
+    return np.concatenate(non_empty)
+
+
+def _build_monkey_role_pupil_session_table(session_pupil_df: pd.DataFrame) -> pd.DataFrame:
+    """Build per-session pupil rows per monkey-role (leader/follower)."""
+    if session_pupil_df.empty:
+        return pd.DataFrame(columns=MONKEY_ROLE_PUPIL_SESSION_COLUMNS)
+
+    rows: list[dict] = []
+    for _, row in session_pupil_df.iterrows():
+        leader_agent = str(row.get("leader_agent"))
+        follower_agent = str(row.get("follower_agent"))
+
+        if leader_agent == "m1":
+            leader_monkey = row["monkey_name_m1"]
+        elif leader_agent == "m2":
+            leader_monkey = row["monkey_name_m2"]
+        else:
+            leader_monkey = None
+
+        if follower_agent == "m1":
+            follower_monkey = row["monkey_name_m1"]
+        elif follower_agent == "m2":
+            follower_monkey = row["monkey_name_m2"]
+        else:
+            follower_monkey = None
+
+        for role, monkey_name, values in (
+            ("leader", leader_monkey, row.get("_lead_vals")),
+            ("follower", follower_monkey, row.get("_follow_vals")),
+        ):
+            if monkey_name is None:
+                continue
+            arr = np.asarray(values, dtype=np.float64).reshape(-1)
+            arr = arr[np.isfinite(arr)]
+            n_samples = int(arr.size)
+            rows.append(
+                {
+                    "fixation_label": row["fixation_label"],
+                    "date": row["date"],
+                    "session": row["session"],
+                    "pair_key": row["pair_key"],
+                    "monkey_name": monkey_name,
+                    "role": role,
+                    "n_samples": n_samples,
+                    "mean_pupil": float(np.mean(arr)) if n_samples > 0 else np.nan,
+                    "_vals": arr,
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(columns=MONKEY_ROLE_PUPIL_SESSION_COLUMNS)
+    out = pd.DataFrame.from_records(rows).sort_values(
+        ["monkey_name", "date", "session", "role"]
+    ).reset_index(drop=True)
+    return out
+
+
+def _summarize_monkey_role_pupil(
+    monkey_role_session_df: pd.DataFrame,
+    *,
+    alpha: float,
+) -> pd.DataFrame:
+    """Compare, for each monkey, pupil size as leader vs follower."""
+    if monkey_role_session_df.empty:
+        return pd.DataFrame(columns=MONKEY_ROLE_PUPIL_SUMMARY_COLUMNS)
+
+    rows: list[dict] = []
+    group_cols = ["fixation_label", "monkey_name"]
+    for group_values, group_df in monkey_role_session_df.groupby(group_cols, dropna=False, sort=False):
+        if not isinstance(group_values, tuple):
+            group_values = (group_values,)
+        fixation_label, monkey_name = group_values
+
+        leader_segments = [
+            np.asarray(arr, dtype=np.float64)
+            for arr in group_df.loc[group_df["role"] == "leader", "_vals"].to_list()
+        ]
+        follower_segments = [
+            np.asarray(arr, dtype=np.float64)
+            for arr in group_df.loc[group_df["role"] == "follower", "_vals"].to_list()
+        ]
+        leader_values = _concat_pupil_segments(leader_segments)
+        follower_values = _concat_pupil_segments(follower_segments)
+
+        compare = _compare_pupil_samples(
+            leader_values,
+            follower_values,
+            alpha=alpha,
+        )
+        rows.append(
+            {
+                "fixation_label": fixation_label,
+                "monkey_name": monkey_name,
+                "n_sessions_as_leader": int((group_df["role"] == "leader").sum()),
+                "n_sessions_as_follower": int((group_df["role"] == "follower").sum()),
+                **compare,
+            }
+        )
+
+    out = pd.DataFrame.from_records(rows).sort_values(["monkey_name"]).reset_index(drop=True)
+    return out[MONKEY_ROLE_PUPIL_SUMMARY_COLUMNS]
+
+
+def _subsample_for_violin_plot(
+    values: np.ndarray,
+    *,
+    max_samples: int,
+    rng: np.random.Generator,
+) -> np.ndarray:
+    """Subsample large arrays for faster violin plotting."""
+    values = np.asarray(values, dtype=np.float64).reshape(-1)
+    if max_samples <= 0 or values.size <= max_samples:
+        return values
+    idx = rng.choice(values.size, size=int(max_samples), replace=False)
+    return values[idx]
+
+
+def _plot_monkey_role_pupil_violin(
+    monkey_role_session_df: pd.DataFrame,
+    monkey_role_summary_df: pd.DataFrame,
+    *,
+    output_path: Path,
+    max_samples_per_role: int,
+) -> None:
+    """Plot one leader-vs-follower violin panel per monkey."""
+    import matplotlib.pyplot as plt
+
+    if monkey_role_summary_df.empty:
+        return
+
+    monkey_order = monkey_role_summary_df["monkey_name"].astype(str).tolist()
+    n_monkeys = len(monkey_order)
+    n_cols = min(4, n_monkeys)
+    n_rows = int(ceil(n_monkeys / n_cols))
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(4.2 * n_cols, 3.6 * n_rows),
+        squeeze=False,
+    )
+    color_by_role = {"leader": "#4C72B0", "follower": "#DD8452"}
+
+    for i, monkey_name in enumerate(monkey_order):
+        ax = axes.flat[i]
+        monkey_rows = monkey_role_session_df[monkey_role_session_df["monkey_name"] == monkey_name]
+
+        leader_values = _concat_pupil_segments(
+            [
+                np.asarray(arr, dtype=np.float64)
+                for arr in monkey_rows.loc[monkey_rows["role"] == "leader", "_vals"].to_list()
+            ]
+        )
+        follower_values = _concat_pupil_segments(
+            [
+                np.asarray(arr, dtype=np.float64)
+                for arr in monkey_rows.loc[monkey_rows["role"] == "follower", "_vals"].to_list()
+            ]
+        )
+        rng = np.random.default_rng(13 + i)
+        leader_plot = _subsample_for_violin_plot(
+            leader_values,
+            max_samples=max_samples_per_role,
+            rng=rng,
+        )
+        follower_plot = _subsample_for_violin_plot(
+            follower_values,
+            max_samples=max_samples_per_role,
+            rng=rng,
+        )
+
+        datasets: list[np.ndarray] = []
+        positions: list[int] = []
+        if leader_plot.size > 0:
+            datasets.append(leader_plot)
+            positions.append(1)
+        if follower_plot.size > 0:
+            datasets.append(follower_plot)
+            positions.append(2)
+
+        if datasets:
+            parts = ax.violinplot(
+                datasets,
+                positions=positions,
+                widths=0.75,
+                showmedians=True,
+                showextrema=False,
+            )
+            for body, pos in zip(parts["bodies"], positions):
+                role = "leader" if pos == 1 else "follower"
+                body.set_facecolor(color_by_role[role])
+                body.set_edgecolor("#222222")
+                body.set_alpha(0.82)
+            if "cmedians" in parts:
+                parts["cmedians"].set_color("#111111")
+                parts["cmedians"].set_linewidth(1.0)
+        else:
+            ax.text(
+                0.5,
+                0.5,
+                "No data",
+                ha="center",
+                va="center",
+                transform=ax.transAxes,
+                fontsize=10,
+            )
+
+        ax.set_xlim(0.5, 2.5)
+        ax.set_xticks([1, 2])
+        ax.set_xticklabels(["leader", "follower"])
+        ax.set_ylabel("Pupil size")
+        ax.grid(axis="y", alpha=0.25, linewidth=0.6)
+
+        summary_row = monkey_role_summary_df[monkey_role_summary_df["monkey_name"] == monkey_name].iloc[0]
+        p_value = summary_row["p"]
+        mean_diff = summary_row["mean_diff"]
+        sig = bool(summary_row["sig"])
+        p_text = f"{p_value:.3g}" if np.isfinite(p_value) else "nan"
+        diff_text = f"{mean_diff:.3f}" if np.isfinite(mean_diff) else "nan"
+        sig_text = " *" if sig else ""
+        ax.set_title(f"{monkey_name}\nmean_diff={diff_text}, p={p_text}{sig_text}", fontsize=10)
+
+    for j in range(n_monkeys, n_rows * n_cols):
+        axes.flat[j].axis("off")
+
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=180, bbox_inches="tight")
+    plt.close(fig)
+
 def _determine_session_leader_follower(
     within_df: pd.DataFrame,
     *,
@@ -883,6 +1161,18 @@ def _print_pupil_property_summaries(
     print("[leader-follower] -----------------------------------------------\n")
 
 
+def _print_monkey_role_pupil_summary(monkey_role_summary_df: pd.DataFrame) -> None:
+    """Print monkey-level pupil comparison by role."""
+    print("\n[leader-follower] -----------------------------------------------")
+    print("[leader-follower] Monkey-level pupil by role (leader vs follower)")
+    print("[leader-follower] -----------------------------------------------")
+    if monkey_role_summary_df.empty:
+        print("[leader-follower] No monkey-level pupil rows found.")
+    else:
+        print(monkey_role_summary_df.to_string(index=False))
+    print("[leader-follower] -----------------------------------------------\n")
+
+
 def run_fix_crosscorr_leader_follower_analysis(
     settings: FixCrossCorrLeaderFollowerSettings,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
@@ -916,6 +1206,11 @@ def run_fix_crosscorr_leader_follower_analysis(
     pupil_date_df = _summarize_pupil_property_by_date(pupil_session_df, settings)
     pupil_pair_df = _summarize_pupil_property_by_pair(pupil_session_df, settings)
     pupil_global_df = _summarize_pupil_property_global(pupil_session_df, settings)
+    monkey_role_session_df = _build_monkey_role_pupil_session_table(pupil_session_df)
+    monkey_role_summary_df = _summarize_monkey_role_pupil(
+        monkey_role_session_df,
+        alpha=settings.pupil_test_alpha,
+    )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     session_out = out_dir / settings.session_output_filename
@@ -926,6 +1221,9 @@ def run_fix_crosscorr_leader_follower_analysis(
     pupil_date_out = out_dir / settings.pupil_date_summary_filename
     pupil_pair_out = out_dir / settings.pupil_pair_summary_filename
     pupil_global_out = out_dir / settings.pupil_global_summary_filename
+    monkey_role_session_out = out_dir / settings.monkey_role_pupil_session_output_filename
+    monkey_role_summary_out = out_dir / settings.monkey_role_pupil_summary_filename
+    monkey_role_violin_out = out_dir / settings.monkey_role_pupil_violin_filename
 
     session_df.to_csv(session_out, index=False)
     date_summary_df.to_csv(date_out, index=False)
@@ -935,6 +1233,19 @@ def run_fix_crosscorr_leader_follower_analysis(
     pupil_date_df.to_csv(pupil_date_out, index=False)
     pupil_pair_df.to_csv(pupil_pair_out, index=False)
     pupil_global_df.to_csv(pupil_global_out, index=False)
+    monkey_role_session_df[MONKEY_ROLE_PUPIL_SESSION_COLUMNS].to_csv(
+        monkey_role_session_out,
+        index=False,
+    )
+    monkey_role_summary_df.to_csv(monkey_role_summary_out, index=False)
+
+    if settings.monkey_role_pupil_make_violin_plot:
+        _plot_monkey_role_pupil_violin(
+            monkey_role_session_df,
+            monkey_role_summary_df,
+            output_path=monkey_role_violin_out,
+            max_samples_per_role=int(settings.monkey_role_pupil_plot_max_samples_per_role),
+        )
 
     print(f"[leader-follower] wrote session-level table: {session_out}")
     print(f"[leader-follower] wrote date-level summary: {date_out}")
@@ -944,12 +1255,18 @@ def run_fix_crosscorr_leader_follower_analysis(
     print(f"[leader-follower] wrote pupil date-level summary: {pupil_date_out}")
     print(f"[leader-follower] wrote pupil pair-level summary: {pupil_pair_out}")
     print(f"[leader-follower] wrote pupil global summary: {pupil_global_out}")
+    print(f"[leader-follower] wrote monkey-role pupil session table: {monkey_role_session_out}")
+    print(f"[leader-follower] wrote monkey-role pupil summary: {monkey_role_summary_out}")
+    if settings.monkey_role_pupil_make_violin_plot:
+        print(f"[leader-follower] wrote monkey-role pupil violin plot: {monkey_role_violin_out}")
     print(
         "[leader-follower] rows: "
         f"session={len(session_df)} date={len(date_summary_df)} "
         f"pair={len(pair_summary_df)} global={len(global_summary_df)} "
         f"pupil_session={len(pupil_session_df)} pupil_date={len(pupil_date_df)} "
-        f"pupil_pair={len(pupil_pair_df)} pupil_global={len(pupil_global_df)}"
+        f"pupil_pair={len(pupil_pair_df)} pupil_global={len(pupil_global_df)} "
+        f"monkey_role_session={len(monkey_role_session_df)} "
+        f"monkey_role_summary={len(monkey_role_summary_df)}"
     )
 
     print(
@@ -970,5 +1287,6 @@ def run_fix_crosscorr_leader_follower_analysis(
         pupil_pair_df=pupil_pair_df,
         pupil_global_df=pupil_global_df,
     )
+    _print_monkey_role_pupil_summary(monkey_role_summary_df)
 
     return session_df, date_summary_df, pair_summary_df
