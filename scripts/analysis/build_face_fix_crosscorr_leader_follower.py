@@ -30,9 +30,12 @@ def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
             "leader_follower_date_summary_filename",
             "date_summary_face_fix_crosscorr_leader_follower.csv",
         ),
-        total_summary_filename=cfg.get(
-            "leader_follower_total_summary_filename",
-            "total_summary_face_fix_crosscorr_leader_follower.csv",
+        pair_summary_filename=cfg.get(
+            "leader_follower_pair_summary_filename",
+            cfg.get(
+                "leader_follower_total_summary_filename",
+                "pair_summary_face_fix_crosscorr_leader_follower.csv",
+            ),
         ),
         global_summary_filename=cfg.get(
             "leader_follower_global_summary_filename",

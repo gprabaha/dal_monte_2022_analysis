@@ -25,7 +25,9 @@ class FixCrossCorrLeaderFollowerSettings:
     lags_filename: Optional[str] = None
     session_output_filename: str = "within_session_face_fix_crosscorr_leader_follower.csv"
     date_summary_filename: str = "date_summary_face_fix_crosscorr_leader_follower.csv"
-    total_summary_filename: str = "total_summary_face_fix_crosscorr_leader_follower.csv"
+    pair_summary_filename: str = "pair_summary_face_fix_crosscorr_leader_follower.csv"
+    # Backward compatibility for older callers/configs.
+    total_summary_filename: Optional[str] = None
     global_summary_filename: str = "global_summary_face_fix_crosscorr_leader_follower.csv"
     tie_epsilon: float = 0.0
 
@@ -56,6 +58,15 @@ def _resolve_lags_filename(settings: FixCrossCorrLeaderFollowerSettings) -> str:
     if settings.lags_filename:
         return settings.lags_filename
     return f"{settings.fixation_label}_crosscorrelation_lags.pkl"
+
+
+def _resolve_pair_summary_filename(settings: FixCrossCorrLeaderFollowerSettings) -> str:
+    """Return pair-level summary filename with backward compatibility."""
+    if settings.pair_summary_filename:
+        return settings.pair_summary_filename
+    if settings.total_summary_filename:
+        return settings.total_summary_filename
+    return f"pair_summary_{settings.fixation_label}_fix_crosscorr_leader_follower.csv"
 
 
 def _load_lags(path: Path) -> np.ndarray:
@@ -218,7 +229,7 @@ def _summarize_by_date(session_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _summarize_total(session_df: pd.DataFrame) -> pd.DataFrame:
+def _summarize_by_pair(session_df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate leader/follower counts per pair across all sessions."""
     if session_df.empty:
         return pd.DataFrame(
@@ -231,6 +242,11 @@ def _summarize_total(session_df: pd.DataFrame) -> pd.DataFrame:
         group_cols=["fixation_label", "pair_key", "monkey_name_m1", "monkey_name_m2"],
         sort_cols=["pair_key"],
     )
+
+
+def _summarize_total(session_df: pd.DataFrame) -> pd.DataFrame:
+    """Backward-compatible alias for pair-level summaries."""
+    return _summarize_by_pair(session_df)
 
 
 def _summarize_global(session_df: pd.DataFrame) -> pd.DataFrame:
@@ -313,10 +329,10 @@ def _print_summaries(
     *,
     fixation_label: str,
     date_summary_df: pd.DataFrame,
-    total_summary_df: pd.DataFrame,
+    pair_summary_df: pd.DataFrame,
     global_summary_df: pd.DataFrame,
 ) -> None:
-    """Print date-level, total, and global summaries."""
+    """Print date-level, pair-level, and global summaries."""
     print("\n[leader-follower] -----------------------------------------------")
     print(f"[leader-follower] fixation_label={fixation_label}")
     print("[leader-follower] Date-level summary by monkey pair")
@@ -345,13 +361,13 @@ def _print_summaries(
             print(pair_rows[table_cols].to_string(index=False))
 
     print("\n[leader-follower] -----------------------------------------------")
-    print("[leader-follower] Total-session summary by monkey pair")
+    print("[leader-follower] Pair-level summary across all sessions")
     print("[leader-follower] -----------------------------------------------")
-    if total_summary_df.empty:
-        print("[leader-follower] No total-summary rows found.")
+    if pair_summary_df.empty:
+        print("[leader-follower] No pair-summary rows found.")
     else:
         print(
-            total_summary_df[
+            pair_summary_df[
                 [
                     "monkey_name_m1",
                     "monkey_name_m2",
@@ -398,7 +414,7 @@ def _print_summaries(
 def run_fix_crosscorr_leader_follower_analysis(
     settings: FixCrossCorrLeaderFollowerSettings,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Build and save leader-follower summaries from existing xcorr outputs."""
+    """Build and save session/date/pair/global leader-follower summaries."""
     cfg = load_dataset_config(settings.cfg_path)
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
     within_path = out_dir / settings.within_filename
@@ -418,35 +434,35 @@ def run_fix_crosscorr_leader_follower_analysis(
         tie_epsilon=settings.tie_epsilon,
     )
     date_summary_df = _summarize_by_date(session_df)
-    total_summary_df = _summarize_total(session_df)
+    pair_summary_df = _summarize_by_pair(session_df)
     global_summary_df = _summarize_global(session_df)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     session_out = out_dir / settings.session_output_filename
     date_out = out_dir / settings.date_summary_filename
-    total_out = out_dir / settings.total_summary_filename
+    pair_out = out_dir / _resolve_pair_summary_filename(settings)
     global_out = out_dir / settings.global_summary_filename
 
     session_df.to_csv(session_out, index=False)
     date_summary_df.to_csv(date_out, index=False)
-    total_summary_df.to_csv(total_out, index=False)
+    pair_summary_df.to_csv(pair_out, index=False)
     global_summary_df.to_csv(global_out, index=False)
 
     print(f"[leader-follower] wrote session-level table: {session_out}")
     print(f"[leader-follower] wrote date-level summary: {date_out}")
-    print(f"[leader-follower] wrote total-session summary: {total_out}")
+    print(f"[leader-follower] wrote pair-level summary: {pair_out}")
     print(f"[leader-follower] wrote global summary: {global_out}")
     print(
         "[leader-follower] rows: "
         f"session={len(session_df)} date={len(date_summary_df)} "
-        f"total={len(total_summary_df)} global={len(global_summary_df)}"
+        f"pair={len(pair_summary_df)} global={len(global_summary_df)}"
     )
 
     _print_summaries(
         fixation_label=settings.fixation_label,
         date_summary_df=date_summary_df,
-        total_summary_df=total_summary_df,
+        pair_summary_df=pair_summary_df,
         global_summary_df=global_summary_df,
     )
 
-    return session_df, date_summary_df, total_summary_df
+    return session_df, date_summary_df, pair_summary_df

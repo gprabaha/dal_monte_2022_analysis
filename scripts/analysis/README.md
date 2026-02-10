@@ -12,9 +12,9 @@ Scripts:
 - `build_out_of_roi_fix_cross_correlation.py`
   Computes within-session and cross-session out-of-ROI fixation cross-correlation outputs, and supports shuffled control workflows.
 - `build_face_fix_crosscorr_leader_follower.py`
-  Computes face fixation leader-follower labels from within-session cross-correlation outputs and reports per-date/per-pair summaries.
+  Computes face fixation leader-follower labels from within-session cross-correlation outputs and reports date-level, pair-level, and global summaries.
 - `build_out_of_roi_fix_crosscorr_leader_follower.py`
-  Computes out-of-ROI fixation leader-follower labels from within-session cross-correlation outputs and reports per-date/per-pair summaries.
+  Computes out-of-ROI fixation leader-follower labels from within-session cross-correlation outputs and reports date-level, pair-level, and global summaries.
 - `hpc_face_fix_crosscorr_shuffle_worker.py`
   Worker script used by array jobs for shuffled within-session cross-correlation pairs.
 - `hpc_out_of_roi_fix_crosscorr_shuffle_worker.py`
@@ -39,4 +39,5 @@ Leader-follower outputs:
   - `m1_leader_sessions`
   - `m2_leader_sessions`
   - `m1_lead_fraction = m1_leader_sessions / (m1_leader_sessions + m2_leader_sessions)`
-- total-summary CSV grouped by `monkey_name_m1` and `monkey_name_m2` across all dates with the same columns above.
+- pair-summary CSV grouped by `monkey_name_m1` and `monkey_name_m2` across all sessions/dates with the same columns above.
+- global-summary CSV collapsed across all sessions regardless of date or monkey pair.
