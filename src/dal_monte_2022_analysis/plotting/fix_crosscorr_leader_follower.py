@@ -53,6 +53,9 @@ class LeaderFollowerPupilGlobalOverlayPlotSettings:
     monkey_role_session_filename: str = (
         "within_session_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv"
     )
+    monkey_role_session_raw_filename: str = (
+        "within_session_face_fix_crosscorr_leader_follower_pupil_by_monkey_role_raw.pkl"
+    )
     monkey_role_summary_filename: str = (
         "summary_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv"
     )
@@ -171,6 +174,26 @@ def _compare_group_means(
         "sig": is_significant,
         "higher": higher,
     }
+
+
+def _concat_role_values_from_raw(
+    raw_df: pd.DataFrame,
+    *,
+    role: str,
+) -> np.ndarray:
+    """Concatenate per-session raw pupil arrays for one role."""
+    if raw_df.empty or "_vals" not in raw_df.columns or "role" not in raw_df.columns:
+        return np.asarray([], dtype=float)
+    segments: list[np.ndarray] = []
+    role_rows = raw_df.loc[raw_df["role"].astype(str) == str(role)]
+    for vals in role_rows["_vals"].to_list():
+        arr = np.asarray(vals, dtype=float).reshape(-1)
+        arr = arr[np.isfinite(arr)]
+        if arr.size > 0:
+            segments.append(arr)
+    if not segments:
+        return np.asarray([], dtype=float)
+    return np.concatenate(segments)
 
 
 def _load_monkey_role_frames(
@@ -343,16 +366,25 @@ def plot_leader_follower_pupil_global_overlay_violin(
     plot_cfg = load_plotting_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
-    session_df, summary_df, out_path = _load_monkey_role_frames(cfg=cfg, settings=settings)
-    if session_df.empty or summary_df.empty:
+    _, summary_df, out_path = _load_monkey_role_frames(cfg=cfg, settings=settings)
+    if summary_df.empty:
         raise RuntimeError("No monkey-role pupil data found to plot.")
 
-    required_session_cols = {"role", settings.value_column}
-    missing_session = required_session_cols.difference(session_df.columns)
-    if missing_session:
+    out_dir = build_analysis_output_dir(cfg, settings.analysis_subdir)
+    raw_path = out_dir / settings.monkey_role_session_raw_filename
+    if not raw_path.exists():
         raise RuntimeError(
-            f"Monkey-role session table missing required columns: {sorted(missing_session)}"
+            "Missing raw monkey-role pupil session file with per-session arrays: "
+            f"{raw_path}. Re-run leader-follower analysis to generate it."
         )
+    raw_df = pd.read_pickle(raw_path)
+    required_raw_cols = {"role", "_vals"}
+    missing_raw = required_raw_cols.difference(raw_df.columns)
+    if missing_raw:
+        raise RuntimeError(
+            f"Raw monkey-role pupil table missing required columns: {sorted(missing_raw)}"
+        )
+
     required_summary_cols = {"monkey_name", "lead_mean", "follow_mean"}
     missing_summary = required_summary_cols.difference(summary_df.columns)
     if missing_summary:
@@ -360,14 +392,8 @@ def plot_leader_follower_pupil_global_overlay_violin(
             f"Monkey-role summary table missing required columns: {sorted(missing_summary)}"
         )
 
-    leader_values_all = session_df.loc[
-        session_df["role"].astype(str) == "leader",
-        settings.value_column,
-    ].to_numpy(dtype=float)
-    follower_values_all = session_df.loc[
-        session_df["role"].astype(str) == "follower",
-        settings.value_column,
-    ].to_numpy(dtype=float)
+    leader_values_all = _concat_role_values_from_raw(raw_df, role="leader")
+    follower_values_all = _concat_role_values_from_raw(raw_df, role="follower")
     if leader_values_all.size == 0 and follower_values_all.size == 0:
         raise RuntimeError("No leader/follower pupil session values found to plot.")
 
@@ -469,8 +495,8 @@ def plot_leader_follower_pupil_global_overlay_violin(
 
     sig_label = " *" if bool(compare["sig"]) else ""
     subtitle = (
-        f"leader n={compare['n_leader']}, mean={compare['lead_mean']:.3f}; "
-        f"follower n={compare['n_follower']}, mean={compare['follow_mean']:.3f}; "
+        f"leader mean={compare['lead_mean']:.3f}; "
+        f"follower mean={compare['follow_mean']:.3f}; "
         f"diff={compare['mean_diff']:.3f}; p={format_p_value(float(compare['p']))}{sig_label}; "
         f"higher={compare['higher']}"
     )

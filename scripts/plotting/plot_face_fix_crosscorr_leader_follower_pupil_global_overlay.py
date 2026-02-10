@@ -38,6 +38,10 @@ def main():
             "leader_follower_monkey_role_pupil_session_filename",
             "within_session_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv",
         ),
+        monkey_role_session_raw_filename=cfg.get(
+            "leader_follower_monkey_role_pupil_session_raw_filename",
+            "within_session_face_fix_crosscorr_leader_follower_pupil_by_monkey_role_raw.pkl",
+        ),
         monkey_role_summary_filename=cfg.get(
             "leader_follower_monkey_role_pupil_summary_filename",
             "summary_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv",
@@ -53,6 +57,7 @@ def main():
             cfg.get("leader_follower_pupil_global_overlay_plot_max_samples_per_role", 50000)
         ),
         show_monkey_legend=bool(cfg.get("leader_follower_pupil_global_overlay_show_legend", False)),
+        alpha=float(cfg.get("leader_follower_pupil_test_alpha", 0.05)),
     )
 
     out_path = plot_leader_follower_pupil_global_overlay_violin(settings)

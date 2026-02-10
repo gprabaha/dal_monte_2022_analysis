@@ -67,6 +67,10 @@ def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
             "leader_follower_monkey_role_pupil_session_filename",
             "within_session_out_of_roi_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv",
         ),
+        monkey_role_pupil_session_raw_filename=cfg.get(
+            "leader_follower_monkey_role_pupil_session_raw_filename",
+            "within_session_out_of_roi_fix_crosscorr_leader_follower_pupil_by_monkey_role_raw.pkl",
+        ),
         monkey_role_pupil_summary_filename=cfg.get(
             "leader_follower_monkey_role_pupil_summary_filename",
             "summary_out_of_roi_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv",
@@ -94,7 +98,18 @@ def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
             ),
         ),
         property_use_all_fixations=bool(
-            cfg.get("leader_follower_property_use_all_fixations", True)
+            cfg.get("leader_follower_property_use_all_fixations", False)
+        ),
+        use_only_interactive_states=bool(
+            cfg.get("leader_follower_use_only_interactive_states", False)
+        ),
+        interactive_modality=cfg.get(
+            "leader_follower_interactive_modality",
+            "interactive_periods",
+        ),
+        interactive_state_label=cfg.get(
+            "leader_follower_interactive_state_label",
+            "interactive",
         ),
         pupil_roi_keywords=cfg.get("leader_follower_pupil_roi_keywords"),
         pupil_test_alpha=float(cfg.get("leader_follower_pupil_test_alpha", 0.05)),

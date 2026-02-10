@@ -12,7 +12,7 @@ Scripts:
 - `plot_face_fix_crosscorr_leader_follower_monkey_role_pupil.py`
   Violin panels comparing each monkey's pupil size as leader vs follower using face leader-follower analysis outputs.
 - `plot_face_fix_crosscorr_leader_follower_pupil_global_overlay.py`
-  One pooled leader-vs-follower pupil violin across all sessions with per-monkey leader/follower mean trends overlaid as connected points.
+  One pooled leader-vs-follower pupil violin across all sessions with per-monkey leader/follower mean trends overlaid as connected points (uses raw per-session pupil arrays from `within_session_*_pupil_by_monkey_role_raw.pkl`).
 - `plot_face_fix_crosscorr_leader_follower_monkey_role_fixation_count.py`
   Violin panels comparing each monkey's fixation count as leader vs follower using face leader-follower analysis outputs.
 - `plot_face_fix_crosscorr_leader_follower_monkey_role_fixation_duration.py`

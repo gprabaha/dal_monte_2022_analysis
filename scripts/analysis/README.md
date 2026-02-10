@@ -37,5 +37,11 @@ Leader-follower outputs:
 - fixation-count property summaries at date/pair/global levels (`n_pos`, `n_neg`, `n_zero`, `mean_delta`, `delta_consistency`).
 - pupil-during-fixation property summaries at session/date/pair/global levels (`n_lead`, `n_follow`, `lead_mean`, `follow_mean`, `mean_diff`, `p`, `sig`, `higher`).
 - monkey-role pupil tables (`within_session_*_pupil_by_monkey_role.csv`, `summary_*_pupil_by_monkey_role.csv`) for plotting in `scripts/plotting`.
+- monkey-role pupil raw session table (`within_session_*_pupil_by_monkey_role_raw.pkl`) containing per-session concatenated pupil arrays (`_vals`) for pooled violin/stat plotting.
 - monkey-role fixation-count tables (`within_session_*_fixation_count_by_monkey_role.csv`, `summary_*_fixation_count_by_monkey_role.csv`) for plotting in `scripts/plotting`.
 - monkey-role fixation-duration tables (`within_session_*_fixation_duration_by_monkey_role.csv`, `summary_*_fixation_duration_by_monkey_role.csv`) for plotting in `scripts/plotting`.
+
+Leader-follower pupil extraction controls:
+- `leader_follower_property_use_all_fixations` (default `false`): use all fixations instead of ROI-matching fixations.
+- `leader_follower_use_only_interactive_states` (default `false`): only keep pupil samples from fixation bins overlapping interactive periods.
+- `leader_follower_interactive_modality` (default `interactive_periods`) and `leader_follower_interactive_state_label` (default `interactive`) choose the interactive-period source/state.

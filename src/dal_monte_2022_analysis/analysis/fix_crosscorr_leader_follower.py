@@ -68,7 +68,10 @@ class FixCrossCorrLeaderFollowerSettings:
     monkey_role_fixation_duration_summary_filename: str = (
         "summary_face_fix_crosscorr_leader_follower_fixation_duration_by_monkey_role.csv"
     )
-    property_use_all_fixations: bool = True
+    property_use_all_fixations: bool = False
+    use_only_interactive_states: bool = False
+    interactive_modality: str = "interactive_periods"
+    interactive_state_label: Optional[str] = "interactive"
     pupil_roi_keywords: Optional[list[str]] = None
     pupil_test_alpha: float = 0.05
     pupil_parallelize_sessions: bool = True
@@ -335,6 +338,74 @@ def _resolve_pupil_roi_keywords(
     return (str(settings.fixation_label).lower(),)
 
 
+def _clip_start_stop(
+    start,
+    stop,
+    *,
+    max_len: int,
+) -> Optional[tuple[int, int]]:
+    """Clip start/stop indices to valid bounds."""
+    if max_len <= 0:
+        return None
+    start_num = pd.to_numeric(start, errors="coerce")
+    stop_num = pd.to_numeric(stop, errors="coerce")
+    if pd.isna(start_num) or pd.isna(stop_num):
+        return None
+    start_i = int(start_num)
+    stop_i = int(stop_num)
+    if stop_i < 0 or start_i >= max_len:
+        return None
+    start_i = max(0, start_i)
+    stop_i = min(max_len - 1, stop_i)
+    if start_i > stop_i:
+        return None
+    return start_i, stop_i
+
+
+def _resolve_interactive_intervals(
+    *,
+    cfg: dict,
+    date: str,
+    session: str,
+    modality: str,
+    state_label: Optional[str],
+    max_len: int,
+    cache: dict[tuple[str, str], Optional[pd.DataFrame]],
+) -> list[tuple[int, int]]:
+    """Return clipped interactive intervals for one date/session."""
+    key = (str(date), str(session))
+    row = {"date": str(date), "session": str(session)}
+    if key not in cache:
+        path = build_processed_data_path(cfg, row, modality, agent=None)
+        if path.exists():
+            obj = _load_pickle(path)
+            cache[key] = obj if isinstance(obj, pd.DataFrame) else None
+        else:
+            cache[key] = None
+
+    periods = cache[key]
+    if periods is None or periods.empty:
+        return []
+    if "start" not in periods.columns or "stop" not in periods.columns:
+        return []
+
+    if state_label is not None and "state" in periods.columns:
+        periods = periods[periods["state"] == state_label]
+    if periods.empty:
+        return []
+
+    intervals: list[tuple[int, int]] = []
+    for _, period_row in periods.iterrows():
+        clipped = _clip_start_stop(
+            period_row.get("start"),
+            period_row.get("stop"),
+            max_len=max_len,
+        )
+        if clipped is not None:
+            intervals.append(clipped)
+    return intervals
+
+
 def _compare_pupil_samples(
     lead_values: np.ndarray,
     follow_values: np.ndarray,
@@ -390,8 +461,12 @@ def _extract_pupil_during_fixations(
     fixations_modality: str,
     pupil_modality: str,
     roi_keywords: Optional[tuple[str, ...]],
+    use_only_interactive_states: bool,
+    interactive_modality: str,
+    interactive_state_label: Optional[str],
     fix_cache: dict[tuple[str, str, str], Optional[pd.DataFrame]],
     pupil_cache: dict[tuple[str, str, str], np.ndarray],
+    interactive_cache: dict[tuple[str, str], Optional[pd.DataFrame]],
 ) -> np.ndarray:
     """Extract pupil samples during ROI-matching fixations for one session/agent."""
     key = (str(date), str(session), str(agent))
@@ -419,27 +494,49 @@ def _extract_pupil_during_fixations(
         return np.asarray([], dtype=np.float64)
 
     n_samples = int(pupil.size)
+    interactive_intervals: Optional[list[tuple[int, int]]] = None
+    if bool(use_only_interactive_states):
+        interactive_intervals = _resolve_interactive_intervals(
+            cfg=cfg,
+            date=date,
+            session=session,
+            modality=interactive_modality,
+            state_label=interactive_state_label,
+            max_len=n_samples,
+            cache=interactive_cache,
+        )
+        if not interactive_intervals:
+            return np.asarray([], dtype=np.float64)
+
     segments: list[np.ndarray] = []
     for _, fix_row in fix_df.iterrows():
         locations = _coerce_location_labels(fix_row.get("location"))
         if roi_keywords is not None and not _location_matches_keywords(locations, roi_keywords):
             continue
-        start = pd.to_numeric(fix_row.get("start"), errors="coerce")
-        stop = pd.to_numeric(fix_row.get("stop"), errors="coerce")
-        if pd.isna(start) or pd.isna(stop):
+        clipped_fix = _clip_start_stop(
+            fix_row.get("start"),
+            fix_row.get("stop"),
+            max_len=n_samples,
+        )
+        if clipped_fix is None:
             continue
-        start_i = int(start)
-        stop_i = int(stop)
-        if stop_i < 0 or start_i >= n_samples:
+        fix_start, fix_stop = clipped_fix
+        if interactive_intervals is None:
+            segment = pupil[fix_start : fix_stop + 1]
+            segment = segment[np.isfinite(segment)]
+            if segment.size > 0:
+                segments.append(segment)
             continue
-        start_i = max(0, start_i)
-        stop_i = min(n_samples - 1, stop_i)
-        if start_i > stop_i:
-            continue
-        segment = pupil[start_i : stop_i + 1]
-        segment = segment[np.isfinite(segment)]
-        if segment.size > 0:
-            segments.append(segment)
+
+        for inter_start, inter_stop in interactive_intervals:
+            seg_start = max(fix_start, inter_start)
+            seg_stop = min(fix_stop, inter_stop)
+            if seg_start > seg_stop:
+                continue
+            segment = pupil[seg_start : seg_stop + 1]
+            segment = segment[np.isfinite(segment)]
+            if segment.size > 0:
+                segments.append(segment)
 
     if not segments:
         return np.asarray([], dtype=np.float64)
@@ -544,6 +641,7 @@ def _build_single_session_pupil_property_row(
     follower_agent = str(session_row["follower_agent"])
     fix_cache: dict[tuple[str, str, str], Optional[pd.DataFrame]] = {}
     pupil_cache: dict[tuple[str, str, str], np.ndarray] = {}
+    interactive_cache: dict[tuple[str, str], Optional[pd.DataFrame]] = {}
 
     m1_vals = _extract_pupil_during_fixations(
         cfg=cfg,
@@ -553,8 +651,12 @@ def _build_single_session_pupil_property_row(
         fixations_modality=settings.fixations_modality,
         pupil_modality=settings.pupil_modality,
         roi_keywords=roi_keywords,
+        use_only_interactive_states=settings.use_only_interactive_states,
+        interactive_modality=settings.interactive_modality,
+        interactive_state_label=settings.interactive_state_label,
         fix_cache=fix_cache,
         pupil_cache=pupil_cache,
+        interactive_cache=interactive_cache,
     )
     m2_vals = _extract_pupil_during_fixations(
         cfg=cfg,
@@ -564,8 +666,12 @@ def _build_single_session_pupil_property_row(
         fixations_modality=settings.fixations_modality,
         pupil_modality=settings.pupil_modality,
         roi_keywords=roi_keywords,
+        use_only_interactive_states=settings.use_only_interactive_states,
+        interactive_modality=settings.interactive_modality,
+        interactive_state_label=settings.interactive_state_label,
         fix_cache=fix_cache,
         pupil_cache=pupil_cache,
+        interactive_cache=interactive_cache,
     )
 
     if leader_agent == "m1" and follower_agent == "m2":
