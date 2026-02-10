@@ -67,6 +67,14 @@ def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
             "leader_follower_monkey_role_pupil_summary_filename",
             "summary_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv",
         ),
+        monkey_role_fixation_count_session_output_filename=cfg.get(
+            "leader_follower_monkey_role_fixation_count_session_filename",
+            "within_session_face_fix_crosscorr_leader_follower_fixation_count_by_monkey_role.csv",
+        ),
+        monkey_role_fixation_count_summary_filename=cfg.get(
+            "leader_follower_monkey_role_fixation_count_summary_filename",
+            "summary_face_fix_crosscorr_leader_follower_fixation_count_by_monkey_role.csv",
+        ),
         pupil_roi_keywords=cfg.get("leader_follower_pupil_roi_keywords"),
         pupil_test_alpha=float(cfg.get("leader_follower_pupil_test_alpha", 0.05)),
         pupil_parallelize_sessions=bool(

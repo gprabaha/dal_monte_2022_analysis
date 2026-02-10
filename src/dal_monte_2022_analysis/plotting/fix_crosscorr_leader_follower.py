@@ -1,4 +1,4 @@
-"""Plot leader-follower pupil role summaries."""
+"""Plot leader-follower monkey-role summaries."""
 
 from __future__ import annotations
 
@@ -39,6 +39,29 @@ class LeaderFollowerMonkeyRolePupilPlotSettings:
     max_samples_per_role: int = 20000
     n_cols: int = 4
     value_column: str = "mean_pupil"
+    y_label: str = "Session mean pupil size"
+
+
+@dataclass
+class LeaderFollowerMonkeyRoleFixationCountPlotSettings:
+    """Configuration for monkey-level leader/follower fixation-count violin plotting."""
+
+    cfg_path: str
+    plotting_cfg_path: str = "configs/plotting.yaml"
+    analysis_subdir: str = "fix_cross_correlation"
+    monkey_role_session_filename: str = (
+        "within_session_face_fix_crosscorr_leader_follower_fixation_count_by_monkey_role.csv"
+    )
+    monkey_role_summary_filename: str = (
+        "summary_face_fix_crosscorr_leader_follower_fixation_count_by_monkey_role.csv"
+    )
+    output_filename: str = (
+        "summary_face_fix_crosscorr_leader_follower_fixation_count_by_monkey_role_violin.pdf"
+    )
+    max_samples_per_role: int = 20000
+    n_cols: int = 4
+    value_column: str = "fixation_count"
+    y_label: str = "Session fixation count"
 
 
 def _subsample_for_plot(
@@ -59,18 +82,18 @@ def _subsample_for_plot(
 def _load_monkey_role_frames(
     *,
     cfg: dict,
-    settings: LeaderFollowerMonkeyRolePupilPlotSettings,
+    settings,
 ) -> tuple[pd.DataFrame, pd.DataFrame, Path]:
-    """Load session and summary CSVs for monkey-role pupil plotting."""
+    """Load session and summary CSVs for monkey-role plotting."""
     out_dir = build_analysis_output_dir(cfg, settings.analysis_subdir)
     session_path = out_dir / settings.monkey_role_session_filename
     summary_path = out_dir / settings.monkey_role_summary_filename
     out_path = out_dir / settings.output_filename
 
     if not session_path.exists():
-        raise FileNotFoundError(f"Missing monkey-role pupil session file: {session_path}")
+        raise FileNotFoundError(f"Missing monkey-role session file: {session_path}")
     if not summary_path.exists():
-        raise FileNotFoundError(f"Missing monkey-role pupil summary file: {summary_path}")
+        raise FileNotFoundError(f"Missing monkey-role summary file: {summary_path}")
 
     session_df = pd.read_csv(session_path)
     summary_df = pd.read_csv(summary_path)
@@ -87,6 +110,7 @@ def _plot_single_monkey_violin(
     seed: int,
     color_leader: str,
     color_follower: str,
+    y_label: str,
 ) -> None:
     """Render one monkey panel with leader/follower violins."""
     leader_values = monkey_rows.loc[monkey_rows["role"] == "leader", value_column].to_numpy(dtype=float)
@@ -148,33 +172,31 @@ def _plot_single_monkey_violin(
     ax.set_xlim(0.5, 2.5)
     ax.set_xticks([1, 2])
     ax.set_xticklabels(["leader", "follower"])
-    ax.set_ylabel("Session mean pupil size")
+    ax.set_ylabel(y_label)
     ax.grid(axis="y", alpha=0.25, linewidth=0.6)
 
 
-def plot_leader_follower_monkey_role_pupil_violin(
-    settings: LeaderFollowerMonkeyRolePupilPlotSettings,
-) -> Path:
-    """Plot monkey-level leader-vs-follower pupil violins and save PDF."""
+def _plot_leader_follower_monkey_role_violin(settings) -> Path:
+    """Plot monkey-level leader-vs-follower role violins and save PDF."""
     cfg = load_dataset_config(settings.cfg_path)
     plot_cfg = load_plotting_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
     session_df, summary_df, out_path = _load_monkey_role_frames(cfg=cfg, settings=settings)
     if session_df.empty or summary_df.empty:
-        raise RuntimeError("No monkey-role pupil data found to plot.")
+        raise RuntimeError("No monkey-role data found to plot.")
 
     required_session_cols = {"monkey_name", "role", settings.value_column}
     missing_session = required_session_cols.difference(session_df.columns)
     if missing_session:
         raise RuntimeError(
-            f"Monkey-role pupil session table missing required columns: {sorted(missing_session)}"
+            f"Monkey-role session table missing required columns: {sorted(missing_session)}"
         )
     required_summary_cols = {"monkey_name", "p", "mean_diff", "sig"}
     missing_summary = required_summary_cols.difference(summary_df.columns)
     if missing_summary:
         raise RuntimeError(
-            f"Monkey-role pupil summary table missing required columns: {sorted(missing_summary)}"
+            f"Monkey-role summary table missing required columns: {sorted(missing_summary)}"
         )
 
     monkeys = summary_df["monkey_name"].astype(str).drop_duplicates().tolist()
@@ -206,6 +228,7 @@ def plot_leader_follower_monkey_role_pupil_violin(
             seed=13 + i,
             color_leader=color_leader,
             color_follower=color_follower,
+            y_label=str(settings.y_label),
         )
 
     for j in range(len(monkeys), n_rows * n_cols):
@@ -216,3 +239,17 @@ def plot_leader_follower_monkey_role_pupil_violin(
     fig.savefig(out_path, format="pdf")
     plt.close(fig)
     return out_path
+
+
+def plot_leader_follower_monkey_role_pupil_violin(
+    settings: LeaderFollowerMonkeyRolePupilPlotSettings,
+) -> Path:
+    """Plot monkey-level leader-vs-follower pupil violins and save PDF."""
+    return _plot_leader_follower_monkey_role_violin(settings)
+
+
+def plot_leader_follower_monkey_role_fixation_count_violin(
+    settings: LeaderFollowerMonkeyRoleFixationCountPlotSettings,
+) -> Path:
+    """Plot monkey-level leader-vs-follower fixation-count violins and save PDF."""
+    return _plot_leader_follower_monkey_role_violin(settings)
