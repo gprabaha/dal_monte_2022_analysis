@@ -33,23 +33,42 @@ class FixCrossCorrLeaderFollowerSettings:
 
 
 LEADER_DELTA_COL = "leader_minus_follower_fixation_count"
-SUMMARY_METRIC_COLUMNS = [
+SESSION_REQUIRED_COLUMNS = {
+    "date",
+    "session",
+    "monkey_name_m1",
+    "monkey_name_m2",
+    "m1_fixation_count",
+    "m2_fixation_count",
+    "cross_correlation",
+}
+SESSION_OUTPUT_COLUMNS = [
+    "fixation_label",
+    "date",
+    "session",
+    "pair_key",
+    "monkey_name_m1",
+    "monkey_name_m2",
+    "m1_fixation_count",
+    "m2_fixation_count",
+    "mean_positive_lag_correlation",
+    "mean_negative_lag_correlation",
+    "lead_score",
+    "leader_agent",
+    "follower_agent",
+    "leader_monkey",
+    "follower_monkey",
+    "leader_fixation_count",
+    "follower_fixation_count",
+    LEADER_DELTA_COL,
+]
+PROPERTY_SUMMARY_METRIC_COLUMNS = [
     "n_sessions",
-    "n_tie_sessions",
-    "m1_leader_sessions",
-    "m2_leader_sessions",
-    "m1_lead_fraction",
-    "n_valid_fixation_deltas",
-    "n_positive_fixation_deltas",
-    "n_negative_fixation_deltas",
-    "n_zero_fixation_deltas",
-    "leader_fixation_advantage_fraction",
-    "leader_fixation_disadvantage_fraction",
-    "mean_leader_minus_follower_fixation_count",
-    "median_leader_minus_follower_fixation_count",
-    "leader_minus_follower_consistency",
-    "leader_minus_follower_all_positive",
-    "leader_minus_follower_all_negative",
+    "n_pos",
+    "n_neg",
+    "n_zero",
+    "mean_delta",
+    "delta_consistency",
 ]
 
 
@@ -79,33 +98,47 @@ def _load_lags(path: Path) -> np.ndarray:
     return lags
 
 
-def _build_pair_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Attach stable monkey-pair identifiers."""
-    out = df.copy()
-    out["pair_key"] = out["monkey_name_m1"].astype(str) + "__" + out["monkey_name_m2"].astype(
-        str
+def _safe_float(value: object) -> float:
+    """Convert to float, returning NaN for invalid values."""
+    numeric = pd.to_numeric(value, errors="coerce")
+    return float(numeric) if pd.notna(numeric) else np.nan
+
+
+def _empty_summary_df(group_cols: list[str]) -> pd.DataFrame:
+    """Return an empty summary table with standard output columns."""
+    return pd.DataFrame(columns=group_cols + PROPERTY_SUMMARY_METRIC_COLUMNS)
+
+
+def _assign_consistency_label(
+    n_positive: np.ndarray,
+    n_negative: np.ndarray,
+    n_zero: np.ndarray,
+) -> np.ndarray:
+    """Classify sign consistency of leader-minus-follower fixation deltas."""
+    valid = n_positive + n_negative + n_zero
+    labels = np.full(valid.size, "mixed", dtype=object)
+    labels[valid == 0.0] = "no_data"
+    labels[(valid > 0.0) & (n_positive == valid)] = "all_positive"
+    labels[(valid > 0.0) & (n_negative == valid)] = "all_negative"
+    labels[(valid > 0.0) & (n_zero == valid)] = "all_zero"
+    labels[(valid > 0.0) & (n_positive > 0.0) & (n_negative == 0.0) & (n_zero > 0.0)] = (
+        "positive_or_zero"
     )
-    return out
+    labels[(valid > 0.0) & (n_negative > 0.0) & (n_positive == 0.0) & (n_zero > 0.0)] = (
+        "negative_or_zero"
+    )
+    return labels
 
 
-def _compute_session_leader_rows(
+def _determine_session_leader_follower(
     within_df: pd.DataFrame,
     *,
     lags: np.ndarray,
     fixation_label: str,
     tie_epsilon: float,
 ) -> pd.DataFrame:
-    """Compute per-session leader/follower calls from lag-signed means."""
-    required_cols = {
-        "date",
-        "session",
-        "monkey_name_m1",
-        "monkey_name_m2",
-        "m1_fixation_count",
-        "m2_fixation_count",
-        "cross_correlation",
-    }
-    missing = required_cols.difference(within_df.columns)
+    """Compute per-session leader/follower calls and fixation count deltas."""
+    missing = SESSION_REQUIRED_COLUMNS.difference(within_df.columns)
     if missing:
         raise RuntimeError(
             f"Within-session cross-correlation table is missing required columns: {sorted(missing)}"
@@ -129,36 +162,24 @@ def _compute_session_leader_rows(
         mean_pos = float(np.mean(corr[pos_idx]))
         mean_neg = float(np.mean(corr[neg_idx]))
         lead_score = mean_pos - mean_neg
-        m1_fixation_count = pd.to_numeric(row["m1_fixation_count"], errors="coerce")
-        m2_fixation_count = pd.to_numeric(row["m2_fixation_count"], errors="coerce")
-        m1_minus_m2_fixation_count = (
-            float(m1_fixation_count) - float(m2_fixation_count)
-            if pd.notna(m1_fixation_count) and pd.notna(m2_fixation_count)
-            else np.nan
-        )
+        m1_fixation_count = _safe_float(row["m1_fixation_count"])
+        m2_fixation_count = _safe_float(row["m2_fixation_count"])
+        pair_key = f"{row['monkey_name_m1']}__{row['monkey_name_m2']}"
 
         if lead_score > float(tie_epsilon):
             leader_agent = "m1"
             follower_agent = "m2"
             leader_monkey = row["monkey_name_m1"]
             follower_monkey = row["monkey_name_m2"]
-            leader_fixation_count = (
-                float(m1_fixation_count) if pd.notna(m1_fixation_count) else np.nan
-            )
-            follower_fixation_count = (
-                float(m2_fixation_count) if pd.notna(m2_fixation_count) else np.nan
-            )
+            leader_fixation_count = m1_fixation_count
+            follower_fixation_count = m2_fixation_count
         elif lead_score < -float(tie_epsilon):
             leader_agent = "m2"
             follower_agent = "m1"
             leader_monkey = row["monkey_name_m2"]
             follower_monkey = row["monkey_name_m1"]
-            leader_fixation_count = (
-                float(m2_fixation_count) if pd.notna(m2_fixation_count) else np.nan
-            )
-            follower_fixation_count = (
-                float(m1_fixation_count) if pd.notna(m1_fixation_count) else np.nan
-            )
+            leader_fixation_count = m2_fixation_count
+            follower_fixation_count = m1_fixation_count
         else:
             leader_agent = "tie"
             follower_agent = "tie"
@@ -167,30 +188,21 @@ def _compute_session_leader_rows(
             leader_fixation_count = np.nan
             follower_fixation_count = np.nan
 
-        leader_minus_follower_fixation_count = (
-            float(leader_fixation_count) - float(follower_fixation_count)
-            if pd.notna(leader_fixation_count) and pd.notna(follower_fixation_count)
-            else np.nan
-        )
-        if np.isnan(leader_minus_follower_fixation_count):
-            leader_minus_follower_sign = "undefined"
-        elif leader_minus_follower_fixation_count > 0.0:
-            leader_minus_follower_sign = "positive"
-        elif leader_minus_follower_fixation_count < 0.0:
-            leader_minus_follower_sign = "negative"
+        if np.isfinite(leader_fixation_count) and np.isfinite(follower_fixation_count):
+            leader_minus_follower_fixation_count = leader_fixation_count - follower_fixation_count
         else:
-            leader_minus_follower_sign = "zero"
+            leader_minus_follower_fixation_count = np.nan
 
         rows.append(
             {
                 "fixation_label": fixation_label,
                 "date": row["date"],
                 "session": row["session"],
+                "pair_key": pair_key,
                 "monkey_name_m1": row["monkey_name_m1"],
                 "monkey_name_m2": row["monkey_name_m2"],
                 "m1_fixation_count": m1_fixation_count,
                 "m2_fixation_count": m2_fixation_count,
-                "m1_minus_m2_fixation_count": m1_minus_m2_fixation_count,
                 "mean_positive_lag_correlation": mean_pos,
                 "mean_negative_lag_correlation": mean_neg,
                 "lead_score": lead_score,
@@ -201,60 +213,62 @@ def _compute_session_leader_rows(
                 "leader_fixation_count": leader_fixation_count,
                 "follower_fixation_count": follower_fixation_count,
                 LEADER_DELTA_COL: leader_minus_follower_fixation_count,
-                "leader_minus_follower_sign": leader_minus_follower_sign,
             }
         )
 
-    session_df = pd.DataFrame.from_records(rows)
+    if not rows:
+        return pd.DataFrame(columns=SESSION_OUTPUT_COLUMNS)
+    return pd.DataFrame.from_records(rows, columns=SESSION_OUTPUT_COLUMNS).sort_values(
+        ["pair_key", "date", "session"]
+    ).reset_index(drop=True)
+
+
+def _compute_session_leader_rows(
+    within_df: pd.DataFrame,
+    *,
+    lags: np.ndarray,
+    fixation_label: str,
+    tie_epsilon: float,
+) -> pd.DataFrame:
+    """Backward-compatible alias for session-level leader/follower determination."""
+    return _determine_session_leader_follower(
+        within_df=within_df,
+        lags=lags,
+        fixation_label=fixation_label,
+        tie_epsilon=tie_epsilon,
+    )
+
+
+def _summarize_fixation_count_property_by_date(session_df: pd.DataFrame) -> pd.DataFrame:
+    """Summarize leader-vs-follower fixation-count deltas by pair and date."""
     if session_df.empty:
-        return session_df
-
-    session_df = _build_pair_columns(session_df)
-    session_df = session_df.sort_values(["pair_key", "date", "session"]).reset_index(drop=True)
-    return session_df
-
-
-def _summarize_by_date(session_df: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate leader/follower counts per pair and date."""
-    if session_df.empty:
-        return pd.DataFrame(
-            columns=["fixation_label", "pair_key", "monkey_name_m1", "monkey_name_m2", "date"]
-            + SUMMARY_METRIC_COLUMNS
+        return _empty_summary_df(
+            ["fixation_label", "pair_key", "monkey_name_m1", "monkey_name_m2", "date"]
         )
-
-    return _build_leader_follower_summary(
+    return _build_fixation_count_property_summary(
         session_df,
         group_cols=["fixation_label", "pair_key", "monkey_name_m1", "monkey_name_m2", "date"],
         sort_cols=["pair_key", "date"],
     )
 
 
-def _summarize_by_pair(session_df: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate leader/follower counts per pair across all sessions."""
+def _summarize_fixation_count_property_by_pair(session_df: pd.DataFrame) -> pd.DataFrame:
+    """Summarize leader-vs-follower fixation-count deltas by pair across sessions."""
     if session_df.empty:
-        return pd.DataFrame(
-            columns=["fixation_label", "pair_key", "monkey_name_m1", "monkey_name_m2"]
-            + SUMMARY_METRIC_COLUMNS
-        )
-
-    return _build_leader_follower_summary(
+        return _empty_summary_df(["fixation_label", "pair_key", "monkey_name_m1", "monkey_name_m2"])
+    return _build_fixation_count_property_summary(
         session_df,
         group_cols=["fixation_label", "pair_key", "monkey_name_m1", "monkey_name_m2"],
         sort_cols=["pair_key"],
     )
 
 
-def _summarize_total(session_df: pd.DataFrame) -> pd.DataFrame:
-    """Backward-compatible alias for pair-level summaries."""
-    return _summarize_by_pair(session_df)
-
-
-def _summarize_global(session_df: pd.DataFrame) -> pd.DataFrame:
-    """Aggregate leader/follower counts across all sessions and monkey pairs."""
+def _summarize_fixation_count_property_global(session_df: pd.DataFrame) -> pd.DataFrame:
+    """Summarize leader-vs-follower fixation-count deltas globally across all sessions."""
     if session_df.empty:
-        return pd.DataFrame(columns=["fixation_label", "n_pairs", "n_dates"] + SUMMARY_METRIC_COLUMNS)
+        return _empty_summary_df(["fixation_label", "n_pairs", "n_dates"])
 
-    summary = (
+    key_counts = (
         session_df.groupby(["fixation_label"], dropna=False, as_index=False)
         .agg(
             n_pairs=("pair_key", "nunique"),
@@ -262,80 +276,72 @@ def _summarize_global(session_df: pd.DataFrame) -> pd.DataFrame:
         )
         .reset_index(drop=True)
     )
-    agg = _build_leader_follower_summary(
+    property_summary = _build_fixation_count_property_summary(
         session_df,
         group_cols=["fixation_label"],
         sort_cols=["fixation_label"],
     )
-    summary = summary.merge(agg, how="inner", on="fixation_label")
-    return summary
+    return key_counts.merge(property_summary, how="inner", on="fixation_label")
 
 
-def _build_leader_follower_summary(
+def _build_fixation_count_property_summary(
     session_df: pd.DataFrame,
     *,
     group_cols: list[str],
     sort_cols: list[str],
 ) -> pd.DataFrame:
-    """Aggregate leader/follower and fixation-delta metrics for arbitrary groups."""
+    """Aggregate fixation-count difference properties given known leader/follower labels."""
     summary = (
-        session_df.groupby(
-            group_cols,
-            dropna=False,
-            as_index=False,
-        )
+        session_df.groupby(group_cols, dropna=False, as_index=False)
         .agg(
             n_sessions=("leader_agent", "size"),
-            n_tie_sessions=("leader_agent", lambda s: int((s == "tie").sum())),
-            m1_leader_sessions=("leader_agent", lambda s: int((s == "m1").sum())),
-            m2_leader_sessions=("leader_agent", lambda s: int((s == "m2").sum())),
-            n_valid_fixation_deltas=(LEADER_DELTA_COL, lambda s: int(s.notna().sum())),
-            n_positive_fixation_deltas=(LEADER_DELTA_COL, lambda s: int((s > 0.0).sum())),
-            n_negative_fixation_deltas=(LEADER_DELTA_COL, lambda s: int((s < 0.0).sum())),
-            n_zero_fixation_deltas=(LEADER_DELTA_COL, lambda s: int((s == 0.0).sum())),
-            mean_leader_minus_follower_fixation_count=(LEADER_DELTA_COL, "mean"),
-            median_leader_minus_follower_fixation_count=(LEADER_DELTA_COL, "median"),
+            n_pos=(LEADER_DELTA_COL, lambda s: int((s > 0.0).sum())),
+            n_neg=(LEADER_DELTA_COL, lambda s: int((s < 0.0).sum())),
+            n_zero=(LEADER_DELTA_COL, lambda s: int((s == 0.0).sum())),
+            mean_delta=(LEADER_DELTA_COL, "mean"),
         )
     )
     if sort_cols:
         summary = summary.sort_values(sort_cols).reset_index(drop=True)
 
-    m1_counts = summary["m1_leader_sessions"].to_numpy(dtype=np.float64)
-    m2_counts = summary["m2_leader_sessions"].to_numpy(dtype=np.float64)
-    leader_denom = m1_counts + m2_counts
-    summary["m1_lead_fraction"] = np.where(leader_denom > 0.0, m1_counts / leader_denom, np.nan)
-
-    valid = summary["n_valid_fixation_deltas"].to_numpy(dtype=np.float64)
-    pos = summary["n_positive_fixation_deltas"].to_numpy(dtype=np.float64)
-    neg = summary["n_negative_fixation_deltas"].to_numpy(dtype=np.float64)
-    zero = summary["n_zero_fixation_deltas"].to_numpy(dtype=np.float64)
-    summary["leader_fixation_advantage_fraction"] = np.where(valid > 0.0, pos / valid, np.nan)
-    summary["leader_fixation_disadvantage_fraction"] = np.where(valid > 0.0, neg / valid, np.nan)
-    summary["leader_minus_follower_all_positive"] = (valid > 0.0) & (pos == valid)
-    summary["leader_minus_follower_all_negative"] = (valid > 0.0) & (neg == valid)
-
-    consistency = np.full(summary.shape[0], "mixed", dtype=object)
-    consistency[valid == 0.0] = "no_data"
-    consistency[(valid > 0.0) & (pos == valid)] = "all_positive"
-    consistency[(valid > 0.0) & (neg == valid)] = "all_negative"
-    consistency[(valid > 0.0) & (zero == valid)] = "all_zero"
-    consistency[(valid > 0.0) & (pos > 0.0) & (neg == 0.0) & (zero > 0.0)] = "positive_or_zero"
-    consistency[(valid > 0.0) & (neg > 0.0) & (pos == 0.0) & (zero > 0.0)] = "negative_or_zero"
-    summary["leader_minus_follower_consistency"] = consistency
-    return summary
+    pos = summary["n_pos"].to_numpy(dtype=np.float64)
+    neg = summary["n_neg"].to_numpy(dtype=np.float64)
+    zero = summary["n_zero"].to_numpy(dtype=np.float64)
+    summary["delta_consistency"] = _assign_consistency_label(pos, neg, zero)
+    return summary[group_cols + PROPERTY_SUMMARY_METRIC_COLUMNS]
 
 
-def _print_summaries(
+def _summarize_by_date(session_df: pd.DataFrame) -> pd.DataFrame:
+    """Backward-compatible alias for date-level fixation-count property summaries."""
+    return _summarize_fixation_count_property_by_date(session_df)
+
+
+def _summarize_by_pair(session_df: pd.DataFrame) -> pd.DataFrame:
+    """Backward-compatible alias for pair-level fixation-count property summaries."""
+    return _summarize_fixation_count_property_by_pair(session_df)
+
+
+def _summarize_total(session_df: pd.DataFrame) -> pd.DataFrame:
+    """Backward-compatible alias for pair-level fixation-count property summaries."""
+    return _summarize_fixation_count_property_by_pair(session_df)
+
+
+def _summarize_global(session_df: pd.DataFrame) -> pd.DataFrame:
+    """Backward-compatible alias for global fixation-count property summaries."""
+    return _summarize_fixation_count_property_global(session_df)
+
+
+def _print_fixation_count_property_summaries(
     *,
     fixation_label: str,
     date_summary_df: pd.DataFrame,
     pair_summary_df: pd.DataFrame,
     global_summary_df: pd.DataFrame,
 ) -> None:
-    """Print date-level, pair-level, and global summaries."""
+    """Print fixation-count property summaries based on precomputed leader/follower labels."""
     print("\n[leader-follower] -----------------------------------------------")
     print(f"[leader-follower] fixation_label={fixation_label}")
-    print("[leader-follower] Date-level summary by monkey pair")
+    print("[leader-follower] Fixation-count properties by date and pair")
     print("[leader-follower] -----------------------------------------------")
 
     if date_summary_df.empty:
@@ -348,20 +354,12 @@ def _print_summaries(
             print(f"\nPair: m1={monkey_name_m1} vs m2={monkey_name_m2}")
             table_cols = [
                 "date",
-                "n_sessions",
-                "m1_leader_sessions",
-                "m2_leader_sessions",
-                "m1_lead_fraction",
-                "n_positive_fixation_deltas",
-                "n_negative_fixation_deltas",
-                "n_zero_fixation_deltas",
-                "mean_leader_minus_follower_fixation_count",
-                "leader_minus_follower_consistency",
+                *PROPERTY_SUMMARY_METRIC_COLUMNS,
             ]
             print(pair_rows[table_cols].to_string(index=False))
 
     print("\n[leader-follower] -----------------------------------------------")
-    print("[leader-follower] Pair-level summary across all sessions")
+    print("[leader-follower] Fixation-count properties by pair (all sessions)")
     print("[leader-follower] -----------------------------------------------")
     if pair_summary_df.empty:
         print("[leader-follower] No pair-summary rows found.")
@@ -371,21 +369,13 @@ def _print_summaries(
                 [
                     "monkey_name_m1",
                     "monkey_name_m2",
-                    "n_sessions",
-                    "m1_leader_sessions",
-                    "m2_leader_sessions",
-                    "m1_lead_fraction",
-                    "n_positive_fixation_deltas",
-                    "n_negative_fixation_deltas",
-                    "n_zero_fixation_deltas",
-                    "mean_leader_minus_follower_fixation_count",
-                    "leader_minus_follower_consistency",
+                    *PROPERTY_SUMMARY_METRIC_COLUMNS,
                 ]
             ].to_string(index=False)
         )
 
     print("\n[leader-follower] -----------------------------------------------")
-    print("[leader-follower] Global summary across all sessions and pairs")
+    print("[leader-follower] Global fixation-count properties")
     print("[leader-follower] -----------------------------------------------")
     if global_summary_df.empty:
         print("[leader-follower] No global-summary rows found.")
@@ -396,15 +386,7 @@ def _print_summaries(
                     "fixation_label",
                     "n_pairs",
                     "n_dates",
-                    "n_sessions",
-                    "m1_leader_sessions",
-                    "m2_leader_sessions",
-                    "m1_lead_fraction",
-                    "n_positive_fixation_deltas",
-                    "n_negative_fixation_deltas",
-                    "n_zero_fixation_deltas",
-                    "mean_leader_minus_follower_fixation_count",
-                    "leader_minus_follower_consistency",
+                    *PROPERTY_SUMMARY_METRIC_COLUMNS,
                 ]
             ].to_string(index=False)
         )
@@ -414,7 +396,7 @@ def _print_summaries(
 def run_fix_crosscorr_leader_follower_analysis(
     settings: FixCrossCorrLeaderFollowerSettings,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Build and save session/date/pair/global leader-follower summaries."""
+    """Build session-level leader calls and fixation-count property summaries."""
     cfg = load_dataset_config(settings.cfg_path)
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
     within_path = out_dir / settings.within_filename
@@ -427,15 +409,15 @@ def run_fix_crosscorr_leader_follower_analysis(
 
     within_df = pd.read_pickle(within_path)
     lags = _load_lags(lags_path)
-    session_df = _compute_session_leader_rows(
+    session_df = _determine_session_leader_follower(
         within_df=within_df,
         lags=lags,
         fixation_label=settings.fixation_label,
         tie_epsilon=settings.tie_epsilon,
     )
-    date_summary_df = _summarize_by_date(session_df)
-    pair_summary_df = _summarize_by_pair(session_df)
-    global_summary_df = _summarize_global(session_df)
+    date_summary_df = _summarize_fixation_count_property_by_date(session_df)
+    pair_summary_df = _summarize_fixation_count_property_by_pair(session_df)
+    global_summary_df = _summarize_fixation_count_property_global(session_df)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     session_out = out_dir / settings.session_output_filename
@@ -458,7 +440,12 @@ def run_fix_crosscorr_leader_follower_analysis(
         f"pair={len(pair_summary_df)} global={len(global_summary_df)}"
     )
 
-    _print_summaries(
+    print(
+        "[leader-follower] note: summaries printed below report fixation-count properties "
+        "given leader/follower labels, not separate leader-call breakdown tables."
+    )
+
+    _print_fixation_count_property_summaries(
         fixation_label=settings.fixation_label,
         date_summary_df=date_summary_df,
         pair_summary_df=pair_summary_df,
