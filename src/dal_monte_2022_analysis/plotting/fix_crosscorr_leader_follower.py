@@ -9,6 +9,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from scipy.stats import ttest_ind
 
 from dal_monte_2022_analysis.config.load import (
     load_dataset_config,
@@ -40,6 +41,32 @@ class LeaderFollowerMonkeyRolePupilPlotSettings:
     n_cols: int = 4
     value_column: str = "mean_pupil"
     y_label: str = "Session mean pupil size"
+
+
+@dataclass
+class LeaderFollowerPupilGlobalOverlayPlotSettings:
+    """Configuration for pooled leader/follower pupil violin with monkey mean overlays."""
+
+    cfg_path: str
+    plotting_cfg_path: str = "configs/plotting.yaml"
+    analysis_subdir: str = "fix_cross_correlation"
+    monkey_role_session_filename: str = (
+        "within_session_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv"
+    )
+    monkey_role_summary_filename: str = (
+        "summary_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv"
+    )
+    output_filename: str = (
+        "global_face_fix_crosscorr_leader_follower_pupil_leader_vs_follower_with_monkey_overlay.pdf"
+    )
+    max_samples_per_role: int = 50000
+    value_column: str = "mean_pupil"
+    y_label: str = "Session mean pupil size"
+    title: str = "Pupil During Fixations: Leader vs Follower (All Sessions)"
+    show_monkey_legend: bool = False
+    monkey_line_alpha: float = 0.7
+    monkey_marker_size: float = 16.0
+    alpha: float = 0.05
 
 
 @dataclass
@@ -99,6 +126,51 @@ def _subsample_for_plot(
         return values
     idx = rng.choice(values.size, size=int(max_samples), replace=False)
     return values[idx]
+
+
+def _compare_group_means(
+    leader_values: np.ndarray,
+    follower_values: np.ndarray,
+    *,
+    alpha: float,
+) -> dict[str, float | bool | str]:
+    """Compare leader vs follower arrays using Welch two-sample t-test."""
+    leader_values = np.asarray(leader_values, dtype=float).reshape(-1)
+    follower_values = np.asarray(follower_values, dtype=float).reshape(-1)
+    leader_values = leader_values[np.isfinite(leader_values)]
+    follower_values = follower_values[np.isfinite(follower_values)]
+
+    n_leader = int(leader_values.size)
+    n_follower = int(follower_values.size)
+    lead_mean = float(np.mean(leader_values)) if n_leader > 0 else np.nan
+    follow_mean = float(np.mean(follower_values)) if n_follower > 0 else np.nan
+    mean_diff = float(lead_mean - follow_mean) if n_leader > 0 and n_follower > 0 else np.nan
+
+    if n_leader > 1 and n_follower > 1:
+        p_value = float(ttest_ind(leader_values, follower_values, equal_var=False).pvalue)
+    else:
+        p_value = np.nan
+
+    is_significant = bool(np.isfinite(p_value) and p_value < float(alpha))
+    if not np.isfinite(mean_diff):
+        higher = "undetermined"
+    elif mean_diff > 0:
+        higher = "leader"
+    elif mean_diff < 0:
+        higher = "follower"
+    else:
+        higher = "equal"
+
+    return {
+        "n_leader": n_leader,
+        "n_follower": n_follower,
+        "lead_mean": lead_mean,
+        "follow_mean": follow_mean,
+        "mean_diff": mean_diff,
+        "p": p_value,
+        "sig": is_significant,
+        "higher": higher,
+    }
 
 
 def _load_monkey_role_frames(
@@ -255,6 +327,159 @@ def _plot_leader_follower_monkey_role_violin(settings) -> Path:
 
     for j in range(len(monkeys), n_rows * n_cols):
         axes.flat[j].axis("off")
+
+    fig.tight_layout()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(out_path, format="pdf")
+    plt.close(fig)
+    return out_path
+
+
+def plot_leader_follower_pupil_global_overlay_violin(
+    settings: LeaderFollowerPupilGlobalOverlayPlotSettings,
+) -> Path:
+    """Plot pooled leader/follower pupil violins with per-monkey paired mean overlay."""
+    cfg = load_dataset_config(settings.cfg_path)
+    plot_cfg = load_plotting_config(settings.plotting_cfg_path)
+    apply_plotting_config(plot_cfg)
+
+    session_df, summary_df, out_path = _load_monkey_role_frames(cfg=cfg, settings=settings)
+    if session_df.empty or summary_df.empty:
+        raise RuntimeError("No monkey-role pupil data found to plot.")
+
+    required_session_cols = {"role", settings.value_column}
+    missing_session = required_session_cols.difference(session_df.columns)
+    if missing_session:
+        raise RuntimeError(
+            f"Monkey-role session table missing required columns: {sorted(missing_session)}"
+        )
+    required_summary_cols = {"monkey_name", "lead_mean", "follow_mean"}
+    missing_summary = required_summary_cols.difference(summary_df.columns)
+    if missing_summary:
+        raise RuntimeError(
+            f"Monkey-role summary table missing required columns: {sorted(missing_summary)}"
+        )
+
+    leader_values_all = session_df.loc[
+        session_df["role"].astype(str) == "leader",
+        settings.value_column,
+    ].to_numpy(dtype=float)
+    follower_values_all = session_df.loc[
+        session_df["role"].astype(str) == "follower",
+        settings.value_column,
+    ].to_numpy(dtype=float)
+    if leader_values_all.size == 0 and follower_values_all.size == 0:
+        raise RuntimeError("No leader/follower pupil session values found to plot.")
+
+    compare = _compare_group_means(
+        leader_values_all,
+        follower_values_all,
+        alpha=float(settings.alpha),
+    )
+
+    rng = np.random.default_rng(13)
+    leader_values = leader_values_all
+    leader_values = _subsample_for_plot(
+        leader_values,
+        max_samples=int(settings.max_samples_per_role),
+        rng=rng,
+    )
+    follower_values = follower_values_all
+    follower_values = _subsample_for_plot(
+        follower_values,
+        max_samples=int(settings.max_samples_per_role),
+        rng=rng,
+    )
+
+    figsize, dpi = resolve_figsize(plot_cfg)
+    if figsize is None:
+        figsize = [7.2, 4.8]
+
+    violin_cfg = plot_cfg.get("violin", {})
+    colors = violin_cfg.get("colors", {})
+    color_leader = str(colors.get("leader", "#4C72B0"))
+    color_follower = str(colors.get("follower", "#DD8452"))
+
+    fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
+    datasets: list[np.ndarray] = []
+    positions: list[int] = []
+    if leader_values.size > 0:
+        datasets.append(leader_values)
+        positions.append(1)
+    if follower_values.size > 0:
+        datasets.append(follower_values)
+        positions.append(2)
+    parts = ax.violinplot(
+        datasets,
+        positions=positions,
+        widths=0.75,
+        showmedians=True,
+        showextrema=False,
+    )
+    for body, pos in zip(parts["bodies"], positions):
+        body.set_facecolor(color_leader if pos == 1 else color_follower)
+        body.set_edgecolor("#222222")
+        body.set_alpha(0.82)
+    if "cmedians" in parts:
+        parts["cmedians"].set_color("#111111")
+        parts["cmedians"].set_linewidth(1.0)
+
+    monkey_summary = summary_df[
+        ["monkey_name", "lead_mean", "follow_mean"]
+    ].drop_duplicates("monkey_name")
+    monkey_summary = monkey_summary.assign(
+        lead_mean=pd.to_numeric(monkey_summary["lead_mean"], errors="coerce"),
+        follow_mean=pd.to_numeric(monkey_summary["follow_mean"], errors="coerce"),
+    )
+    monkey_summary = monkey_summary.dropna(subset=["lead_mean", "follow_mean"])
+
+    cmap = plt.get_cmap("tab20")
+    n_monkeys = len(monkey_summary)
+    for i, row in monkey_summary.reset_index(drop=True).iterrows():
+        color = cmap(i % 20)
+        monkey_name = str(row["monkey_name"])
+        y_vals = [float(row["lead_mean"]), float(row["follow_mean"])]
+        ax.plot(
+            [1, 2],
+            y_vals,
+            color=color,
+            alpha=float(settings.monkey_line_alpha),
+            linewidth=1.25,
+            zorder=3,
+            label=monkey_name,
+        )
+        ax.scatter(
+            [1, 2],
+            y_vals,
+            color=[color, color],
+            s=float(settings.monkey_marker_size),
+            edgecolors="#111111",
+            linewidths=0.35,
+            zorder=4,
+        )
+
+    if bool(settings.show_monkey_legend) and n_monkeys > 0:
+        ax.legend(
+            loc="center left",
+            bbox_to_anchor=(1.02, 0.5),
+            frameon=False,
+            title="Monkey",
+            fontsize=8,
+        )
+
+    sig_label = " *" if bool(compare["sig"]) else ""
+    subtitle = (
+        f"leader n={compare['n_leader']}, mean={compare['lead_mean']:.3f}; "
+        f"follower n={compare['n_follower']}, mean={compare['follow_mean']:.3f}; "
+        f"diff={compare['mean_diff']:.3f}; p={format_p_value(float(compare['p']))}{sig_label}; "
+        f"higher={compare['higher']}"
+    )
+    ax.set_title(f"{settings.title}\n{subtitle}")
+    ax.set_xlim(0.5, 2.5)
+    ax.set_xticks([1, 2])
+    ax.set_xticklabels(["leader", "follower"])
+    ax.set_ylabel(str(settings.y_label))
+    ax.grid(axis="y", alpha=0.25, linewidth=0.6)
 
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)

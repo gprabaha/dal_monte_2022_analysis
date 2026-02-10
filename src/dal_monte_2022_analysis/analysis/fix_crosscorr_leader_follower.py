@@ -50,6 +50,9 @@ class FixCrossCorrLeaderFollowerSettings:
     monkey_role_pupil_session_output_filename: str = (
         "within_session_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv"
     )
+    monkey_role_pupil_session_raw_filename: str = (
+        "within_session_face_fix_crosscorr_leader_follower_pupil_by_monkey_role_raw.pkl"
+    )
     monkey_role_pupil_summary_filename: str = (
         "summary_face_fix_crosscorr_leader_follower_pupil_by_monkey_role.csv"
     )
@@ -1589,6 +1592,7 @@ def run_fix_crosscorr_leader_follower_analysis(
     pupil_pair_out = out_dir / settings.pupil_pair_summary_filename
     pupil_global_out = out_dir / settings.pupil_global_summary_filename
     monkey_role_session_out = out_dir / settings.monkey_role_pupil_session_output_filename
+    monkey_role_session_raw_out = out_dir / settings.monkey_role_pupil_session_raw_filename
     monkey_role_summary_out = out_dir / settings.monkey_role_pupil_summary_filename
     monkey_role_fixation_count_session_out = (
         out_dir / settings.monkey_role_fixation_count_session_output_filename
@@ -1615,6 +1619,7 @@ def run_fix_crosscorr_leader_follower_analysis(
         monkey_role_session_out,
         index=False,
     )
+    monkey_role_session_df.to_pickle(monkey_role_session_raw_out)
     monkey_role_summary_df.to_csv(monkey_role_summary_out, index=False)
     monkey_role_fixation_count_session_df[MONKEY_ROLE_FIXATION_COUNT_SESSION_COLUMNS].to_csv(
         monkey_role_fixation_count_session_out,
@@ -1636,6 +1641,7 @@ def run_fix_crosscorr_leader_follower_analysis(
     print(f"[leader-follower] wrote pupil pair-level summary: {pupil_pair_out}")
     print(f"[leader-follower] wrote pupil global summary: {pupil_global_out}")
     print(f"[leader-follower] wrote monkey-role pupil session table: {monkey_role_session_out}")
+    print(f"[leader-follower] wrote monkey-role pupil raw session table: {monkey_role_session_raw_out}")
     print(f"[leader-follower] wrote monkey-role pupil summary: {monkey_role_summary_out}")
     print(
         "[leader-follower] wrote monkey-role fixation-count session table: "
