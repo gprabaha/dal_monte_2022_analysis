@@ -9,7 +9,7 @@ from dal_monte_2022_analysis.plotting.interactive_period_durations import (
 
 
 def main():
-    """Parse CLI args and generate per-pair interactive-period duration plots."""
+    """Parse CLI args and generate multi-panel interactive-period duration histograms."""
     parser = argparse.ArgumentParser(
         description=(
             "Plot interactive and non-interactive period duration distributions "
@@ -22,14 +22,14 @@ def main():
     parser.add_argument("--analysis-subdir", default="interactive_periods")
     parser.add_argument("--output-subdir", default="duration_distributions")
     parser.add_argument(
-        "--output-filename-prefix",
-        default="interactive_period_duration_distribution",
+        "--output-filename",
+        default="interactive_period_duration_distributions_histogram.pdf",
     )
     parser.add_argument(
-        "--max-samples-per-state",
+        "--histogram-bins",
         type=int,
-        default=0,
-        help="Optional cap for displayed samples per state (0 means no subsampling).",
+        default=60,
+        help="Number of shared bins used across all histograms.",
     )
     args = parser.parse_args()
 
@@ -39,16 +39,12 @@ def main():
         interactive_periods_cfg_path=args.interactive_periods_cfg,
         analysis_subdir=args.analysis_subdir,
         output_subdir=args.output_subdir,
-        output_filename_prefix=args.output_filename_prefix,
-        max_samples_per_state=int(args.max_samples_per_state),
+        output_filename=args.output_filename,
+        histogram_bins=int(args.histogram_bins),
     )
 
-    out_paths = plot_interactive_period_duration_distributions(settings)
-    print(
-        "[plot] wrote "
-        f"{len(out_paths)} interactive-period duration distribution plot(s) to: "
-        f"{out_paths[0].parent}"
-    )
+    out_path = plot_interactive_period_duration_distributions(settings)
+    print(f"[plot] wrote interactive-period duration histogram grid: {out_path}")
 
 
 if __name__ == "__main__":
