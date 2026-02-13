@@ -26,6 +26,10 @@ def main():
         default="interactive_period_duration_distributions_histogram.pdf",
     )
     parser.add_argument(
+        "--m1-output-filename",
+        default="interactive_period_duration_distributions_histogram_by_m1.pdf",
+    )
+    parser.add_argument(
         "--aggregate-output-filename",
         default="interactive_period_duration_distributions_histogram_all_pairs_aggregate.pdf",
     )
@@ -44,13 +48,15 @@ def main():
         analysis_subdir=args.analysis_subdir,
         output_subdir=args.output_subdir,
         output_filename=args.output_filename,
+        m1_output_filename=args.m1_output_filename,
         aggregate_output_filename=args.aggregate_output_filename,
         histogram_bins=int(args.histogram_bins),
     )
 
     out_paths = plot_interactive_period_duration_distributions(settings)
     print(f"[plot] wrote interactive-period duration histogram grid: {out_paths[0]}")
-    print(f"[plot] wrote interactive-period duration aggregate histogram: {out_paths[1]}")
+    print(f"[plot] wrote interactive-period duration histogram grid by m1: {out_paths[1]}")
+    print(f"[plot] wrote interactive-period duration aggregate histogram: {out_paths[2]}")
 
 
 if __name__ == "__main__":

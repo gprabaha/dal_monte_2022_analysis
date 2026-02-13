@@ -8,7 +8,7 @@ Modules:
 - `fix_crosscorr_leader_follower.py`
   Loads leader-follower monkey-role pupil, fixation-count, or fixation-duration summary/session tables and renders per-monkey leader-vs-follower violin panels.
 - `interactive_period_durations.py`
-  Loads interactive-period segment tables, computes period durations in seconds, and renders both a shared-axis histogram grid by monkey pair/state and a separate all-pairs aggregate histogram with mean/quartile overlays.
+  Loads interactive-period segment tables, computes period durations in seconds, and renders shared-axis histogram grids by monkey pair and by unique m1 (state-split), plus a separate all-pairs aggregate histogram with mean/quartile overlays.
 - `interactive_period_detection.py`
   Builds per-session detection figures with fixation binary timelines (broken bars), individual fixation-density traces, joint face-density thresholding, and interactive-period overlays, writing outputs under per-date subfolders.
 - `pupil_smoothing.py`

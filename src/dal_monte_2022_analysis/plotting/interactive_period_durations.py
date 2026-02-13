@@ -34,6 +34,7 @@ class InteractivePeriodDurationDistributionPlotSettings:
     analysis_subdir: str = "interactive_periods"
     output_subdir: str = "duration_distributions"
     output_filename: str = "interactive_period_duration_distributions_histogram.pdf"
+    m1_output_filename: str = "interactive_period_duration_distributions_histogram_by_m1.pdf"
     aggregate_output_filename: str = (
         "interactive_period_duration_distributions_histogram_all_pairs_aggregate.pdf"
     )
@@ -62,7 +63,7 @@ def _canonical_pair_label(monkey_a: object, monkey_b: object) -> str:
 
 
 def _load_pair_lookup(cfg: dict) -> pd.DataFrame:
-    """Load date->pair mapping from ephys metadata."""
+    """Load date->pair and m1 mapping from ephys metadata."""
     ephys_path = Path(cfg["raw_data_root"]) / "ephys_days_and_monkeys.pkl"
     if not ephys_path.exists():
         raise FileNotFoundError(f"Missing ephys metadata file: {ephys_path}")
@@ -88,6 +89,7 @@ def _load_pair_lookup(cfg: dict) -> pd.DataFrame:
     pairs_df = pd.DataFrame(
         {
             "date": session_str,
+            "m1_label": [str(m1).strip() if str(m1).strip() else "unknown_m1" for m1 in ephys_df["m1"]],
             "pair_label": [
                 _canonical_pair_label(m1, m2)
                 for m1, m2 in zip(ephys_df["m1"], ephys_df["m2"])
@@ -311,7 +313,7 @@ def _resolve_figure_size(
 def plot_interactive_period_duration_distributions(
     settings: InteractivePeriodDurationDistributionPlotSettings,
 ) -> list[Path]:
-    """Plot monkey-pair grid and all-pairs aggregate duration histograms."""
+    """Plot monkey-pair grid, m1-only grid, and all-pairs aggregate histograms."""
     cfg = load_dataset_config(settings.cfg_path)
     interactive_cfg = load_interactive_periods_config(settings.interactive_periods_cfg_path)
     plot_cfg = load_plotting_config(settings.plotting_cfg_path)
@@ -327,6 +329,7 @@ def plot_interactive_period_duration_distributions(
         analysis_subdir=settings.analysis_subdir,
         output_subdir=settings.output_subdir,
         output_filename=settings.output_filename,
+        m1_output_filename=settings.m1_output_filename,
         aggregate_output_filename=settings.aggregate_output_filename,
         interactive_periods_modality=modality,
         high_label=high_label,
@@ -353,10 +356,16 @@ def plot_interactive_period_duration_distributions(
     durations_df["pair_label"] = durations_df["pair_label"].fillna(
         durations_df["date"].map(lambda date: f"unknown_pair ({date})")
     )
+    durations_df["m1_label"] = durations_df["m1_label"].fillna(
+        durations_df["date"].map(lambda date: f"unknown_m1 ({date})")
+    )
 
     pair_labels = sorted(durations_df["pair_label"].astype(str).drop_duplicates(), key=str.casefold)
     if not pair_labels:
         raise RuntimeError("No monkey pairs found after loading interactive-period durations.")
+    m1_labels = sorted(durations_df["m1_label"].astype(str).drop_duplicates(), key=str.casefold)
+    if not m1_labels:
+        raise RuntimeError("No m1 labels found after loading interactive-period durations.")
 
     bins, x_max = _resolve_common_bins(
         durations_df[resolved_settings.duration_column].to_numpy(dtype=float),
@@ -431,6 +440,63 @@ def plot_interactive_period_duration_distributions(
     fig.savefig(out_path, format="pdf")
     plt.close(fig)
 
+    # Per-m1 grid (each row is one unique m1 monkey, pooled across its sessions/pairs).
+    m1_figsize, _ = _resolve_figure_size(n_rows=len(m1_labels), plot_cfg=plot_cfg)
+    fig_m1, axes_m1 = plt.subplots(
+        len(m1_labels),
+        2,
+        figsize=m1_figsize,
+        dpi=dpi,
+        squeeze=False,
+        sharex=True,
+    )
+    for row_idx, m1_label in enumerate(m1_labels):
+        m1_df = durations_df[durations_df["m1_label"].astype(str) == m1_label]
+        for col_idx, (state_label, hist_color) in enumerate(state_specs):
+            ax = axes_m1[row_idx, col_idx]
+            state_values = m1_df.loc[
+                m1_df["state"] == state_label,
+                resolved_settings.duration_column,
+            ].to_numpy(dtype=float)
+            _plot_histogram_with_stats(
+                ax=ax,
+                values=state_values,
+                bins=bins,
+                hist_color=hist_color,
+                mean_color=mean_color,
+                summary_color=summary_color,
+            )
+            ax.set_xlim(0.0, x_max)
+            ax.grid(axis="y", alpha=0.24, linewidth=0.6)
+            if row_idx == 0:
+                ax.set_title(state_label.replace("_", " "))
+            if col_idx == 0:
+                ax.text(
+                    0.98,
+                    0.06,
+                    m1_label,
+                    transform=ax.transAxes,
+                    ha="right",
+                    va="bottom",
+                    fontsize=10,
+                    fontweight="bold",
+                    bbox={
+                        "boxstyle": "round,pad=0.20",
+                        "facecolor": "white",
+                        "edgecolor": "#DDDDDD",
+                        "alpha": 0.9,
+                    },
+                )
+
+    fig_m1.supxlabel(resolved_settings.x_label)
+    fig_m1.supylabel(resolved_settings.y_label)
+    fig_m1.tight_layout()
+
+    m1_out_path = out_dir / resolved_settings.m1_output_filename
+    m1_out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig_m1.savefig(m1_out_path, format="pdf")
+    plt.close(fig_m1)
+
     agg_height = min(4.0, max(2.2, 0.22 * float(figsize[1])))
     fig_agg, axes_agg = plt.subplots(
         1,
@@ -467,4 +533,4 @@ def plot_interactive_period_duration_distributions(
     aggregate_out_path.parent.mkdir(parents=True, exist_ok=True)
     fig_agg.savefig(aggregate_out_path, format="pdf")
     plt.close(fig_agg)
-    return [out_path, aggregate_out_path]
+    return [out_path, m1_out_path, aggregate_out_path]
