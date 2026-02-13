@@ -1,0 +1,39 @@
+# Face fixation HSMM settings
+# Fits a 2-state HSMM to joint face-fixation observations:
+#   0 -> (m1=0, m2=0)
+#   1 -> (m1=1, m2=0)
+#   2 -> (m1=0, m2=1)
+#   3 -> (m1=1, m2=1)
+
+input_modality: fixation_binary_vectors
+fixation_label: face
+output_subdir: face_fixation_hsmm
+
+# Grouping for shared-parameter fits:
+# - session: one model per session
+# - day: one model per date (all sessions on that date)
+# - pair: one model per monkey pair across dates/sessions
+# - global: one model across all sessions
+grouping: session
+
+n_hidden_states: 2
+max_duration: 2000 # milliseconds
+n_iter: 50
+tol: 0.001
+n_init: 3
+seed: 13
+allow_self_transitions: false
+
+transition_pseudocount: 1.0
+emission_pseudocount: 1.0
+
+group_summary_filename: face_fixation_hsmm_group_summary.csv
+session_summary_filename: face_fixation_hsmm_session_summary.csv
+segments_filename: face_fixation_hsmm_segments.csv
+fits_filename: face_fixation_hsmm_fits.pkl
+
+# Optional filters.
+dates: null
+sessions: null
+
+test_single: false

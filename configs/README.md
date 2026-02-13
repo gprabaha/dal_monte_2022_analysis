@@ -25,6 +25,7 @@ With current settings, processed outputs are written under:
 - `out_of_roi_fixation_probability.yaml`
 - `face_fix_cross_correlation.yaml`
 - `out_of_roi_fix_cross_correlation.yaml`
+- `face_fixation_hsmm.yaml`
 
 Cross-correlation configs also hold optional leader-follower settings used by:
 - `scripts/analysis/build_face_fix_crosscorr_leader_follower.py`

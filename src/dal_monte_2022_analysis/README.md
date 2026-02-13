@@ -6,6 +6,7 @@ This package holds the reusable core of the project:
 - `preprocessing/` handles indexing, extraction, cleaning, and fixation-guided pupil smoothing pipelines.
 - `features/` builds fixations, fixation vectors/density, joint density, and interactive periods.
 - `analysis/` computes fixation probability, fixation cross-correlation, and cross-correlation leader-follower outputs.
+- `modeling/` fits latent-state models (currently Poisson-HSMM for joint face fixation).
 - `plotting/` renders analysis figures from saved outputs.
 - `utils/` provides shared helpers (paths, parallelism, fixation detection, and HPC job helpers).
 
