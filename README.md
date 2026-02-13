@@ -44,6 +44,7 @@ Analysis outputs are written under `analysis_output_root`.
 
 2. Build features
 - `python scripts/features/detect_fixations_and_saccades.py`
+- `python scripts/preprocessing/build_smoothed_pupil_size.py` (requires `fixations`)
 - `python scripts/features/build_fixation_binary_vectors.py`
 - `python scripts/features/build_fixation_density.py`
 - `python scripts/features/build_joint_face_fixation_density.py`
@@ -83,18 +84,20 @@ Generated artifacts are written under `hpc/`.
 `python scripts/preprocessing/clean_processed_data.py`
 3. Detect fixations/saccades:
 `python scripts/features/detect_fixations_and_saccades.py`
-4. Build vectors and density:
+4. Build fixation-guided smoothed pupil:
+`python scripts/preprocessing/build_smoothed_pupil_size.py`
+5. Build vectors and density:
 `python scripts/features/build_fixation_binary_vectors.py`
 `python scripts/features/build_fixation_density.py`
-5. Build joint/interactive features:
+6. Build joint/interactive features:
 `python scripts/features/build_joint_face_fixation_density.py`
 `python scripts/features/build_interactive_periods.py`
-6. Run analyses:
+7. Run analyses:
 `python scripts/analysis/build_face_fixation_probability.py`
 `python scripts/analysis/build_out_of_roi_fixation_probability.py`
 `python scripts/analysis/build_face_fix_cross_correlation.py`
 `python scripts/analysis/build_out_of_roi_fix_cross_correlation.py`
 `python scripts/analysis/build_face_fix_crosscorr_leader_follower.py`
 `python scripts/analysis/build_out_of_roi_fix_crosscorr_leader_follower.py`
-7. Plot:
+8. Plot:
 `python scripts/plotting/plot_face_fixation_probability.py`

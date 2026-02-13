@@ -17,6 +17,7 @@ With current settings, processed outputs are written under:
 - `fixation_density.yaml`
 - `joint_face_fixation_density.yaml`
 - `interactive_periods.yaml`
+- `pupil_smoothing.yaml`
 
 ## Analysis configs
 

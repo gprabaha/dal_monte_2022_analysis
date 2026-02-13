@@ -17,6 +17,7 @@ src/dal_monte_2022_analysis/preprocessing/clean_dataset.py
 src/dal_monte_2022_analysis/preprocessing/data_extraction.py
 src/dal_monte_2022_analysis/preprocessing/index_dataset.py
 src/dal_monte_2022_analysis/preprocessing/load_mat.py
+src/dal_monte_2022_analysis/preprocessing/pupil_smoothing.py
 src/dal_monte_2022_analysis/utils/__init__.py
 src/dal_monte_2022_analysis/utils/parallel.py
 src/dal_monte_2022_analysis/utils/paths.py

@@ -1,0 +1,20 @@
+# configs/pupil_smoothing.yaml
+# Settings for fixation-guided pupil smoothing/interpolation.
+
+input_pupil_modality: pupil_size
+fixations_modality: fixations
+output_modality: smoothed_pupil_size
+
+# Adaptive Gaussian smoothing sigma in samples (1 sample = 1 ms at 1 kHz).
+base_sigma_samples: 6.0
+min_sigma_samples: 2.0
+max_sigma_samples: 40.0
+adaptive_noise_gain: 2.0
+
+# If true, each fixation interval is replaced by its median pupil value before
+# interpolating non-fixation bins.
+flatten_within_fixation: true
+
+use_parallel: true
+test_single: false
+agents: null

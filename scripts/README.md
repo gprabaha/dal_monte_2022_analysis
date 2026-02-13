@@ -3,7 +3,7 @@
 Thin CLI wrappers over package logic in `src/dal_monte_2022_analysis/`.
 
 Subdirectories:
-- `scripts/preprocessing/`: raw extraction, cleaning, and quick verification.
+- `scripts/preprocessing/`: raw extraction, cleaning, fixation-guided pupil smoothing, and quick verification.
 - `scripts/features/`: fixation/saccade detection and downstream feature products.
 - `scripts/analysis/`: fixation probability and cross-correlation analyses.
 - `scripts/plotting/`: figure generation from analysis outputs.

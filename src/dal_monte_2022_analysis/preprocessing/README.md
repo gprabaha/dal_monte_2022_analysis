@@ -7,6 +7,7 @@ Key pieces:
 - `data_extraction.py`: modality-specific extraction from MATLAB structures.
 - `build_dataset.py`: batch extraction pipeline with multiprocessing.
 - `clean_dataset.py`: pruning/interpolation pipeline that writes cleaned outputs.
+- `pupil_smoothing.py`: fixation-guided pupil smoothing and interpolation pipeline.
 
 The guiding idea is to keep pipelines explicit and side-effectful (write outputs),
 while keeping data logic in `data/`.
@@ -27,4 +28,15 @@ processed pickles (timeline + position + pupil)
   -> data/cleaning.py (prune + interpolate)
     -> preprocessing/clean_dataset.py (write cleaned pickles)
       -> processed_data_root/.../modality_cleaned/agent=...pkl
+```
+
+Data flow (fixation-guided pupil smoothing)
+```
+processed pupil + fixation intervals
+  -> preprocessing/pupil_smoothing.py
+    -> estimate noise from within-fixation variability
+    -> smooth pupil trace
+    -> keep fixation-constrained pupil anchors
+    -> interpolate non-fixation bins
+      -> processed_data_root/.../smoothed_pupil_size/agent=...pkl
 ```
