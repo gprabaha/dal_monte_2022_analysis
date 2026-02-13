@@ -10,6 +10,7 @@ from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
+from scipy.interpolate import PchipInterpolator
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_dataset_config
@@ -92,14 +93,73 @@ def _build_fixation_mask(
 
 
 def _interp_nan_1d(values: np.ndarray) -> np.ndarray:
-    """Linearly interpolate NaNs in a 1D array (edge-filled by nearest finite)."""
+    """Fill NaNs in a 1D array via shape-preserving cubic interpolation (PCHIP)."""
     arr = np.asarray(values, dtype=float).reshape(-1).copy()
-    idx = np.arange(arr.size)
+    idx = np.arange(arr.size, dtype=float)
     valid = np.isfinite(arr)
     if not np.any(valid):
         return np.zeros_like(arr, dtype=float)
-    arr[~valid] = np.interp(idx[~valid], idx[valid], arr[valid])
-    return arr
+    return _pchip_interpolate_1d(
+        query_idx=idx,
+        known_idx=idx[valid],
+        known_values=arr[valid],
+    )
+
+
+def _pchip_interpolate_1d(
+    *,
+    query_idx: np.ndarray,
+    known_idx: np.ndarray,
+    known_values: np.ndarray,
+) -> np.ndarray:
+    """Interpolate a 1D signal with PCHIP, edge-filling outside known range."""
+    q = np.asarray(query_idx, dtype=float).reshape(-1)
+    x = np.asarray(known_idx, dtype=float).reshape(-1)
+    y = np.asarray(known_values, dtype=float).reshape(-1)
+
+    finite = np.isfinite(x) & np.isfinite(y)
+    x = x[finite]
+    y = y[finite]
+    if x.size == 0:
+        return np.zeros_like(q, dtype=float)
+
+    order = np.argsort(x)
+    x = x[order]
+    y = y[order]
+    unique_x, unique_idx = np.unique(x, return_index=True)
+    x = unique_x
+    y = y[unique_idx]
+
+    if x.size == 1:
+        return np.full_like(q, float(y[0]), dtype=float)
+
+    interpolator = PchipInterpolator(x, y, extrapolate=False)
+    out = interpolator(q).astype(float)
+
+    left_mask = q < x[0]
+    right_mask = q > x[-1]
+    out[left_mask] = y[0]
+    out[right_mask] = y[-1]
+
+    nan_mask = ~np.isfinite(out)
+    if np.any(nan_mask):
+        out[nan_mask & (q <= x[0])] = y[0]
+        out[nan_mask & (q >= x[-1])] = y[-1]
+    return out
+
+
+def _interpolate_fixation_gaps(fixation_anchor: np.ndarray) -> np.ndarray:
+    """Interpolate non-fixation gaps from fixation anchors using PCHIP."""
+    anchor = np.asarray(fixation_anchor, dtype=float).reshape(-1)
+    idx = np.arange(anchor.size, dtype=float)
+    valid = np.isfinite(anchor)
+    if np.count_nonzero(valid) == 0:
+        return np.zeros_like(anchor, dtype=float)
+    return _pchip_interpolate_1d(
+        query_idx=idx,
+        known_idx=idx[valid],
+        known_values=anchor[valid],
+    )
 
 
 def _gaussian_smooth_1d(values: np.ndarray, sigma: float) -> np.ndarray:
@@ -235,8 +295,7 @@ def smooth_pupil_for_row_agent(
     if np.count_nonzero(valid) == 0:
         return None
 
-    idx = np.arange(raw_pupil.size, dtype=float)
-    interp = np.interp(idx, idx[valid], fixation_anchor[valid]).astype(float)
+    interp = _interpolate_fixation_gaps(fixation_anchor)
 
     monkey_name = getattr(pupil_obj.context, "monkey_name", None)
     context = RecordingContext(
