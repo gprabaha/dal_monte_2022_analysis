@@ -166,6 +166,26 @@ def _compute_fixation_stats(
     return avg_fix, avg_gap
 
 
+def _compute_kernel_from_binwidth(
+    binwidth_value: float,
+    settings: FixationDensitySettings,
+) -> tuple[int, float, float]:
+    """Resolve kernel binwidth/sigma/truncate from a binwidth value."""
+    binwidth = max(settings.min_kernel_width, int(round(float(binwidth_value))))
+    if settings.sigma_method == "binwidth_over_factor":
+        width_factor = settings.kernel_width_factor if settings.kernel_width_factor > 0 else 1.0
+        sigma = binwidth / width_factor
+    elif settings.sigma_method == "binwidth":
+        sigma = float(binwidth)
+    else:
+        raise ValueError(
+            "Unsupported sigma_method. Expected 'binwidth' or 'binwidth_over_factor'."
+        )
+    sigma = max(settings.sigma_floor, sigma)
+    truncate = max(0.0, float(settings.truncate_sigmas))
+    return binwidth, sigma, truncate
+
+
 def _minmax_normalize(values: np.ndarray) -> np.ndarray:
     """Normalize an array between 0 and 1."""
     if values.size == 0:
@@ -187,53 +207,95 @@ def _extract_monkey_name(fix_df: pd.DataFrame) -> Optional[str]:
     return str(valid.iloc[0])
 
 
-def _compute_kernel_for_events(
-    events: Sequence[tuple[int, int]],
+def _compute_global_face_kernel_parameters(
     settings: FixationDensitySettings,
-) -> tuple[float, float, dict]:
-    """Compute Gaussian filter parameters based on fixation event stats."""
-    avg_fix, avg_gap = _compute_fixation_stats(
-        events,
-        inter_fixation_fallback=settings.inter_fixation_fallback,
-    )
+) -> tuple[int, float, float, dict]:
+    """Compute one shared kernel from m1/m2 face fixation stats across sessions."""
+    cfg = load_dataset_config(settings.cfg_path)
+    fix_index_df = index_processed_dataset(cfg, settings.fixations_modality)
+    fix_rows = fix_index_df.to_dict(orient="records")
 
-    if settings.binwidth_method == "sum":
-        binwidth = int(round(avg_fix + avg_gap))
-    elif settings.binwidth_method == "mean":
-        binwidth = int(round(np.mean([avg_fix, avg_gap])))
-    else:
-        raise ValueError(
-            "Unsupported binwidth_method. Expected 'mean' or 'sum'."
-        )
-    binwidth = max(settings.min_kernel_width, binwidth)
-    if settings.sigma_method == "binwidth_over_factor":
-        width_factor = settings.kernel_width_factor if settings.kernel_width_factor > 0 else 1.0
-        sigma = binwidth / width_factor
-    elif settings.sigma_method == "binwidth":
-        sigma = float(binwidth)
-    else:
-        raise ValueError(
-            "Unsupported sigma_method. Expected 'binwidth' or 'binwidth_over_factor'."
-        )
-    sigma = max(settings.sigma_floor, sigma)
+    required_agents = ("m1", "m2")
+    per_agent_stats: dict[str, dict[str, float]] = {}
+    for agent in required_agents:
+        roi_groups = _resolve_roi_groups(settings, agent)
+        face_keywords = roi_groups.get("face")
+        if not face_keywords:
+            raise RuntimeError(
+                f"Face ROI keywords are missing for agent '{agent}' in fixation density settings."
+            )
 
-    truncate = max(0.0, float(settings.truncate_sigmas))
+        session_fix_means: list[float] = []
+        session_gap_means: list[float] = []
+        for row in fix_rows:
+            if str(row.get("agent")) != agent:
+                continue
+            fix_df = _load_pickle(row["path"])
+            if not isinstance(fix_df, pd.DataFrame) or fix_df.empty:
+                continue
+            face_events = _extract_fixation_events(fix_df, face_keywords)
+            if not face_events:
+                continue
+            avg_fix, avg_gap = _compute_fixation_stats(
+                face_events,
+                inter_fixation_fallback=settings.inter_fixation_fallback,
+            )
+            session_fix_means.append(float(avg_fix))
+            session_gap_means.append(float(avg_gap))
+
+        if not session_fix_means or not session_gap_means:
+            raise RuntimeError(
+                f"No usable face fixation events found for agent '{agent}' "
+                "while estimating shared fixation-density kernel."
+            )
+
+        per_agent_stats[agent] = {
+            "avg_fixation_duration": float(np.mean(session_fix_means)),
+            "avg_inter_fixation_duration": float(np.mean(session_gap_means)),
+            "n_sessions_with_face_events": float(len(session_fix_means)),
+        }
+
+    binwidth_components = [
+        per_agent_stats["m1"]["avg_fixation_duration"],
+        per_agent_stats["m1"]["avg_inter_fixation_duration"],
+        per_agent_stats["m2"]["avg_fixation_duration"],
+        per_agent_stats["m2"]["avg_inter_fixation_duration"],
+    ]
+    binwidth_raw = float(np.mean(binwidth_components))
+    binwidth, sigma, truncate = _compute_kernel_from_binwidth(binwidth_raw, settings)
+
     stats = {
-        "avg_fixation_duration": avg_fix,
-        "avg_inter_fixation_duration": avg_gap,
-        "kernel_binwidth": binwidth,
-        "kernel_sigma": sigma,
-        "kernel_truncate": truncate,
+        "m1_avg_fixation_duration": per_agent_stats["m1"]["avg_fixation_duration"],
+        "m1_avg_inter_fixation_duration": per_agent_stats["m1"][
+            "avg_inter_fixation_duration"
+        ],
+        "m2_avg_fixation_duration": per_agent_stats["m2"]["avg_fixation_duration"],
+        "m2_avg_inter_fixation_duration": per_agent_stats["m2"][
+            "avg_inter_fixation_duration"
+        ],
+        "m1_n_sessions_with_face_events": per_agent_stats["m1"][
+            "n_sessions_with_face_events"
+        ],
+        "m2_n_sessions_with_face_events": per_agent_stats["m2"][
+            "n_sessions_with_face_events"
+        ],
+        "global_face_binwidth_raw": binwidth_raw,
+        "kernel_binwidth": float(binwidth),
+        "kernel_sigma": float(sigma),
+        "kernel_truncate": float(truncate),
     }
-    return sigma, truncate, stats
+    return binwidth, sigma, truncate, stats
 
 
 def build_fixation_density_for_row(
     settings: FixationDensitySettings,
     row: dict,
     agent: str,
+    *,
+    kernel_sigma: Optional[float] = None,
+    kernel_truncate: Optional[float] = None,
 ) -> Optional[FixationDensityVectorsData]:
-    """Build fixation density vectors for a single date/session/agent."""
+    """Build fixation density vectors for one row using a shared global kernel."""
     cfg = load_dataset_config(settings.cfg_path)
 
     fix_path = build_processed_data_path(cfg, row, settings.fixations_modality, agent)
@@ -257,20 +319,26 @@ def build_fixation_density_for_row(
     else:
         return None
 
+    if kernel_sigma is None or kernel_truncate is None:
+        _kernel_binwidth, shared_sigma, shared_truncate, _kernel_stats = (
+            _compute_global_face_kernel_parameters(settings)
+        )
+    else:
+        shared_sigma = float(kernel_sigma)
+        shared_truncate = float(kernel_truncate)
+
     roi_groups = _resolve_roi_groups(settings, agent)
     density_vectors: Dict[str, np.ndarray] = {}
-    for group, keywords in roi_groups.items():
+    for group in roi_groups:
         if group not in vectors:
             continue
         binary_vec = np.asarray(vectors[group]).astype(float)
-        events = _extract_fixation_events(fix_df, keywords)
-        sigma, truncate, _stats = _compute_kernel_for_events(events, settings)
         density = gaussian_filter1d(
             binary_vec,
-            sigma=sigma,
+            sigma=shared_sigma,
             mode="constant",
             cval=0.0,
-            truncate=truncate,
+            truncate=shared_truncate,
         )
         if settings.normalize:
             density = _minmax_normalize(density)
@@ -291,9 +359,18 @@ def process_fixation_density_for_row(
     settings: FixationDensitySettings,
     row: dict,
     agent: str,
+    *,
+    kernel_sigma: Optional[float] = None,
+    kernel_truncate: Optional[float] = None,
 ) -> Optional[FixationDensityVectorsData]:
     """Build and persist fixation density vectors for one row/agent."""
-    data = build_fixation_density_for_row(settings, row, agent)
+    data = build_fixation_density_for_row(
+        settings,
+        row,
+        agent,
+        kernel_sigma=kernel_sigma,
+        kernel_truncate=kernel_truncate,
+    )
     if data is None:
         return None
 
@@ -305,8 +382,14 @@ def process_fixation_density_for_row(
 
 def _build_and_save_worker(args) -> int:
     """Worker wrapper that returns 1 if outputs were written."""
-    settings, row, agent = args
-    data = process_fixation_density_for_row(settings, row, agent)
+    settings, row, agent, kernel_sigma, kernel_truncate = args
+    data = process_fixation_density_for_row(
+        settings,
+        row,
+        agent,
+        kernel_sigma=kernel_sigma,
+        kernel_truncate=kernel_truncate,
+    )
     return 1 if data is not None else 0
 
 
@@ -347,16 +430,35 @@ def run_fixation_density_build(
     use_parallel: bool = False,
     test_single: bool = False,
 ) -> None:
-    """Run fixation density creation across all tasks."""
+    """Run fixation density creation across all tasks with one shared face kernel."""
     tasks = build_tasks(settings, test_single=test_single)
     if not tasks:
         print("No fixation density tasks found.")
         return
 
+    kernel_binwidth, kernel_sigma, kernel_truncate, kernel_stats = (
+        _compute_global_face_kernel_parameters(settings)
+    )
+    print(
+        "Shared face kernel: "
+        f"m1_fix={kernel_stats['m1_avg_fixation_duration']:.3f}, "
+        f"m1_gap={kernel_stats['m1_avg_inter_fixation_duration']:.3f}, "
+        f"m2_fix={kernel_stats['m2_avg_fixation_duration']:.3f}, "
+        f"m2_gap={kernel_stats['m2_avg_inter_fixation_duration']:.3f}, "
+        f"binwidth={kernel_binwidth}, sigma={kernel_sigma:.3f}, "
+        f"truncate={kernel_truncate:.3f}"
+    )
+
     if test_single:
         settings, row, agent = tasks[0]
         print(f"Test single: date={row['date']} session={row['session']} agent={agent}")
-        data = process_fixation_density_for_row(settings, row, agent)
+        data = process_fixation_density_for_row(
+            settings,
+            row,
+            agent,
+            kernel_sigma=kernel_sigma,
+            kernel_truncate=kernel_truncate,
+        )
         if data is None or not data.vectors:
             print("No density vectors produced.")
             return
@@ -373,14 +475,18 @@ def run_fixation_density_build(
 
     if not use_parallel:
         for task in tqdm(tasks, desc="Building fixation densities (serial)", unit="task"):
-            _build_and_save_worker(task)
+            _build_and_save_worker((*task, kernel_sigma, kernel_truncate))
         return
 
     n_proc = get_n_processes(max_procs=32)
+    worker_args = [
+        (*task, kernel_sigma, kernel_truncate)
+        for task in tasks
+    ]
     with Pool(processes=n_proc) as pool:
         for _ in tqdm(
-            pool.imap_unordered(_build_and_save_worker, tasks),
-            total=len(tasks),
+            pool.imap_unordered(_build_and_save_worker, worker_args),
+            total=len(worker_args),
             desc=f"Building fixation densities ({n_proc} workers)",
             unit="task",
         ):
