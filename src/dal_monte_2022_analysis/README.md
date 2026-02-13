@@ -3,7 +3,7 @@
 This package holds the reusable core of the project:
 - `config/` loads dataset configuration and normalizes paths.
 - `data/` defines typed data containers, cleaning utilities, and a loader in `data/load.py`.
-- `io/` handles indexing, extraction, and cleaning pipelines.
+- `preprocessing/` handles indexing, extraction, and cleaning pipelines.
 - `features/` builds fixations, fixation vectors/density, joint density, and interactive periods.
 - `analysis/` computes fixation probability, fixation cross-correlation, and cross-correlation leader-follower outputs.
 - `plotting/` renders analysis figures from saved outputs.
@@ -11,5 +11,5 @@ This package holds the reusable core of the project:
 
 Design philosophy
 - Keep data objects small and serializable (pickle-friendly).
-- Make each IO step explicit and testable.
+- Make each preprocessing step explicit and testable.
 - Prefer straightforward, readable code over clever abstractions.

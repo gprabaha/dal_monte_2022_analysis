@@ -6,7 +6,7 @@ Script-driven pipeline for extracting, cleaning, and analyzing gaze data from th
 
 - `configs/`: YAML configuration for dataset paths, feature settings, analysis settings, plotting, and HPC submission.
 - `scripts/`: CLI wrappers for preprocessing, feature building, analysis, and plotting.
-- `src/dal_monte_2022_analysis/`: package code for IO, data models, features, analysis, plotting, and utilities.
+- `src/dal_monte_2022_analysis/`: package code for preprocessing, data models, features, analysis, plotting, and utilities.
 - `hpc/`: generated job files, sbatch scripts, and logs for dSQ/SLURM runs.
 - `notebooks/`: exploratory notebooks.
 - `plots/`: exported figure outputs.

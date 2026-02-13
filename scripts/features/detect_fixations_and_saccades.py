@@ -13,7 +13,7 @@ from dal_monte_2022_analysis.features.gaze_event_detection import (
     process_and_save_gaze_events_for_row,
     run_gaze_event_detection,
 )
-from dal_monte_2022_analysis.io.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.hpc_utils import (
     generate_gaze_event_job_file,
     submit_dsq_array_job,

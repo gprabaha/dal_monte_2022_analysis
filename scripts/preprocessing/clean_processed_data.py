@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.io.clean_dataset import clean_dataset
+from dal_monte_2022_analysis.preprocessing.clean_dataset import clean_dataset
 
 
 def main():

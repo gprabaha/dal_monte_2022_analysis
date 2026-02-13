@@ -1,7 +1,7 @@
 """Extract raw .mat files into per-session pickles per modality using configs/dataset.yaml."""
 
-from dal_monte_2022_analysis.io.build_dataset import build_agent_dataset
-from dal_monte_2022_analysis.io.data_extraction import (
+from dal_monte_2022_analysis.preprocessing.build_dataset import build_agent_dataset
+from dal_monte_2022_analysis.preprocessing.data_extraction import (
     extract_position,
     extract_neural_timeline,
     extract_pupil,

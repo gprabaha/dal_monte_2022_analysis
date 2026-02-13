@@ -19,7 +19,7 @@ from dal_monte_2022_analysis.data.gaze_data import (
     FixationDensityVectorsData,
     RecordingContext,
 )
-from dal_monte_2022_analysis.io.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 

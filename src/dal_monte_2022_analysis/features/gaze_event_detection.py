@@ -11,7 +11,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_dataset_config
-from dal_monte_2022_analysis.io.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.fixation_utils import detect_fixations_and_saccades
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_processed_data_path
