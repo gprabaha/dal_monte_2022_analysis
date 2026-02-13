@@ -16,7 +16,7 @@ Scripts:
 - `plot_face_fix_crosscorr_leader_follower_monkey_role_fixation_duration.py`
   Violin panels comparing each monkey's fixation duration (in bins) as leader vs follower using face leader-follower analysis outputs.
 - `plot_interactive_period_duration_distributions.py`
-  One multi-panel histogram figure (rows: monkey pairs; columns: interactive/non-interactive) with mean and quartile overlays.
+  One multi-panel histogram figure (rows: monkey pairs; columns: interactive/non-interactive) plus a separate all-pairs aggregate histogram figure.
 
 Inputs:
 - analysis CSV outputs in `analysis_output_root` (table-driven plots)

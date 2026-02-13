@@ -9,7 +9,7 @@ from dal_monte_2022_analysis.plotting.interactive_period_durations import (
 
 
 def main():
-    """Parse CLI args and generate multi-panel interactive-period duration histograms."""
+    """Parse CLI args and generate monkey-pair and aggregate duration histograms."""
     parser = argparse.ArgumentParser(
         description=(
             "Plot interactive and non-interactive period duration distributions "
@@ -26,6 +26,10 @@ def main():
         default="interactive_period_duration_distributions_histogram.pdf",
     )
     parser.add_argument(
+        "--aggregate-output-filename",
+        default="interactive_period_duration_distributions_histogram_all_pairs_aggregate.pdf",
+    )
+    parser.add_argument(
         "--histogram-bins",
         type=int,
         default=60,
@@ -40,11 +44,13 @@ def main():
         analysis_subdir=args.analysis_subdir,
         output_subdir=args.output_subdir,
         output_filename=args.output_filename,
+        aggregate_output_filename=args.aggregate_output_filename,
         histogram_bins=int(args.histogram_bins),
     )
 
-    out_path = plot_interactive_period_duration_distributions(settings)
-    print(f"[plot] wrote interactive-period duration histogram grid: {out_path}")
+    out_paths = plot_interactive_period_duration_distributions(settings)
+    print(f"[plot] wrote interactive-period duration histogram grid: {out_paths[0]}")
+    print(f"[plot] wrote interactive-period duration aggregate histogram: {out_paths[1]}")
 
 
 if __name__ == "__main__":

@@ -34,6 +34,9 @@ class InteractivePeriodDurationDistributionPlotSettings:
     analysis_subdir: str = "interactive_periods"
     output_subdir: str = "duration_distributions"
     output_filename: str = "interactive_period_duration_distributions_histogram.pdf"
+    aggregate_output_filename: str = (
+        "interactive_period_duration_distributions_histogram_all_pairs_aggregate.pdf"
+    )
     interactive_periods_modality: str = "interactive_periods"
     high_label: str = "interactive"
     low_label: str = "non_interactive"
@@ -307,8 +310,8 @@ def _resolve_figure_size(
 
 def plot_interactive_period_duration_distributions(
     settings: InteractivePeriodDurationDistributionPlotSettings,
-) -> Path:
-    """Plot one multi-panel histogram figure for all monkey pairs."""
+) -> list[Path]:
+    """Plot monkey-pair grid and all-pairs aggregate duration histograms."""
     cfg = load_dataset_config(settings.cfg_path)
     interactive_cfg = load_interactive_periods_config(settings.interactive_periods_cfg_path)
     plot_cfg = load_plotting_config(settings.plotting_cfg_path)
@@ -324,6 +327,7 @@ def plot_interactive_period_duration_distributions(
         analysis_subdir=settings.analysis_subdir,
         output_subdir=settings.output_subdir,
         output_filename=settings.output_filename,
+        aggregate_output_filename=settings.aggregate_output_filename,
         interactive_periods_modality=modality,
         high_label=high_label,
         low_label=low_label,
@@ -401,11 +405,11 @@ def plot_interactive_period_duration_distributions(
                 ax.set_title(state_label.replace("_", " "))
             if col_idx == 0:
                 ax.text(
-                    0.02,
+                    0.98,
                     0.06,
                     pair_label,
                     transform=ax.transAxes,
-                    ha="left",
+                    ha="right",
                     va="bottom",
                     fontsize=10,
                     fontweight="bold",
@@ -426,4 +430,41 @@ def plot_interactive_period_duration_distributions(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, format="pdf")
     plt.close(fig)
-    return out_path
+
+    agg_height = min(4.0, max(2.2, 0.22 * float(figsize[1])))
+    fig_agg, axes_agg = plt.subplots(
+        1,
+        2,
+        figsize=[max(figsize[0], 10.0), agg_height],
+        dpi=dpi,
+        squeeze=False,
+        sharex=True,
+    )
+    for col_idx, (state_label, hist_color) in enumerate(state_specs):
+        ax = axes_agg[0, col_idx]
+        state_values = durations_df.loc[
+            durations_df["state"] == state_label,
+            resolved_settings.duration_column,
+        ].to_numpy(dtype=float)
+        _plot_histogram_with_stats(
+            ax=ax,
+            values=state_values,
+            bins=bins,
+            hist_color=hist_color,
+            mean_color=mean_color,
+            summary_color=summary_color,
+        )
+        ax.set_xlim(0.0, x_max)
+        ax.grid(axis="y", alpha=0.24, linewidth=0.6)
+        ax.set_title(state_label.replace("_", " "))
+
+    fig_agg.suptitle("All Sessions Aggregated Across Monkey Pairs", fontsize=12)
+    fig_agg.supxlabel(resolved_settings.x_label)
+    fig_agg.supylabel(resolved_settings.y_label)
+    fig_agg.tight_layout()
+
+    aggregate_out_path = out_dir / resolved_settings.aggregate_output_filename
+    aggregate_out_path.parent.mkdir(parents=True, exist_ok=True)
+    fig_agg.savefig(aggregate_out_path, format="pdf")
+    plt.close(fig_agg)
+    return [out_path, aggregate_out_path]
