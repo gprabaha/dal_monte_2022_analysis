@@ -19,12 +19,15 @@ Scripts:
   Violin panels comparing each monkey's fixation duration (in bins) as leader vs follower using face leader-follower analysis outputs.
 - `plot_interactive_period_duration_distributions.py`
   One multi-panel histogram figure (rows: monkey pairs; columns: interactive/non-interactive) plus a separate all-pairs aggregate histogram figure.
+- `plot_interactive_period_detection.py`
+  One per-session figure with top fixation binary timelines (m1 face, m2 face, m1 object) and bottom density-based interactive-period detection traces; outputs are grouped in date subfolders and support PDF-size reduction flags.
 - `plot_smoothed_pupil_timecourses.py`
   QC figure with random-session raw vs smoothed pupil traces (rows: sessions, columns: m1/m2).
 
 Inputs:
 - analysis CSV outputs in `analysis_output_root` (table-driven plots)
 - processed `interactive_periods` pickles + `ephys_days_and_monkeys.pkl` (duration distributions)
+- processed `fixation_binary_vectors`, `fixation_density_vectors`, `joint_face_fixation_density`, and `interactive_periods` pickles (interactive period detection plots)
 - processed `pupil_size` and `smoothed_pupil_size` pickles (pupil smoothing QC)
 - style config in `configs/plotting.yaml`
 
