@@ -23,6 +23,19 @@ m1_m2_plot_ttest_parallel_chunk_size: 4096
 m1_m2_observed_vs_cross_filename: observed_vs_cross_session_face_m1_m2_crosscorr.pdf
 m1_m2_observed_vs_shuffle_filename: observed_vs_shuffle_face_m1_m2_crosscorr.pdf
 
+# Leader-aligned cross-correlation plots (session/date/pair leader bases).
+lf_plot_output_subdir: plots/leader_follower
+lf_plot_scopes: [whole, interactive, non_interactive]
+lf_plot_leader_bases: [session, date, pair]
+lf_plot_significance_alpha: 0.05
+lf_plot_lag_sampling_rate_hz: 1000.0
+lf_plot_ttest_parallel: true
+lf_plot_ttest_parallel_workers: null
+lf_plot_ttest_parallel_min_lags: 4000
+lf_plot_ttest_parallel_chunk_size: 4096
+lf_observed_vs_cross_filename_template: observed_vs_cross_session_face_leader_follower_basis={basis}.pdf
+lf_observed_vs_shuffle_filename_template: observed_vs_shuffle_face_leader_follower_basis={basis}.pdf
+
 # Time-scope filtering for fixation vectors before cross-correlation:
 # - whole
 # - interactive

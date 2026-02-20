@@ -1001,17 +1001,47 @@ def _build_cross_session_control_rows(
         )
 
     accum: dict[tuple[str, str], dict] = {}
+    accum_m1_source: dict[tuple[str, str], dict] = {}
+    accum_m2_source: dict[tuple[str, str], dict] = {}
 
-    def _update_accum(key: tuple[str, str], corr: np.ndarray) -> None:
-        if key not in accum:
-            accum[key] = {
+    def _update_accum(
+        target_accum: dict[tuple[str, str], dict],
+        key: tuple[str, str],
+        corr: np.ndarray,
+    ) -> None:
+        if key not in target_accum:
+            target_accum[key] = {
                 "sum": np.zeros(corr.size, dtype=np.float64),
                 "sum_sq": np.zeros(corr.size, dtype=np.float64),
                 "n_pairs": 0,
             }
-        accum[key]["sum"] += corr
-        accum[key]["sum_sq"] += corr * corr
-        accum[key]["n_pairs"] += 1
+        target_accum[key]["sum"] += corr
+        target_accum[key]["sum_sq"] += corr * corr
+        target_accum[key]["n_pairs"] += 1
+
+    def _stats_from_accum(
+        target_accum: dict[tuple[str, str], dict],
+        key: tuple[str, str],
+    ) -> tuple[np.ndarray, np.ndarray, int]:
+        stats = target_accum.get(key)
+        if stats is None or stats["n_pairs"] == 0:
+            return (
+                np.full(lag_axis.size, np.nan, dtype=np.float32),
+                np.full(lag_axis.size, np.nan, dtype=np.float32),
+                0,
+            )
+
+        n_pairs = int(stats["n_pairs"])
+        mean = stats["sum"] / float(n_pairs)
+        if n_pairs > 1:
+            var = (stats["sum_sq"] - (stats["sum"] * stats["sum"]) / float(n_pairs)) / float(
+                n_pairs - 1
+            )
+            var = np.maximum(var, 0.0)
+            std = np.sqrt(var)
+        else:
+            std = np.zeros_like(mean)
+        return mean.astype(np.float32), std.astype(np.float32), n_pairs
 
     use_parallel = (
         settings.parallelize_across_crosscorr_pairs
@@ -1041,9 +1071,12 @@ def _build_cross_session_control_rows(
                 key2 = result["key2"]
                 corr = result["cross_correlation"]
                 if key1 in within_key_set:
-                    _update_accum(key1, corr)
+                    _update_accum(accum, key1, corr)
+                    _update_accum(accum_m1_source, key1, corr)
                 if key2 in within_key_set and key2 != key1:
-                    _update_accum(key2, corr)
+                    _update_accum(accum, key2, corr)
+                    # key2 contributes as m2 side; flip lag sign so positive means m2 leads.
+                    _update_accum(accum_m2_source, key2, corr[::-1])
     else:
         for task in tqdm(tasks, desc="Cross-session xcorr", unit="pair"):
             result = _build_pair_result_worker(task)
@@ -1076,9 +1109,12 @@ def _build_cross_session_control_rows(
                 )
 
             if key1 in within_key_set:
-                _update_accum(key1, corr)
+                _update_accum(accum, key1, corr)
+                _update_accum(accum_m1_source, key1, corr)
             if key2 in within_key_set and key2 != key1:
-                _update_accum(key2, corr)
+                _update_accum(accum, key2, corr)
+                # key2 contributes as m2 side; flip lag sign so positive means m2 leads.
+                _update_accum(accum_m2_source, key2, corr[::-1])
 
     rows: list[dict] = []
     if lag_axis is None:
@@ -1086,24 +1122,15 @@ def _build_cross_session_control_rows(
 
     for key in within_keys:
         meta = metadata_by_key.get(key, {})
-        stats = accum.get(key)
-        if stats is None or stats["n_pairs"] == 0:
-            mean_corr = np.full(lag_axis.size, np.nan, dtype=np.float32)
-            std_corr = np.full(lag_axis.size, np.nan, dtype=np.float32)
-            n_pairs = 0
-        else:
-            n_pairs = int(stats["n_pairs"])
-            mean = stats["sum"] / float(n_pairs)
-            if n_pairs > 1:
-                var = (stats["sum_sq"] - (stats["sum"] * stats["sum"]) / float(n_pairs)) / float(
-                    n_pairs - 1
-                )
-                var = np.maximum(var, 0.0)
-                std = np.sqrt(var)
-            else:
-                std = np.zeros_like(mean)
-            mean_corr = mean.astype(np.float32)
-            std_corr = std.astype(np.float32)
+        mean_corr, std_corr, n_pairs = _stats_from_accum(accum, key)
+        mean_corr_m1_source, std_corr_m1_source, n_pairs_m1_source = _stats_from_accum(
+            accum_m1_source,
+            key,
+        )
+        mean_corr_m2_source, std_corr_m2_source, n_pairs_m2_source = _stats_from_accum(
+            accum_m2_source,
+            key,
+        )
 
         rows.append({
             "fixation_label": settings.fixation_label,
@@ -1119,6 +1146,12 @@ def _build_cross_session_control_rows(
             "n_pairs": n_pairs,
             "cross_correlation_mean": mean_corr,
             "cross_correlation_std": std_corr,
+            "n_pairs_m1_source": n_pairs_m1_source,
+            "n_pairs_m2_source": n_pairs_m2_source,
+            "cross_correlation_mean_m1_source": mean_corr_m1_source,
+            "cross_correlation_std_m1_source": std_corr_m1_source,
+            "cross_correlation_mean_m2_source": mean_corr_m2_source,
+            "cross_correlation_std_m2_source": std_corr_m2_source,
         })
 
     return rows, lag_axis
