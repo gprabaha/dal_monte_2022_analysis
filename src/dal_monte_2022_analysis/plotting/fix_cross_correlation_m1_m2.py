@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 import pickle
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
@@ -31,6 +33,11 @@ class M1M2CrossCorrComparisonPlotSettings:
     fixation_label: str = "face"
     scopes: tuple[str, ...] = ("whole", "interactive", "non_interactive")
     significance_alpha: float = 0.05
+    lag_sampling_rate_hz: float = 1000.0
+    ttest_parallel: bool = True
+    ttest_parallel_workers: int | None = None
+    ttest_parallel_min_lags: int = 4000
+    ttest_parallel_chunk_size: int = 4096
     output_subdir: str = "plots/m1-m2"
     observed_vs_cross_filename: str = "observed_vs_cross_session_face_m1_m2_crosscorr.pdf"
     observed_vs_shuffle_filename: str = "observed_vs_shuffle_face_m1_m2_crosscorr.pdf"
@@ -146,19 +153,90 @@ def _nanmean_sem(mat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return mean, sem
 
 
-def _paired_ttest_per_lag(observed: np.ndarray, control: np.ndarray) -> np.ndarray:
-    """Compute per-lag paired t-test p-values."""
+def _paired_ttest_per_lag_chunk(
+    observed: np.ndarray,
+    control: np.ndarray,
+    *,
+    start: int,
+    stop: int,
+) -> tuple[int, np.ndarray]:
+    """Compute paired t-test p-values for one [start:stop) lag chunk."""
+    x = observed[:, start:stop]
+    y = control[:, start:stop]
+    pvals = np.asarray(
+        ttest_rel(x, y, axis=0, nan_policy="omit").pvalue,
+        dtype=np.float64,
+    ).reshape(-1)
+    valid_counts = np.sum(np.isfinite(x) & np.isfinite(y), axis=0)
+    pvals[valid_counts < 2] = np.nan
+    return start, pvals
+
+
+def _paired_ttest_per_lag(
+    observed: np.ndarray,
+    control: np.ndarray,
+    *,
+    parallel: bool,
+    workers: int | None,
+    min_lags_for_parallel: int,
+    chunk_size: int,
+) -> np.ndarray:
+    """Compute per-lag paired t-test p-values (optionally in parallel chunks)."""
     if observed.shape != control.shape:
         raise ValueError("Observed and control matrices must have same shape.")
     n_lags = observed.shape[1]
+    if n_lags <= 0:
+        return np.array([], dtype=np.float64)
+
+    if (
+        not parallel
+        or n_lags < int(max(1, min_lags_for_parallel))
+        or int(max(1, chunk_size)) >= n_lags
+    ):
+        pvals = np.asarray(
+            ttest_rel(observed, control, axis=0, nan_policy="omit").pvalue,
+            dtype=np.float64,
+        ).reshape(-1)
+        valid_counts = np.sum(np.isfinite(observed) & np.isfinite(control), axis=0)
+        pvals[valid_counts < 2] = np.nan
+        return pvals
+
+    chunk = int(max(1, chunk_size))
+    starts = list(range(0, n_lags, chunk))
+    auto_workers = os.cpu_count() or 1
+    n_workers = int(max(1, workers if workers is not None else auto_workers))
+    n_workers = min(n_workers, len(starts))
+    if n_workers <= 1:
+        pvals = np.full(n_lags, np.nan, dtype=np.float64)
+        for start in starts:
+            stop = min(start + chunk, n_lags)
+            _, chunk_p = _paired_ttest_per_lag_chunk(
+                observed,
+                control,
+                start=start,
+                stop=stop,
+            )
+            pvals[start:stop] = chunk_p
+        return pvals
+
     pvals = np.full(n_lags, np.nan, dtype=np.float64)
-    for idx in range(n_lags):
-        x = observed[:, idx]
-        y = control[:, idx]
-        valid = np.isfinite(x) & np.isfinite(y)
-        if np.count_nonzero(valid) < 2:
-            continue
-        pvals[idx] = float(ttest_rel(x[valid], y[valid]).pvalue)
+    with ThreadPoolExecutor(max_workers=n_workers) as executor:
+        futures = []
+        for start in starts:
+            stop = min(start + chunk, n_lags)
+            futures.append(
+                executor.submit(
+                    _paired_ttest_per_lag_chunk,
+                    observed,
+                    control,
+                    start=start,
+                    stop=stop,
+                )
+            )
+        for future in futures:
+            start, chunk_p = future.result()
+            stop = start + int(chunk_p.size)
+            pvals[start:stop] = chunk_p
     return pvals
 
 
@@ -180,6 +258,10 @@ def _plot_one_scope(
     alpha: float,
     color_observed: str,
     color_control: str,
+    ttest_parallel: bool,
+    ttest_parallel_workers: int | None,
+    ttest_parallel_min_lags: int,
+    ttest_parallel_chunk_size: int,
     n_obs_total: int,
     n_ctl_total: int,
     n_paired: int,
@@ -187,7 +269,14 @@ def _plot_one_scope(
     """Render one scope panel."""
     obs_mean, obs_sem = _nanmean_sem(observed)
     ctl_mean, ctl_sem = _nanmean_sem(control)
-    pvals = _paired_ttest_per_lag(observed, control)
+    pvals = _paired_ttest_per_lag(
+        observed,
+        control,
+        parallel=ttest_parallel,
+        workers=ttest_parallel_workers,
+        min_lags_for_parallel=ttest_parallel_min_lags,
+        chunk_size=ttest_parallel_chunk_size,
+    )
     sig = np.isfinite(pvals) & (pvals < float(alpha))
 
     ax.plot(lags, obs_mean, color=color_observed, lw=1.7, label="Observed (within-session)")
@@ -223,7 +312,7 @@ def _plot_one_scope(
         fontsize=10,
     )
     ax.grid(axis="y", alpha=0.25, linewidth=0.6)
-    ax.set_xlabel("Lag (samples)")
+    ax.set_xlabel("Lag (s)")
 
 
 def _plot_observed_vs_control(
@@ -243,6 +332,10 @@ def _plot_observed_vs_control(
     scopes = tuple(normalize_fix_crosscorr_time_scope(scope) for scope in settings.scopes)
     if len(scopes) != 3:
         raise RuntimeError("Expected exactly 3 scopes for plotting (whole, interactive, non_interactive).")
+    if float(settings.lag_sampling_rate_hz) <= 0:
+        raise RuntimeError(
+            f"lag_sampling_rate_hz must be > 0, got {settings.lag_sampling_rate_hz}."
+        )
 
     figsize, dpi = resolve_figsize(plot_cfg)
     custom_figsize = plot_cfg.get("crosscorr_m1_m2_figsize")
@@ -250,7 +343,7 @@ def _plot_observed_vs_control(
         figsize = custom_figsize
     if figsize is None or (len(figsize) >= 1 and float(figsize[0]) < 12.0):
         figsize = [16, 4.6]
-    fig, axes = plt.subplots(1, 3, figsize=figsize, dpi=dpi, sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=figsize, dpi=dpi, sharey=False)
 
     colors = plot_cfg.get("crosscorr_m1_m2_colors", {})
     observed_color = colors.get("observed", "#1f77b4")
@@ -258,6 +351,7 @@ def _plot_observed_vs_control(
 
     for ax, scope in zip(axes, scopes):
         lags = _load_lags_for_scope(out_dir, fixation_label=settings.fixation_label, scope=scope)
+        lags_seconds = np.asarray(lags, dtype=np.float64) / float(settings.lag_sampling_rate_hz)
         within_df = _load_df_for_scope(
             out_dir,
             fixation_label=settings.fixation_label,
@@ -275,14 +369,14 @@ def _plot_observed_vs_control(
             control_df,
             control_col=control_col,
         )
-        if observed.shape[1] != lags.size:
+        if observed.shape[1] != lags_seconds.size:
             raise RuntimeError(
                 f"Lag length mismatch for scope='{scope}': "
-                f"lags={lags.size}, observed={observed.shape[1]}"
+                f"lags={lags_seconds.size}, observed={observed.shape[1]}"
             )
         _plot_one_scope(
             ax=ax,
-            lags=lags,
+            lags=lags_seconds,
             observed=observed,
             control=control,
             scope=scope,
@@ -290,6 +384,10 @@ def _plot_observed_vs_control(
             alpha=settings.significance_alpha,
             color_observed=observed_color,
             color_control=control_color,
+            ttest_parallel=settings.ttest_parallel,
+            ttest_parallel_workers=settings.ttest_parallel_workers,
+            ttest_parallel_min_lags=settings.ttest_parallel_min_lags,
+            ttest_parallel_chunk_size=settings.ttest_parallel_chunk_size,
             n_obs_total=n_obs_total,
             n_ctl_total=n_ctl_total,
             n_paired=n_paired,

@@ -36,6 +36,11 @@ def main():
         fixation_label=cfg.get("fixation_label", "face"),
         scopes=tuple(cfg.get("m1_m2_plot_scopes", ("whole", "interactive", "non_interactive"))),
         significance_alpha=float(cfg.get("m1_m2_plot_significance_alpha", 0.05)),
+        lag_sampling_rate_hz=float(cfg.get("m1_m2_plot_lag_sampling_rate_hz", 1000.0)),
+        ttest_parallel=bool(cfg.get("m1_m2_plot_ttest_parallel", True)),
+        ttest_parallel_workers=cfg.get("m1_m2_plot_ttest_parallel_workers", None),
+        ttest_parallel_min_lags=int(cfg.get("m1_m2_plot_ttest_parallel_min_lags", 4000)),
+        ttest_parallel_chunk_size=int(cfg.get("m1_m2_plot_ttest_parallel_chunk_size", 4096)),
         output_subdir=cfg.get("m1_m2_plot_output_subdir", "plots/m1-m2"),
         observed_vs_cross_filename=cfg.get(
             "m1_m2_observed_vs_cross_filename",

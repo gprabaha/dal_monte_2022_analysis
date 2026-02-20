@@ -13,6 +13,13 @@ m1_m2_plot_output_subdir: plots/m1-m2
 m1_m2_plot_scopes: [whole, interactive, non_interactive]
 # Per-lag paired t-test alpha for observed-vs-control m1-m2 plots.
 m1_m2_plot_significance_alpha: 0.05
+# Lag axis unit conversion for m1-m2 plots (lags / sampling_rate_hz -> seconds).
+m1_m2_plot_lag_sampling_rate_hz: 1000.0
+m1_m2_plot_ttest_parallel: true
+# null -> auto from CPU count
+m1_m2_plot_ttest_parallel_workers: null
+m1_m2_plot_ttest_parallel_min_lags: 4000
+m1_m2_plot_ttest_parallel_chunk_size: 4096
 m1_m2_observed_vs_cross_filename: observed_vs_cross_session_face_m1_m2_crosscorr.pdf
 m1_m2_observed_vs_shuffle_filename: observed_vs_shuffle_face_m1_m2_crosscorr.pdf
 
