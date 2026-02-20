@@ -16,7 +16,7 @@ rc_params:
   savefig.bbox: tight
   savefig.transparent: true
   path.simplify: false
-  pdf.compression: 0
+  pdf.compression: 6
 
 figure:
   figsize: [8, 4]

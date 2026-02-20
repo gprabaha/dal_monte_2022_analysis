@@ -34,6 +34,10 @@ class M1M2CrossCorrComparisonPlotSettings:
     scopes: tuple[str, ...] = ("whole", "interactive", "non_interactive")
     significance_alpha: float = 0.05
     lag_sampling_rate_hz: float = 1000.0
+    max_plot_points: int = 4000
+    max_sig_markers: int = 1000
+    rasterize_bands: bool = True
+    rasterize_sig_markers: bool = True
     ttest_parallel: bool = True
     ttest_parallel_workers: int | None = None
     ttest_parallel_min_lags: int = 4000
@@ -153,6 +157,47 @@ def _nanmean_sem(mat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return mean, sem
 
 
+def _downsample_indices(n_points: int, max_points: int) -> np.ndarray:
+    """Return monotonic indices for plotting downsampling."""
+    n = int(max(0, n_points))
+    if n == 0:
+        return np.asarray([], dtype=np.int64)
+    cap = int(max(1, max_points))
+    if n <= cap:
+        return np.arange(n, dtype=np.int64)
+    step = int(np.ceil(n / float(cap)))
+    return np.arange(0, n, step, dtype=np.int64)
+
+
+def _downsample_significance_mask(sig_full: np.ndarray, idx: np.ndarray) -> np.ndarray:
+    """Collapse a full-resolution significance mask onto downsampled indices."""
+    if idx.size == 0:
+        return np.asarray([], dtype=bool)
+    out = np.zeros(idx.size, dtype=bool)
+    n = int(sig_full.size)
+    for i, start in enumerate(idx):
+        stop = int(idx[i + 1]) if i + 1 < idx.size else n
+        out[i] = bool(np.any(sig_full[int(start) : stop]))
+    return out
+
+
+def _limit_true_markers(mask: np.ndarray, max_true: int) -> np.ndarray:
+    """Cap number of True markers by uniform subsampling over True positions."""
+    out = np.asarray(mask, dtype=bool).copy()
+    cap = int(max_true)
+    if cap <= 0:
+        out[:] = False
+        return out
+    true_idx = np.flatnonzero(out)
+    if true_idx.size <= cap:
+        return out
+    keep = np.linspace(0, true_idx.size - 1, num=cap, dtype=int)
+    keep_idx = true_idx[keep]
+    out[:] = False
+    out[keep_idx] = True
+    return out
+
+
 def _paired_ttest_per_lag_chunk(
     observed: np.ndarray,
     control: np.ndarray,
@@ -258,6 +303,10 @@ def _plot_one_scope(
     alpha: float,
     color_observed: str,
     color_control: str,
+    max_plot_points: int,
+    max_sig_markers: int,
+    rasterize_bands: bool,
+    rasterize_sig_markers: bool,
     ttest_parallel: bool,
     ttest_parallel_workers: int | None,
     ttest_parallel_min_lags: int,
@@ -279,10 +328,39 @@ def _plot_one_scope(
     )
     sig = np.isfinite(pvals) & (pvals < float(alpha))
 
-    ax.plot(lags, obs_mean, color=color_observed, lw=1.7, label="Observed (within-session)")
-    ax.plot(lags, ctl_mean, color=color_control, lw=1.5, label=control_label)
-    ax.fill_between(lags, obs_mean - obs_sem, obs_mean + obs_sem, color=color_observed, alpha=0.20)
-    ax.fill_between(lags, ctl_mean - ctl_sem, ctl_mean + ctl_sem, color=color_control, alpha=0.20)
+    idx = _downsample_indices(int(lags.size), int(max_plot_points))
+    lags_plot = lags[idx]
+    obs_mean_plot = obs_mean[idx]
+    obs_sem_plot = obs_sem[idx]
+    ctl_mean_plot = ctl_mean[idx]
+    ctl_sem_plot = ctl_sem[idx]
+    sig_plot = _downsample_significance_mask(sig, idx)
+    sig_plot = _limit_true_markers(sig_plot, int(max_sig_markers))
+
+    ax.plot(
+        lags_plot,
+        obs_mean_plot,
+        color=color_observed,
+        lw=1.7,
+        label="Observed (within-session)",
+    )
+    ax.plot(lags_plot, ctl_mean_plot, color=color_control, lw=1.5, label=control_label)
+    ax.fill_between(
+        lags_plot,
+        obs_mean_plot - obs_sem_plot,
+        obs_mean_plot + obs_sem_plot,
+        color=color_observed,
+        alpha=0.20,
+        rasterized=bool(rasterize_bands),
+    )
+    ax.fill_between(
+        lags_plot,
+        ctl_mean_plot - ctl_sem_plot,
+        ctl_mean_plot + ctl_sem_plot,
+        color=color_control,
+        alpha=0.20,
+        rasterized=bool(rasterize_bands),
+    )
     ax.axvline(0, color="#444444", lw=0.8, ls="--", alpha=0.8)
 
     y_lo = float(np.nanmin(np.r_[obs_mean - obs_sem, ctl_mean - ctl_sem]))
@@ -293,16 +371,17 @@ def _plot_one_scope(
         y_hi = y_lo + 1e-6
     y_pad = 0.08 * (y_hi - y_lo)
     y_sig = y_hi + 0.02 * (y_hi - y_lo)
-    if np.any(sig):
+    if np.any(sig_plot):
         ax.scatter(
-            lags[sig],
-            np.full(int(np.count_nonzero(sig)), y_sig),
+            lags_plot[sig_plot],
+            np.full(int(np.count_nonzero(sig_plot)), y_sig),
             marker="|",
             s=36,
             c="#111111",
             linewidths=0.9,
             label=f"paired t-test p<{alpha:.02f}",
             zorder=5,
+            rasterized=bool(rasterize_sig_markers),
         )
     ax.set_ylim(y_lo - y_pad, y_hi + 2.5 * y_pad)
 
@@ -384,6 +463,10 @@ def _plot_observed_vs_control(
             alpha=settings.significance_alpha,
             color_observed=observed_color,
             color_control=control_color,
+            max_plot_points=settings.max_plot_points,
+            max_sig_markers=settings.max_sig_markers,
+            rasterize_bands=settings.rasterize_bands,
+            rasterize_sig_markers=settings.rasterize_sig_markers,
             ttest_parallel=settings.ttest_parallel,
             ttest_parallel_workers=settings.ttest_parallel_workers,
             ttest_parallel_min_lags=settings.ttest_parallel_min_lags,

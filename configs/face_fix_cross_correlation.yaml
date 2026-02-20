@@ -15,6 +15,10 @@ m1_m2_plot_scopes: [whole, interactive, non_interactive]
 m1_m2_plot_significance_alpha: 0.05
 # Lag axis unit conversion for m1-m2 plots (lags / sampling_rate_hz -> seconds).
 m1_m2_plot_lag_sampling_rate_hz: 1000.0
+m1_m2_plot_max_points: 4000
+m1_m2_plot_max_sig_markers: 1000
+m1_m2_plot_rasterize_bands: true
+m1_m2_plot_rasterize_sig_markers: true
 m1_m2_plot_ttest_parallel: true
 # null -> auto from CPU count
 m1_m2_plot_ttest_parallel_workers: null
@@ -29,6 +33,10 @@ lf_plot_scopes: [whole, interactive, non_interactive]
 lf_plot_leader_bases: [session, date, pair]
 lf_plot_significance_alpha: 0.05
 lf_plot_lag_sampling_rate_hz: 1000.0
+lf_plot_max_points: 4000
+lf_plot_max_sig_markers: 1000
+lf_plot_rasterize_bands: true
+lf_plot_rasterize_sig_markers: true
 lf_plot_ttest_parallel: true
 lf_plot_ttest_parallel_workers: null
 lf_plot_ttest_parallel_min_lags: 4000
