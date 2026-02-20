@@ -29,8 +29,14 @@ Primary configs:
 - `configs/hpc_out_of_roi_fix_cross_correlation_shuffle.yaml` (for `shuffle_submit_hpc` mode)
 
 Leader-follower scripts reuse the corresponding cross-correlation configs above and read:
-- within-session cross-correlation pickle (`within_filename`)
-- lag axis pickle (`lags_filename` or `<fixation_label>_crosscorrelation_lags.pkl`)
+- within-session cross-correlation pickle (`within_filename` or algorithmic default)
+- lag axis pickle (`lags_filename` or algorithmic default)
+
+Cross-correlation naming/layout notes:
+- Cross-correlation pickles are written to `crosscorr_output_subdir` (default: `crosscorr_outputs`).
+- Leader-follower CSV outputs are written to `output_subdir` (default: `fix_cross_correlation`).
+- If `within_filename`/`cross_filename`/`shuffle_output_filename`/`lags_filename` are null,
+  names are generated from fixation label + `time_scope` (whole / interactive / non_interactive).
 
 Leader-follower outputs:
 - session-level CSV with per-session leader labels and lead scores.

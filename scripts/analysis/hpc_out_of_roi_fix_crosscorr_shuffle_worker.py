@@ -9,6 +9,7 @@ from dal_monte_2022_analysis.analysis.fix_cross_correlation import (
 from dal_monte_2022_analysis.config.load import (
     load_out_of_roi_fix_cross_correlation_config,
 )
+from dal_monte_2022_analysis.utils.paths import normalize_fix_crosscorr_time_scope
 
 
 def main():
@@ -28,26 +29,23 @@ def main():
         cfg_path=args.dataset_cfg,
         input_modality=cfg.get("input_modality", "fixation_binary_vectors"),
         fixation_label=fixation_label,
-        output_subdir=cfg.get("output_subdir", "fix_cross_correlation"),
-        within_filename=cfg.get(
-            "within_filename",
-            "within_session_out_of_roi_fix_cross_correlation.pkl",
+        output_subdir=cfg.get(
+            "crosscorr_output_subdir",
+            cfg.get("output_subdir", "crosscorr_outputs"),
         ),
-        cross_filename=cfg.get(
-            "cross_filename",
-            "cross_session_out_of_roi_fix_cross_correlation.pkl",
-        ),
+        within_filename=cfg.get("within_filename"),
+        cross_filename=cfg.get("cross_filename"),
         lags_filename=cfg.get("lags_filename"),
         max_lag=cfg.get("max_lag", 60000),
+        time_scope=normalize_fix_crosscorr_time_scope(cfg.get("time_scope", "whole")),
+        interactive_modality=cfg.get("interactive_modality", "interactive_periods"),
+        interactive_state_label=cfg.get("interactive_state_label", "interactive"),
         cross_pairs_max=cfg.get("cross_pairs_max"),
         cross_pairs_seed=cfg.get("cross_pairs_seed", 13),
         cross_exclude_same_session=cfg.get("cross_exclude_same_session", True),
         cross_exclude_same_date=cfg.get("cross_exclude_same_date", False),
         parallelize_across_crosscorr_pairs=False,
-        shuffle_output_filename=cfg.get(
-            "shuffle_output_filename",
-            "within_session_out_of_roi_fix_cross_correlation_shuffle.pkl",
-        ),
+        shuffle_output_filename=cfg.get("shuffle_output_filename"),
         shuffle_pairs_subdir=cfg.get(
             "shuffle_pairs_subdir",
             "within_session_out_of_roi_shuffle_pair_results",

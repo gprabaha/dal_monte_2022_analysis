@@ -173,3 +173,67 @@ def build_analysis_output_dir(cfg: dict, subdir: str) -> Path:
     """
     root = Path(cfg.get("analysis_output_root", cfg["processed_data_root"]))
     return root / subdir
+
+
+_CROSSCORR_SCOPE_ALIASES = {
+    "whole": "whole",
+    "whole_session": "whole",
+    "all": "whole",
+    "session": "whole",
+    "interactive": "interactive",
+    "interactive_only": "interactive",
+    "non_interactive": "non_interactive",
+    "non_interactive_only": "non_interactive",
+    "noninteractive": "non_interactive",
+}
+
+
+def normalize_fix_crosscorr_time_scope(scope: Optional[str]) -> str:
+    """Normalize cross-correlation time-scope labels to canonical values."""
+    if scope is None:
+        raw = "whole"
+    else:
+        raw = str(scope).strip().lower()
+    token = raw.replace("-", "_").replace(" ", "_")
+    normalized = _CROSSCORR_SCOPE_ALIASES.get(token)
+    if normalized is None:
+        allowed = ", ".join(sorted(set(_CROSSCORR_SCOPE_ALIASES.values())))
+        raise ValueError(f"Unsupported cross-correlation time scope '{scope}'. Allowed: {allowed}.")
+    return normalized
+
+
+def build_fix_crosscorr_output_filename(
+    fixation_label: str,
+    output_kind: str,
+    *,
+    time_scope: Optional[str] = "whole",
+) -> str:
+    """Build canonical cross-correlation output filenames.
+
+    Args:
+        fixation_label: Fixation label (e.g., "face", "out_of_roi").
+        output_kind: One of: "within", "cross", "shuffle", "lags".
+        time_scope: One of: whole / interactive / non_interactive.
+
+    Returns:
+        Deterministic pickle filename with explicit phase tag.
+    """
+    scope = normalize_fix_crosscorr_time_scope(time_scope)
+    label = str(fixation_label).strip().lower().replace(" ", "_")
+    kind = str(output_kind).strip().lower()
+
+    if kind == "within":
+        stem = f"within_session_{label}_fix_cross_correlation"
+    elif kind == "cross":
+        stem = f"cross_session_{label}_fix_cross_correlation"
+    elif kind == "shuffle":
+        stem = f"within_session_{label}_fix_cross_correlation_shuffle"
+    elif kind == "lags":
+        stem = f"{label}_crosscorrelation_lags"
+    else:
+        raise ValueError(
+            "Unsupported cross-correlation output kind "
+            f"'{output_kind}'. Expected one of: within, cross, shuffle, lags."
+        )
+
+    return f"{stem}__phase={scope}.pkl"

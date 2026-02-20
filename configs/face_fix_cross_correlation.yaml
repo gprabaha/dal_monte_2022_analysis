@@ -3,13 +3,27 @@
 
 input_modality: fixation_binary_vectors
 fixation_label: face
+# Folder for leader/follower CSV outputs.
 output_subdir: fix_cross_correlation
-within_filename: within_session_face_fix_cross_correlation.pkl
+# Folder for cross-correlation pickle outputs.
+crosscorr_output_subdir: crosscorr_outputs
+
+# Time-scope filtering for fixation vectors before cross-correlation:
+# - whole
+# - interactive
+# - non_interactive
+time_scope: whole
+interactive_modality: interactive_periods
+interactive_state_label: interactive
+
+# Optional explicit filenames. If null, algorithmic names are generated from
+# fixation_label + time_scope in utils.paths.build_fix_crosscorr_output_filename.
+within_filename: null
 # Cross output now stores per-session cross-control summaries (mean/std/n_pairs),
 # not all raw n*(n-1) pair traces.
-cross_filename: cross_session_face_fix_cross_correlation.pkl
+cross_filename: null
 # Optional override for the shared lag-axis file. If null, defaults to:
-# "<fixation_label>_crosscorrelation_lags.pkl"
+# "<...>__phase=<time_scope>.pkl"
 lags_filename: null
 
 # Max absolute lag (in samples) to keep in the saved cross-correlation arrays.
@@ -29,7 +43,7 @@ parallelize_across_crosscorr_pairs: true
 test_single: false
 
 # Within-session shuffled distribution settings.
-shuffle_output_filename: within_session_face_fix_cross_correlation_shuffle.pkl
+shuffle_output_filename: null
 shuffle_pairs_subdir: within_session_shuffle_pair_results
 shuffle_n_shuffles: 1000
 shuffle_stringent: true

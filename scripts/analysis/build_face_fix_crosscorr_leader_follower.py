@@ -7,6 +7,7 @@ from dal_monte_2022_analysis.analysis.fix_crosscorr_leader_follower import (
     run_fix_crosscorr_leader_follower_analysis,
 )
 from dal_monte_2022_analysis.config.load import load_face_fix_cross_correlation_config
+from dal_monte_2022_analysis.utils.paths import normalize_fix_crosscorr_time_scope
 
 
 def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
@@ -16,12 +17,17 @@ def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
     settings = FixCrossCorrLeaderFollowerSettings(
         cfg_path=args.dataset_cfg,
         fixation_label=fixation_label,
-        output_subdir=cfg.get("output_subdir", "fix_cross_correlation"),
-        within_filename=cfg.get(
-            "within_filename",
-            "within_session_face_fix_cross_correlation.pkl",
+        output_subdir=cfg.get(
+            "leader_follower_output_subdir",
+            cfg.get("output_subdir", "fix_cross_correlation"),
         ),
+        crosscorr_input_subdir=cfg.get(
+            "crosscorr_output_subdir",
+            cfg.get("output_subdir", "fix_cross_correlation"),
+        ),
+        within_filename=cfg.get("within_filename"),
         lags_filename=cfg.get("lags_filename"),
+        time_scope=normalize_fix_crosscorr_time_scope(cfg.get("time_scope", "whole")),
         session_output_filename=cfg.get(
             "leader_follower_session_filename",
             "within_session_face_fix_crosscorr_leader_follower.csv",

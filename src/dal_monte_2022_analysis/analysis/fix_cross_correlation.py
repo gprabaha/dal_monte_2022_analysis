@@ -18,7 +18,11 @@ from dal_monte_2022_analysis.config.load import load_dataset_config
 from dal_monte_2022_analysis.data.gaze_data import FixationBinaryVectorsData
 from dal_monte_2022_analysis.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.utils.paths import (
+    build_analysis_output_dir,
+    build_fix_crosscorr_output_filename,
+    normalize_fix_crosscorr_time_scope,
+)
 
 
 @dataclass
@@ -28,17 +32,20 @@ class FixCrossCorrelationSettings:
     cfg_path: str
     input_modality: str = "fixation_binary_vectors"
     fixation_label: str = "face"
-    output_subdir: str = "fix_cross_correlation"
-    within_filename: str = "within_session_face_fix_cross_correlation.pkl"
-    cross_filename: str = "cross_session_face_fix_cross_correlation.pkl"
+    output_subdir: str = "crosscorr_outputs"
+    within_filename: Optional[str] = None
+    cross_filename: Optional[str] = None
     lags_filename: Optional[str] = None
     max_lag: Optional[int] = 60000
+    time_scope: str = "whole"
+    interactive_modality: str = "interactive_periods"
+    interactive_state_label: str = "interactive"
     cross_pairs_max: Optional[int] = None
     cross_pairs_seed: int = 13
     cross_exclude_same_session: bool = True
     cross_exclude_same_date: bool = False
     parallelize_across_crosscorr_pairs: bool = False
-    shuffle_output_filename: str = "within_session_face_fix_cross_correlation_shuffle.pkl"
+    shuffle_output_filename: Optional[str] = None
     shuffle_pairs_subdir: str = "within_session_shuffle_pair_results"
     shuffle_n_shuffles: int = 1000
     shuffle_stringent: bool = True
@@ -117,6 +124,128 @@ def _index_agent_paths(cfg: dict, modality: str) -> tuple[dict, dict]:
             m2_paths[(row["date"], row["session"])] = row["path"]
 
     return m1_paths, m2_paths
+
+
+def _index_shared_paths(cfg: dict, modality: str) -> dict:
+    """Index shared (agent-less) modality paths by (date, session)."""
+    index_df = index_processed_dataset(cfg, modality)
+    rows = index_df.to_dict(orient="records")
+
+    shared_paths: dict[tuple[str, str], object] = {}
+    for row in rows:
+        if row.get("agent") is None:
+            shared_paths[(row["date"], row["session"])] = row["path"]
+    return shared_paths
+
+
+def _load_interactive_periods(path) -> Optional[pd.DataFrame]:
+    """Load interactive periods from pickle (DataFrame expected)."""
+    obj = _load_pickle(path)
+    if isinstance(obj, pd.DataFrame):
+        return obj
+    return None
+
+
+def _filter_interactive_periods(
+    df: Optional[pd.DataFrame],
+    state_label: Optional[str],
+) -> pd.DataFrame:
+    """Filter interactive period DataFrame to the requested state."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    periods = df
+    required_cols = {"start", "stop"}
+    if not required_cols.issubset(periods.columns):
+        return pd.DataFrame()
+
+    if state_label is not None and "state" in periods.columns:
+        periods = periods[periods["state"] == state_label]
+    if periods.empty:
+        return pd.DataFrame()
+
+    return periods.sort_values(["start", "stop"]).reset_index(drop=True)
+
+
+def _clip_period(
+    start,
+    stop,
+    max_len: int,
+) -> Optional[tuple[int, int]]:
+    """Clip a start/stop pair to [0, max_len - 1]."""
+    if max_len <= 0:
+        return None
+    try:
+        start_idx = int(start)
+        stop_idx = int(stop)
+    except (TypeError, ValueError):
+        return None
+    if stop_idx < 0 or start_idx >= max_len:
+        return None
+    start_idx = max(0, start_idx)
+    stop_idx = min(max_len - 1, stop_idx)
+    if start_idx > stop_idx:
+        return None
+    return start_idx, stop_idx
+
+
+def _build_interactive_mask(
+    periods_df: Optional[pd.DataFrame],
+    *,
+    n_samples: int,
+    state_label: Optional[str],
+) -> np.ndarray:
+    """Build a boolean interactive mask with shape (n_samples,)."""
+    mask = np.zeros(int(max(0, n_samples)), dtype=bool)
+    periods = _filter_interactive_periods(periods_df, state_label)
+    if periods.empty:
+        return mask
+
+    for _, row in periods.iterrows():
+        clipped = _clip_period(row.get("start"), row.get("stop"), int(n_samples))
+        if clipped is None:
+            continue
+        start, stop = clipped
+        mask[start : stop + 1] = True
+    return mask
+
+
+def _apply_time_scope_filter(
+    vec_bool: np.ndarray,
+    *,
+    time_scope: str,
+    interactive_periods_path,
+    interactive_state_label: Optional[str],
+) -> np.ndarray:
+    """Filter fixation vector to whole/interactive/non-interactive scope."""
+    scope = normalize_fix_crosscorr_time_scope(time_scope)
+    vec = np.asarray(vec_bool, dtype=bool)
+
+    if scope == "whole":
+        return vec
+
+    if interactive_periods_path is None:
+        raise RuntimeError(
+            "Missing interactive-period path while running cross-correlation "
+            f"time_scope='{scope}'."
+        )
+    periods_df = _load_interactive_periods(interactive_periods_path)
+    if periods_df is None:
+        raise RuntimeError(
+            "Interactive-period file is missing/invalid while running cross-correlation "
+            f"time_scope='{scope}': {interactive_periods_path}"
+        )
+
+    interactive_mask = _build_interactive_mask(
+        periods_df,
+        n_samples=int(vec.size),
+        state_label=interactive_state_label,
+    )
+    if scope == "interactive":
+        keep_mask = interactive_mask
+    else:
+        keep_mask = ~interactive_mask
+    return vec & keep_mask
 
 
 def _build_cross_pairs(
@@ -558,6 +687,11 @@ def _build_pair_result(
     key2: tuple[str, str],
     m1_path,
     m2_path,
+    *,
+    time_scope: str = "whole",
+    interactive_state_label: Optional[str] = "interactive",
+    interactive_periods_path_key1=None,
+    interactive_periods_path_key2=None,
 ) -> Optional[dict]:
     """Build one pair result, including normalized cross-correlation and metadata."""
     m1_vec, m1_name = _load_fixation_vector(m1_path, fixation_label)
@@ -566,6 +700,19 @@ def _build_pair_result(
     m2_vec, m2_name = _load_fixation_vector(m2_path, fixation_label)
     if m2_vec is None or m2_vec.size == 0:
         return None
+
+    m1_vec = _apply_time_scope_filter(
+        m1_vec,
+        time_scope=time_scope,
+        interactive_periods_path=interactive_periods_path_key1,
+        interactive_state_label=interactive_state_label,
+    )
+    m2_vec = _apply_time_scope_filter(
+        m2_vec,
+        time_scope=time_scope,
+        interactive_periods_path=interactive_periods_path_key2,
+        interactive_state_label=interactive_state_label,
+    )
 
     lags, corr = _fft_cross_correlation(m1_vec, m2_vec, max_lag=max_lag)
     m1_fix_bin_count = int(np.count_nonzero(m1_vec))
@@ -593,10 +740,32 @@ def _build_pair_result(
 
 
 def _build_pair_result_worker(
-    args: tuple[str, Optional[int], tuple[str, str], tuple[str, str], object, object],
+    args: tuple[
+        str,
+        Optional[int],
+        tuple[str, str],
+        tuple[str, str],
+        object,
+        object,
+        str,
+        Optional[str],
+        object,
+        object,
+    ],
 ) -> Optional[dict]:
     """Pool worker wrapper for computing one pair result."""
-    fixation_label, max_lag, key1, key2, m1_path, m2_path = args
+    (
+        fixation_label,
+        max_lag,
+        key1,
+        key2,
+        m1_path,
+        m2_path,
+        time_scope,
+        interactive_state_label,
+        interactive_periods_path_key1,
+        interactive_periods_path_key2,
+    ) = args
     return _build_pair_result(
         fixation_label=fixation_label,
         max_lag=max_lag,
@@ -604,6 +773,10 @@ def _build_pair_result_worker(
         key2=key2,
         m1_path=m1_path,
         m2_path=m2_path,
+        time_scope=time_scope,
+        interactive_state_label=interactive_state_label,
+        interactive_periods_path_key1=interactive_periods_path_key1,
+        interactive_periods_path_key2=interactive_periods_path_key2,
     )
 
 
@@ -616,10 +789,50 @@ def _assert_lags_match(expected_lags: np.ndarray, lags: np.ndarray) -> None:
         )
 
 
+def _within_session_row_from_result(
+    settings: FixCrossCorrelationSettings,
+    result: dict,
+) -> dict:
+    """Construct one within-session output row from a pair-result payload."""
+    key = result["key1"]
+    return {
+        "fixation_label": settings.fixation_label,
+        "time_scope": normalize_fix_crosscorr_time_scope(settings.time_scope),
+        "date": key[0],
+        "session": key[1],
+        "n_samples_m1": result["n_samples_m1"],
+        "n_samples_m2": result["n_samples_m2"],
+        "m1_fixation_count": result["m1_fixation_count"],
+        "m2_fixation_count": result["m2_fixation_count"],
+        "m1_fixation_bin_count": result["m1_fixation_bin_count"],
+        "m2_fixation_bin_count": result["m2_fixation_bin_count"],
+        "monkey_name_m1": result["monkey_name_m1"],
+        "monkey_name_m2": result["monkey_name_m2"],
+        "cross_correlation": result["cross_correlation"],
+        "n_lags": result["n_lags"],
+        "zero_lag_correlation": result["zero_lag_correlation"],
+        "peak_lag": result["peak_lag"],
+        "peak_correlation": result["peak_correlation"],
+    }
+
+
+def _within_session_metadata_from_result(result: dict) -> dict:
+    """Construct per-session metadata payload from one pair-result payload."""
+    return {
+        "monkey_name_m1": result["monkey_name_m1"],
+        "monkey_name_m2": result["monkey_name_m2"],
+        "m1_fixation_count": result["m1_fixation_count"],
+        "m2_fixation_count": result["m2_fixation_count"],
+        "m1_fixation_bin_count": result["m1_fixation_bin_count"],
+        "m2_fixation_bin_count": result["m2_fixation_bin_count"],
+    }
+
+
 def _build_within_session_rows(
     settings: FixCrossCorrelationSettings,
     m1_paths: dict,
     m2_paths: dict,
+    interactive_paths: Optional[dict] = None,
 ) -> tuple[list[dict], dict[tuple[str, str], dict], Optional[np.ndarray]]:
     """Build within-session rows and return per-session metadata + lag axis."""
     rows: list[dict] = []
@@ -630,17 +843,41 @@ def _build_within_session_rows(
     if settings.test_single and shared_keys:
         shared_keys = [random.choice(shared_keys)]
 
-    tasks = [
-        (
-            settings.fixation_label,
-            settings.max_lag,
-            key,
-            key,
-            m1_paths[key],
-            m2_paths[key],
+    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
+    tasks = []
+    missing_interactive = 0
+    for key in shared_keys:
+        interactive_path = None
+        if scope != "whole":
+            if interactive_paths is None:
+                raise RuntimeError(
+                    "Interactive paths are required for non-whole cross-correlation scopes."
+                )
+            interactive_path = interactive_paths.get(key)
+            if interactive_path is None:
+                missing_interactive += 1
+                continue
+
+        tasks.append(
+            (
+                settings.fixation_label,
+                settings.max_lag,
+                key,
+                key,
+                m1_paths[key],
+                m2_paths[key],
+                scope,
+                settings.interactive_state_label,
+                interactive_path,
+                interactive_path,
+            )
         )
-        for key in shared_keys
-    ]
+
+    if missing_interactive > 0:
+        print(
+            f"[fix-xcorr] skipped {missing_interactive} within-session keys due to "
+            f"missing interactive periods for scope='{scope}'."
+        )
 
     use_parallel = (
         settings.parallelize_across_crosscorr_pairs
@@ -667,33 +904,8 @@ def _build_within_session_rows(
                     _assert_lags_match(lag_axis, lags)
 
                 key = result["key1"]
-                row = {
-                    "fixation_label": settings.fixation_label,
-                    "date": key[0],
-                    "session": key[1],
-                    "n_samples_m1": result["n_samples_m1"],
-                    "n_samples_m2": result["n_samples_m2"],
-                    "m1_fixation_count": result["m1_fixation_count"],
-                    "m2_fixation_count": result["m2_fixation_count"],
-                    "m1_fixation_bin_count": result["m1_fixation_bin_count"],
-                    "m2_fixation_bin_count": result["m2_fixation_bin_count"],
-                    "monkey_name_m1": result["monkey_name_m1"],
-                    "monkey_name_m2": result["monkey_name_m2"],
-                    "cross_correlation": result["cross_correlation"],
-                    "n_lags": result["n_lags"],
-                    "zero_lag_correlation": result["zero_lag_correlation"],
-                    "peak_lag": result["peak_lag"],
-                    "peak_correlation": result["peak_correlation"],
-                }
-                rows.append(row)
-                metadata_by_key[key] = {
-                    "monkey_name_m1": result["monkey_name_m1"],
-                    "monkey_name_m2": result["monkey_name_m2"],
-                    "m1_fixation_count": result["m1_fixation_count"],
-                    "m2_fixation_count": result["m2_fixation_count"],
-                    "m1_fixation_bin_count": result["m1_fixation_bin_count"],
-                    "m2_fixation_bin_count": result["m2_fixation_bin_count"],
-                }
+                rows.append(_within_session_row_from_result(settings, result))
+                metadata_by_key[key] = _within_session_metadata_from_result(result)
         return rows, metadata_by_key, lag_axis
 
     for task in tqdm(tasks, desc="Within-session xcorr", unit="session"):
@@ -723,33 +935,8 @@ def _build_within_session_rows(
                 corr=result["cross_correlation"],
             )
 
-        row = {
-            "fixation_label": settings.fixation_label,
-            "date": key[0],
-            "session": key[1],
-            "n_samples_m1": result["n_samples_m1"],
-            "n_samples_m2": result["n_samples_m2"],
-            "m1_fixation_count": result["m1_fixation_count"],
-            "m2_fixation_count": result["m2_fixation_count"],
-            "m1_fixation_bin_count": result["m1_fixation_bin_count"],
-            "m2_fixation_bin_count": result["m2_fixation_bin_count"],
-            "monkey_name_m1": result["monkey_name_m1"],
-            "monkey_name_m2": result["monkey_name_m2"],
-            "cross_correlation": result["cross_correlation"],
-            "n_lags": result["n_lags"],
-            "zero_lag_correlation": result["zero_lag_correlation"],
-            "peak_lag": result["peak_lag"],
-            "peak_correlation": result["peak_correlation"],
-        }
-        rows.append(row)
-        metadata_by_key[key] = {
-            "monkey_name_m1": result["monkey_name_m1"],
-            "monkey_name_m2": result["monkey_name_m2"],
-            "m1_fixation_count": result["m1_fixation_count"],
-            "m2_fixation_count": result["m2_fixation_count"],
-            "m1_fixation_bin_count": result["m1_fixation_bin_count"],
-            "m2_fixation_bin_count": result["m2_fixation_bin_count"],
-        }
+        rows.append(_within_session_row_from_result(settings, result))
+        metadata_by_key[key] = _within_session_metadata_from_result(result)
 
     return rows, metadata_by_key, lag_axis
 
@@ -761,6 +948,7 @@ def _build_cross_session_control_rows(
     within_keys: list[tuple[str, str]],
     metadata_by_key: dict[tuple[str, str], dict],
     lag_axis: Optional[np.ndarray],
+    interactive_paths: Optional[dict] = None,
 ) -> tuple[list[dict], Optional[np.ndarray]]:
     """Build cross-session control rows aggregated per within-session key.
 
@@ -775,17 +963,42 @@ def _build_cross_session_control_rows(
     if settings.test_single and pairs:
         pairs = [random.choice(pairs)]
 
-    tasks = [
-        (
-            settings.fixation_label,
-            settings.max_lag,
-            key1,
-            key2,
-            m1_paths[key1],
-            m2_paths[key2],
+    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
+    tasks = []
+    missing_interactive = 0
+    for key1, key2 in pairs:
+        interactive_path_key1 = None
+        interactive_path_key2 = None
+        if scope != "whole":
+            if interactive_paths is None:
+                raise RuntimeError(
+                    "Interactive paths are required for non-whole cross-correlation scopes."
+                )
+            interactive_path_key1 = interactive_paths.get(key1)
+            interactive_path_key2 = interactive_paths.get(key2)
+            if interactive_path_key1 is None or interactive_path_key2 is None:
+                missing_interactive += 1
+                continue
+        tasks.append(
+            (
+                settings.fixation_label,
+                settings.max_lag,
+                key1,
+                key2,
+                m1_paths[key1],
+                m2_paths[key2],
+                scope,
+                settings.interactive_state_label,
+                interactive_path_key1,
+                interactive_path_key2,
+            )
         )
-        for key1, key2 in pairs
-    ]
+
+    if missing_interactive > 0:
+        print(
+            f"[fix-xcorr] skipped {missing_interactive} cross-session pairs due to "
+            f"missing interactive periods for scope='{scope}'."
+        )
 
     accum: dict[tuple[str, str], dict] = {}
 
@@ -894,6 +1107,7 @@ def _build_cross_session_control_rows(
 
         rows.append({
             "fixation_label": settings.fixation_label,
+            "time_scope": normalize_fix_crosscorr_time_scope(settings.time_scope),
             "date": key[0],
             "session": key[1],
             "monkey_name_m1": meta.get("monkey_name_m1"),
@@ -917,6 +1131,12 @@ def build_within_session_pair_tasks(
     cfg = load_dataset_config(settings.cfg_path)
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
     shared_keys = sorted(set(m1_paths).intersection(m2_paths))
+
+    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
+    if scope != "whole":
+        interactive_paths = _index_shared_paths(cfg, settings.interactive_modality)
+        shared_keys = [key for key in shared_keys if key in interactive_paths]
+
     if settings.test_single and shared_keys:
         shared_keys = [random.choice(shared_keys)]
     return shared_keys
@@ -924,9 +1144,10 @@ def build_within_session_pair_tasks(
 
 def _shuffle_pair_output_dir(cfg: dict, settings: FixCrossCorrelationSettings) -> Path:
     """Return output directory for per-pair shuffled results."""
+    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
     return build_analysis_output_dir(
         cfg,
-        f"{settings.output_subdir}/{settings.shuffle_pairs_subdir}",
+        f"{settings.output_subdir}/{settings.shuffle_pairs_subdir}/phase={scope}",
     )
 
 
@@ -944,6 +1165,8 @@ def _build_within_session_shuffle_row(
     key: tuple[str, str],
     m1_path,
     m2_path,
+    *,
+    interactive_periods_path=None,
 ) -> Optional[dict]:
     """Build shuffled-summary row for one within-session pair."""
     m1_vec, m1_name = _load_fixation_vector(m1_path, settings.fixation_label)
@@ -952,6 +1175,19 @@ def _build_within_session_shuffle_row(
     m2_vec, m2_name = _load_fixation_vector(m2_path, settings.fixation_label)
     if m2_vec is None or m2_vec.size == 0:
         return None
+
+    m1_vec = _apply_time_scope_filter(
+        m1_vec,
+        time_scope=settings.time_scope,
+        interactive_periods_path=interactive_periods_path,
+        interactive_state_label=settings.interactive_state_label,
+    )
+    m2_vec = _apply_time_scope_filter(
+        m2_vec,
+        time_scope=settings.time_scope,
+        interactive_periods_path=interactive_periods_path,
+        interactive_state_label=settings.interactive_state_label,
+    )
 
     m1_fix_event_count = _count_fixation_events(m1_vec)
     m2_fix_event_count = _count_fixation_events(m2_vec)
@@ -974,6 +1210,7 @@ def _build_within_session_shuffle_row(
 
     return {
         "fixation_label": settings.fixation_label,
+        "time_scope": normalize_fix_crosscorr_time_scope(settings.time_scope),
         "date": key[0],
         "session": key[1],
         "monkey_name_m1": m1_name,
@@ -1000,15 +1237,27 @@ def process_and_save_within_session_shuffle_pair(
     """Compute and save shuffled-summary output for one within-session pair."""
     cfg = load_dataset_config(settings.cfg_path)
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
+    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
     key = (str(date), str(session))
     if key not in m1_paths or key not in m2_paths:
         print(f"[shuffle-worker] missing within-session pair for date={date} session={session}")
         return None
 
+    interactive_path = None
+    if scope != "whole":
+        interactive_paths = _index_shared_paths(cfg, settings.interactive_modality)
+        interactive_path = interactive_paths.get(key)
+        if interactive_path is None:
+            print(
+                f"[shuffle-worker] missing interactive periods for date={date} "
+                f"session={session} scope={scope}"
+            )
+            return None
+
     print(
         f"[shuffle-worker] start pair date={date} session={session} "
         f"label={settings.fixation_label} n_shuffles={settings.shuffle_n_shuffles} "
-        f"max_lag={settings.max_lag}"
+        f"max_lag={settings.max_lag} scope={scope}"
     )
 
     row = _build_within_session_shuffle_row(
@@ -1016,6 +1265,7 @@ def process_and_save_within_session_shuffle_pair(
         key=key,
         m1_path=m1_paths[key],
         m2_path=m2_paths[key],
+        interactive_periods_path=interactive_path,
     )
     if row is None:
         print(f"[shuffle-worker] no result for date={date} session={session}")
@@ -1078,7 +1328,7 @@ def collate_within_session_shuffle_results(
 
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / settings.shuffle_output_filename
+    out_path = out_dir / _resolve_shuffle_output_filename(settings)
     shuffle_df.to_pickle(out_path)
 
     if lag_axis is not None:
@@ -1138,11 +1388,48 @@ def collate_within_session_shuffle_results(
     return shuffle_df, lag_axis
 
 
+def _resolve_within_filename(settings: FixCrossCorrelationSettings) -> str:
+    """Return within-session output filename."""
+    if settings.within_filename:
+        return settings.within_filename
+    return build_fix_crosscorr_output_filename(
+        settings.fixation_label,
+        "within",
+        time_scope=settings.time_scope,
+    )
+
+
+def _resolve_cross_filename(settings: FixCrossCorrelationSettings) -> str:
+    """Return cross-session output filename."""
+    if settings.cross_filename:
+        return settings.cross_filename
+    return build_fix_crosscorr_output_filename(
+        settings.fixation_label,
+        "cross",
+        time_scope=settings.time_scope,
+    )
+
+
+def _resolve_shuffle_output_filename(settings: FixCrossCorrelationSettings) -> str:
+    """Return shuffled-summary output filename."""
+    if settings.shuffle_output_filename:
+        return settings.shuffle_output_filename
+    return build_fix_crosscorr_output_filename(
+        settings.fixation_label,
+        "shuffle",
+        time_scope=settings.time_scope,
+    )
+
+
 def _resolve_lags_filename(settings: FixCrossCorrelationSettings) -> str:
     """Return lag-axis output filename."""
     if settings.lags_filename:
         return settings.lags_filename
-    return f"{settings.fixation_label}_crosscorrelation_lags.pkl"
+    return build_fix_crosscorr_output_filename(
+        settings.fixation_label,
+        "lags",
+        time_scope=settings.time_scope,
+    )
 
 
 def _print_output_sanity_summary(
@@ -1220,12 +1507,13 @@ def run_fix_cross_correlation_analysis(
     """Run fixation cross-correlation analysis and persist outputs.
 
     Output files:
-    - within_filename: per-session within-session cross-correlation vectors.
-    - cross_filename: per-session aggregated cross-session controls (mean/std/n_pairs).
-    - <fixation_label>_crosscorrelation_lags.pkl (or settings.lags_filename): shared lag axis.
+    - within filename (resolved by scope/label): per-session within-session vectors.
+    - cross filename (resolved by scope/label): per-session cross-session controls.
+    - lags filename (resolved by scope/label): shared lag axis.
     """
     cfg = load_dataset_config(settings.cfg_path)
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
+    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
 
     if not m1_paths or not m2_paths:
         raise RuntimeError(
@@ -1233,7 +1521,21 @@ def run_fix_cross_correlation_analysis(
             f"Found m1={len(m1_paths)} m2={len(m2_paths)}."
         )
 
-    within_rows, metadata_by_key, lag_axis = _build_within_session_rows(settings, m1_paths, m2_paths)
+    interactive_paths = None
+    if scope != "whole":
+        interactive_paths = _index_shared_paths(cfg, settings.interactive_modality)
+        if not interactive_paths:
+            raise RuntimeError(
+                "No interactive-period files found for non-whole cross-correlation scope "
+                f"'{scope}' in modality '{settings.interactive_modality}'."
+            )
+
+    within_rows, metadata_by_key, lag_axis = _build_within_session_rows(
+        settings,
+        m1_paths,
+        m2_paths,
+        interactive_paths=interactive_paths,
+    )
     within_df = pd.DataFrame.from_records(within_rows)
 
     cross_df = None
@@ -1246,17 +1548,18 @@ def run_fix_cross_correlation_analysis(
             within_keys=within_keys,
             metadata_by_key=metadata_by_key,
             lag_axis=lag_axis,
+            interactive_paths=interactive_paths,
         )
         cross_df = pd.DataFrame.from_records(cross_rows)
 
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    within_path = out_dir / settings.within_filename
+    within_path = out_dir / _resolve_within_filename(settings)
     within_df.to_pickle(within_path)
 
     if cross_df is not None:
-        cross_path = out_dir / settings.cross_filename
+        cross_path = out_dir / _resolve_cross_filename(settings)
         cross_df.to_pickle(cross_path)
 
     if lag_axis is not None:

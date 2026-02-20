@@ -14,7 +14,12 @@ import pandas as pd
 from scipy.stats import ttest_ind
 
 from dal_monte_2022_analysis.config.load import load_dataset_config
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir, build_processed_data_path
+from dal_monte_2022_analysis.utils.paths import (
+    build_analysis_output_dir,
+    build_fix_crosscorr_output_filename,
+    build_processed_data_path,
+    normalize_fix_crosscorr_time_scope,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 
 
@@ -25,8 +30,10 @@ class FixCrossCorrLeaderFollowerSettings:
     cfg_path: str
     fixation_label: str = "face"
     output_subdir: str = "fix_cross_correlation"
-    within_filename: str = "within_session_face_fix_cross_correlation.pkl"
+    crosscorr_input_subdir: Optional[str] = None
+    within_filename: Optional[str] = None
     lags_filename: Optional[str] = None
+    time_scope: str = "whole"
     session_output_filename: str = "within_session_face_fix_crosscorr_leader_follower.csv"
     date_summary_filename: str = "date_summary_face_fix_crosscorr_leader_follower.csv"
     pair_summary_filename: str = "pair_summary_face_fix_crosscorr_leader_follower.csv"
@@ -227,7 +234,22 @@ def _resolve_lags_filename(settings: FixCrossCorrLeaderFollowerSettings) -> str:
     """Return lag-axis filename."""
     if settings.lags_filename:
         return settings.lags_filename
-    return f"{settings.fixation_label}_crosscorrelation_lags.pkl"
+    return build_fix_crosscorr_output_filename(
+        settings.fixation_label,
+        "lags",
+        time_scope=settings.time_scope,
+    )
+
+
+def _resolve_within_filename(settings: FixCrossCorrLeaderFollowerSettings) -> str:
+    """Return within-session cross-correlation filename."""
+    if settings.within_filename:
+        return settings.within_filename
+    return build_fix_crosscorr_output_filename(
+        settings.fixation_label,
+        "within",
+        time_scope=settings.time_scope,
+    )
 
 
 def _resolve_pair_summary_filename(settings: FixCrossCorrLeaderFollowerSettings) -> str:
@@ -1636,9 +1658,12 @@ def run_fix_crosscorr_leader_follower_analysis(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build session-level leader calls and fixation-count property summaries."""
     cfg = load_dataset_config(settings.cfg_path)
+    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
+    input_subdir = settings.crosscorr_input_subdir or settings.output_subdir
+    input_dir = build_analysis_output_dir(cfg, input_subdir)
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
-    within_path = out_dir / settings.within_filename
-    lags_path = out_dir / _resolve_lags_filename(settings)
+    within_path = input_dir / _resolve_within_filename(settings)
+    lags_path = input_dir / _resolve_lags_filename(settings)
 
     if not within_path.exists():
         raise RuntimeError(f"Missing within-session cross-correlation file: {within_path}")
@@ -1653,6 +1678,7 @@ def run_fix_crosscorr_leader_follower_analysis(
         fixation_label=settings.fixation_label,
         tie_epsilon=settings.tie_epsilon,
     )
+    session_df["time_scope"] = scope
     date_summary_df = _summarize_fixation_count_property_by_date(session_df)
     pair_summary_df = _summarize_fixation_count_property_by_pair(session_df)
     global_summary_df = _summarize_fixation_count_property_global(session_df)
