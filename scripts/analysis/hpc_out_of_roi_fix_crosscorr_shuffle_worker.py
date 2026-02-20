@@ -21,6 +21,11 @@ def main():
     parser.add_argument("--fix-crosscorr-cfg", required=True)
     parser.add_argument("--date", required=True)
     parser.add_argument("--session", required=True)
+    parser.add_argument(
+        "--time-scope",
+        default=None,
+        choices=["whole", "interactive", "non_interactive"],
+    )
     args = parser.parse_args()
 
     cfg = load_out_of_roi_fix_cross_correlation_config(args.fix_crosscorr_cfg)
@@ -57,6 +62,8 @@ def main():
         shuffle_log_every=cfg.get("shuffle_log_every", 100),
         test_single=False,
     )
+    if args.time_scope is not None:
+        settings.time_scope = normalize_fix_crosscorr_time_scope(args.time_scope)
 
     process_and_save_within_session_shuffle_pair(
         settings=settings,

@@ -3,7 +3,7 @@
 import subprocess
 import time
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 
 def write_job_file(job_file_path: Path, commands: Iterable[str]) -> None:
@@ -95,10 +95,12 @@ def generate_fix_crosscorr_shuffle_job_file(
     env_name: str,
     dataset_cfg_path: str,
     fix_crosscorr_cfg_path: str,
+    time_scope: Optional[str] = None,
 ) -> None:
     """Generate a job file for within-session shuffled cross-correlation pairs."""
     commands: List[str] = []
     for date, session in tasks:
+        scope_arg = f" --time-scope {time_scope}" if time_scope else ""
         cmd = (
             "module load miniconda; "
             "conda init; "
@@ -110,6 +112,7 @@ def generate_fix_crosscorr_shuffle_job_file(
             f"--fix-crosscorr-cfg {fix_crosscorr_cfg_path} "
             f"--date {date} "
             f"--session {session}"
+            f"{scope_arg}"
         )
         commands.append(cmd)
 

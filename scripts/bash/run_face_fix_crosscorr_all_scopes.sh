@@ -9,8 +9,11 @@ FACE_FIX_CROSSCORR_CFG="${FACE_FIX_CROSSCORR_CFG:-configs/face_fix_cross_correla
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 export PYTHONPATH="${PYTHONPATH:-src}"
 
-SCOPES=(whole interactive non_interactive)
-MODES=(observed shuffle_submit_hpc)
+#SCOPES=(whole interactive non_interactive)
+#MODES=(observed shuffle_submit_hpc)
+
+SCOPES=(interactive non_interactive)
+MODES=(shuffle_submit_hpc)
 
 echo "Running face fixation cross-correlation for all scopes/modes"
 echo "repo=${REPO_ROOT}"

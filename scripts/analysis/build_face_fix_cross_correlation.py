@@ -105,6 +105,7 @@ def _run_shuffle_submit_hpc(settings: FixCrossCorrelationSettings, args) -> None
         env_name=hpc_cfg["env_name"],
         dataset_cfg_path=dataset_cfg_path,
         fix_crosscorr_cfg_path=fix_cfg_path,
+        time_scope=settings.time_scope,
     )
 
     job_id = submit_dsq_array_job(
