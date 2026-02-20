@@ -17,6 +17,8 @@ Scripts:
   Violin panels comparing each monkey's fixation count as leader vs follower using face leader-follower analysis outputs.
 - `plot_face_fix_crosscorr_leader_follower_monkey_role_fixation_duration.py`
   Violin panels comparing each monkey's fixation duration (in bins) as leader vs follower using face leader-follower analysis outputs.
+- `plot_face_fix_crosscorr_m1_m2.py`
+  Three-panel line plots (whole/interactive/non-interactive) comparing observed within-session m1-m2 cross-correlation traces against cross-session controls and against shuffled controls, with per-lag paired t-test significance markers.
 - `plot_interactive_period_duration_distributions.py`
   Multi-panel histogram figures for interactive/non-interactive durations by monkey pair and by unique m1, plus a separate all-pairs aggregate histogram.
 - `plot_interactive_period_detection.py`

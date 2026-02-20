@@ -7,6 +7,14 @@ fixation_label: face
 output_subdir: fix_cross_correlation
 # Folder for cross-correlation pickle outputs.
 crosscorr_output_subdir: crosscorr_outputs
+# Folder (inside crosscorr_output_subdir) for m1-m2 comparison PDFs.
+m1_m2_plot_output_subdir: plots/m1-m2
+# Scope order for m1-m2 comparison panels.
+m1_m2_plot_scopes: [whole, interactive, non_interactive]
+# Per-lag paired t-test alpha for observed-vs-control m1-m2 plots.
+m1_m2_plot_significance_alpha: 0.05
+m1_m2_observed_vs_cross_filename: observed_vs_cross_session_face_m1_m2_crosscorr.pdf
+m1_m2_observed_vs_shuffle_filename: observed_vs_shuffle_face_m1_m2_crosscorr.pdf
 
 # Time-scope filtering for fixation vectors before cross-correlation:
 # - whole

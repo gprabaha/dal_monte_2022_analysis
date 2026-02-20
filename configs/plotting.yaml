@@ -22,6 +22,12 @@ figure:
   figsize: [8, 4]
   dpi: 300
 
+# Optional override for 3-panel m1-m2 cross-correlation comparison figures.
+crosscorr_m1_m2_figsize: [16, 4.6]
+crosscorr_m1_m2_colors:
+  observed: "#1f77b4"
+  control: "#d62728"
+
 # Subsampling seed for cross-session plots to match within-session sample size.
 cross_subsample_seed: 42
 
