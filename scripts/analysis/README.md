@@ -31,21 +31,20 @@ Primary configs:
 Leader-follower scripts reuse the corresponding cross-correlation configs above and read:
 - within-session cross-correlation pickle (`within_filename` or algorithmic default)
 - lag axis pickle (`lags_filename` or algorithmic default)
+- by default they read from `crosscorr_output_subdir` at `leader_follower_time_scope` (default `whole`)
+  and write outputs to `leader_follower_output_subdir` (default `<crosscorr_output_subdir>/leader_follower`).
 
 Cross-correlation naming/layout notes:
 - Cross-correlation pickles are written to `crosscorr_output_subdir` (default: `crosscorr_outputs`).
-- Leader-follower CSV outputs are written to `output_subdir` (default: `fix_cross_correlation`).
+- Leader-follower pickles are written to `leader_follower_output_subdir` (default: `<crosscorr_output_subdir>/leader_follower`).
 - If `within_filename`/`cross_filename`/`shuffle_output_filename`/`lags_filename` are null,
   names are generated from fixation label + `time_scope` (whole / interactive / non_interactive).
 
 Leader-follower outputs:
-- session-level CSV with per-session leader labels and lead scores.
-- fixation-count property summaries at date/pair/global levels (`n_pos`, `n_neg`, `n_zero`, `mean_delta`, `delta_consistency`).
-- pupil-during-fixation property summaries at session/date/pair/global levels (`n_lead`, `n_follow`, `lead_mean`, `follow_mean`, `mean_diff`, `p`, `sig`, `higher`).
-- monkey-role pupil tables (`within_session_*_pupil_by_monkey_role.csv`, `summary_*_pupil_by_monkey_role.csv`) for plotting in `scripts/plotting`.
-- monkey-role pupil raw session table (`within_session_*_pupil_by_monkey_role_raw.pkl`) containing per-session concatenated pupil arrays (`_vals`) for pooled violin/stat plotting.
-- monkey-role fixation-count tables (`within_session_*_fixation_count_by_monkey_role.csv`, `summary_*_fixation_count_by_monkey_role.csv`) for plotting in `scripts/plotting`.
-- monkey-role fixation-duration tables (`within_session_*_fixation_duration_by_monkey_role.csv`, `summary_*_fixation_duration_by_monkey_role.csv`) for plotting in `scripts/plotting`.
+- three pickle files with leader/follower calls:
+  - session-level (`leader_follower_session_filename`)
+  - date-level averages across sessions (`leader_follower_date_summary_filename`)
+  - monkey-pair-level averages across sessions (`leader_follower_pair_summary_filename`)
 
 Leader-follower pupil extraction controls:
 - `leader_follower_property_use_all_fixations` (default `false`): use all fixations instead of ROI-matching fixations.

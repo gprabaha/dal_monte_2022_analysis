@@ -12,8 +12,8 @@ export PYTHONPATH="${PYTHONPATH:-src}"
 #SCOPES=(whole interactive non_interactive)
 #MODES=(observed shuffle_submit_hpc)
 
-SCOPES=(interactive non_interactive)
-MODES=(shuffle_submit_hpc)
+SCOPES=(non_interactive)
+MODES=(observed)
 
 echo "Running face fixation cross-correlation for all scopes/modes"
 echo "repo=${REPO_ROOT}"

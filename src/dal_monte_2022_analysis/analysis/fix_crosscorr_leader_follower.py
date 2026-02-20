@@ -34,12 +34,12 @@ class FixCrossCorrLeaderFollowerSettings:
     within_filename: Optional[str] = None
     lags_filename: Optional[str] = None
     time_scope: str = "whole"
-    session_output_filename: str = "within_session_face_fix_crosscorr_leader_follower.csv"
-    date_summary_filename: str = "date_summary_face_fix_crosscorr_leader_follower.csv"
-    pair_summary_filename: str = "pair_summary_face_fix_crosscorr_leader_follower.csv"
+    session_output_filename: str = "within_session_face_fix_crosscorr_leader_follower.pkl"
+    date_summary_filename: str = "date_summary_face_fix_crosscorr_leader_follower.pkl"
+    pair_summary_filename: str = "pair_summary_face_fix_crosscorr_leader_follower.pkl"
     # Backward compatibility for older callers/configs.
     total_summary_filename: Optional[str] = None
-    global_summary_filename: str = "global_summary_face_fix_crosscorr_leader_follower.csv"
+    global_summary_filename: str = "global_summary_face_fix_crosscorr_leader_follower.pkl"
     fixations_modality: str = "fixations"
     pupil_modality: str = "pupil_size"
     pupil_session_output_filename: str = (
@@ -115,6 +115,54 @@ SESSION_OUTPUT_COLUMNS = [
     "leader_fixation_count",
     "follower_fixation_count",
     LEADER_DELTA_COL,
+]
+SESSION_LEADER_OUTPUT_COLUMNS = [
+    "fixation_label",
+    "time_scope",
+    "date",
+    "session",
+    "pair_key",
+    "monkey_name_m1",
+    "monkey_name_m2",
+    "mean_positive_lag_correlation",
+    "mean_negative_lag_correlation",
+    "lead_score",
+    "leader_agent",
+    "follower_agent",
+    "leader_monkey",
+    "follower_monkey",
+]
+DATE_LEADER_OUTPUT_COLUMNS = [
+    "fixation_label",
+    "time_scope",
+    "date",
+    "pair_key",
+    "monkey_name_m1",
+    "monkey_name_m2",
+    "n_sessions",
+    "mean_positive_lag_correlation",
+    "mean_negative_lag_correlation",
+    "mean_lead_score",
+    "leader_agent",
+    "follower_agent",
+    "leader_monkey",
+    "follower_monkey",
+]
+PAIR_LEADER_OUTPUT_COLUMNS = [
+    "fixation_label",
+    "time_scope",
+    "pair_key",
+    "monkey_name_m1",
+    "monkey_name_m2",
+    "n_sessions",
+    "n_dates",
+    "mean_positive_lag_correlation",
+    "mean_negative_lag_correlation",
+    "mean_lead_score",
+    "leader_agent",
+    "follower_agent",
+    "leader_monkey",
+    "follower_monkey",
 ]
 PROPERTY_SUMMARY_METRIC_COLUMNS = [
     "n_sessions",
@@ -1402,6 +1450,127 @@ def _compute_session_leader_rows(
     )
 
 
+def _add_group_leader_labels(
+    df: pd.DataFrame,
+    *,
+    score_col: str,
+    monkey_name_m1_col: str,
+    monkey_name_m2_col: str,
+    tie_epsilon: float,
+) -> pd.DataFrame:
+    """Add leader/follower labels from an aggregate lead-score column."""
+    out = df.copy()
+    scores = pd.to_numeric(out[score_col], errors="coerce").to_numpy(dtype=np.float64)
+    n_rows = int(scores.size)
+    is_valid = np.isfinite(scores)
+    eps = float(tie_epsilon)
+
+    leader_agent = np.full(n_rows, "tie", dtype=object)
+    follower_agent = np.full(n_rows, "tie", dtype=object)
+    leader_agent[is_valid & (scores > eps)] = "m1"
+    follower_agent[is_valid & (scores > eps)] = "m2"
+    leader_agent[is_valid & (scores < -eps)] = "m2"
+    follower_agent[is_valid & (scores < -eps)] = "m1"
+
+    m1_names = out[monkey_name_m1_col].to_numpy(dtype=object)
+    m2_names = out[monkey_name_m2_col].to_numpy(dtype=object)
+    leader_monkey = np.full(n_rows, None, dtype=object)
+    follower_monkey = np.full(n_rows, None, dtype=object)
+
+    m1_leads = leader_agent == "m1"
+    m2_leads = leader_agent == "m2"
+    leader_monkey[m1_leads] = m1_names[m1_leads]
+    leader_monkey[m2_leads] = m2_names[m2_leads]
+    follower_monkey[m1_leads] = m2_names[m1_leads]
+    follower_monkey[m2_leads] = m1_names[m2_leads]
+
+    out["leader_agent"] = leader_agent
+    out["follower_agent"] = follower_agent
+    out["leader_monkey"] = leader_monkey
+    out["follower_monkey"] = follower_monkey
+    return out
+
+
+def _build_session_leader_output(session_df: pd.DataFrame) -> pd.DataFrame:
+    """Return the simplified session-level leader table."""
+    if session_df.empty:
+        return pd.DataFrame(columns=SESSION_LEADER_OUTPUT_COLUMNS)
+    return (
+        session_df[SESSION_LEADER_OUTPUT_COLUMNS]
+        .sort_values(["pair_key", "date", "session"])
+        .reset_index(drop=True)
+    )
+
+
+def _summarize_session_leader_by_date(
+    session_df: pd.DataFrame,
+    *,
+    tie_epsilon: float,
+) -> pd.DataFrame:
+    """Average session lead-scores within each day and call leader/follower."""
+    if session_df.empty:
+        return pd.DataFrame(columns=DATE_LEADER_OUTPUT_COLUMNS)
+
+    grouped = (
+        session_df.groupby(
+            ["fixation_label", "time_scope", "date", "pair_key", "monkey_name_m1", "monkey_name_m2"],
+            dropna=False,
+            as_index=False,
+        )
+        .agg(
+            n_sessions=("session", "nunique"),
+            mean_positive_lag_correlation=("mean_positive_lag_correlation", "mean"),
+            mean_negative_lag_correlation=("mean_negative_lag_correlation", "mean"),
+            mean_lead_score=("lead_score", "mean"),
+        )
+        .sort_values(["pair_key", "date"])
+        .reset_index(drop=True)
+    )
+    grouped = _add_group_leader_labels(
+        grouped,
+        score_col="mean_lead_score",
+        monkey_name_m1_col="monkey_name_m1",
+        monkey_name_m2_col="monkey_name_m2",
+        tie_epsilon=tie_epsilon,
+    )
+    return grouped[DATE_LEADER_OUTPUT_COLUMNS]
+
+
+def _summarize_session_leader_by_pair(
+    session_df: pd.DataFrame,
+    *,
+    tie_epsilon: float,
+) -> pd.DataFrame:
+    """Average session lead-scores across sessions for each monkey pair."""
+    if session_df.empty:
+        return pd.DataFrame(columns=PAIR_LEADER_OUTPUT_COLUMNS)
+
+    grouped = (
+        session_df.groupby(
+            ["fixation_label", "time_scope", "pair_key", "monkey_name_m1", "monkey_name_m2"],
+            dropna=False,
+            as_index=False,
+        )
+        .agg(
+            n_sessions=("session", "nunique"),
+            n_dates=("date", "nunique"),
+            mean_positive_lag_correlation=("mean_positive_lag_correlation", "mean"),
+            mean_negative_lag_correlation=("mean_negative_lag_correlation", "mean"),
+            mean_lead_score=("lead_score", "mean"),
+        )
+        .sort_values(["pair_key"])
+        .reset_index(drop=True)
+    )
+    grouped = _add_group_leader_labels(
+        grouped,
+        score_col="mean_lead_score",
+        monkey_name_m1_col="monkey_name_m1",
+        monkey_name_m2_col="monkey_name_m2",
+        tie_epsilon=tie_epsilon,
+    )
+    return grouped[PAIR_LEADER_OUTPUT_COLUMNS]
+
+
 def _summarize_fixation_count_property_by_date(session_df: pd.DataFrame) -> pd.DataFrame:
     """Summarize leader-vs-follower fixation-count deltas by pair and date."""
     if session_df.empty:
@@ -1656,7 +1825,7 @@ def _print_monkey_role_fixation_count_summary(
 def run_fix_crosscorr_leader_follower_analysis(
     settings: FixCrossCorrLeaderFollowerSettings,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Build session-level leader calls and fixation-count property summaries."""
+    """Build simplified leader/follower outputs (session, date, pair)."""
     cfg = load_dataset_config(settings.cfg_path)
     scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
     input_subdir = settings.crosscorr_input_subdir or settings.output_subdir
@@ -1672,159 +1841,38 @@ def run_fix_crosscorr_leader_follower_analysis(
 
     within_df = pd.read_pickle(within_path)
     lags = _load_lags(lags_path)
-    session_df = _determine_session_leader_follower(
+    session_df_full = _determine_session_leader_follower(
         within_df=within_df,
         lags=lags,
         fixation_label=settings.fixation_label,
         tie_epsilon=settings.tie_epsilon,
     )
-    session_df["time_scope"] = scope
-    date_summary_df = _summarize_fixation_count_property_by_date(session_df)
-    pair_summary_df = _summarize_fixation_count_property_by_pair(session_df)
-    global_summary_df = _summarize_fixation_count_property_global(session_df)
-    pupil_session_df = _build_session_pupil_property_table(
-        cfg=cfg,
-        settings=settings,
-        session_df=session_df,
+    session_df_full["time_scope"] = scope
+
+    session_df = _build_session_leader_output(session_df_full)
+    date_summary_df = _summarize_session_leader_by_date(
+        session_df_full,
+        tie_epsilon=settings.tie_epsilon,
     )
-    pupil_date_df = _summarize_pupil_property_by_date(pupil_session_df, settings)
-    pupil_pair_df = _summarize_pupil_property_by_pair(pupil_session_df, settings)
-    pupil_global_df = _summarize_pupil_property_global(pupil_session_df, settings)
-    monkey_role_session_df = _build_monkey_role_pupil_session_table(pupil_session_df)
-    monkey_role_summary_df = _summarize_monkey_role_pupil(
-        monkey_role_session_df,
-        alpha=settings.pupil_test_alpha,
-    )
-    monkey_role_fixation_count_session_df = _build_monkey_role_fixation_count_session_table(
-        cfg=cfg,
-        settings=settings,
-        session_df=session_df,
-    )
-    monkey_role_fixation_count_summary_df = _summarize_monkey_role_fixation_count(
-        monkey_role_fixation_count_session_df,
-        alpha=settings.pupil_test_alpha,
-    )
-    monkey_role_fixation_duration_session_df = _build_monkey_role_fixation_duration_session_table(
-        cfg=cfg,
-        settings=settings,
-        session_df=session_df,
-    )
-    monkey_role_fixation_duration_summary_df = _summarize_monkey_role_fixation_duration(
-        monkey_role_fixation_duration_session_df,
-        alpha=settings.pupil_test_alpha,
+    pair_summary_df = _summarize_session_leader_by_pair(
+        session_df_full,
+        tie_epsilon=settings.tie_epsilon,
     )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     session_out = out_dir / settings.session_output_filename
     date_out = out_dir / settings.date_summary_filename
     pair_out = out_dir / _resolve_pair_summary_filename(settings)
-    global_out = out_dir / settings.global_summary_filename
-    pupil_session_out = out_dir / settings.pupil_session_output_filename
-    pupil_date_out = out_dir / settings.pupil_date_summary_filename
-    pupil_pair_out = out_dir / settings.pupil_pair_summary_filename
-    pupil_global_out = out_dir / settings.pupil_global_summary_filename
-    monkey_role_session_out = out_dir / settings.monkey_role_pupil_session_output_filename
-    monkey_role_session_raw_out = out_dir / settings.monkey_role_pupil_session_raw_filename
-    monkey_role_summary_out = out_dir / settings.monkey_role_pupil_summary_filename
-    monkey_role_fixation_count_session_out = (
-        out_dir / settings.monkey_role_fixation_count_session_output_filename
-    )
-    monkey_role_fixation_count_summary_out = (
-        out_dir / settings.monkey_role_fixation_count_summary_filename
-    )
-    monkey_role_fixation_duration_session_out = (
-        out_dir / settings.monkey_role_fixation_duration_session_output_filename
-    )
-    monkey_role_fixation_duration_summary_out = (
-        out_dir / settings.monkey_role_fixation_duration_summary_filename
-    )
+    session_df.to_pickle(session_out)
+    date_summary_df.to_pickle(date_out)
+    pair_summary_df.to_pickle(pair_out)
 
-    session_df.to_csv(session_out, index=False)
-    date_summary_df.to_csv(date_out, index=False)
-    pair_summary_df.to_csv(pair_out, index=False)
-    global_summary_df.to_csv(global_out, index=False)
-    pupil_session_df[PUPIL_PROPERTY_SESSION_COLUMNS].to_csv(pupil_session_out, index=False)
-    pupil_date_df.to_csv(pupil_date_out, index=False)
-    pupil_pair_df.to_csv(pupil_pair_out, index=False)
-    pupil_global_df.to_csv(pupil_global_out, index=False)
-    monkey_role_session_df[MONKEY_ROLE_PUPIL_SESSION_COLUMNS].to_csv(
-        monkey_role_session_out,
-        index=False,
-    )
-    monkey_role_session_df.to_pickle(monkey_role_session_raw_out)
-    monkey_role_summary_df.to_csv(monkey_role_summary_out, index=False)
-    monkey_role_fixation_count_session_df[MONKEY_ROLE_FIXATION_COUNT_SESSION_COLUMNS].to_csv(
-        monkey_role_fixation_count_session_out,
-        index=False,
-    )
-    monkey_role_fixation_count_summary_df.to_csv(monkey_role_fixation_count_summary_out, index=False)
-    monkey_role_fixation_duration_session_df[MONKEY_ROLE_FIXATION_DURATION_SESSION_COLUMNS].to_csv(
-        monkey_role_fixation_duration_session_out,
-        index=False,
-    )
-    monkey_role_fixation_duration_summary_df.to_csv(monkey_role_fixation_duration_summary_out, index=False)
-
-    print(f"[leader-follower] wrote session-level table: {session_out}")
-    print(f"[leader-follower] wrote date-level summary: {date_out}")
-    print(f"[leader-follower] wrote pair-level summary: {pair_out}")
-    print(f"[leader-follower] wrote global summary: {global_out}")
-    print(f"[leader-follower] wrote pupil session-level summary: {pupil_session_out}")
-    print(f"[leader-follower] wrote pupil date-level summary: {pupil_date_out}")
-    print(f"[leader-follower] wrote pupil pair-level summary: {pupil_pair_out}")
-    print(f"[leader-follower] wrote pupil global summary: {pupil_global_out}")
-    print(f"[leader-follower] wrote monkey-role pupil session table: {monkey_role_session_out}")
-    print(f"[leader-follower] wrote monkey-role pupil raw session table: {monkey_role_session_raw_out}")
-    print(f"[leader-follower] wrote monkey-role pupil summary: {monkey_role_summary_out}")
-    print(
-        "[leader-follower] wrote monkey-role fixation-count session table: "
-        f"{monkey_role_fixation_count_session_out}"
-    )
-    print(
-        "[leader-follower] wrote monkey-role fixation-count summary: "
-        f"{monkey_role_fixation_count_summary_out}"
-    )
-    print(
-        "[leader-follower] wrote monkey-role fixation-duration session table: "
-        f"{monkey_role_fixation_duration_session_out}"
-    )
-    print(
-        "[leader-follower] wrote monkey-role fixation-duration summary: "
-        f"{monkey_role_fixation_duration_summary_out}"
-    )
+    print(f"[leader-follower] wrote session-level leader calls: {session_out}")
+    print(f"[leader-follower] wrote date-level leader calls: {date_out}")
+    print(f"[leader-follower] wrote pair-level leader calls: {pair_out}")
     print(
         "[leader-follower] rows: "
-        f"session={len(session_df)} date={len(date_summary_df)} "
-        f"pair={len(pair_summary_df)} global={len(global_summary_df)} "
-        f"pupil_session={len(pupil_session_df)} pupil_date={len(pupil_date_df)} "
-        f"pupil_pair={len(pupil_pair_df)} pupil_global={len(pupil_global_df)} "
-        f"monkey_role_session={len(monkey_role_session_df)} "
-        f"monkey_role_summary={len(monkey_role_summary_df)} "
-        f"monkey_role_fix_cnt_session={len(monkey_role_fixation_count_session_df)} "
-        f"monkey_role_fix_cnt_summary={len(monkey_role_fixation_count_summary_df)} "
-        f"monkey_role_fix_dur_session={len(monkey_role_fixation_duration_session_df)} "
-        f"monkey_role_fix_dur_summary={len(monkey_role_fixation_duration_summary_df)}"
+        f"session={len(session_df)} date={len(date_summary_df)} pair={len(pair_summary_df)}"
     )
-
-    print(
-        "[leader-follower] note: summaries printed below report fixation-count properties "
-        "given leader/follower labels, not separate leader-call breakdown tables."
-    )
-
-    _print_fixation_count_property_summaries(
-        fixation_label=settings.fixation_label,
-        date_summary_df=date_summary_df,
-        pair_summary_df=pair_summary_df,
-        global_summary_df=global_summary_df,
-    )
-    _print_pupil_property_summaries(
-        fixation_label=settings.fixation_label,
-        pupil_session_df=pupil_session_df,
-        pupil_date_df=pupil_date_df,
-        pupil_pair_df=pupil_pair_df,
-        pupil_global_df=pupil_global_df,
-    )
-    _print_monkey_role_pupil_summary(monkey_role_summary_df)
-    _print_monkey_role_fixation_count_summary(monkey_role_fixation_count_summary_df)
-    _print_monkey_role_fixation_duration_summary(monkey_role_fixation_duration_summary_df)
 
     return session_df, date_summary_df, pair_summary_df

@@ -14,38 +14,42 @@ def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
     """Construct leader-follower settings from config + CLI overrides."""
     cfg = load_face_fix_cross_correlation_config(args.face_fix_cross_correlation_cfg)
     fixation_label = cfg.get("fixation_label", cfg.get("face_label", "face"))
+    crosscorr_subdir = cfg.get(
+        "crosscorr_output_subdir",
+        cfg.get("output_subdir", "fix_cross_correlation"),
+    )
+    leader_follower_subdir = cfg.get(
+        "leader_follower_output_subdir",
+        f"{crosscorr_subdir}/leader_follower",
+    )
     settings = FixCrossCorrLeaderFollowerSettings(
         cfg_path=args.dataset_cfg,
         fixation_label=fixation_label,
-        output_subdir=cfg.get(
-            "leader_follower_output_subdir",
-            cfg.get("output_subdir", "fix_cross_correlation"),
-        ),
-        crosscorr_input_subdir=cfg.get(
-            "crosscorr_output_subdir",
-            cfg.get("output_subdir", "fix_cross_correlation"),
-        ),
+        output_subdir=leader_follower_subdir,
+        crosscorr_input_subdir=crosscorr_subdir,
         within_filename=cfg.get("within_filename"),
         lags_filename=cfg.get("lags_filename"),
-        time_scope=normalize_fix_crosscorr_time_scope(cfg.get("time_scope", "whole")),
+        time_scope=normalize_fix_crosscorr_time_scope(
+            cfg.get("leader_follower_time_scope", "whole")
+        ),
         session_output_filename=cfg.get(
             "leader_follower_session_filename",
-            "within_session_face_fix_crosscorr_leader_follower.csv",
+            "within_session_face_fix_crosscorr_leader_follower.pkl",
         ),
         date_summary_filename=cfg.get(
             "leader_follower_date_summary_filename",
-            "date_summary_face_fix_crosscorr_leader_follower.csv",
+            "date_summary_face_fix_crosscorr_leader_follower.pkl",
         ),
         pair_summary_filename=cfg.get(
             "leader_follower_pair_summary_filename",
             cfg.get(
                 "leader_follower_total_summary_filename",
-                "pair_summary_face_fix_crosscorr_leader_follower.csv",
+                "pair_summary_face_fix_crosscorr_leader_follower.pkl",
             ),
         ),
         global_summary_filename=cfg.get(
             "leader_follower_global_summary_filename",
-            "global_summary_face_fix_crosscorr_leader_follower.csv",
+            "global_summary_face_fix_crosscorr_leader_follower.pkl",
         ),
         fixations_modality=cfg.get("leader_follower_fixations_modality", "fixations"),
         pupil_modality=cfg.get("leader_follower_pupil_modality", "pupil_size"),

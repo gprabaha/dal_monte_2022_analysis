@@ -34,10 +34,15 @@ def main():
         print("[plot] skipping monkey-role fixation-duration violin (disabled in config).")
         return
 
+    crosscorr_subdir = cfg.get("crosscorr_output_subdir", cfg.get("output_subdir", "fix_cross_correlation"))
+    leader_follower_subdir = cfg.get(
+        "leader_follower_output_subdir",
+        f"{crosscorr_subdir}/leader_follower",
+    )
     settings = LeaderFollowerMonkeyRoleFixationDurationPlotSettings(
         cfg_path=args.dataset_cfg,
         plotting_cfg_path=args.plotting_cfg,
-        analysis_subdir=cfg.get("output_subdir", "fix_cross_correlation"),
+        analysis_subdir=leader_follower_subdir,
         monkey_role_session_filename=cfg.get(
             "leader_follower_monkey_role_fixation_duration_session_filename",
             cfg.get(
@@ -76,4 +81,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
