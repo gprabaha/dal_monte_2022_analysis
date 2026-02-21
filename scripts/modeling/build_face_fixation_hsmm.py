@@ -30,6 +30,11 @@ def main():
     parser.add_argument("--n-iter", type=int, default=None)
     parser.add_argument("--n-init", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--no-progress", action="store_true")
+    parser.add_argument("--show-inner-progress", action="store_true")
+    parser.add_argument("--inner-progress-every", type=int, default=None)
+    parser.add_argument("--no-parallelize-across-iterations", action="store_true")
+    parser.add_argument("--max-parallel-workers", type=int, default=None)
     parser.add_argument("--allow-self-transitions", action="store_true")
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
@@ -47,6 +52,11 @@ def main():
         tol=cfg.get("tol", 1e-3),
         n_init=cfg.get("n_init", 3),
         seed=cfg.get("seed", 13),
+        show_progress=cfg.get("show_progress", True),
+        show_inner_progress=cfg.get("show_inner_progress", False),
+        inner_progress_every=cfg.get("inner_progress_every", 5),
+        parallelize_across_iterations=cfg.get("parallelize_across_iterations", True),
+        max_parallel_workers=cfg.get("max_parallel_workers", 8),
         allow_self_transitions=cfg.get("allow_self_transitions", False),
         transition_pseudocount=cfg.get("transition_pseudocount", 1.0),
         emission_pseudocount=cfg.get("emission_pseudocount", 1.0),
@@ -82,6 +92,16 @@ def main():
         settings.n_init = args.n_init
     if args.seed is not None:
         settings.seed = args.seed
+    if args.no_progress:
+        settings.show_progress = False
+    if args.show_inner_progress:
+        settings.show_inner_progress = True
+    if args.inner_progress_every is not None:
+        settings.inner_progress_every = max(1, int(args.inner_progress_every))
+    if args.no_parallelize_across_iterations:
+        settings.parallelize_across_iterations = False
+    if args.max_parallel_workers is not None:
+        settings.max_parallel_workers = max(1, int(args.max_parallel_workers))
     if args.allow_self_transitions:
         settings.allow_self_transitions = True
     if args.test_single:

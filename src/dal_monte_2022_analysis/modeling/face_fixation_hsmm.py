@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pickle
 from dataclasses import dataclass
+from multiprocessing import Pool
 from typing import Optional, Sequence
 
 import numpy as np
@@ -14,6 +15,7 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_dataset_config
 from dal_monte_2022_analysis.data.gaze_data import FixationBinaryVectorsData
 from dal_monte_2022_analysis.preprocessing.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 
@@ -41,6 +43,11 @@ class FaceFixationHSMMSettings:
     tol: float = 1e-3
     n_init: int = 3
     seed: int = 13
+    show_progress: bool = True
+    show_inner_progress: bool = False
+    inner_progress_every: int = 5
+    parallelize_across_iterations: bool = True
+    max_parallel_workers: int = 8
     allow_self_transitions: bool = False
     transition_pseudocount: float = 1.0
     emission_pseudocount: float = 1.0
@@ -575,73 +582,50 @@ def _reestimate_parameters(
     )
 
 
-def _fit_poisson_hsmm_viterbi(
+def _fit_single_hsmm_init(
     sequences: list[SessionSequence],
     settings: FaceFixationHSMMSettings,
     *,
-    rng: np.random.Generator,
-) -> GroupFitResult:
-    """Fit a Poisson-HSMM with Viterbi re-estimation to grouped sequences."""
+    seed: int,
+    init_idx: int,
+    n_init: int,
+    progress_label: Optional[str] = None,
+    show_inner_progress: bool = False,
+) -> Optional[GroupFitResult]:
+    """Fit one HSMM initialization and return its decoded result."""
     n_states = int(settings.n_hidden_states)
     n_symbols = len(OBSERVATION_LABELS)
-    best_result: Optional[GroupFitResult] = None
+    rng = np.random.default_rng(int(seed))
+    params = _initialize_parameters(
+        sequences=sequences,
+        n_states=n_states,
+        n_symbols=n_symbols,
+        max_duration=settings.max_duration,
+        allow_self_transitions=settings.allow_self_transitions,
+        rng=rng,
+    )
 
-    for _ in range(max(1, int(settings.n_init))):
-        params = _initialize_parameters(
-            sequences=sequences,
-            n_states=n_states,
-            n_symbols=n_symbols,
-            max_duration=settings.max_duration,
-            allow_self_transitions=settings.allow_self_transitions,
-            rng=rng,
+    prev_score: Optional[float] = None
+    converged = False
+    n_iterations = 0
+
+    iter_values = range(1, int(settings.n_iter) + 1)
+    iter_progress = None
+    if show_inner_progress:
+        iter_desc = (
+            f"{progress_label} init {init_idx + 1}/{n_init}"
+            if progress_label
+            else f"HSMM init {init_idx + 1}/{n_init}"
         )
+        iter_progress = tqdm(iter_values, desc=iter_desc, unit="iter", leave=False)
+        iter_iter = iter_progress
+    else:
+        iter_iter = iter_values
 
-        prev_score: Optional[float] = None
-        converged = False
-        n_iterations = 0
-
-        for iter_idx in range(1, int(settings.n_iter) + 1):
-            decoded: list[DecodedSequence] = []
-            total_score = 0.0
-            failed = False
-            for seq in sequences:
-                dec = _viterbi_decode_hsmm(
-                    seq.observations,
-                    params,
-                    max_duration=settings.max_duration,
-                    allow_self_transitions=settings.allow_self_transitions,
-                )
-                if dec is None:
-                    failed = True
-                    break
-                decoded.append(dec)
-                total_score += float(dec.score)
-
-            if failed or not decoded:
-                break
-
-            new_params = _reestimate_parameters(
-                params=params,
-                sequences=sequences,
-                decoded=decoded,
-                transition_pseudocount=settings.transition_pseudocount,
-                emission_pseudocount=settings.emission_pseudocount,
-                max_duration=settings.max_duration,
-                allow_self_transitions=settings.allow_self_transitions,
-            )
-
-            n_iterations = iter_idx
-            if prev_score is not None and abs(total_score - prev_score) <= settings.tol:
-                params = new_params
-                converged = True
-                break
-
-            prev_score = total_score
-            params = new_params
-
-        decoded_final: list[DecodedSequence] = []
-        final_score = 0.0
-        failed_final = False
+    for iter_idx in iter_iter:
+        decoded: list[DecodedSequence] = []
+        total_score = 0.0
+        failed = False
         for seq in sequences:
             dec = _viterbi_decode_hsmm(
                 seq.observations,
@@ -650,24 +634,168 @@ def _fit_poisson_hsmm_viterbi(
                 allow_self_transitions=settings.allow_self_transitions,
             )
             if dec is None:
-                failed_final = True
+                failed = True
                 break
-            decoded_final.append(dec)
-            final_score += float(dec.score)
+            decoded.append(dec)
+            total_score += float(dec.score)
 
-        if failed_final or not decoded_final:
-            continue
+        if failed or not decoded:
+            break
 
-        candidate = GroupFitResult(
-            group_id="",
-            group_key=(),
+        if (
+            iter_progress is not None
+            and (
+                iter_idx == 1
+                or iter_idx == int(settings.n_iter)
+                or iter_idx % max(1, int(settings.inner_progress_every)) == 0
+            )
+        ):
+            if prev_score is None:
+                iter_progress.set_postfix(score=f"{total_score:.2f}", refresh=False)
+            else:
+                iter_progress.set_postfix(
+                    score=f"{total_score:.2f}",
+                    delta=f"{(total_score - prev_score):.4f}",
+                    refresh=False,
+                )
+
+        new_params = _reestimate_parameters(
             params=params,
-            decoded=decoded_final,
-            final_score=final_score,
-            converged=converged,
-            n_iterations=n_iterations,
+            sequences=sequences,
+            decoded=decoded,
+            transition_pseudocount=settings.transition_pseudocount,
+            emission_pseudocount=settings.emission_pseudocount,
+            max_duration=settings.max_duration,
+            allow_self_transitions=settings.allow_self_transitions,
         )
 
+        n_iterations = iter_idx
+        if prev_score is not None and abs(total_score - prev_score) <= settings.tol:
+            params = new_params
+            converged = True
+            break
+
+        prev_score = total_score
+        params = new_params
+
+    if iter_progress is not None:
+        iter_progress.close()
+
+    decoded_final: list[DecodedSequence] = []
+    final_score = 0.0
+    failed_final = False
+    for seq in sequences:
+        dec = _viterbi_decode_hsmm(
+            seq.observations,
+            params,
+            max_duration=settings.max_duration,
+            allow_self_transitions=settings.allow_self_transitions,
+        )
+        if dec is None:
+            failed_final = True
+            break
+        decoded_final.append(dec)
+        final_score += float(dec.score)
+
+    if failed_final or not decoded_final:
+        return None
+
+    return GroupFitResult(
+        group_id="",
+        group_key=(),
+        params=params,
+        decoded=decoded_final,
+        final_score=final_score,
+        converged=converged,
+        n_iterations=n_iterations,
+    )
+
+
+def _fit_hsmm_init_worker(
+    task: tuple[
+        int,
+        list[SessionSequence],
+        FaceFixationHSMMSettings,
+        int,
+        int,
+    ],
+) -> tuple[int, Optional[GroupFitResult]]:
+    """Worker wrapper for one HSMM initialization fit."""
+    init_idx, sequences, settings, seed, n_init = task
+    result = _fit_single_hsmm_init(
+        sequences,
+        settings,
+        seed=seed,
+        init_idx=init_idx,
+        n_init=n_init,
+        show_inner_progress=False,
+    )
+    return init_idx, result
+
+
+def _fit_poisson_hsmm_viterbi(
+    sequences: list[SessionSequence],
+    settings: FaceFixationHSMMSettings,
+    *,
+    rng: np.random.Generator,
+    progress_label: Optional[str] = None,
+) -> GroupFitResult:
+    """Fit a Poisson-HSMM with Viterbi re-estimation to grouped sequences."""
+    n_init = max(1, int(settings.n_init))
+    best_result: Optional[GroupFitResult] = None
+    init_seeds = [
+        int(rng.integers(0, np.iinfo(np.int32).max))
+        for _ in range(n_init)
+    ]
+
+    use_parallel = bool(settings.parallelize_across_iterations) and n_init > 1
+    if use_parallel:
+        n_proc = get_n_processes(max_procs=max(1, int(settings.max_parallel_workers)))
+        n_proc = min(n_proc, n_init)
+        if n_proc > 1:
+            tasks = [
+                (init_idx, sequences, settings, init_seeds[init_idx], n_init)
+                for init_idx in range(n_init)
+            ]
+            ordered_results: list[Optional[GroupFitResult]] = [None] * n_init
+            with Pool(processes=n_proc) as pool:
+                iterator = pool.imap_unordered(_fit_hsmm_init_worker, tasks)
+                if settings.show_inner_progress:
+                    desc = (
+                        f"{progress_label} inits ({n_proc} workers)"
+                        if progress_label
+                        else f"HSMM inits ({n_proc} workers)"
+                    )
+                    iterator = tqdm(iterator, total=n_init, desc=desc, unit="init", leave=False)
+                for init_idx, result in iterator:
+                    ordered_results[init_idx] = result
+
+            for result in ordered_results:
+                if result is None:
+                    continue
+                if best_result is None or result.final_score > best_result.final_score:
+                    best_result = result
+            if best_result is not None:
+                return best_result
+
+        use_parallel = False
+
+    init_iter = range(n_init)
+    if settings.show_inner_progress and n_init > 1:
+        init_desc = f"{progress_label} inits" if progress_label else "HSMM inits"
+        init_iter = tqdm(init_iter, desc=init_desc, unit="init", leave=False)
+    for init_idx in init_iter:
+        candidate = _fit_single_hsmm_init(
+            sequences,
+            settings,
+            seed=init_seeds[init_idx],
+            init_idx=init_idx,
+            n_init=n_init,
+            progress_label=progress_label,
+            show_inner_progress=settings.show_inner_progress,
+        )
+        if candidate is None:
+            continue
         if best_result is None or candidate.final_score > best_result.final_score:
             best_result = candidate
 
@@ -821,10 +949,29 @@ def run_face_fixation_hsmm_analysis(
     if settings.test_single and grouped_sequences:
         grouped_sequences = [grouped_sequences[0]]
 
-    rng = np.random.default_rng(int(settings.seed))
+    seed_rng = np.random.default_rng(int(settings.seed))
+    group_seeds = [
+        int(seed_rng.integers(0, np.iinfo(np.int32).max))
+        for _ in range(len(grouped_sequences))
+    ]
+
     group_results: list[GroupFitResult] = []
-    for group_key, group_seqs in tqdm(grouped_sequences, desc="Fitting HSMM", unit="group"):
-        group_result = _fit_poisson_hsmm_viterbi(group_seqs, settings, rng=rng)
+    iterator = enumerate(grouped_sequences)
+    if settings.show_progress:
+        iterator = tqdm(
+            iterator,
+            total=len(grouped_sequences),
+            desc="Fitting HSMM",
+            unit="group",
+        )
+    for idx, (group_key, group_seqs) in iterator:
+        rng = np.random.default_rng(int(group_seeds[idx]))
+        group_result = _fit_poisson_hsmm_viterbi(
+            group_seqs,
+            settings,
+            rng=rng,
+            progress_label=_format_group_id(group_key),
+        )
         group_result.group_key = group_key
         group_result.group_id = _format_group_id(group_key)
         group_results.append(group_result)
