@@ -20,13 +20,13 @@ n_hidden_states: 2
 max_duration: 2000 # milliseconds
 n_iter: 50
 tol: 0.001
-n_init: 3
+n_init: 5
 seed: 13
 show_progress: true
-show_inner_progress: false
+show_inner_progress: true
 inner_progress_every: 5
 parallelize_across_iterations: true
-max_parallel_workers: 8
+max_parallel_workers: 32
 allow_self_transitions: false
 
 transition_pseudocount: 1.0
