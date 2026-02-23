@@ -237,6 +237,19 @@ def _limit_true_markers(mask: np.ndarray, max_true: int) -> np.ndarray:
     return out
 
 
+def _scope_y_bounds(observed: np.ndarray, control: np.ndarray) -> tuple[float, float]:
+    """Return y-bounds from mean +/- SEM envelopes for one scope."""
+    obs_mean, obs_sem = _nanmean_sem(observed)
+    ctl_mean, ctl_sem = _nanmean_sem(control)
+    y_lo = float(np.nanmin(np.r_[obs_mean - obs_sem, ctl_mean - ctl_sem]))
+    y_hi = float(np.nanmax(np.r_[obs_mean + obs_sem, ctl_mean + ctl_sem]))
+    if not np.isfinite(y_lo) or not np.isfinite(y_hi):
+        return -1.0, 1.0
+    if y_hi <= y_lo:
+        y_hi = y_lo + 1e-6
+    return y_lo, y_hi
+
+
 def _resolve_pair_key(df: pd.DataFrame) -> pd.Series:
     if "pair_key" in df.columns:
         return df["pair_key"].astype(str)
@@ -428,6 +441,8 @@ def _plot_one_scope(
     ttest_parallel_workers: int | None,
     ttest_parallel_min_lags: int,
     ttest_parallel_chunk_size: int,
+    y_min_global: float,
+    y_max_global: float,
     n_obs_total: int,
     n_ctl_total: int,
     n_oriented: int,
@@ -473,8 +488,8 @@ def _plot_one_scope(
     )
     ax.axvline(0.0, color="#444444", lw=0.8, ls="--", alpha=0.8)
 
-    y_lo = float(np.nanmin(np.r_[obs_mean - obs_sem, ctl_mean - ctl_sem]))
-    y_hi = float(np.nanmax(np.r_[obs_mean + obs_sem, ctl_mean + ctl_sem]))
+    y_lo = float(y_min_global)
+    y_hi = float(y_max_global)
     if not np.isfinite(y_lo) or not np.isfinite(y_hi):
         y_lo, y_hi = -1.0, 1.0
     if y_hi <= y_lo:
@@ -532,13 +547,17 @@ def _plot_observed_vs_control_for_basis(
         figsize = custom_figsize
     if figsize is None or (len(figsize) >= 1 and float(figsize[0]) < 12.0):
         figsize = [16, 4.6]
-    fig, axes = plt.subplots(1, 3, figsize=figsize, dpi=dpi, sharey=False)
+    fig, axes = plt.subplots(1, 3, figsize=figsize, dpi=dpi, sharey=True)
 
     colors = plot_cfg.get("crosscorr_m1_m2_colors", {})
     observed_color = colors.get("observed", "#1f77b4")
     control_color = colors.get("control", "#d62728")
 
-    for ax, scope in zip(axes, scopes):
+    panel_rows: list[dict] = []
+    global_y_min = np.inf
+    global_y_max = -np.inf
+
+    for scope in scopes:
         lags = _load_lags_for_scope(out_dir, fixation_label=settings.fixation_label, scope=scope)
         lags_seconds = np.asarray(lags, dtype=np.float64) / float(settings.lag_sampling_rate_hz)
         within_df = _load_df_for_scope(
@@ -565,12 +584,33 @@ def _plot_observed_vs_control_for_basis(
                 f"Lag length mismatch for scope='{scope}': "
                 f"lags={lags_seconds.size}, observed={observed.shape[1]}"
             )
+        y_lo, y_hi = _scope_y_bounds(observed, control)
+        global_y_min = min(global_y_min, y_lo)
+        global_y_max = max(global_y_max, y_hi)
+        panel_rows.append(
+            {
+                "scope": scope,
+                "lags_seconds": lags_seconds,
+                "observed": observed,
+                "control": control,
+                "n_obs_total": n_obs_total,
+                "n_ctl_total": n_ctl_total,
+                "n_oriented": n_oriented,
+            }
+        )
+
+    if not np.isfinite(global_y_min) or not np.isfinite(global_y_max):
+        global_y_min, global_y_max = -1.0, 1.0
+    if global_y_max <= global_y_min:
+        global_y_max = global_y_min + 1e-6
+
+    for ax, panel in zip(axes, panel_rows):
         _plot_one_scope(
             ax=ax,
-            lags_seconds=lags_seconds,
-            observed=observed,
-            control=control,
-            scope=scope,
+            lags_seconds=panel["lags_seconds"],
+            observed=panel["observed"],
+            control=panel["control"],
+            scope=panel["scope"],
             basis=basis,
             control_label=control_label,
             alpha=settings.significance_alpha,
@@ -584,9 +624,11 @@ def _plot_observed_vs_control_for_basis(
             ttest_parallel_workers=settings.ttest_parallel_workers,
             ttest_parallel_min_lags=settings.ttest_parallel_min_lags,
             ttest_parallel_chunk_size=settings.ttest_parallel_chunk_size,
-            n_obs_total=n_obs_total,
-            n_ctl_total=n_ctl_total,
-            n_oriented=n_oriented,
+            y_min_global=global_y_min,
+            y_max_global=global_y_max,
+            n_obs_total=panel["n_obs_total"],
+            n_ctl_total=panel["n_ctl_total"],
+            n_oriented=panel["n_oriented"],
         )
 
     axes[0].set_ylabel("Normalized cross-correlation")
