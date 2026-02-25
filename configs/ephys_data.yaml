@@ -1,0 +1,35 @@
+# configs/ephys_data.yaml
+# Unit-level ephys table loader configuration.
+
+# Defaults to the historical file name until a dedicated ephys filename is used.
+ephys_data_filename: spike_data.pkl
+
+required_columns:
+  - session_name
+  - region
+  - unit_uuid
+  - spike_channel
+  - spike_times
+
+column_aliases:
+  session_name: [session_name, session, recording_day, date]
+  region: [region, brain_region]
+  unit_uuid: [unit_uuid, unit_id, unit]
+  spike_channel: [spike_channel, channel, chan]
+  spike_times: [spike_times, spike_ts, spike_timestamps]
+
+recorded_monkey_candidates:
+  - recorded_monkey
+  - monkey_name
+  - monkey
+  - animal
+
+recorded_agent_candidates:
+  - recorded_agent
+  - agent
+  - recording_agent
+
+area_candidates:
+  - area
+  - brain_area
+  - region

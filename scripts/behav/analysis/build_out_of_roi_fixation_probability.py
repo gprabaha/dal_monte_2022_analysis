@@ -1,0 +1,76 @@
+"""Build out-of-ROI fixation probability tables."""
+
+import argparse
+
+from dal_monte_2022_analysis.behav.analysis.fixation_probability import (
+    FixationProbabilitySettings,
+    run_fixation_probability_analysis,
+)
+from dal_monte_2022_analysis.config.load import (
+    load_out_of_roi_fixation_probability_config,
+)
+
+
+def main():
+    """Parse CLI args and run out-of-ROI fixation probability analysis."""
+    parser = argparse.ArgumentParser(
+        description="Build out-of-ROI fixation probability tables.",
+    )
+    parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
+    parser.add_argument(
+        "--out-of-roi-fixation-probability-cfg",
+        default="configs/out_of_roi_fixation_probability.yaml",
+    )
+    parser.add_argument("--no-cross", action="store_true")
+    parser.add_argument("--test-single", action="store_true")
+    parser.add_argument("--max-cross-pairs", type=int, default=None)
+    parser.add_argument("--exclude-same-date", action="store_true")
+    parser.add_argument("--include-same-session", action="store_true")
+    parser.add_argument("--precision", type=int, default=None)
+
+    args = parser.parse_args()
+
+    cfg = load_out_of_roi_fixation_probability_config(
+        args.out_of_roi_fixation_probability_cfg
+    )
+    fixation_label = cfg.get("fixation_label", cfg.get("face_label", "out_of_roi"))
+    settings = FixationProbabilitySettings(
+        cfg_path=args.dataset_cfg,
+        input_modality=cfg.get("input_modality", "fixation_binary_vectors"),
+        fixation_label=fixation_label,
+        output_subdir=cfg.get("output_subdir", "fixation_probability"),
+        within_filename=cfg.get(
+            "within_filename",
+            "within_session_out_of_roi_fixation_probability.csv",
+        ),
+        cross_filename=cfg.get(
+            "cross_filename",
+            "cross_session_out_of_roi_fixation_probability.csv",
+        ),
+        decimal_precision=cfg.get("decimal_precision", 50),
+        cross_pairs_max=cfg.get("cross_pairs_max"),
+        cross_pairs_seed=cfg.get("cross_pairs_seed", 13),
+        cross_exclude_same_session=cfg.get("cross_exclude_same_session", True),
+        cross_exclude_same_date=cfg.get("cross_exclude_same_date", False),
+        test_single=cfg.get("test_single", False),
+    )
+
+    if args.test_single:
+        settings.test_single = True
+    if args.max_cross_pairs is not None:
+        settings.cross_pairs_max = args.max_cross_pairs
+    if args.exclude_same_date:
+        settings.cross_exclude_same_date = True
+    if args.include_same_session:
+        settings.cross_exclude_same_session = False
+    if args.precision is not None:
+        settings.decimal_precision = args.precision
+
+    run_fixation_probability_analysis(
+        settings,
+        compute_cross=not args.no_cross,
+    )
+
+
+if __name__ == "__main__":
+    main()

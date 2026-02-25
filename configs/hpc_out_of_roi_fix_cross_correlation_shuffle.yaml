@@ -1,7 +1,7 @@
 # HPC settings for shuffled within-session out-of-ROI fixation cross-correlation
 env_name: gaze_processing
 job_name: out_of_roi_fix_crosscorr_shuffle
-worker_script_path: scripts/analysis/hpc_out_of_roi_fix_crosscorr_shuffle_worker.py
+worker_script_path: scripts/behav/analysis/hpc_out_of_roi_fix_crosscorr_shuffle_worker.py
 job_file_path: hpc/out_of_roi_fix_crosscorr_shuffle_jobs.txt
 sbatch_script_path: hpc/out_of_roi_fix_crosscorr_shuffle_jobs.sh
 log_dir: hpc/out_of_roi_fix_crosscorr_shuffle_logs

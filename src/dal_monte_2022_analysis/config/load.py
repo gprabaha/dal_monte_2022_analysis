@@ -51,6 +51,23 @@ def _resolve_paths(cfg: dict, keys, base_dir: Path, *, alt_base_dir: Path | None
     return cfg
 
 
+def load_ephys_data_config(path: str) -> dict:
+    """Load ephys unit data config and normalize path entries."""
+    cfg_path = Path(path)
+    with open(cfg_path, "r") as f:
+        cfg = yaml.safe_load(f) or {}
+
+    base_dir = cfg_path.resolve().parent
+    repo_root = base_dir.parent
+    cfg = _resolve_paths(
+        cfg,
+        keys=["ephys_data_path"],
+        base_dir=base_dir,
+        alt_base_dir=repo_root,
+    )
+    return cfg
+
+
 def load_gaze_event_config(path: str) -> dict:
     """Load fixation/saccade detection config (no path normalization).
 
