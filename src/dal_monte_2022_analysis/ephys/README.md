@@ -23,3 +23,8 @@ Current feature utility:
 - `features/fixation_psth.py`
   Builds fixation-triggered unit PSTHs at trial level (session outputs) and
   date-level averaged PSTHs.
+
+Current plotting utility:
+- `plotting/fixation_psth.py`
+  Builds per-unit fixation PSTH figures with condition-specific rasters and
+  average firing-rate (mean ± SEM) traces.
