@@ -24,6 +24,8 @@ With current settings, processed outputs are written under:
 - `ephys_data.yaml`
   Canonical unit-level ephys loader settings (column aliases, required fields,
   file path/filename).
+  Used by `scripts/ephys/preprocessing/add_date_column_from_session_name.py`
+  to locate and normalize the unit-level ephys pickle.
 
 ## Analysis configs
 

@@ -64,6 +64,9 @@ Analysis outputs are written under `analysis_output_root`.
 - `python scripts/behav/plotting/plot_interactive_face_fixation_probability.py`
 - `python scripts/behav/plotting/plot_out_of_roi_fixation_probability.py`
 
+Ephys preprocessing (current first step)
+- `python scripts/ephys/preprocessing/add_date_column_from_session_name.py`
+
 ## HPC workflows
 
 Two HPC-enabled paths are supported:
