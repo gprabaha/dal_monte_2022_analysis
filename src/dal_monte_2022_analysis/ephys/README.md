@@ -18,3 +18,8 @@ Current preprocessing utility:
 - `preprocessing/spike_data.py`
   Adds a `date` column to the unit-level spike table pickle from `session_name`
   for nomenclature consistency.
+
+Current feature utility:
+- `features/fixation_psth.py`
+  Builds fixation-triggered unit PSTHs at trial level (session outputs) and
+  date-level averaged PSTHs.

@@ -67,6 +67,10 @@ Analysis outputs are written under `analysis_output_root`.
 Ephys preprocessing (current first step)
 - `python scripts/ephys/preprocessing/add_date_column_from_session_name.py`
 
+Ephys features (fixation-triggered PSTH)
+- `python scripts/ephys/features/build_fixation_psth_trials.py`
+- `python scripts/ephys/features/build_fixation_psth_averages.py`
+
 ## HPC workflows
 
 Two HPC-enabled paths are supported:

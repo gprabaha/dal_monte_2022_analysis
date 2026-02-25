@@ -27,6 +27,13 @@ With current settings, processed outputs are written under:
   Used by `scripts/ephys/preprocessing/add_date_column_from_session_name.py`
   to locate and normalize the unit-level ephys pickle.
 
+## Ephys feature config
+
+- `ephys_fixation_psth.yaml`
+  Settings for fixation-triggered PSTH trial extraction and date-level PSTH
+  averaging (`scripts/ephys/features/build_fixation_psth_trials.py`,
+  `scripts/ephys/features/build_fixation_psth_averages.py`).
+
 ## Analysis configs
 
 - `face_fixation_probability.yaml`

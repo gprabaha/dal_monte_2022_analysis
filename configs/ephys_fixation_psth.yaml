@@ -1,0 +1,43 @@
+# configs/ephys_fixation_psth.yaml
+# Session-level fixation-triggered PSTH extraction and date-level averaging.
+
+# Inputs
+fixations_modality: fixations
+timeline_modality: neural_timeline
+interactive_modality: interactive_periods
+
+# Session-level trial PSTH output (stored in processed_data_root)
+trial_output_modality: psth
+# Use an event-specific filename (not shared.pkl) so multiple PSTH event families
+# can coexist in the same modality folder later.
+trial_output_filename: fixations.pkl
+
+# Fixation category matching
+roi_groups:
+  face: ["face", "mouth", "eyes_nf"]
+  object: ["right_nonsocial_object", "left_nonsocial_object"]
+  out_of_roi: ["out_of_roi"]
+categories: ["face", "object", "out_of_roi"]
+
+# PSTH construction
+bin_size_ms: 10.0
+window_pre_s: 1.0
+window_post_s: 1.0
+include_interactive_state: true
+interactive_high_label: interactive
+
+# Parallel/task controls
+use_parallel: true
+average_use_parallel: true
+max_procs: 16
+test_single: false
+agents: null
+
+# Date-level average PSTH output (stored in analysis_output_root)
+average_output_subdir: ephys/psth/fixation_psth_averages
+average_output_filename: fixations.pkl
+split_by_interactive_state: false
+restrict_interactive_state: null
+group_by_session: false
+smooth_before_average: true
+smoothing_sigma_ms: 20.0

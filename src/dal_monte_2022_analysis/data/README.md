@@ -29,3 +29,6 @@ Canonical structure
 - processed behavioral/feature product loading now lives in
   `behav/features/load.py`.
 - `annotate.py` is the single annotation module for shared label/context joins.
+- `gaze_data.py` and `spike_data.py` are compatibility shims for loading legacy
+  pickles; use `scripts/combined/preprocessing/migrate_legacy_pickle_modules.py`
+  to rewrite old pickles to current module paths.

@@ -256,3 +256,17 @@ def load_face_fixation_hsmm_config(path: str) -> dict:
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
     return cfg or {}
+
+
+def load_ephys_fixation_psth_config(path: str) -> dict:
+    """Load ephys fixation PSTH config (no path normalization).
+
+    Args:
+        path: Path to the YAML config file.
+
+    Returns:
+        Parsed config dictionary (empty if file is empty).
+    """
+    with open(path, "r") as f:
+        cfg = yaml.safe_load(f)
+    return cfg or {}

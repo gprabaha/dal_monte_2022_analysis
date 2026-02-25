@@ -50,10 +50,14 @@ src/dal_monte_2022_analysis/data/annotate.py
 src/dal_monte_2022_analysis/data/behavioral_data.py
 src/dal_monte_2022_analysis/data/cleaning.py
 src/dal_monte_2022_analysis/data/ephys_data.py
+src/dal_monte_2022_analysis/data/gaze_data.py
 src/dal_monte_2022_analysis/data/load.py
+src/dal_monte_2022_analysis/data/pickle_migration.py
+src/dal_monte_2022_analysis/data/spike_data.py
 src/dal_monte_2022_analysis/ephys/__init__.py
 src/dal_monte_2022_analysis/ephys/analysis/__init__.py
 src/dal_monte_2022_analysis/ephys/features/__init__.py
+src/dal_monte_2022_analysis/ephys/features/fixation_psth.py
 src/dal_monte_2022_analysis/ephys/modeling/__init__.py
 src/dal_monte_2022_analysis/ephys/plotting/__init__.py
 src/dal_monte_2022_analysis/ephys/preprocessing/__init__.py
