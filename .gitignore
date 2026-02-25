@@ -2,11 +2,10 @@
 .DS_Store
 
 # Data
-data/
-raw_data/
 *.mat
 *.bin
 *.npy
+*.pkl
 
 # Outputs
 results/
