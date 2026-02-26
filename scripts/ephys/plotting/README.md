@@ -53,7 +53,7 @@ Config:
   Selective-unit PSTH plotting with two modes:
   - batch mode (default): generate PNG plots for all selective units
     in region folders (no extra statistical computation)
-  - example mode (`--example-unit-uuid`): generate PDF for a selected
+  - example mode (`--example-unit-uuid`): generate PDF + PNG for a selected
     selective unit under an `example units/` subfolder with per-bin
     significance tick marks for all three fixation-pair comparisons
 
@@ -61,7 +61,7 @@ Config:
   - `selective_plot_output_subdir`
   - `selective_plot_output_extension`
   - `selective_example_subfolder`
-  - `selective_example_output_extension`
+  - `selective_example_output_extensions`
   - `selective_example_significance_alpha`
   - `selective_example_significance_test`
   - `selective_example_significance_min_trials_per_condition`

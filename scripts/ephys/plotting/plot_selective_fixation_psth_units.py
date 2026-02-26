@@ -42,6 +42,25 @@ def _normalize_date_str(val) -> str:
         return token
 
 
+def _normalize_ext_list(raw, *, fallback: tuple[str, ...]) -> list[str]:
+    if raw is None:
+        seq = list(fallback)
+    elif isinstance(raw, (list, tuple)):
+        seq = [str(v).strip() for v in raw]
+    else:
+        seq = [str(raw).strip()]
+    cleaned: list[str] = []
+    for ext in seq:
+        if not ext:
+            continue
+        token = ext.lower()
+        if token.startswith("."):
+            token = token[1:]
+        if token and token not in cleaned:
+            cleaned.append(token)
+    return cleaned or list(fallback)
+
+
 def _load_selective_units_df(dataset_cfg_path: str, cfg: dict) -> pd.DataFrame:
     ds_cfg = load_dataset_config(dataset_cfg_path)
     out_root = Path(ds_cfg["analysis_output_root"]) / cfg.get(
@@ -173,7 +192,6 @@ def _build_example_plot(args, cfg: dict, selective_df: pd.DataFrame) -> int:
         "selective_plot_output_subdir",
         "ephys/psth/fixation_psth_selective_unit_plots",
     )
-    settings.output_extension = cfg.get("selective_example_output_extension", "pdf")
     settings.example_units_subfolder = cfg.get("selective_example_subfolder", "example units")
     settings.show_significance_ticks = True
     settings.significance_alpha = cfg.get("selective_example_significance_alpha", cfg.get("selective_alpha", 0.05))
@@ -188,21 +206,30 @@ def _build_example_plot(args, cfg: dict, selective_df: pd.DataFrame) -> int:
 
     unit_keys = sel["unit_key"].astype(str).tolist()
     target_dates = sorted(sel["date"].astype(str).unique().tolist())
-    out_paths = plot_fixation_psth_units(
-        settings,
-        dates=target_dates,
-        sessions=[args.session] if args.session else None,
-        unit_keys=unit_keys,
+    exts = _normalize_ext_list(
+        cfg.get("selective_example_output_extensions", cfg.get("selective_example_output_extension")),
+        fallback=("pdf", "png"),
     )
-    if not out_paths:
+    all_out_paths = []
+    for ext in exts:
+        settings.output_extension = ext
+        out_paths = plot_fixation_psth_units(
+            settings,
+            dates=target_dates,
+            sessions=[args.session] if args.session else None,
+            unit_keys=unit_keys,
+        )
+        all_out_paths.extend(out_paths)
+        print(f"[plot] wrote {len(out_paths)} example selective-unit {ext.upper()} plot(s)")
+        if out_paths:
+            print(f"[plot] {ext} output: {out_paths[0]}")
+
+    if not all_out_paths:
         print(
             "[plot] no example plot written. "
             f"resolved_dates={target_dates}, unit_keys={unit_keys}"
         )
-    print(f"[plot] wrote {len(out_paths)} example selective-unit PDF plot(s)")
-    if out_paths:
-        print(f"[plot] output: {out_paths[0]}")
-    return len(out_paths)
+    return len(all_out_paths)
 
 
 def main() -> None:
