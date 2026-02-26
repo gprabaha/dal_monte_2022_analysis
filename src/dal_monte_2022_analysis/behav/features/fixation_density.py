@@ -13,7 +13,7 @@ import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import (
     FixationBinaryVectorsData,
     FixationDensityVectorsData,
@@ -211,7 +211,7 @@ def _compute_global_face_kernel_parameters(
     settings: FixationDensitySettings,
 ) -> tuple[int, float, float, dict]:
     """Compute one shared kernel from m1/m2 face fixation stats across sessions."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     fix_index_df = index_processed_dataset(cfg, settings.fixations_modality)
     fix_rows = fix_index_df.to_dict(orient="records")
 
@@ -296,7 +296,7 @@ def build_fixation_density_for_row(
     kernel_truncate: Optional[float] = None,
 ) -> Optional[FixationDensityVectorsData]:
     """Build fixation density vectors for one row using a shared global kernel."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
 
     fix_path = build_processed_data_path(cfg, row, settings.fixations_modality, agent)
     vector_path = build_processed_data_path(cfg, row, settings.fixation_vectors_modality, agent)
@@ -374,7 +374,7 @@ def process_fixation_density_for_row(
     if data is None:
         return None
 
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     out_path = build_processed_data_path(cfg, row, settings.output_modality, agent)
     _save_pickle(data, out_path)
     return data
@@ -399,7 +399,7 @@ def build_tasks(
     test_single: bool = False,
 ) -> list[tuple[FixationDensitySettings, dict, str]]:
     """Build (settings, row, agent) tasks from fixation binary vector files."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     index_df = index_processed_dataset(cfg, settings.fixation_vectors_modality)
     rows = index_df.to_dict(orient="records")
 

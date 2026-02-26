@@ -2,14 +2,14 @@
 
 import pickle
 import numpy as np
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_dataset
 from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 
 
 def main():
     """Sample one session and print simple NaN/length stats for cleaned outputs."""
-    cfg = load_dataset_config("configs/dataset.yaml")
+    cfg = load_config("configs/dataset.yaml")
     index = index_dataset(cfg, "neural_timeline")
     rng = np.random.default_rng()
     row = index.iloc[rng.integers(0, len(index))].to_dict()

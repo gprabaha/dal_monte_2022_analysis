@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.config.load import load_ephys_fixation_psth_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.plotting.fixation_selectivity_venn import (
     FixationSelectivityVennPlotSettings,
     build_fixation_selectivity_venn_summaries,
@@ -63,7 +63,7 @@ def main() -> None:
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
 
-    cfg = load_ephys_fixation_psth_config(args.ephys_fixation_psth_cfg)
+    cfg = load_config(args.ephys_fixation_psth_cfg)
     settings = FixationSelectivityVennPlotSettings(
         cfg_path=args.dataset_cfg,
         plotting_cfg_path=args.plotting_cfg,

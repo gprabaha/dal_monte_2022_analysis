@@ -7,7 +7,7 @@ from typing import Optional
 
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 
 
 def load_pair_context_table(
@@ -15,7 +15,7 @@ def load_pair_context_table(
     cfg_path: str = "configs/dataset.yaml",
 ) -> pd.DataFrame:
     """Load one row per date with m1/m2 monkey names and pair label."""
-    dataset_cfg = load_dataset_config(cfg_path)
+    dataset_cfg = load_config(cfg_path)
     pair_path = Path(dataset_cfg["raw_data_root"]) / "ephys_days_and_monkeys.pkl"
     if not pair_path.exists():
         raise FileNotFoundError(f"Missing ephys metadata file: {pair_path}")

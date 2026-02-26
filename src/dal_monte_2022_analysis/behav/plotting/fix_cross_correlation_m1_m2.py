@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import ttest_rel
 
-from dal_monte_2022_analysis.config.load import load_dataset_config, load_plotting_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.common import apply_plotting_config, resolve_figsize
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
@@ -418,8 +418,8 @@ def _plot_observed_vs_control(
     output_filename: str,
 ) -> Path:
     """Create one 3-panel figure comparing observed trace to one control type."""
-    cfg = load_dataset_config(settings.cfg_path)
-    plot_cfg = load_plotting_config(settings.plotting_cfg_path)
+    cfg = load_config(settings.cfg_path)
+    plot_cfg = load_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
     out_dir = build_analysis_output_dir(cfg, settings.analysis_subdir)

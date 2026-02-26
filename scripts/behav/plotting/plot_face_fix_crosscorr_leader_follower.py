@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.config.load import load_face_fix_cross_correlation_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.fix_cross_correlation_leader_follower import (
     LeaderFollowerCrossCorrComparisonPlotSettings,
     plot_leader_follower_crosscorr_comparisons,
@@ -26,7 +26,7 @@ def main():
     )
     args = parser.parse_args()
 
-    cfg = load_face_fix_cross_correlation_config(args.face_fix_cross_correlation_cfg)
+    cfg = load_config(args.face_fix_cross_correlation_cfg)
     crosscorr_subdir = cfg.get("crosscorr_output_subdir", cfg.get("output_subdir", "crosscorr_outputs"))
     leader_follower_subdir = cfg.get(
         "leader_follower_output_subdir",

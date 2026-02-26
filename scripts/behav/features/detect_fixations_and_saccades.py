@@ -3,11 +3,7 @@
 import argparse
 from pathlib import Path
 
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_gaze_event_config,
-    load_hpc_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.features.gaze_event_detection import (
     GazeEventDetectionSettings,
     process_and_save_gaze_events_for_row,
@@ -23,7 +19,7 @@ from dal_monte_2022_analysis.utils.hpc_utils import (
 
 def _pick_random_task(settings: GazeEventDetectionSettings):
     """Pick a random processed row that includes an agent entry."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     index_df = index_processed_dataset(cfg, settings.input_modality)
     index_df = index_df[index_df["agent"].notna()]
     if index_df.empty:
@@ -56,7 +52,7 @@ def main():
 
     args = parser.parse_args()
 
-    detection_cfg = load_gaze_event_config(args.gaze_event_cfg)
+    detection_cfg = load_config(args.gaze_event_cfg)
 
     settings = GazeEventDetectionSettings(
         cfg_path=args.dataset_cfg,
@@ -80,8 +76,8 @@ def main():
         run_hpc = False
 
     if run_hpc:
-        hpc_cfg = load_hpc_config(args.hpc_cfg)
-        cfg = load_dataset_config(settings.cfg_path)
+        hpc_cfg = load_config(args.hpc_cfg)
+        cfg = load_config(settings.cfg_path)
         index_df = index_processed_dataset(cfg, settings.input_modality)
         tasks = []
         for _, row in index_df.iterrows():

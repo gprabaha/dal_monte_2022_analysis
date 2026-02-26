@@ -12,10 +12,7 @@ import pandas as pd
 import seaborn as sns
 from scipy import stats
 
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_plotting_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
@@ -208,8 +205,8 @@ def plot_fixation_probability_violin(
     settings: FixationProbabilityPlotSettings,
 ) -> Path:
     """Plot within/cross-session fixation probability violins and save PDF."""
-    cfg = load_dataset_config(settings.cfg_path)
-    plot_cfg = load_plotting_config(settings.plotting_cfg_path)
+    cfg = load_config(settings.cfg_path)
+    plot_cfg = load_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
     within_df, cross_df = _load_probability_frames(cfg, settings)
@@ -301,8 +298,8 @@ def plot_interactive_fixation_probability_violin(
     settings: InteractiveFixationProbabilityPlotSettings,
 ) -> Path:
     """Plot interactive-period fixation probability violins and save PDF."""
-    cfg = load_dataset_config(settings.cfg_path)
-    plot_cfg = load_plotting_config(settings.plotting_cfg_path)
+    cfg = load_config(settings.cfg_path)
+    plot_cfg = load_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
     periods_df, concat_df = _load_interactive_probability_frames(cfg, settings)

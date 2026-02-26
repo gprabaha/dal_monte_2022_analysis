@@ -25,7 +25,7 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
 )
-from dal_monte_2022_analysis.config.load import load_dataset_config, load_plotting_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
@@ -296,7 +296,7 @@ def _load_trials_for_date(
 
 def _resolve_figsize_and_dpi(settings: FixationPSTHUnitPlotSettings) -> tuple[list[float], Optional[int]]:
     if settings.plotting_cfg_path and Path(settings.plotting_cfg_path).exists():
-        plot_cfg = load_plotting_config(settings.plotting_cfg_path)
+        plot_cfg = load_config(settings.plotting_cfg_path)
         apply_plotting_config(plot_cfg)
         figsize, cfg_dpi = resolve_figsize(plot_cfg)
     else:
@@ -730,7 +730,7 @@ def _plot_single_unit_worker(args) -> Optional[Path]:
 
 def _build_unit_plot_tasks_for_date(args):
     settings, date, paths, unit_filter, unit_key_filter = args
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
     df, bin_centers = _load_trials_for_date(paths, date=date, settings=settings)
     if df.empty or "unit_uuid" not in df.columns:
@@ -787,7 +787,7 @@ def plot_fixation_psth_units(
     unit_keys: Optional[Sequence[str]] = None,
 ) -> list[Path]:
     """Generate one raster + average firing-rate PSTH figure per unit/date."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     trial_rows = _iter_trial_rows(cfg, settings, dates=dates, sessions=sessions)
     if not trial_rows:
         print("[plot] no fixation PSTH trial files found")

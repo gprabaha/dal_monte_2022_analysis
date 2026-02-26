@@ -7,10 +7,7 @@ from dal_monte_2022_analysis.behav.features.interactive_periods import (
     process_interactive_periods_for_row,
     run_interactive_periods_build,
 )
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_interactive_periods_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 
 
@@ -31,7 +28,7 @@ def main():
 
     args = parser.parse_args()
 
-    cfg = load_interactive_periods_config(args.interactive_periods_cfg)
+    cfg = load_config(args.interactive_periods_cfg)
     settings = InteractivePeriodsSettings(
         cfg_path=args.dataset_cfg,
         input_modality=cfg.get("input_modality", "joint_face_fixation_density"),
@@ -51,7 +48,7 @@ def main():
 
     if args.date and args.session:
         row = {"date": args.date, "session": args.session}
-        dataset_cfg = load_dataset_config(args.dataset_cfg)
+        dataset_cfg = load_config(args.dataset_cfg)
         density_path = build_processed_data_path(
             dataset_cfg,
             row,

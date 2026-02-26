@@ -6,7 +6,7 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.cleaning import prune_and_interpolate_session
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_dataset
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
@@ -134,7 +134,7 @@ def clean_dataset(
     Returns:
         None. Outputs are written to disk.
     """
-    cfg = load_dataset_config(cfg_path)
+    cfg = load_config(cfg_path)
     index = index_dataset(cfg, "neural_timeline")
 
     rows = index.to_dict(orient="records")

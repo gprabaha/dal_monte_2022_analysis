@@ -8,8 +8,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import load_ephys_fixation_psth_config
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.features.fixation_psth import (
     FixationPSTHAverageSettings,
     run_fixation_psth_average_build,
@@ -23,7 +22,7 @@ def _iter_average_output_paths(
     *,
     date: Optional[str] = None,
 ) -> list[Path]:
-    cfg = load_dataset_config(dataset_cfg_path)
+    cfg = load_config(dataset_cfg_path)
     root = Path(cfg["analysis_output_root"]) / output_subdir
     date_glob = f"date={date}" if date else "date=*"
     filename = output_filename if output_filename.endswith(".pkl") else f"{output_filename}.pkl"
@@ -89,7 +88,7 @@ def main() -> None:
     parser.add_argument("--example-max-bins", type=int, default=12)
     args = parser.parse_args()
 
-    cfg = load_ephys_fixation_psth_config(args.ephys_fixation_psth_cfg)
+    cfg = load_config(args.ephys_fixation_psth_cfg)
     settings = FixationPSTHAverageSettings(
         cfg_path=args.dataset_cfg,
         trial_input_modality=cfg.get("trial_output_modality", "psth"),

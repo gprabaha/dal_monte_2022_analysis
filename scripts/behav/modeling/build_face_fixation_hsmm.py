@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.config.load import load_face_fixation_hsmm_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.modeling.face_fixation_hsmm import (
     FaceFixationHSMMSettings,
     run_face_fixation_hsmm_analysis,
@@ -39,7 +39,7 @@ def main():
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
 
-    cfg = load_face_fixation_hsmm_config(args.face_fixation_hsmm_cfg)
+    cfg = load_config(args.face_fixation_hsmm_cfg)
     settings = FaceFixationHSMMSettings(
         cfg_path=args.dataset_cfg,
         input_modality=cfg.get("input_modality", "fixation_binary_vectors"),

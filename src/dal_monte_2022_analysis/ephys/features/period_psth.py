@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.load import load_ephys_units
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
@@ -109,7 +109,7 @@ def _build_period_tasks(
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
 ) -> list[dict]:
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     rows = scan_processed_data_paths(
         cfg,
         settings.periods_modality,
@@ -136,7 +136,7 @@ def _build_session_period_events(
     settings: PeriodPSTHSettings,
     row: dict,
 ) -> tuple[list[dict], np.ndarray]:
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     timeline_path = build_processed_data_path(cfg, row, settings.timeline_modality, None)
     if not timeline_path.exists():
         return [], np.array([], dtype=float)
@@ -390,7 +390,7 @@ def process_period_psth_trials_for_session(
     data = build_period_psth_trials_for_session(settings, row, units_for_session)
     if data is None:
         return None
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     out_path = _build_trial_output_path(cfg, row, settings)
     _save_pickle(data, out_path)
     return data
@@ -510,7 +510,7 @@ def run_period_psth_trial_build(
     for date in sorted(session_events_by_date):
         all_session_events.extend(session_events_by_date[date])
 
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     date_filter = sorted(session_events_by_date.keys()) if settings.restrict_units_to_date else None
     all_units = load_ephys_units(
         cfg_path=settings.cfg_path,

@@ -9,7 +9,7 @@ from typing import Iterable
 
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.paths import scan_processed_data_paths
 
 
@@ -79,7 +79,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    cfg = load_dataset_config(args.dataset_cfg)
+    cfg = load_config(args.dataset_cfg)
     rows = scan_processed_data_paths(cfg, "fixations")
     if not rows:
         print(f"No fixation files found under {cfg['processed_data_root']}")

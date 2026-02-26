@@ -10,10 +10,7 @@ from dal_monte_2022_analysis.behav.analysis.fix_cross_correlation import (
     process_and_save_within_session_shuffle_pair,
     run_fix_cross_correlation_analysis,
 )
-from dal_monte_2022_analysis.config.load import (
-    load_hpc_config,
-    load_out_of_roi_fix_cross_correlation_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.hpc_utils import (
     generate_fix_crosscorr_shuffle_job_file,
     submit_dsq_array_job,
@@ -24,7 +21,7 @@ from dal_monte_2022_analysis.utils.paths import normalize_fix_crosscorr_time_sco
 
 def _build_settings(args) -> FixCrossCorrelationSettings:
     """Construct analysis settings from config + CLI overrides."""
-    cfg = load_out_of_roi_fix_cross_correlation_config(
+    cfg = load_config(
         args.out_of_roi_fix_cross_correlation_cfg
     )
     fixation_label = cfg.get("fixation_label", cfg.get("face_label", "out_of_roi"))
@@ -94,7 +91,7 @@ def _build_settings(args) -> FixCrossCorrelationSettings:
 
 def _run_shuffle_submit_hpc(settings: FixCrossCorrelationSettings, args) -> None:
     """Submit one-array-task-per-within-pair shuffle jobs, then collate."""
-    hpc_cfg = load_hpc_config(args.hpc_cfg)
+    hpc_cfg = load_config(args.hpc_cfg)
     tasks = build_within_session_pair_tasks(settings)
     if not tasks:
         print("No within-session pairs found for shuffled cross-correlation.")

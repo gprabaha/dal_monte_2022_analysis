@@ -27,7 +27,7 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
 )
-from dal_monte_2022_analysis.config.load import load_dataset_config, load_plotting_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
@@ -104,7 +104,7 @@ def _load_pair_summary_df(
     *,
     regions: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     in_path = (
         build_analysis_output_dir(cfg, settings.selectivity_input_subdir)
         / (settings.pair_summary_filename if str(settings.pair_summary_filename).endswith(".csv") else f"{settings.pair_summary_filename}.csv")
@@ -185,7 +185,7 @@ def _compute_region_summary(region: str, df_region: pd.DataFrame) -> Optional[di
 
 def _resolve_figsize_and_dpi(settings: FixationSelectivityVennPlotSettings) -> tuple[list[float], Optional[int]]:
     if settings.plotting_cfg_path and Path(settings.plotting_cfg_path).exists():
-        plot_cfg = load_plotting_config(settings.plotting_cfg_path)
+        plot_cfg = load_config(settings.plotting_cfg_path)
         apply_plotting_config(plot_cfg)
         figsize, cfg_dpi = resolve_figsize(plot_cfg)
     else:
@@ -223,7 +223,7 @@ def _render_region_venn(summary: dict, settings: FixationSelectivityVennPlotSett
             f"Import error: {_MATPLOTLIB_VENN_IMPORT_ERROR}"
         )
 
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
     out_root.mkdir(parents=True, exist_ok=True)
 

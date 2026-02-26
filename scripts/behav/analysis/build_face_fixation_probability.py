@@ -7,7 +7,7 @@ from dal_monte_2022_analysis.behav.analysis.fixation_probability import (
     run_fixation_probability_analysis,
     run_interactive_fixation_probability_analysis,
 )
-from dal_monte_2022_analysis.config.load import load_face_fixation_probability_config
+from dal_monte_2022_analysis.config.load import load_config
 
 
 def main():
@@ -29,7 +29,7 @@ def main():
 
     args = parser.parse_args()
 
-    cfg = load_face_fixation_probability_config(args.face_fixation_probability_cfg)
+    cfg = load_config(args.face_fixation_probability_cfg)
     fixation_label = cfg.get("fixation_label", cfg.get("face_label", "face"))
     settings = FixationProbabilitySettings(
         cfg_path=args.dataset_cfg,

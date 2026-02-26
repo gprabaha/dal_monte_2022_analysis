@@ -12,7 +12,7 @@ import pandas as pd
 from scipy.stats import poisson
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import FixationBinaryVectorsData
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
@@ -943,7 +943,7 @@ def run_face_fixation_hsmm_analysis(
             "This workflow currently expects n_hidden_states=2 for the requested model."
         )
 
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     sequences = _build_session_sequences(cfg, settings)
     grouped_sequences = _build_groups(sequences, settings.grouping)
     if settings.test_single and grouped_sequences:

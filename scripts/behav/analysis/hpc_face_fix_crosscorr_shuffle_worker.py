@@ -6,7 +6,7 @@ from dal_monte_2022_analysis.behav.analysis.fix_cross_correlation import (
     FixCrossCorrelationSettings,
     process_and_save_within_session_shuffle_pair,
 )
-from dal_monte_2022_analysis.config.load import load_face_fix_cross_correlation_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.paths import normalize_fix_crosscorr_time_scope
 
 
@@ -26,7 +26,7 @@ def main():
     )
     args = parser.parse_args()
 
-    cfg = load_face_fix_cross_correlation_config(args.fix_crosscorr_cfg)
+    cfg = load_config(args.fix_crosscorr_cfg)
     fixation_label = cfg.get("fixation_label", cfg.get("face_label", "face"))
     settings = FixCrossCorrelationSettings(
         cfg_path=args.dataset_cfg,

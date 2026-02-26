@@ -11,10 +11,7 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_ephys_data_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import (
     NeuralTimelineData,
     PositionData,
@@ -93,7 +90,7 @@ def index_behavioral_data(
     agents: Optional[Sequence[Optional[str]]] = None,
 ) -> pd.DataFrame:
     """Index behavioral data files on disk without loading file contents."""
-    cfg = load_dataset_config(cfg_path)
+    cfg = load_config(cfg_path)
     modalities = _resolve_behavioral_modalities(cfg, modality)
 
     rows: list[dict] = []
@@ -206,7 +203,7 @@ def load_behavioral_data_objects(
     agents: Optional[Sequence[Optional[str]]] = None,
 ) -> list[BehavioralDataItem]:
     """Load behavioral data objects for one data modality."""
-    cfg = load_dataset_config(cfg_path)
+    cfg = load_config(cfg_path)
     mod = _resolve_behavioral_modalities(cfg, modality)[0]
     rows = scan_processed_data_paths(cfg, mod, dates=dates, sessions=sessions, agents=agents)
     return [
@@ -408,8 +405,8 @@ def load_ephys_unit_dataframe(
     regions: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
     """Load and normalize unit-level ephys data."""
-    dataset_cfg = load_dataset_config(cfg_path)
-    ephys_cfg = load_ephys_data_config(ephys_cfg_path)
+    dataset_cfg = load_config(cfg_path)
+    ephys_cfg = load_config(ephys_cfg_path)
     ephys_path = _resolve_ephys_data_path(dataset_cfg, ephys_cfg)
     if not ephys_path.exists():
         raise FileNotFoundError(f"Ephys data file not found: {ephys_path}")
@@ -450,7 +447,7 @@ def load_ephys_units(
     regions: Optional[Sequence[str]] = None,
 ) -> list[UnitSpikeData]:
     """Load unit-level ephys data as dataclass objects."""
-    ephys_cfg = load_ephys_data_config(ephys_cfg_path)
+    ephys_cfg = load_config(ephys_cfg_path)
     df = load_ephys_unit_dataframe(
         cfg_path=cfg_path,
         ephys_cfg_path=ephys_cfg_path,

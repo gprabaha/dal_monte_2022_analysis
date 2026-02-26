@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.config.load import load_ephys_fixation_psth_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.analysis.fixation_selectivity import (
     DEFAULT_SELECTIVITY_WINDOWS_MS,
     FixationPSTHSelectivitySettings,
@@ -46,7 +46,7 @@ def main() -> None:
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
 
-    cfg = load_ephys_fixation_psth_config(args.ephys_fixation_psth_cfg)
+    cfg = load_config(args.ephys_fixation_psth_cfg)
     settings = FixationPSTHSelectivitySettings(
         cfg_path=args.dataset_cfg,
         trial_input_modality=cfg.get("trial_output_modality", "psth"),

@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.config.load import load_pupil_smoothing_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.preprocessing.pupil_smoothing import (
     PupilSmoothingSettings,
     run_pupil_smoothing,
@@ -23,7 +23,7 @@ def main() -> None:
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
 
-    cfg = load_pupil_smoothing_config(args.pupil_smoothing_cfg)
+    cfg = load_config(args.pupil_smoothing_cfg)
     settings = PupilSmoothingSettings(
         cfg_path=args.dataset_cfg,
         input_pupil_modality=cfg.get("input_pupil_modality", "pupil_size"),

@@ -7,10 +7,7 @@ from dal_monte_2022_analysis.behav.features.joint_fixation_density import (
     process_joint_face_density_for_row,
     run_joint_face_density_build,
 )
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_joint_fixation_density_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 
 
@@ -31,7 +28,7 @@ def main():
 
     args = parser.parse_args()
 
-    joint_cfg = load_joint_fixation_density_config(args.joint_density_cfg)
+    joint_cfg = load_config(args.joint_density_cfg)
     settings = JointFixationDensitySettings(
         cfg_path=args.dataset_cfg,
         input_modality=joint_cfg.get("input_modality", "fixation_density_vectors"),
@@ -49,7 +46,7 @@ def main():
 
     if args.date and args.session:
         row = {"date": args.date, "session": args.session}
-        cfg = load_dataset_config(args.dataset_cfg)
+        cfg = load_config(args.dataset_cfg)
         m1_path = build_processed_data_path(cfg, row, settings.input_modality, "m1")
         m2_path = build_processed_data_path(cfg, row, settings.input_modality, "m2")
         if not m1_path.exists() or not m2_path.exists():

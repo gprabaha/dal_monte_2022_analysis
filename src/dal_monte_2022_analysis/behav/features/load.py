@@ -10,7 +10,7 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import (
     FixationBinaryVectorsData,
     FixationDensityVectorsData,
@@ -86,7 +86,7 @@ def index_feature_data(
     agents: Optional[Sequence[Optional[str]]] = None,
 ) -> pd.DataFrame:
     """Index feature product files without loading contents."""
-    cfg = load_dataset_config(cfg_path)
+    cfg = load_config(cfg_path)
     modalities = _resolve_feature_modalities(cfg, modality)
 
     rows: list[dict] = []
@@ -190,7 +190,7 @@ def load_feature_objects(
     agents: Optional[Sequence[Optional[str]]] = None,
 ) -> list[FeatureItem]:
     """Load feature objects for one feature modality."""
-    cfg = load_dataset_config(cfg_path)
+    cfg = load_config(cfg_path)
     mod = _resolve_feature_modalities(cfg, modality)[0]
     rows = scan_processed_data_paths(cfg, mod, dates=dates, sessions=sessions, agents=agents)
     return [

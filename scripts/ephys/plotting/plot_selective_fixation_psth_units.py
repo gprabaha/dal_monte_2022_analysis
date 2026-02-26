@@ -5,10 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_ephys_fixation_psth_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.plotting.fixation_psth import (
     DEFAULT_CONDITION_COLORS,
     FixationPSTHUnitPlotSettings,
@@ -62,7 +59,7 @@ def _normalize_ext_list(raw, *, fallback: tuple[str, ...]) -> list[str]:
 
 
 def _load_selective_units_df(dataset_cfg_path: str, cfg: dict) -> pd.DataFrame:
-    ds_cfg = load_dataset_config(dataset_cfg_path)
+    ds_cfg = load_config(dataset_cfg_path)
     out_root = Path(ds_cfg["analysis_output_root"]) / cfg.get(
         "selective_output_subdir",
         "ephys/psth/fixation_psth_selectivity",
@@ -251,7 +248,7 @@ def main() -> None:
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
 
-    cfg = load_ephys_fixation_psth_config(args.ephys_fixation_psth_cfg)
+    cfg = load_config(args.ephys_fixation_psth_cfg)
     selective_df = _load_selective_units_df(args.dataset_cfg, cfg)
     if selective_df.empty:
         print("[plot] selective unit summary is empty")

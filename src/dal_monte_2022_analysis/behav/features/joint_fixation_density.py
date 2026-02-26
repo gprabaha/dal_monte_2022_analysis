@@ -11,7 +11,7 @@ from typing import Optional
 import numpy as np
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import (
     FixationDensityVectorsData,
     JointFixationDensityData,
@@ -114,7 +114,7 @@ def process_joint_face_density_for_row(
     if data is None:
         return None
 
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     out_path = build_processed_data_path(cfg, row, settings.output_modality, None)
     _save_pickle(data, out_path)
     return data
@@ -138,7 +138,7 @@ def build_tasks(
     test_single: bool = False,
 ) -> list[tuple[JointFixationDensitySettings, dict, object, object]]:
     """Build tasks that include m1/m2 fixation density paths for each session."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     index_df = index_processed_dataset(cfg, settings.input_modality)
     rows = index_df.to_dict(orient="records")
 

@@ -9,11 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_interactive_periods_config,
-    load_plotting_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
@@ -314,9 +310,9 @@ def plot_interactive_period_duration_distributions(
     settings: InteractivePeriodDurationDistributionPlotSettings,
 ) -> list[Path]:
     """Plot monkey-pair grid, m1-only grid, and all-pairs aggregate histograms."""
-    cfg = load_dataset_config(settings.cfg_path)
-    interactive_cfg = load_interactive_periods_config(settings.interactive_periods_cfg_path)
-    plot_cfg = load_plotting_config(settings.plotting_cfg_path)
+    cfg = load_config(settings.cfg_path)
+    interactive_cfg = load_config(settings.interactive_periods_cfg_path)
+    plot_cfg = load_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
     modality = str(interactive_cfg.get("output_modality", settings.interactive_periods_modality))

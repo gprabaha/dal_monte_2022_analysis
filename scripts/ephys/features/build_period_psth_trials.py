@@ -8,8 +8,7 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
-from dal_monte_2022_analysis.config.load import load_ephys_period_psth_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.features.period_psth import (
     PeriodPSTHSettings,
     run_period_psth_trial_build,
@@ -24,7 +23,7 @@ def _iter_trial_output_paths(
     date: Optional[str] = None,
     session: Optional[str] = None,
 ) -> list[Path]:
-    cfg = load_dataset_config(dataset_cfg_path)
+    cfg = load_config(dataset_cfg_path)
     root = Path(cfg["processed_data_root"])
     date_glob = f"date={date}" if date else "date=*"
     session_glob = f"session={session}" if session else "session=*"
@@ -100,7 +99,7 @@ def main() -> None:
     parser.add_argument("--example-max-bins", type=int, default=12)
     args = parser.parse_args()
 
-    cfg = load_ephys_period_psth_config(args.ephys_period_psth_cfg)
+    cfg = load_config(args.ephys_period_psth_cfg)
     settings = PeriodPSTHSettings(
         cfg_path=args.dataset_cfg,
         ephys_cfg_path=args.ephys_cfg,

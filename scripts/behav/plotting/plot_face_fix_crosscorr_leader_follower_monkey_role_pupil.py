@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.config.load import load_face_fix_cross_correlation_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.fix_crosscorr_leader_follower import (
     LeaderFollowerMonkeyRolePupilPlotSettings,
     plot_leader_follower_monkey_role_pupil_violin,
@@ -25,7 +25,7 @@ def main():
     )
     args = parser.parse_args()
 
-    cfg = load_face_fix_cross_correlation_config(args.face_fix_cross_correlation_cfg)
+    cfg = load_config(args.face_fix_cross_correlation_cfg)
     if not bool(cfg.get("leader_follower_monkey_role_pupil_make_violin_plot", True)):
         print("[plot] skipping monkey-role pupil violin (disabled in config).")
         return

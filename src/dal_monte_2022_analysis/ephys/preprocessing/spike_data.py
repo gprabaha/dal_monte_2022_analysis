@@ -9,10 +9,7 @@ from typing import Optional
 
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_ephys_data_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 
 
 DEFAULT_EPHYS_DATA_FILENAME = "ephys_unit_data.pkl"
@@ -39,8 +36,8 @@ def _resolve_ephys_table_path(
     if input_path:
         return Path(input_path).expanduser().resolve()
 
-    dataset_cfg = load_dataset_config(cfg_path)
-    ephys_cfg = load_ephys_data_config(ephys_cfg_path)
+    dataset_cfg = load_config(cfg_path)
+    ephys_cfg = load_config(ephys_cfg_path)
     ephys_data_path = ephys_cfg.get("ephys_data_path")
     if ephys_data_path:
         return Path(ephys_data_path).expanduser().resolve()

@@ -8,10 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_ephys_data_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 
 # Import compatibility shims so legacy module paths can be resolved during unpickle.
 import dal_monte_2022_analysis.data.gaze_data  # noqa: F401
@@ -113,8 +110,8 @@ def migrate_legacy_pickle_modules(
     backup_suffix: str = ".pre_module_migration.bak",
 ) -> PickleMigrationSummary:
     """Rewrite pickles so they no longer depend on legacy module paths."""
-    dataset_cfg = load_dataset_config(cfg_path)
-    ephys_cfg = load_ephys_data_config(ephys_cfg_path)
+    dataset_cfg = load_config(cfg_path)
+    ephys_cfg = load_config(ephys_cfg_path)
 
     scan_roots: list[Path] = []
     if roots:

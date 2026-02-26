@@ -6,13 +6,13 @@ from dal_monte_2022_analysis.behav.analysis.fix_crosscorr_leader_follower import
     FixCrossCorrLeaderFollowerSettings,
     run_fix_crosscorr_leader_follower_analysis,
 )
-from dal_monte_2022_analysis.config.load import load_face_fix_cross_correlation_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.paths import normalize_fix_crosscorr_time_scope
 
 
 def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
     """Construct leader-follower settings from config + CLI overrides."""
-    cfg = load_face_fix_cross_correlation_config(args.face_fix_cross_correlation_cfg)
+    cfg = load_config(args.face_fix_cross_correlation_cfg)
     fixation_label = cfg.get("fixation_label", cfg.get("face_label", "face"))
     crosscorr_subdir = cfg.get(
         "crosscorr_output_subdir",

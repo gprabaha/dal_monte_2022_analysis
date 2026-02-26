@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import ttest_ind
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
     build_fix_crosscorr_output_filename,
@@ -1826,7 +1826,7 @@ def run_fix_crosscorr_leader_follower_analysis(
     settings: FixCrossCorrLeaderFollowerSettings,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build simplified leader/follower outputs (session, date, pair)."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
     input_subdir = settings.crosscorr_input_subdir or settings.output_subdir
     input_dir = build_analysis_output_dir(cfg, input_subdir)

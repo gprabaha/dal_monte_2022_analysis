@@ -13,7 +13,7 @@ import pandas as pd
 from scipy.interpolate import PchipInterpolator
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import PupilSizeData, RecordingContext
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
@@ -246,7 +246,7 @@ def smooth_pupil_for_row_agent(
     agent: str,
 ) -> Optional[PupilSizeData]:
     """Smooth pupil for one date/session/agent using fixation-constrained interpolation."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     pupil_path = build_processed_data_path(cfg, row, settings.input_pupil_modality, agent)
     fix_path = build_processed_data_path(cfg, row, settings.fixations_modality, agent)
 
@@ -316,7 +316,7 @@ def process_and_save_smoothed_pupil_for_row_agent(
     data = smooth_pupil_for_row_agent(settings, row, agent)
     if data is None:
         return 0
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     out_path = build_processed_data_path(cfg, row, settings.output_modality, agent)
     _save_pickle(data, out_path)
     return 1
@@ -334,7 +334,7 @@ def build_pupil_smoothing_tasks(
     test_single: bool = False,
 ) -> list[tuple[PupilSmoothingSettings, dict, str]]:
     """Build smoothing tasks from processed pupil files."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     index_df = index_processed_dataset(cfg, settings.input_pupil_modality)
     rows = index_df.to_dict(orient="records")
 

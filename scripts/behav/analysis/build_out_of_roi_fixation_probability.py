@@ -6,9 +6,7 @@ from dal_monte_2022_analysis.behav.analysis.fixation_probability import (
     FixationProbabilitySettings,
     run_fixation_probability_analysis,
 )
-from dal_monte_2022_analysis.config.load import (
-    load_out_of_roi_fixation_probability_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 
 
 def main():
@@ -30,7 +28,7 @@ def main():
 
     args = parser.parse_args()
 
-    cfg = load_out_of_roi_fixation_probability_config(
+    cfg = load_config(
         args.out_of_roi_fixation_probability_cfg
     )
     fixation_label = cfg.get("fixation_label", cfg.get("face_label", "out_of_roi"))

@@ -11,10 +11,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import ttest_ind
 
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_plotting_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     format_p_value,
@@ -295,8 +292,8 @@ def _plot_single_monkey_violin(
 
 def _plot_leader_follower_monkey_role_violin(settings) -> Path:
     """Plot monkey-level leader-vs-follower role violins and save PDF."""
-    cfg = load_dataset_config(settings.cfg_path)
-    plot_cfg = load_plotting_config(settings.plotting_cfg_path)
+    cfg = load_config(settings.cfg_path)
+    plot_cfg = load_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
     session_df, summary_df, out_path = _load_monkey_role_frames(cfg=cfg, settings=settings)
@@ -362,8 +359,8 @@ def plot_leader_follower_pupil_global_overlay_violin(
     settings: LeaderFollowerPupilGlobalOverlayPlotSettings,
 ) -> Path:
     """Plot pooled leader/follower pupil violins with per-monkey paired mean overlay."""
-    cfg = load_dataset_config(settings.cfg_path)
-    plot_cfg = load_plotting_config(settings.plotting_cfg_path)
+    cfg = load_config(settings.cfg_path)
+    plot_cfg = load_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
     _, summary_df, out_path = _load_monkey_role_frames(cfg=cfg, settings=settings)

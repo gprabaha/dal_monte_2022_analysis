@@ -14,7 +14,7 @@ import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.load import load_ephys_units
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
@@ -224,7 +224,7 @@ def _build_fixation_tasks(
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
 ) -> list[dict]:
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     rows = scan_processed_data_paths(
         cfg,
         settings.fixations_modality,
@@ -254,7 +254,7 @@ def _build_session_events(
     settings: FixationPSTHSettings,
     row: dict,
 ) -> tuple[list[dict], np.ndarray]:
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     timeline_path = build_processed_data_path(cfg, row, settings.timeline_modality, None)
     if not timeline_path.exists():
         return [], np.array([], dtype=float)
@@ -445,7 +445,7 @@ def process_fixation_psth_trials_for_session(
     data = build_fixation_psth_trials_for_session(settings, row, units_for_date)
     if data is None:
         return None
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     out_path = _build_trial_output_path(cfg, row, settings)
     _save_pickle(data, out_path)
     return data
@@ -714,7 +714,7 @@ def process_fixation_psth_averages_for_date(
     data = build_fixation_psth_averages_for_date(settings, date, trial_paths)
     if data is None:
         return None
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     out_path = _build_average_output_path(cfg, date, settings)
     _save_pickle(data, out_path)
     return data
@@ -733,7 +733,7 @@ def run_fixation_psth_average_build(
     sessions: Optional[Sequence[str]] = None,
 ) -> None:
     """Run date-level PSTH averaging from session trial files."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     trial_rows = _iter_trial_files(cfg, settings, dates=dates, sessions=sessions)
     if not trial_rows:
         print("No fixation PSTH trial files found.")

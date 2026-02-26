@@ -14,7 +14,7 @@ import pandas as pd
 from scipy.stats import mannwhitneyu, ttest_ind
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
@@ -225,7 +225,7 @@ def _load_trial_table(
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     rows = _iter_trial_files(cfg, settings, dates=dates, sessions=sessions)
     if not rows:
         return pd.DataFrame(), _fallback_bin_centers(settings)
@@ -534,7 +534,7 @@ def run_fixation_selectivity_analysis(
     if not unit_df.empty:
         unit_df = unit_df.sort_values(["date", "region", "unit_uuid"]).reset_index(drop=True)
 
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
     out_root.mkdir(parents=True, exist_ok=True)
 

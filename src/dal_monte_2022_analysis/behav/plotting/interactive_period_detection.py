@@ -14,11 +14,7 @@ import pandas as pd
 from matplotlib.patches import Patch
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_interactive_periods_config,
-    load_plotting_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
@@ -570,9 +566,9 @@ def plot_interactive_period_detection(
     settings: InteractivePeriodDetectionPlotSettings,
 ) -> list[Path]:
     """Generate one interactive-period detection plot per session."""
-    cfg = load_dataset_config(settings.cfg_path)
-    plot_cfg = load_plotting_config(settings.plotting_cfg_path)
-    interactive_cfg = load_interactive_periods_config(settings.interactive_periods_cfg_path)
+    cfg = load_config(settings.cfg_path)
+    plot_cfg = load_config(settings.plotting_cfg_path)
+    interactive_cfg = load_config(settings.interactive_periods_cfg_path)
     apply_plotting_config(plot_cfg)
 
     resolved_settings = replace(

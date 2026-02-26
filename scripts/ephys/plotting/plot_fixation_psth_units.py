@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.config.load import load_ephys_fixation_psth_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.plotting.fixation_psth import (
     DEFAULT_CONDITION_COLORS,
     FixationPSTHUnitPlotSettings,
@@ -39,7 +39,7 @@ def main() -> None:
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
 
-    cfg = load_ephys_fixation_psth_config(args.ephys_fixation_psth_cfg)
+    cfg = load_config(args.ephys_fixation_psth_cfg)
     plot_colors = cfg.get("plot_condition_colors", DEFAULT_CONDITION_COLORS)
 
     settings = FixationPSTHUnitPlotSettings(

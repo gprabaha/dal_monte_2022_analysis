@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.config.load import load_fixation_density_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.features.fixation_density import (
     DEFAULT_ROI_GROUPS,
     FixationDensitySettings,
@@ -24,7 +24,7 @@ def main():
 
     args = parser.parse_args()
 
-    density_cfg = load_fixation_density_config(args.fixation_density_cfg)
+    density_cfg = load_config(args.fixation_density_cfg)
 
     settings = FixationDensitySettings(
         cfg_path=args.dataset_cfg,

@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import FixationBinaryVectorsData
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
@@ -1161,7 +1161,7 @@ def build_within_session_pair_tasks(
     settings: FixCrossCorrelationSettings,
 ) -> list[tuple[str, str]]:
     """Return within-session pair keys as (date, session) tuples."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
     shared_keys = sorted(set(m1_paths).intersection(m2_paths))
 
@@ -1268,7 +1268,7 @@ def process_and_save_within_session_shuffle_pair(
     session: str,
 ) -> Optional[Path]:
     """Compute and save shuffled-summary output for one within-session pair."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
     scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
     key = (str(date), str(session))
@@ -1330,7 +1330,7 @@ def collate_within_session_shuffle_results(
     settings: FixCrossCorrelationSettings,
 ) -> tuple[pd.DataFrame, Optional[np.ndarray]]:
     """Collate per-pair shuffled outputs into one analysis table."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     pair_dir = _shuffle_pair_output_dir(cfg, settings)
     if not pair_dir.exists():
         raise RuntimeError(f"No shuffle pair directory found: {pair_dir}")
@@ -1544,7 +1544,7 @@ def run_fix_cross_correlation_analysis(
     - cross filename (resolved by scope/label): per-session cross-session controls.
     - lags filename (resolved by scope/label): shared lag axis.
     """
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
     scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
 

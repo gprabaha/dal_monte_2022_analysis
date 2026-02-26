@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import FixationBinaryVectorsData
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
@@ -518,7 +518,7 @@ def run_fixation_probability_analysis(
     compute_cross: bool = True,
 ) -> tuple[pd.DataFrame, Optional[pd.DataFrame], pd.DataFrame]:
     """Run fixation probability analysis and persist outputs."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
 
     if not m1_paths or not m2_paths:
@@ -552,7 +552,7 @@ def run_interactive_fixation_probability_analysis(
     settings: FixationProbabilitySettings,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Run interactive-period fixation probability analysis and persist outputs."""
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
     try:
         interactive_paths = _index_shared_paths(cfg, settings.interactive_modality)

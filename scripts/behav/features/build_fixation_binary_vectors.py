@@ -2,7 +2,7 @@
 
 import argparse
 
-from dal_monte_2022_analysis.config.load import load_fixation_binary_vector_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.features.fixation_binary_vectors import (
     DEFAULT_ROI_GROUPS,
     FixationBinaryVectorSettings,
@@ -24,7 +24,7 @@ def main():
 
     args = parser.parse_args()
 
-    vectors_cfg = load_fixation_binary_vector_config(args.fixation_vector_cfg)
+    vectors_cfg = load_config(args.fixation_vector_cfg)
 
     settings = FixationBinaryVectorSettings(
         cfg_path=args.dataset_cfg,

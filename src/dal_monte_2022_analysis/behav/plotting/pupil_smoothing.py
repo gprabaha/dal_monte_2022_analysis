@@ -9,10 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import (
-    load_dataset_config,
-    load_plotting_config,
-)
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
@@ -124,8 +121,8 @@ def _resolve_dynamic_figsize(
 
 def plot_smoothed_pupil_timecourse_qc(settings: SmoothedPupilQCPlotSettings) -> Path:
     """Plot random-session raw vs smoothed pupil timecourses for m1/m2."""
-    cfg = load_dataset_config(settings.cfg_path)
-    plot_cfg = load_plotting_config(settings.plotting_cfg_path)
+    cfg = load_config(settings.cfg_path)
+    plot_cfg = load_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
     raw_rows = scan_processed_data_paths(

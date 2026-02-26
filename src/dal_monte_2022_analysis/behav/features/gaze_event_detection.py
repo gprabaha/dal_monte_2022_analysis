@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.config.load import load_dataset_config
+from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.fixation_utils import detect_fixations_and_saccades
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
@@ -135,7 +135,7 @@ def detect_gaze_events_for_row(
     Returns:
         Tuple of (fixation_df, saccade_df). Each is None if input data missing.
     """
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
 
     pos_data = _load_positions(cfg, row, agent, settings.input_modality)
     if pos_data is None:
@@ -191,7 +191,7 @@ def process_and_save_gaze_events_for_row(
     Returns:
         Tuple of (fixation_df, saccade_df), or (None, None) if missing input.
     """
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     fix_df, sacc_df = detect_gaze_events_for_row(settings, row, agent)
     if fix_df is None and sacc_df is None:
         return None, None
@@ -297,7 +297,7 @@ def build_tasks(
     Returns:
         List of task tuples.
     """
-    cfg = load_dataset_config(settings.cfg_path)
+    cfg = load_config(settings.cfg_path)
     index_df = index_processed_dataset(cfg, settings.input_modality)
     rows = index_df.to_dict(orient="records")
     tasks: List[Tuple[GazeEventDetectionSettings, dict, str]] = []
@@ -343,7 +343,7 @@ def annotate_fixation_locations(
     Returns:
         DataFrame with an added "location" column.
     """
-    cfg = load_dataset_config(cfg_path)
+    cfg = load_config(cfg_path)
     pos_data = _load_positions(cfg, row, agent, input_modality)
     roi_path = build_processed_data_path(cfg, row, roi_modality, agent)
     if pos_data is None or not roi_path.exists():
@@ -379,7 +379,7 @@ def annotate_saccade_from_to(
     Returns:
         DataFrame with added "from" and "to" columns.
     """
-    cfg = load_dataset_config(cfg_path)
+    cfg = load_config(cfg_path)
     pos_data = _load_positions(cfg, row, agent, input_modality)
     roi_path = build_processed_data_path(cfg, row, roi_modality, agent)
     if pos_data is None or not roi_path.exists():
