@@ -18,9 +18,58 @@ rc_params:
   path.simplify: false
   pdf.compression: 6
 
+export:
+  # Disable clipping masks in PDF exports for easier Illustrator editing.
+  disable_pdf_clipping_masks: true
+
 figure:
   figsize: [8, 4]
   dpi: 300
+
+# Fixation probability violin styling used by face and out-of-ROI plots.
+fixation_probability:
+  # Sized to fit roughly half a US letter page when placed in Illustrator.
+  figsize: [8.2, 4.8]
+  # Hard cap for major y ticks (implemented as <= this count).
+  y_max_ticks: 5
+  styles:
+    face:
+      within:
+        product: "#F7A6A6"
+        joint: "#FF2D2D"
+        body_alpha: 1.0
+        body_edgecolor: "#1F1F1F"
+      cross:
+        product: "#F7A6A6"
+        joint: "#FF2D2D"
+        body_alpha: 1.0
+        body_edgecolor: "#1F1F1F"
+        hatch: "xx"
+        fill: false
+    out_of_roi:
+      within:
+        product: "#AFAFAF"
+        joint: "#333333"
+        body_alpha: 1.0
+        body_edgecolor: "#1F1F1F"
+      cross:
+        product: "#AFAFAF"
+        joint: "#333333"
+        body_alpha: 1.0
+        body_edgecolor: "#1F1F1F"
+        hatch: "xx"
+        fill: false
+  within_pair_overlay:
+    enabled: true
+    use_pair_colors: true
+    pair_colormap: "tab20"
+    line_color: "#000000"
+    line_alpha: 1.0
+    line_width: 1.0
+    marker_size: 24
+    marker_linewidth: 0.45
+    marker_alpha: 1.0
+    clip_on: false
 
 # Optional override for 3-panel m1-m2 cross-correlation comparison figures.
 crosscorr_m1_m2_figsize: [16, 4.6]
