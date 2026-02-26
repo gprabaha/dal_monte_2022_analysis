@@ -359,6 +359,51 @@ def _compute_unit_trial_rows(unit_payload: dict) -> list[dict]:
     return rows
 
 
+_GLOBAL_FIXATION_EVENTS_BY_DATE: dict[str, list[dict]] = {}
+_GLOBAL_FIXATION_BIN_EDGES: np.ndarray = np.array([], dtype=float)
+
+
+def _init_fixation_unit_worker(events_by_date: dict[str, list[dict]], bin_edges: np.ndarray) -> None:
+    global _GLOBAL_FIXATION_EVENTS_BY_DATE, _GLOBAL_FIXATION_BIN_EDGES
+    _GLOBAL_FIXATION_EVENTS_BY_DATE = events_by_date
+    _GLOBAL_FIXATION_BIN_EDGES = bin_edges
+
+
+def _compute_unit_rows_across_fixation_sessions(
+    unit_payload: dict,
+) -> tuple[str, dict[tuple[str, str], list[dict]]]:
+    unit_date = str(unit_payload.get("unit_date", ""))
+    session_payloads = _GLOBAL_FIXATION_EVENTS_BY_DATE.get(unit_date, [])
+    rows_by_session: dict[tuple[str, str], list[dict]] = {}
+    spike_ts = np.asarray(unit_payload["spike_ts"], dtype=float)
+
+    for session_payload in session_payloads:
+        session_date = str(session_payload["date"])
+        session_name = str(session_payload["session"])
+        events = session_payload["events"]
+        session_rows: list[dict] = []
+        for event in events:
+            rel = spike_ts - float(event["fixation_start_time_s"])
+            counts, _ = np.histogram(rel, bins=_GLOBAL_FIXATION_BIN_EDGES)
+            session_rows.append(
+                {
+                    **event,
+                    "unit_uuid": unit_payload["unit_uuid"],
+                    "region": unit_payload["region"],
+                    "spike_channel": unit_payload["spike_channel"],
+                    "session_name": unit_payload["session_name"],
+                    "recorded_agent": unit_payload["recorded_agent"],
+                    "recorded_monkey": unit_payload["recorded_monkey"],
+                    "area": unit_payload["area"],
+                    "psth_counts": counts.astype(np.int32),
+                }
+            )
+        if session_rows:
+            rows_by_session[(session_date, session_name)] = session_rows
+
+    return unit_date, rows_by_session
+
+
 def _units_to_payloads(units) -> list[dict]:
     payloads: list[dict] = []
     for unit in units:
@@ -366,6 +411,7 @@ def _units_to_payloads(units) -> list[dict]:
         payloads.append(
             {
                 "unit_uuid": str(ctx.unit_uuid),
+                "unit_date": str(ctx.date),
                 "region": _as_optional_str(ctx.region),
                 "spike_channel": _as_optional_str(ctx.spike_channel),
                 "session_name": str(ctx.session_name),
@@ -451,6 +497,58 @@ def process_fixation_psth_trials_for_session(
     return data
 
 
+def _build_fixation_trial_payload(
+    settings: FixationPSTHSettings,
+    *,
+    date: str,
+    session: str,
+    rows: list[dict],
+    bin_edges: np.ndarray,
+    bin_centers: np.ndarray,
+) -> dict:
+    trial_df = pd.DataFrame(rows)
+    return {
+        "meta": {
+            "date": date,
+            "session": session,
+            "event_source": "fixations",
+            "event_anchor": "fixation_start",
+            "bin_size_ms": float(settings.bin_size_ms),
+            "window_pre_s": float(settings.window_pre_s),
+            "window_post_s": float(settings.window_post_s),
+            "bin_edges_s_rel": bin_edges,
+            "bin_centers_s_rel": bin_centers,
+            "output_modality": settings.output_modality,
+            "trial_output_filename": _ensure_pkl_filename(settings.trial_output_filename),
+        },
+        "trials": trial_df,
+    }
+
+
+def _flush_fixation_session_rows(
+    cfg: dict,
+    settings: FixationPSTHSettings,
+    rows_for_session: dict[tuple[str, str], list[dict]],
+    *,
+    bin_edges: np.ndarray,
+    bin_centers: np.ndarray,
+) -> None:
+    for (date, session), rows in rows_for_session.items():
+        if not rows:
+            continue
+        row = {"date": str(date), "session": str(session)}
+        data = _build_fixation_trial_payload(
+            settings,
+            date=str(date),
+            session=str(session),
+            rows=rows,
+            bin_edges=bin_edges,
+            bin_centers=bin_centers,
+        )
+        out_path = _build_trial_output_path(cfg, row, settings)
+        _save_pickle(data, out_path)
+
+
 def run_fixation_psth_trial_build(
     settings: FixationPSTHSettings,
     *,
@@ -459,26 +557,117 @@ def run_fixation_psth_trial_build(
     use_parallel: Optional[bool] = None,
     test_single: Optional[bool] = None,
 ) -> None:
-    """Run session-level fixation PSTH extraction."""
+    """Run fixation PSTH extraction with global unit-level parallelization."""
     if use_parallel is not None:
         settings.use_parallel = bool(use_parallel)
     if test_single is not None:
         settings.test_single = bool(test_single)
 
-    tasks = _build_fixation_tasks(settings, dates=dates, sessions=sessions)
-    if not tasks:
+    session_rows = _build_fixation_tasks(settings, dates=dates, sessions=sessions)
+    if not session_rows:
         print("No fixation PSTH tasks found.")
         return
 
-    all_units = load_ephys_units(cfg_path=settings.cfg_path, ephys_cfg_path=settings.ephys_cfg_path)
-    units_by_date: dict[str, list[object]] = {}
-    for unit in all_units:
-        units_by_date.setdefault(unit.context.date, []).append(unit)
+    rows_by_date: dict[str, list[dict]] = {}
+    for row in session_rows:
+        rows_by_date.setdefault(str(row["date"]), []).append(row)
+    for date in rows_by_date:
+        rows_by_date[date].sort(key=lambda row: str(row["session"]))
 
-    for row in tqdm(tasks, desc="Building fixation PSTH trials", unit="session"):
-        date = str(row["date"])
-        units = units_by_date.get(date, [])
-        process_fixation_psth_trials_for_session(settings, row, units)
+    session_events_by_date: dict[str, list[dict]] = {}
+    for date, date_rows in rows_by_date.items():
+        payloads_for_date: list[dict] = []
+        for row in date_rows:
+            events, _ = _build_session_events(settings, row)
+            if not events:
+                continue
+            payloads_for_date.append(
+                {
+                    "date": str(row["date"]),
+                    "session": str(row["session"]),
+                    "events": events,
+                }
+            )
+        if payloads_for_date:
+            session_events_by_date[date] = payloads_for_date
+
+    if not session_events_by_date:
+        print("No fixation session events found.")
+        return
+
+    cfg = load_config(settings.cfg_path)
+    all_units = load_ephys_units(
+        cfg_path=settings.cfg_path,
+        ephys_cfg_path=settings.ephys_cfg_path,
+        dates=sorted(session_events_by_date.keys()),
+    )
+    payloads = _units_to_payloads(all_units)
+    payloads = [payload for payload in payloads if payload["unit_date"] in session_events_by_date]
+    if not payloads:
+        print("No matching ephys units found for fixation PSTH tasks.")
+        return
+
+    bin_edges = _build_bin_edges(settings)
+    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+    buffered_rows_by_date: dict[str, dict[tuple[str, str], list[dict]]] = {}
+    for date, session_payloads in session_events_by_date.items():
+        buffered_rows_by_date[date] = {
+            (date, str(payload["session"])): [] for payload in session_payloads
+        }
+
+    remaining_units_by_date: dict[str, int] = {}
+    for payload in payloads:
+        date = str(payload["unit_date"])
+        remaining_units_by_date[date] = remaining_units_by_date.get(date, 0) + 1
+
+    def _accumulate_and_flush(unit_date: str, rows_by_session: dict[tuple[str, str], list[dict]]) -> None:
+        for key, rows in rows_by_session.items():
+            date_key = str(key[0])
+            date_bucket = buffered_rows_by_date.setdefault(date_key, {})
+            date_bucket.setdefault((str(key[0]), str(key[1])), []).extend(rows)
+
+        remaining = remaining_units_by_date.get(unit_date, 0) - 1
+        remaining_units_by_date[unit_date] = remaining
+        if remaining <= 0:
+            rows_for_date = buffered_rows_by_date.pop(unit_date, {})
+            _flush_fixation_session_rows(
+                cfg,
+                settings,
+                rows_for_date,
+                bin_edges=bin_edges,
+                bin_centers=bin_centers,
+            )
+
+    if settings.use_parallel and len(payloads) > 1:
+        n_proc = get_n_processes(max_procs=settings.max_procs)
+        with Pool(
+            processes=n_proc,
+            initializer=_init_fixation_unit_worker,
+            initargs=(session_events_by_date, bin_edges),
+        ) as pool:
+            iterator = pool.imap_unordered(_compute_unit_rows_across_fixation_sessions, payloads)
+            for unit_date, rows_by_session in tqdm(
+                iterator,
+                total=len(payloads),
+                desc="Building fixation PSTH trials",
+                unit="unit",
+            ):
+                _accumulate_and_flush(str(unit_date), rows_by_session)
+    else:
+        _init_fixation_unit_worker(session_events_by_date, bin_edges)
+        for payload in tqdm(payloads, desc="Building fixation PSTH trials", unit="unit"):
+            unit_date, rows_by_session = _compute_unit_rows_across_fixation_sessions(payload)
+            _accumulate_and_flush(str(unit_date), rows_by_session)
+
+    for _, rows_for_date in buffered_rows_by_date.items():
+        _flush_fixation_session_rows(
+            cfg,
+            settings,
+            rows_for_date,
+            bin_edges=bin_edges,
+            bin_centers=bin_centers,
+        )
 
 
 def _iter_trial_files(
