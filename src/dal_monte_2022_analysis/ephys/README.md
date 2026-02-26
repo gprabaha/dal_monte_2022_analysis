@@ -24,6 +24,11 @@ Current feature utility:
   Builds fixation-triggered unit PSTHs at trial level (session outputs) and
   date-level averaged PSTHs.
 
+Current analysis utility:
+- `analysis/fixation_selectivity.py`
+  Tests per-unit fixation-category selectivity for interactive face,
+  non-interactive face, and object across multiple PSTH windows.
+
 Current plotting utility:
 - `plotting/fixation_psth.py`
   Builds per-unit fixation PSTH figures with condition-specific rasters and

@@ -42,6 +42,23 @@ group_by_session: false
 smooth_before_average: true
 smoothing_sigma_ms: 20.0
 
+# Fixation selective-unit analysis (stored in analysis_output_root)
+selective_output_subdir: ephys/psth/fixation_psth_selectivity
+selective_window_stats_filename: window_stats.csv
+selective_pair_summary_filename: pair_selectivity.csv
+selective_unit_summary_filename: unit_selectivity.csv
+selective_output_pickle_filename: results.pkl
+selective_alpha: 0.05
+selective_test: welch_ttest
+selective_min_trials_per_condition: 2
+selective_use_parallel: true
+face_label: face
+object_label: object
+selective_windows_ms:
+  pre_fix: [-500.0, 0.0]
+  peri_fix: [-250.0, 250.0]
+  post_fix: [0.0, 500.0]
+
 # Per-unit fixation PSTH plotting (stored in analysis_output_root)
 plot_output_subdir: ephys/psth/fixation_psth_unit_plots
 plot_output_extension: pdf

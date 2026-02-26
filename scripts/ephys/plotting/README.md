@@ -4,9 +4,9 @@ CLI entrypoints for ephys plotting.
 
 Current scripts:
 - `plot_fixation_psth_units.py`
-  Generates one figure per unit (grouped by date) using fixation PSTH trial data.
-  Output layout is grouped by date and region:
-  `.../date=<date>/region=<region>/unit=<unit_uuid>.pdf`
+  Generates one figure per unit using fixation PSTH trial data.
+  Output layout is grouped by region (across all dates):
+  `.../region=<region>/date=<date>__unit=<unit_uuid>.pdf`
   Each figure has:
   - top: color-coded rasters for interactive face, non-interactive face, and object fixations
   - bottom: mean firing rate (Hz) with SEM shading for the same conditions

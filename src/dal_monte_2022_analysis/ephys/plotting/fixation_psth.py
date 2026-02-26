@@ -555,7 +555,7 @@ def _plot_single_unit(
     fig.suptitle(" | ".join(title_bits), y=0.99)
 
     ext = _ensure_ext(settings.output_extension)
-    out_path = out_dir / f"unit={_safe_unit_filename(unit_uuid)}.{ext}"
+    out_path = out_dir / f"date={date}__unit={_safe_unit_filename(unit_uuid)}.{ext}"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, format=ext, dpi=dpi)
     plt.close(fig)
@@ -579,7 +579,7 @@ def _plot_single_unit_worker(args) -> Optional[Path]:
 def _build_unit_plot_tasks_for_date(args):
     settings, date, paths, unit_filter = args
     cfg = load_dataset_config(settings.cfg_path)
-    out_root = build_analysis_output_dir(cfg, settings.output_subdir) / f"date={date}"
+    out_root = build_analysis_output_dir(cfg, settings.output_subdir)
     df, bin_centers = _load_trials_for_date(paths, date=date, settings=settings)
     if df.empty or "unit_uuid" not in df.columns:
         return []
