@@ -7,7 +7,6 @@ import pickle
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -305,13 +304,38 @@ def _pretty_scope(scope: str) -> str:
     return scope
 
 
-def _plot_one_scope(
+def _append_filename_suffix(filename: str, suffix: str) -> str:
+    """Append a suffix before extension in a filename."""
+    path = Path(str(filename))
+    extension = path.suffix if path.suffix else ".pdf"
+    return f"{path.stem}_{suffix}{extension}"
+
+
+def _resolve_single_panel_figsize(plot_cfg: dict) -> list[float]:
+    """Resolve single-panel figure size defaults for m1-m2 plots."""
+    figsize = plot_cfg.get("crosscorr_m1_m2_single_panel_figsize", [4.25, 2.6])
+    if not isinstance(figsize, (list, tuple)) or len(figsize) < 2:
+        raise RuntimeError(
+            "crosscorr_m1_m2_single_panel_figsize must be a 2-element list/tuple [width, height]."
+        )
+    width = float(figsize[0])
+    height = float(figsize[1])
+    if width <= 0 or height <= 0:
+        raise RuntimeError(
+            f"crosscorr_m1_m2_single_panel_figsize must be positive, got [{width}, {height}]."
+        )
+    if width <= height:
+        height = 0.72 * width
+    return [width, height]
+
+
+def _plot_scope_trace(
     *,
     ax,
     lags: np.ndarray,
     observed: np.ndarray,
     control: np.ndarray,
-    scope: str,
+    observed_label: str,
     control_label: str,
     alpha: float,
     color_observed: str,
@@ -324,13 +348,13 @@ def _plot_one_scope(
     ttest_parallel_workers: int | None,
     ttest_parallel_min_lags: int,
     ttest_parallel_chunk_size: int,
-    y_min_global: float,
-    y_max_global: float,
-    n_obs_total: int,
-    n_ctl_total: int,
-    n_paired: int,
+    y_sig: float,
+    observed_lw: float = 1.7,
+    control_lw: float = 1.5,
+    observed_ls: str = "-",
+    control_ls: str = ":",
 ) -> None:
-    """Render one scope panel."""
+    """Render one observed-vs-control trace pair on one axis."""
     obs_mean, obs_sem = _nanmean_sem(observed)
     ctl_mean, ctl_sem = _nanmean_sem(control)
     pvals = _paired_ttest_per_lag(
@@ -356,16 +380,24 @@ def _plot_one_scope(
         lags_plot,
         obs_mean_plot,
         color=color_observed,
-        lw=1.7,
-        label="Observed (within-session)",
+        lw=float(observed_lw),
+        ls=observed_ls,
+        label=observed_label,
     )
-    ax.plot(lags_plot, ctl_mean_plot, color=color_control, lw=1.5, label=control_label)
+    ax.plot(
+        lags_plot,
+        ctl_mean_plot,
+        color=color_control,
+        lw=float(control_lw),
+        ls=control_ls,
+        label=control_label,
+    )
     ax.fill_between(
         lags_plot,
         obs_mean_plot - obs_sem_plot,
         obs_mean_plot + obs_sem_plot,
         color=color_observed,
-        alpha=0.20,
+        alpha=0.18,
         rasterized=bool(rasterize_bands),
     )
     ax.fill_between(
@@ -373,40 +405,21 @@ def _plot_one_scope(
         ctl_mean_plot - ctl_sem_plot,
         ctl_mean_plot + ctl_sem_plot,
         color=color_control,
-        alpha=0.20,
+        alpha=0.14,
         rasterized=bool(rasterize_bands),
     )
-    ax.axvline(0, color="#444444", lw=0.8, ls="--", alpha=0.8)
-
-    y_lo = float(y_min_global)
-    y_hi = float(y_max_global)
-    if not np.isfinite(y_lo) or not np.isfinite(y_hi):
-        y_lo, y_hi = -1.0, 1.0
-    if y_hi <= y_lo:
-        y_hi = y_lo + 1e-6
-    y_pad = 0.08 * (y_hi - y_lo)
-    y_sig = y_hi + 0.02 * (y_hi - y_lo)
     if np.any(sig_plot):
         ax.scatter(
             lags_plot[sig_plot],
             np.full(int(np.count_nonzero(sig_plot)), y_sig),
             marker="|",
             s=36,
-            c="#111111",
+            c=color_observed,
             linewidths=0.9,
             label=f"paired t-test p<{alpha:.02f}",
             zorder=5,
             rasterized=bool(rasterize_sig_markers),
         )
-    ax.set_ylim(y_lo - y_pad, y_hi + 2.5 * y_pad)
-
-    ax.set_title(
-        f"{_pretty_scope(scope)}\n"
-        f"n_paired={n_paired} (obs={n_obs_total}, ctrl={n_ctl_total})",
-        fontsize=10,
-    )
-    ax.grid(axis="y", alpha=0.25, linewidth=0.6)
-    ax.set_xlabel("Lag (s)")
 
 
 def _plot_observed_vs_control(
@@ -416,38 +429,39 @@ def _plot_observed_vs_control(
     control_col: str,
     control_label: str,
     output_filename: str,
-) -> Path:
-    """Create one 3-panel figure comparing observed trace to one control type."""
+) -> list[Path]:
+    """Create two figures: whole-only and interactive/non-interactive overlay."""
     cfg = load_config(settings.cfg_path)
     plot_cfg = load_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
     out_dir = build_analysis_output_dir(cfg, settings.analysis_subdir)
-    scopes = tuple(normalize_fix_crosscorr_time_scope(scope) for scope in settings.scopes)
-    if len(scopes) != 3:
-        raise RuntimeError("Expected exactly 3 scopes for plotting (whole, interactive, non_interactive).")
+    scopes = tuple(dict.fromkeys(normalize_fix_crosscorr_time_scope(scope) for scope in settings.scopes))
+    required_scopes = ("whole", "interactive", "non_interactive")
+    missing_scopes = sorted(set(required_scopes).difference(scopes))
+    if missing_scopes:
+        raise RuntimeError(
+            f"Missing required scopes for plotting: {missing_scopes}. "
+            f"Found scopes={list(scopes)}."
+        )
     if float(settings.lag_sampling_rate_hz) <= 0:
         raise RuntimeError(
             f"lag_sampling_rate_hz must be > 0, got {settings.lag_sampling_rate_hz}."
         )
 
-    figsize, dpi = resolve_figsize(plot_cfg)
-    custom_figsize = plot_cfg.get("crosscorr_m1_m2_figsize")
-    if custom_figsize is not None:
-        figsize = custom_figsize
-    if figsize is None or (len(figsize) >= 1 and float(figsize[0]) < 12.0):
-        figsize = [16, 4.6]
-    fig, axes = plt.subplots(1, 3, figsize=figsize, dpi=dpi, sharey=True)
+    _, dpi = resolve_figsize(plot_cfg)
+    single_panel_figsize = _resolve_single_panel_figsize(plot_cfg)
+    if dpi is None:
+        dpi = 300
 
     colors = plot_cfg.get("crosscorr_m1_m2_colors", {})
-    observed_color = colors.get("observed", "#1f77b4")
-    control_color = colors.get("control", "#d62728")
+    whole_color = colors.get("whole", "#d62728")
+    whole_control_color = colors.get("whole_control", "#4A4A4A")
+    interactive_color = colors.get("interactive", "#6A3D9A")
+    non_interactive_color = colors.get("non_interactive", "#B8860B")
 
-    panel_rows: list[dict] = []
-    global_y_min = np.inf
-    global_y_max = -np.inf
-
-    for scope in scopes:
+    panel_rows: dict[str, dict] = {}
+    for scope in required_scopes:
         lags = _load_lags_for_scope(out_dir, fixation_label=settings.fixation_label, scope=scope)
         lags_seconds = np.asarray(lags, dtype=np.float64) / float(settings.lag_sampling_rate_hz)
         within_df = _load_df_for_scope(
@@ -472,76 +486,137 @@ def _plot_observed_vs_control(
                 f"Lag length mismatch for scope='{scope}': "
                 f"lags={lags_seconds.size}, observed={observed.shape[1]}"
             )
-        y_lo, y_hi = _scope_y_bounds(observed, control)
-        global_y_min = min(global_y_min, y_lo)
-        global_y_max = max(global_y_max, y_hi)
-        panel_rows.append(
-            {
-                "scope": scope,
-                "lags_seconds": lags_seconds,
-                "observed": observed,
-                "control": control,
-                "n_obs_total": n_obs_total,
-                "n_ctl_total": n_ctl_total,
-                "n_paired": n_paired,
-            }
-        )
-
-    if not np.isfinite(global_y_min) or not np.isfinite(global_y_max):
-        global_y_min, global_y_max = -1.0, 1.0
-    if global_y_max <= global_y_min:
-        global_y_max = global_y_min + 1e-6
-
-    for ax, panel in zip(axes, panel_rows):
-        _plot_one_scope(
-            ax=ax,
-            lags=panel["lags_seconds"],
-            observed=panel["observed"],
-            control=panel["control"],
-            scope=panel["scope"],
-            control_label=control_label,
-            alpha=settings.significance_alpha,
-            color_observed=observed_color,
-            color_control=control_color,
-            max_plot_points=settings.max_plot_points,
-            max_sig_markers=settings.max_sig_markers,
-            rasterize_bands=settings.rasterize_bands,
-            rasterize_sig_markers=settings.rasterize_sig_markers,
-            ttest_parallel=settings.ttest_parallel,
-            ttest_parallel_workers=settings.ttest_parallel_workers,
-            ttest_parallel_min_lags=settings.ttest_parallel_min_lags,
-            ttest_parallel_chunk_size=settings.ttest_parallel_chunk_size,
-            y_min_global=global_y_min,
-            y_max_global=global_y_max,
-            n_obs_total=panel["n_obs_total"],
-            n_ctl_total=panel["n_ctl_total"],
-            n_paired=panel["n_paired"],
-        )
-
-    axes[0].set_ylabel("Normalized cross-correlation")
-    handles = []
-    labels = []
-    for ax in axes:
-        ax_handles, ax_labels = ax.get_legend_handles_labels()
-        for handle, label in zip(ax_handles, ax_labels):
-            if label in labels:
-                continue
-            labels.append(label)
-            handles.append(handle)
-    if handles:
-        fig.legend(handles, labels, loc="upper center", ncols=min(3, len(labels)), frameon=False)
-    fig.tight_layout(rect=[0, 0, 1, 0.93])
+        panel_rows[scope] = {
+            "scope": scope,
+            "lags_seconds": lags_seconds,
+            "observed": observed,
+            "control": control,
+            "n_obs_total": n_obs_total,
+            "n_ctl_total": n_ctl_total,
+            "n_paired": n_paired,
+        }
 
     plot_dir = out_dir / settings.output_subdir
     plot_dir.mkdir(parents=True, exist_ok=True)
-    out_path = plot_dir / output_filename
-    fig.savefig(out_path, format="pdf")
-    plt.close(fig)
-    return out_path
+    out_paths: list[Path] = []
+
+    group_specs: list[tuple[str, list[str], str]] = [
+        (output_filename, ["whole"], "Whole Session"),
+        (
+            _append_filename_suffix(output_filename, "interactive_non_interactive"),
+            ["interactive", "non_interactive"],
+            "Interactive + Non-Interactive",
+        ),
+    ]
+    observed_colors = {
+        "whole": whole_color,
+        "interactive": interactive_color,
+        "non_interactive": non_interactive_color,
+    }
+    control_colors = {
+        "whole": whole_control_color,
+        "interactive": interactive_color,
+        "non_interactive": non_interactive_color,
+    }
+
+    for group_filename, group_scopes, title_prefix in group_specs:
+        group_panels = [panel_rows[scope] for scope in group_scopes]
+        group_y_min = np.inf
+        group_y_max = -np.inf
+        for panel in group_panels:
+            y_lo, y_hi = _scope_y_bounds(panel["observed"], panel["control"])
+            group_y_min = min(group_y_min, y_lo)
+            group_y_max = max(group_y_max, y_hi)
+        if not np.isfinite(group_y_min) or not np.isfinite(group_y_max):
+            group_y_min, group_y_max = -1.0, 1.0
+        if group_y_max <= group_y_min:
+            group_y_max = group_y_min + 1e-6
+
+        fig, ax = plt.subplots(1, 1, figsize=single_panel_figsize, dpi=dpi)
+        y_range = group_y_max - group_y_min
+        y_pad = 0.10 * y_range
+        sig_step = 0.09 * y_range
+        for idx, panel in enumerate(group_panels):
+            scope = panel["scope"]
+            scope_pretty = _pretty_scope(scope)
+            obs_color = observed_colors[scope]
+            ctl_color = control_colors[scope]
+            is_overlay_scope = scope in ("interactive", "non_interactive")
+            _plot_scope_trace(
+                ax=ax,
+                lags=panel["lags_seconds"],
+                observed=panel["observed"],
+                control=panel["control"],
+                observed_label=f"{scope_pretty} observed",
+                control_label=f"{scope_pretty} {control_label}",
+                alpha=settings.significance_alpha,
+                color_observed=obs_color,
+                color_control=ctl_color,
+                max_plot_points=settings.max_plot_points,
+                max_sig_markers=settings.max_sig_markers,
+                rasterize_bands=settings.rasterize_bands,
+                rasterize_sig_markers=settings.rasterize_sig_markers,
+                ttest_parallel=settings.ttest_parallel,
+                ttest_parallel_workers=settings.ttest_parallel_workers,
+                ttest_parallel_min_lags=settings.ttest_parallel_min_lags,
+                ttest_parallel_chunk_size=settings.ttest_parallel_chunk_size,
+                y_sig=group_y_max + 0.15 * y_pad + idx * sig_step,
+                observed_lw=1.8,
+                control_lw=1.0 if is_overlay_scope else 1.4,
+                observed_ls="-",
+                control_ls=":",
+            )
+        ax.axvline(0, color="#444444", lw=0.8, ls="--", alpha=0.8)
+        ax.set_ylim(group_y_min - y_pad, group_y_max + 2.2 * y_pad + (len(group_panels) - 1) * sig_step)
+        ax.set_xlabel("Lag (s)")
+        ax.set_ylabel("Normalized cross-correlation")
+        ax.grid(axis="y", alpha=0.25, linewidth=0.6)
+        if len(group_panels) == 1:
+            panel = group_panels[0]
+            subtitle = (
+                f"n_paired={panel['n_paired']} "
+                f"(obs={panel['n_obs_total']}, ctrl={panel['n_ctl_total']})"
+            )
+        else:
+            subtitle = "; ".join(
+                f"{_pretty_scope(panel['scope'])}: n_paired={panel['n_paired']}"
+                for panel in group_panels
+            )
+        ax.set_title(f"{title_prefix}\n{subtitle}", fontsize=10)
+
+        handles, labels = ax.get_legend_handles_labels()
+        unique_handles = []
+        unique_labels = []
+        for handle, label in zip(handles, labels):
+            if label in unique_labels:
+                continue
+            unique_labels.append(label)
+            unique_handles.append(handle)
+        if unique_handles:
+            legend_ncols = min(2, len(unique_handles))
+            ax.legend(
+                unique_handles,
+                unique_labels,
+                loc="upper center",
+                bbox_to_anchor=(0.5, 1.23),
+                ncol=legend_ncols,
+                frameon=False,
+                fontsize=8,
+            )
+
+        fig.tight_layout(rect=[0, 0, 1, 0.90])
+        out_path = plot_dir / group_filename
+        fig.savefig(out_path, format="pdf")
+        plt.close(fig)
+        out_paths.append(out_path)
+
+    return out_paths
 
 
-def plot_observed_vs_cross_session_m1_m2(settings: M1M2CrossCorrComparisonPlotSettings) -> Path:
-    """Plot observed-vs-cross-session comparison across whole/interactive/non-interactive."""
+def plot_observed_vs_cross_session_m1_m2(
+    settings: M1M2CrossCorrComparisonPlotSettings,
+) -> list[Path]:
+    """Plot observed-vs-cross-session comparison as whole-only and interactive overlays."""
     return _plot_observed_vs_control(
         settings,
         control_kind="cross",
@@ -551,8 +626,10 @@ def plot_observed_vs_cross_session_m1_m2(settings: M1M2CrossCorrComparisonPlotSe
     )
 
 
-def plot_observed_vs_shuffle_m1_m2(settings: M1M2CrossCorrComparisonPlotSettings) -> Path:
-    """Plot observed-vs-shuffle comparison across whole/interactive/non-interactive."""
+def plot_observed_vs_shuffle_m1_m2(
+    settings: M1M2CrossCorrComparisonPlotSettings,
+) -> list[Path]:
+    """Plot observed-vs-shuffle comparison as whole-only and interactive overlays."""
     return _plot_observed_vs_control(
         settings,
         control_kind="shuffle",

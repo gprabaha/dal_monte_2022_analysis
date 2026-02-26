@@ -57,10 +57,12 @@ def main():
     )
 
     out_cross = plot_observed_vs_cross_session_m1_m2(settings)
-    print(f"[plot] wrote observed-vs-cross-session m1-m2 figure: {out_cross}")
+    for path in out_cross:
+        print(f"[plot] wrote observed-vs-cross-session m1-m2 figure: {path}")
 
     out_shuffle = plot_observed_vs_shuffle_m1_m2(settings)
-    print(f"[plot] wrote observed-vs-shuffle m1-m2 figure: {out_shuffle}")
+    for path in out_shuffle:
+        print(f"[plot] wrote observed-vs-shuffle m1-m2 figure: {path}")
 
 
 if __name__ == "__main__":
