@@ -23,6 +23,9 @@ Current feature utility:
 - `features/fixation_psth.py`
   Builds fixation-triggered unit PSTHs at trial level (session outputs) and
   date-level averaged PSTHs.
+- `features/period_psth.py`
+  Builds period-centered (interactive/non-interactive) unit PSTHs at trial
+  level for each date/session.
 
 Current analysis utility:
 - `analysis/fixation_selectivity.py`

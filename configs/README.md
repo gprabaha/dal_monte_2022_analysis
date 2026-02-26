@@ -33,6 +33,9 @@ With current settings, processed outputs are written under:
   Settings for fixation-triggered PSTH trial extraction and date-level PSTH
   averaging (`scripts/ephys/features/build_fixation_psth_trials.py`,
   `scripts/ephys/features/build_fixation_psth_averages.py`).
+- `ephys_period_psth.yaml`
+  Settings for interactive/non-interactive period-centered PSTH trial
+  extraction (`scripts/ephys/features/build_period_psth_trials.py`).
 
 ## Analysis configs
 

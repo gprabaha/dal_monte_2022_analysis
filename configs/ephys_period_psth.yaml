@@ -1,0 +1,32 @@
+# configs/ephys_period_psth.yaml
+# Session-level interactive/non-interactive period-centered PSTH extraction.
+
+# Inputs
+periods_modality: interactive_periods
+timeline_modality: neural_timeline
+
+# Session-level trial PSTH output (stored in processed_data_root)
+output_modality: psth
+trial_output_filename: interactive_periods.pkl
+
+# Period parsing
+state_column: state
+start_column: start
+stop_column: stop
+states: ["interactive", "non_interactive"]
+interactive_high_label: interactive
+
+# PSTH construction
+bin_size_ms: 100.0
+window_pre_s: 14.0
+window_post_s: 14.0
+
+# Parallel/task controls
+use_parallel: true
+max_procs: 16
+test_single: false
+
+# Unit selection
+# false: use all available units (not restricted by date)
+# true: use only units whose date matches each session date
+restrict_units_to_date: true
