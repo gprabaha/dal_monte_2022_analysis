@@ -328,7 +328,16 @@ def _render_region_venn(summary: dict, settings: FixationSelectivityVennPlotSett
 
     ext = settings.output_extension if str(settings.output_extension).startswith(".") else f".{settings.output_extension}"
     out_path = out_root / f"region={_safe_region(region)}{ext}"
-    fig.savefig(out_path, format=ext.lstrip("."), dpi=dpi)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+    fig.savefig(
+        out_path,
+        format=ext.lstrip("."),
+        dpi=dpi,
+        facecolor="white",
+        edgecolor="white",
+        transparent=False,
+    )
     plt.close(fig)
     return out_path
 

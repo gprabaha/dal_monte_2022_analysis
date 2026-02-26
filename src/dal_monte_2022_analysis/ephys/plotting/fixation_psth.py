@@ -18,6 +18,7 @@ from matplotlib.colors import to_rgb
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
+from scipy.stats import mannwhitneyu, ttest_ind
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.behav.plotting.common import (
@@ -46,6 +47,7 @@ class FixationPSTHUnitPlotSettings:
     trial_input_filename: str = "fixations.pkl"
     output_subdir: str = "ephys/psth/fixation_psth_unit_plots"
     output_extension: str = "pdf"
+    example_units_subfolder: Optional[str] = None
     output_dpi: Optional[int] = 220
     interactive_label: str = "interactive"
     face_label: str = "face"
@@ -70,6 +72,12 @@ class FixationPSTHUnitPlotSettings:
     raster_show_condition_background: bool = False
     panel_raster_height_ratio: float = 1.2
     panel_rate_height_ratio: float = 2.0
+    show_significance_ticks: bool = False
+    significance_alpha: float = 0.05
+    significance_test: str = "welch_ttest"
+    significance_min_trials_per_condition: int = 2
+    significance_tick_height_ratio: float = 0.03
+    significance_tick_row_gap_ratio: float = 0.08
     bin_size_ms_fallback: float = 10.0
     window_pre_s: float = 1.0
     window_post_s: float = 1.0
@@ -347,13 +355,7 @@ def _build_unit_condition_payloads(
     ]
 
     payloads: list[dict] = []
-    sigma_bins = None
-    if settings.smooth_before_average:
-        if float(settings.smoothing_sigma_ms) <= 0:
-            raise ValueError("plot smoothing_sigma_ms must be > 0 when smoothing is enabled.")
-        sigma_bins = float(settings.smoothing_sigma_ms) / (float(bin_size_s) * 1000.0)
-        if sigma_bins <= 0:
-            raise ValueError("resolved smoothing sigma in bins must be > 0.")
+    sigma_bins = _resolve_plot_sigma_bins(settings, bin_size_s)
 
     for cond_key, cond_label in payload_order:
         cond_df = df_unit.loc[masks[cond_key]].copy()
@@ -417,6 +419,102 @@ def _build_unit_condition_payloads(
         )
 
     return payloads
+
+
+def _resolve_plot_sigma_bins(settings: FixationPSTHUnitPlotSettings, bin_size_s: float) -> Optional[float]:
+    if not settings.smooth_before_average:
+        return None
+    if float(settings.smoothing_sigma_ms) <= 0:
+        raise ValueError("plot smoothing_sigma_ms must be > 0 when smoothing is enabled.")
+    sigma_bins = float(settings.smoothing_sigma_ms) / (float(bin_size_s) * 1000.0)
+    if sigma_bins <= 0:
+        raise ValueError("resolved smoothing sigma in bins must be > 0.")
+    return sigma_bins
+
+
+def _collect_condition_rate_mats(
+    df_unit: pd.DataFrame,
+    *,
+    bin_size_s: float,
+    n_bins: int,
+    settings: FixationPSTHUnitPlotSettings,
+) -> dict[str, np.ndarray]:
+    masks = _condition_masks(
+        df_unit,
+        interactive_label=settings.interactive_label,
+        face_label=settings.face_label,
+        object_label=settings.object_label,
+    )
+    sigma_bins = _resolve_plot_sigma_bins(settings, bin_size_s)
+    out: dict[str, np.ndarray] = {}
+    for cond in ("face_interactive", "face_non_interactive", "object"):
+        cond_df = df_unit.loc[masks[cond]].copy()
+        rows: list[np.ndarray] = []
+        for row in cond_df.itertuples(index=False):
+            counts = _row_counts(row, n_bins)
+            if counts is None:
+                continue
+            rows.append(counts / float(bin_size_s))
+        if not rows:
+            out[cond] = np.zeros((0, n_bins), dtype=float)
+            continue
+        mat = np.vstack(rows)
+        if settings.smooth_before_average:
+            mat = gaussian_filter1d(mat, sigma=sigma_bins, axis=1, mode="nearest")
+        out[cond] = mat
+    return out
+
+
+def _pair_significance_masks(
+    df_unit: pd.DataFrame,
+    *,
+    bin_centers: np.ndarray,
+    bin_size_s: float,
+    settings: FixationPSTHUnitPlotSettings,
+) -> list[dict]:
+    n_bins = int(bin_centers.size)
+    mats = _collect_condition_rate_mats(
+        df_unit,
+        bin_size_s=bin_size_s,
+        n_bins=n_bins,
+        settings=settings,
+    )
+    pair_defs = [
+        ("face_interactive", "face_non_interactive", "Int vs Non-Int Face", "#5E3C99"),
+        ("face_interactive", "object", "Int Face vs Object", "#1B7837"),
+        ("face_non_interactive", "object", "Non-Int Face vs Object", "#B35806"),
+    ]
+    results: list[dict] = []
+    for cond_a, cond_b, label, color in pair_defs:
+        mat_a = mats.get(cond_a, np.zeros((0, n_bins), dtype=float))
+        mat_b = mats.get(cond_b, np.zeros((0, n_bins), dtype=float))
+        if (
+            mat_a.shape[0] < int(settings.significance_min_trials_per_condition)
+            or mat_b.shape[0] < int(settings.significance_min_trials_per_condition)
+        ):
+            mask = np.zeros(n_bins, dtype=bool)
+            results.append({"label": label, "color": color, "mask": mask, "n_a": int(mat_a.shape[0]), "n_b": int(mat_b.shape[0])})
+            continue
+
+        if str(settings.significance_test).lower() == "welch_ttest":
+            _, p_vals = ttest_ind(mat_a, mat_b, axis=0, equal_var=False, nan_policy="omit")
+            p_vals = np.asarray(p_vals, dtype=float).reshape(-1)
+        elif str(settings.significance_test).lower() == "mannwhitney":
+            p_vals = np.full(n_bins, np.nan, dtype=float)
+            for idx in range(n_bins):
+                try:
+                    _, p = mannwhitneyu(mat_a[:, idx], mat_b[:, idx], alternative="two-sided")
+                    p_vals[idx] = float(p)
+                except Exception:
+                    p_vals[idx] = np.nan
+        else:
+            raise ValueError(
+                f"Unsupported significance_test '{settings.significance_test}'. "
+                "Use 'welch_ttest' or 'mannwhitney'."
+            )
+        mask = np.isfinite(p_vals) & (p_vals < float(settings.significance_alpha))
+        results.append({"label": label, "color": color, "mask": mask, "n_a": int(mat_a.shape[0]), "n_b": int(mat_b.shape[0])})
+    return results
 
 
 def _safe_unit_filename(unit_uuid: str) -> str:
@@ -544,6 +642,50 @@ def _plot_single_unit(
     ax_rate.set_xlim(float(bin_centers[0]), float(bin_centers[-1]))
     ax_rate.legend(loc="upper right", frameon=False)
 
+    if settings.show_significance_ticks:
+        pair_masks = _pair_significance_masks(
+            df_unit,
+            bin_centers=bin_centers,
+            bin_size_s=bin_size_s,
+            settings=settings,
+        )
+        y_min, y_max = ax_rate.get_ylim()
+        span = max(1e-6, float(y_max - y_min))
+        row_gap = float(settings.significance_tick_row_gap_ratio) * span
+        tick_h = float(settings.significance_tick_height_ratio) * span
+        n_rows = len(pair_masks)
+        new_y_min = y_min - (row_gap * (n_rows + 1.4))
+        ax_rate.set_ylim(new_y_min, y_max)
+
+        for idx, pair in enumerate(pair_masks):
+            y0 = y_min - row_gap * float(n_rows - idx)
+            sig_x = bin_centers[np.asarray(pair["mask"], dtype=bool)]
+            if sig_x.size > 0:
+                ax_rate.vlines(sig_x, y0, y0 + tick_h, color=pair["color"], linewidth=0.8, alpha=0.95)
+
+            y_frac = (y0 + 0.5 * tick_h - new_y_min) / max(1e-6, y_max - new_y_min)
+            ax_rate.text(
+                1.01,
+                float(y_frac),
+                f"{pair['label']} (p<{settings.significance_alpha:g})",
+                transform=ax_rate.transAxes,
+                ha="left",
+                va="center",
+                fontsize=8,
+                color=pair["color"],
+            )
+
+        ax_rate.text(
+            0.0,
+            -0.22,
+            "Significance ticks: per-bin category-pair FR difference",
+            transform=ax_rate.transAxes,
+            ha="left",
+            va="top",
+            fontsize=8,
+            color="#333333",
+        )
+
     row0 = df_unit.iloc[0]
     region = _safe_optional_str(row0.get("region")) if isinstance(row0, pd.Series) else None
     channel = _safe_optional_str(row0.get("spike_channel")) if isinstance(row0, pd.Series) else None
@@ -557,7 +699,17 @@ def _plot_single_unit(
     ext = _ensure_ext(settings.output_extension)
     out_path = out_dir / f"date={date}__unit={_safe_unit_filename(unit_uuid)}.{ext}"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, format=ext, dpi=dpi)
+    fig.patch.set_facecolor("white")
+    ax_raster.set_facecolor("white")
+    ax_rate.set_facecolor("white")
+    fig.savefig(
+        out_path,
+        format=ext,
+        dpi=dpi,
+        facecolor="white",
+        edgecolor="white",
+        transparent=False,
+    )
     plt.close(fig)
     return out_path
 
@@ -577,7 +729,7 @@ def _plot_single_unit_worker(args) -> Optional[Path]:
 
 
 def _build_unit_plot_tasks_for_date(args):
-    settings, date, paths, unit_filter = args
+    settings, date, paths, unit_filter, unit_key_filter = args
     cfg = load_dataset_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
     df, bin_centers = _load_trials_for_date(paths, date=date, settings=settings)
@@ -595,6 +747,8 @@ def _build_unit_plot_tasks_for_date(args):
     figsize, dpi = _resolve_figsize_and_dpi(settings)
     unit_tasks = []
     for unit_uuid in unit_ids:
+        if unit_key_filter is not None and f"{date}|{unit_uuid}" not in unit_key_filter:
+            continue
         df_unit = df.loc[df["unit_uuid"].astype(str) == unit_uuid].copy()
         if df_unit.empty:
             continue
@@ -607,6 +761,8 @@ def _build_unit_plot_tasks_for_date(args):
         if not region_series.empty:
             region = next((val for val in region_series if val), None)
         unit_out_dir = out_root / _safe_region_folder(region)
+        if settings.example_units_subfolder:
+            unit_out_dir = unit_out_dir / str(settings.example_units_subfolder)
         unit_tasks.append(
             (
                 df_unit,
@@ -628,6 +784,7 @@ def plot_fixation_psth_units(
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
     unit_uuids: Optional[Sequence[str]] = None,
+    unit_keys: Optional[Sequence[str]] = None,
 ) -> list[Path]:
     """Generate one raster + average firing-rate PSTH figure per unit/date."""
     cfg = load_dataset_config(settings.cfg_path)
@@ -643,12 +800,13 @@ def plot_fixation_psth_units(
     tasks = sorted(grouped.items(), key=lambda item: item[0])
 
     unit_filter = None if unit_uuids is None else {str(unit) for unit in unit_uuids}
+    unit_key_filter = None if unit_keys is None else {str(key) for key in unit_keys}
     out_paths: list[Path] = []
 
     all_unit_tasks = []
     for date, paths in tasks:
         all_unit_tasks.extend(
-            _build_unit_plot_tasks_for_date((settings, date, paths, unit_filter))
+            _build_unit_plot_tasks_for_date((settings, date, paths, unit_filter, unit_key_filter))
         )
     if settings.test_single and all_unit_tasks:
         all_unit_tasks = [random.choice(all_unit_tasks)]

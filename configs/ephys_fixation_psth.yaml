@@ -66,6 +66,15 @@ selective_venn_output_dpi: 220
 selective_venn_use_parallel: true
 selective_venn_min_units_per_region: 1
 
+# Selective-unit firing-rate plotting
+selective_plot_output_subdir: ephys/psth/fixation_psth_selective_unit_plots
+selective_plot_output_extension: png
+selective_example_subfolder: "example units"
+selective_example_output_extension: pdf
+selective_example_significance_alpha: 0.05
+selective_example_significance_test: welch_ttest
+selective_example_significance_min_trials_per_condition: 2
+
 # Per-unit fixation PSTH plotting (stored in analysis_output_root)
 plot_output_subdir: ephys/psth/fixation_psth_unit_plots
 plot_output_extension: pdf

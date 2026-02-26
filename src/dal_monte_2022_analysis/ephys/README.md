@@ -35,3 +35,5 @@ Current plotting utility:
   average firing-rate (mean ± SEM) traces.
 - `plotting/fixation_selectivity_venn.py`
   Builds region-level Venn diagrams for fixation selectivity pair overlaps.
+  Also supports selective-unit example overlays (per-bin significance ticks)
+  through the selective plotting CLI script.
