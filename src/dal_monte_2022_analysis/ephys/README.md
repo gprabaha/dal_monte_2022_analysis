@@ -36,6 +36,9 @@ Current plotting utility:
 - `plotting/fixation_psth.py`
   Builds per-unit fixation PSTH figures with condition-specific rasters and
   average firing-rate (mean ± SEM) traces.
+- `plotting/period_psth.py`
+  Builds per-unit interactive/non-interactive period PSTH figures with rasters
+  and average firing-rate (mean ± SEM) traces.
 - `plotting/fixation_selectivity_venn.py`
   Builds region-level Venn diagrams for fixation selectivity pair overlaps.
   Also supports selective-unit example overlays (per-bin significance ticks)

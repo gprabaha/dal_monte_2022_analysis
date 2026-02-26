@@ -19,5 +19,6 @@ Current implemented step:
 - `features/build_fixation_psth_averages.py`
 - `analysis/build_fixation_selective_units.py`
 - `plotting/plot_fixation_psth_units.py`
+- `plotting/plot_period_psth_units.py`
 - `plotting/plot_fixation_selectivity_venn.py`
 - `plotting/plot_selective_fixation_psth_units.py`

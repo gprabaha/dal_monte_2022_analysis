@@ -30,3 +30,27 @@ test_single: false
 # false: use all available units (not restricted by date)
 # true: use only units whose date matches each session date
 restrict_units_to_date: true
+
+# Per-unit period PSTH plotting (stored in analysis_output_root)
+plot_output_subdir: ephys/psth/period_psth_unit_plots
+plot_output_extension: png
+plot_output_dpi: 220
+plot_use_parallel: true
+plot_parallelize_units: true
+plot_unit_parallel_min_units: 2
+plot_max_trials_per_condition: null
+plot_random_seed: 42
+plot_smooth_before_average: true
+plot_smoothing_sigma_ms: 200.0
+plot_raster_jitter_within_bin: true
+plot_raster_linelength: 0.95
+plot_raster_linewidth: 1.0
+plot_raster_alpha: 1.0
+plot_raster_darkening_factor: 0.65
+plot_raster_show_condition_background: false
+plot_raster_max_spikes_per_bin: null
+plot_panel_raster_height_ratio: 1.2
+plot_panel_rate_height_ratio: 2.0
+plot_condition_colors:
+  period_interactive: "#d62728"
+  period_non_interactive: "#1f77b4"
