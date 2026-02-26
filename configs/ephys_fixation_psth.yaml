@@ -59,6 +59,13 @@ selective_windows_ms:
   peri_fix: [-250.0, 250.0]
   post_fix: [0.0, 500.0]
 
+# Region-level Venn plots from fixation selectivity outputs
+selective_venn_output_subdir: ephys/psth/fixation_psth_selectivity_venn
+selective_venn_output_extension: pdf
+selective_venn_output_dpi: 220
+selective_venn_use_parallel: true
+selective_venn_min_units_per_region: 1
+
 # Per-unit fixation PSTH plotting (stored in analysis_output_root)
 plot_output_subdir: ephys/psth/fixation_psth_unit_plots
 plot_output_extension: pdf

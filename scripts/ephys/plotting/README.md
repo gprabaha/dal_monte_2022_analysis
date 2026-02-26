@@ -33,3 +33,18 @@ Config:
   - `plot_panel_raster_height_ratio`
   - `plot_panel_rate_height_ratio`
   - `plot_condition_colors`
+
+- `plot_fixation_selectivity_venn.py`
+  Generates one Venn diagram per region using fixation selectivity pair outputs.
+  Uses area-scaled 3-set Venn fitting (`matplotlib-venn`) so set/overlap
+  bubble geometry reflects relative magnitudes.
+  Also prints region-level counts and percentages to terminal for:
+  - each pair set
+  - all seven Venn intersections
+
+  Config:
+  - `selective_venn_output_subdir`
+  - `selective_venn_output_extension`
+  - `selective_venn_output_dpi`
+  - `selective_venn_use_parallel`
+  - `selective_venn_min_units_per_region`
