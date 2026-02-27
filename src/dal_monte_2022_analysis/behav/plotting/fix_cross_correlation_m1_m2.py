@@ -11,6 +11,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.ticker import MaxNLocator
 from scipy.stats import ttest_rel
 
 from dal_monte_2022_analysis.config.load import load_config
@@ -329,6 +330,81 @@ def _resolve_single_panel_figsize(plot_cfg: dict) -> list[float]:
     return [width, height]
 
 
+def _scale_figsize_2d(figsize: list[float], width_scale: float, height_scale: float) -> list[float]:
+    """Scale figure width and height."""
+    return [float(figsize[0]) * float(width_scale), float(figsize[1]) * float(height_scale)]
+
+
+def _fill_sem_band(
+    ax,
+    *,
+    x: np.ndarray,
+    mean: np.ndarray,
+    sem: np.ndarray,
+    color: str,
+    alpha: float,
+) -> None:
+    """Draw SEM band as explicit polygon(s) for cleaner vector editing."""
+    x = np.asarray(x, dtype=np.float64).reshape(-1)
+    mean = np.asarray(mean, dtype=np.float64).reshape(-1)
+    sem = np.asarray(sem, dtype=np.float64).reshape(-1)
+    if x.size == 0 or mean.size != x.size or sem.size != x.size:
+        return
+
+    y_lo = mean - sem
+    y_hi = mean + sem
+    finite_mask = np.isfinite(x) & np.isfinite(y_lo) & np.isfinite(y_hi)
+    finite_idx = np.flatnonzero(finite_mask)
+    if finite_idx.size < 2:
+        return
+
+    split_points = np.where(np.diff(finite_idx) > 1)[0]
+    run_starts = np.r_[0, split_points + 1]
+    run_stops = np.r_[split_points + 1, finite_idx.size]
+
+    drew_any = False
+    for start, stop in zip(run_starts, run_stops):
+        run = finite_idx[int(start) : int(stop)]
+        if run.size < 2:
+            continue
+        xs = x[run]
+        upper = y_hi[run]
+        lower = y_lo[run]
+        poly_x = np.r_[xs, xs[::-1]]
+        poly_y = np.r_[upper, lower[::-1]]
+        ax.fill(
+            poly_x,
+            poly_y,
+            facecolor=color,
+            edgecolor="none",
+            linewidth=0.0,
+            alpha=float(alpha),
+            rasterized=False,
+            zorder=1.6,
+        )
+        drew_any = True
+
+    if drew_any:
+        return
+
+    # Fallback path for sparse/degenerate finite masks where polygon runs do not
+    # meet the length threshold; keeps shading visible rather than dropping it.
+    valid = np.isfinite(x) & np.isfinite(y_lo) & np.isfinite(y_hi)
+    if np.count_nonzero(valid) >= 2:
+        ax.fill_between(
+            x,
+            y_lo,
+            y_hi,
+            where=valid,
+            color=color,
+            alpha=float(alpha),
+            linewidth=0.0,
+            interpolate=False,
+            rasterized=False,
+            zorder=1.6,
+        )
+
+
 def _plot_scope_trace(
     *,
     ax,
@@ -392,34 +468,41 @@ def _plot_scope_trace(
         ls=control_ls,
         label=control_label,
     )
-    ax.fill_between(
-        lags_plot,
-        obs_mean_plot - obs_sem_plot,
-        obs_mean_plot + obs_sem_plot,
+    _fill_sem_band(
+        ax,
+        x=lags_plot,
+        mean=obs_mean_plot,
+        sem=obs_sem_plot,
         color=color_observed,
         alpha=0.18,
-        rasterized=bool(rasterize_bands),
     )
-    ax.fill_between(
-        lags_plot,
-        ctl_mean_plot - ctl_sem_plot,
-        ctl_mean_plot + ctl_sem_plot,
+    _fill_sem_band(
+        ax,
+        x=lags_plot,
+        mean=ctl_mean_plot,
+        sem=ctl_sem_plot,
         color=color_control,
         alpha=0.14,
-        rasterized=bool(rasterize_bands),
     )
     if np.any(sig_plot):
-        ax.scatter(
-            lags_plot[sig_plot],
-            np.full(int(np.count_nonzero(sig_plot)), y_sig),
-            marker="|",
-            s=36,
-            c=color_observed,
-            linewidths=0.9,
-            label=f"paired t-test p<{alpha:.02f}",
-            zorder=5,
-            rasterized=bool(rasterize_sig_markers),
-        )
+        sig_x = lags_plot[sig_plot]
+        sig_label = f"paired t-test p<{alpha:.02f}"
+        # Draw one marker artist per significant bin so each marker is independently
+        # editable/manipulable in vector editors (e.g., Illustrator).
+        for idx, x_val in enumerate(sig_x):
+            ax.plot(
+                [float(x_val)],
+                [float(y_sig)],
+                marker="D",
+                ms=3.8,
+                mfc="white",
+                mec=color_observed,
+                mew=0.9,
+                linestyle="None",
+                label=sig_label if idx == 0 else "_nolegend_",
+                zorder=5,
+                rasterized=False,
+            )
 
 
 def _plot_observed_vs_control(
@@ -520,6 +603,7 @@ def _plot_observed_vs_control(
     }
 
     for group_filename, group_scopes, title_prefix in group_specs:
+        is_overlay_group = len(group_scopes) > 1
         group_panels = [panel_rows[scope] for scope in group_scopes]
         group_y_min = np.inf
         group_y_max = -np.inf
@@ -532,10 +616,15 @@ def _plot_observed_vs_control(
         if group_y_max <= group_y_min:
             group_y_max = group_y_min + 1e-6
 
-        fig, ax = plt.subplots(1, 1, figsize=single_panel_figsize, dpi=dpi)
+        group_figsize = (
+            _scale_figsize_2d(single_panel_figsize, 1.30, 1.12)
+            if is_overlay_group
+            else list(single_panel_figsize)
+        )
+        fig, ax = plt.subplots(1, 1, figsize=group_figsize, dpi=dpi)
         y_range = group_y_max - group_y_min
         y_pad = 0.10 * y_range
-        sig_step = 0.09 * y_range
+        sig_step = 0.14 * y_range
         for idx, panel in enumerate(group_panels):
             scope = panel["scope"]
             scope_pretty = _pretty_scope(scope)
@@ -560,7 +649,7 @@ def _plot_observed_vs_control(
                 ttest_parallel_workers=settings.ttest_parallel_workers,
                 ttest_parallel_min_lags=settings.ttest_parallel_min_lags,
                 ttest_parallel_chunk_size=settings.ttest_parallel_chunk_size,
-                y_sig=group_y_max + 0.15 * y_pad + idx * sig_step,
+                y_sig=group_y_max + 0.40 * y_pad + idx * sig_step,
                 observed_lw=1.8,
                 control_lw=1.0 if is_overlay_scope else 1.4,
                 observed_ls="-",
@@ -571,6 +660,17 @@ def _plot_observed_vs_control(
         ax.set_xlabel("Lag (s)")
         ax.set_ylabel("Normalized cross-correlation")
         ax.grid(axis="y", alpha=0.25, linewidth=0.6)
+        if is_overlay_group:
+            # Keep ~7 major x ticks (including 0) and 3-4 y ticks for cleaner readability.
+            max_abs_lag = max(abs(float(panel["lags_seconds"][0])) for panel in group_panels)
+            max_abs_lag = max(
+                max_abs_lag,
+                max(abs(float(panel["lags_seconds"][-1])) for panel in group_panels),
+            )
+            if np.isfinite(max_abs_lag) and max_abs_lag > 0:
+                ax.set_xlim(-max_abs_lag, max_abs_lag)
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=7, min_n_ticks=7))
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=4, min_n_ticks=3))
         if len(group_panels) == 1:
             panel = group_panels[0]
             subtitle = (
@@ -593,18 +693,19 @@ def _plot_observed_vs_control(
             unique_labels.append(label)
             unique_handles.append(handle)
         if unique_handles:
-            legend_ncols = min(2, len(unique_handles))
+            legend_ncols = min(3 if is_overlay_group else 2, len(unique_handles))
             ax.legend(
                 unique_handles,
                 unique_labels,
                 loc="upper center",
-                bbox_to_anchor=(0.5, 1.23),
+                bbox_to_anchor=(0.5, 1.28 if is_overlay_group else 1.23),
                 ncol=legend_ncols,
                 frameon=False,
                 fontsize=8,
             )
 
-        fig.tight_layout(rect=[0, 0, 1, 0.90])
+        top_rect = 0.86 if is_overlay_group else 0.90
+        fig.tight_layout(rect=[0, 0, 1, top_rect])
         out_path = plot_dir / group_filename
         fig.savefig(out_path, format="pdf")
         plt.close(fig)
