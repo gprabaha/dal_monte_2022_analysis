@@ -21,12 +21,47 @@ def main():
     parser.add_argument("--interactive-periods-cfg", default="configs/interactive_periods.yaml")
     parser.add_argument("--analysis-subdir", default="interactive_periods")
     parser.add_argument("--output-subdir", default="period_detection")
-    parser.add_argument("--output-extension", default="pdf")
+    parser.add_argument("--output-extension", default="png")
+    parser.add_argument(
+        "--figure-width-in",
+        type=float,
+        default=4.25,
+        help="Figure width in inches (default is about half of letter width).",
+    )
+    parser.add_argument(
+        "--figure-height-in",
+        type=float,
+        default=5.25,
+        help="Figure height in inches.",
+    )
+    parser.add_argument(
+        "--example-session",
+        action="append",
+        default=[],
+        help=(
+            "Session key to export to example subfolder as both PNG and PDF. "
+            "Repeatable. Format: date|session"
+        ),
+    )
+    parser.add_argument("--example-sessions-subfolder", default="example_sessions")
+    parser.add_argument(
+        "--example-pdf-rasterized",
+        action="store_true",
+        help="Rasterize traces/blocks in example PDFs (disable for Illustrator editing).",
+    )
     parser.add_argument(
         "--max-density-points",
         type=int,
-        default=50000,
-        help="Maximum points per density trace after strided downsampling (PDF size control).",
+        default=3000,
+        help=(
+            "Maximum points per density trace after strided downsampling "
+            "(controls vector anchor-point count)."
+        ),
+    )
+    parser.add_argument(
+        "--show-grid",
+        action="store_true",
+        help="Enable x/y grid lines (off by default).",
     )
     parser.add_argument(
         "--no-rasterize-density-traces",
@@ -55,9 +90,15 @@ def main():
         analysis_subdir=args.analysis_subdir,
         output_subdir=args.output_subdir,
         output_extension=args.output_extension,
+        example_sessions_subfolder=str(args.example_sessions_subfolder),
+        example_session_keys=tuple(str(key) for key in args.example_session),
+        example_pdf_force_vector=not bool(args.example_pdf_rasterized),
+        figure_width_in=float(args.figure_width_in),
+        figure_height_in=float(args.figure_height_in),
         session_parallel=not bool(args.no_parallel),
         test_single=bool(args.test_single),
         max_density_points=int(args.max_density_points),
+        show_grid=bool(args.show_grid),
         rasterize_density_traces=not bool(args.no_rasterize_density_traces),
         rasterize_interactive_blocks=not bool(args.no_rasterize_interactive_blocks),
         pdf_compression=int(args.pdf_compression),

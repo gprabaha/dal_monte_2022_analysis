@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Optional
@@ -36,7 +36,12 @@ class InteractivePeriodDetectionPlotSettings:
     interactive_periods_cfg_path: str = "configs/interactive_periods.yaml"
     analysis_subdir: str = "interactive_periods"
     output_subdir: str = "period_detection"
-    output_extension: str = "pdf"
+    output_extension: str = "png"
+    example_sessions_subfolder: str = "example_sessions"
+    example_session_keys: tuple[str, ...] = field(default_factory=tuple)
+    example_pdf_force_vector: bool = True
+    figure_width_in: Optional[float] = 4.25
+    figure_height_in: Optional[float] = 5.25
     fixation_vectors_modality: str = "fixation_binary_vectors"
     fixation_density_modality: str = "fixation_density_vectors"
     joint_density_modality: str = "joint_face_fixation_density"
@@ -53,10 +58,52 @@ class InteractivePeriodDetectionPlotSettings:
     session_parallel: bool = True
     test_single: bool = False
     max_parallel_workers: int = 32
-    max_density_points: int = 50000
+    max_density_points: int = 3000
+    show_grid: bool = False
     rasterize_density_traces: bool = True
     rasterize_interactive_blocks: bool = True
     pdf_compression: int = 6
+
+
+def _normalize_ext(ext: str, fallback: str) -> str:
+    """Normalize extension token to a lowercase suffix without leading dot."""
+    text = str(ext).strip().lower().lstrip(".")
+    return text if text else str(fallback).strip().lower().lstrip(".")
+
+
+def _session_key(date: str, session: str) -> str:
+    """Build canonical session key used for example-session matching."""
+    return f"{str(date).strip()}|{str(session).strip()}"
+
+
+def _normalize_example_session_keys(raw_keys: tuple[str, ...]) -> set[str]:
+    """Normalize example-session key strings to canonical date|session form."""
+    out: set[str] = set()
+    for raw in raw_keys:
+        text = str(raw).strip()
+        if not text:
+            continue
+
+        if "__session=" in text:
+            left, right = text.split("__session=", 1)
+            date = left.split("date=", 1)[-1].strip()
+            session = right.replace("session=", "", 1).strip()
+            if date and session:
+                out.add(_session_key(date, session))
+            continue
+
+        date = None
+        session = None
+        for sep in ("|", ",", ":"):
+            if sep in text:
+                date_part, session_part = text.split(sep, 1)
+                date = date_part.replace("date=", "", 1).strip()
+                session = session_part.replace("session=", "", 1).strip()
+                break
+
+        if date and session:
+            out.add(_session_key(date, session))
+    return out
 
 
 def _load_pickle(path: Path):
@@ -181,13 +228,27 @@ def _resolve_threshold(
     return float(threshold_factor) * float(np.mean(joint_density))
 
 
-def _resolve_period_figsize(plot_cfg: dict) -> tuple[list[float], int | None]:
-    """Resolve a readable figure size for two-row session traces."""
+def _resolve_period_figsize(
+    plot_cfg: dict,
+    settings: InteractivePeriodDetectionPlotSettings,
+) -> tuple[list[float], int | None]:
+    """Resolve figure size with half-letter-width defaults for session traces."""
     figsize, dpi = resolve_figsize(plot_cfg)
-    if figsize is None:
-        return [12.0, 6.0], dpi
-    width = max(float(figsize[0]), 9.0)
-    height = max(float(figsize[1]), 5.0)
+    width = float(settings.figure_width_in) if settings.figure_width_in is not None else None
+    height = float(settings.figure_height_in) if settings.figure_height_in is not None else None
+
+    if figsize is not None:
+        cfg_width = float(figsize[0])
+        cfg_height = float(figsize[1])
+        if width is None:
+            width = cfg_width
+        if height is None:
+            height = cfg_height
+
+    if width is None:
+        width = 4.25
+    if height is None:
+        height = 5.25
     return [width, height], dpi
 
 
@@ -286,6 +347,193 @@ def _build_tasks(
     return tasks
 
 
+def _save_figure(
+    fig: plt.Figure,
+    out_path: Path,
+    *,
+    ext: str,
+    settings: InteractivePeriodDetectionPlotSettings,
+) -> None:
+    """Save figure with PDF compression when applicable."""
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    if ext == "pdf":
+        with mpl.rc_context({"pdf.compression": int(settings.pdf_compression)}):
+            fig.savefig(out_path, format=ext)
+        return
+    fig.savefig(out_path, format=ext)
+
+
+def _render_period_figure(
+    *,
+    task: dict,
+    settings: InteractivePeriodDetectionPlotSettings,
+    figsize: list[float],
+    dpi: int | None,
+    sample_rate_hz: float,
+    duration_seconds: float,
+    m1_face_binary: np.ndarray,
+    m2_face_binary: np.ndarray,
+    m1_object_binary: np.ndarray,
+    x_m1_face: np.ndarray,
+    y_m1_face: np.ndarray,
+    x_m2_face: np.ndarray,
+    y_m2_face: np.ndarray,
+    x_m1_object: np.ndarray,
+    y_m1_object: np.ndarray,
+    x_joint: np.ndarray,
+    y_joint: np.ndarray,
+    interactive_periods: list[tuple[int, int]],
+    threshold: float,
+    line_rasterized: bool,
+    block_rasterized: bool,
+) -> plt.Figure:
+    """Build one interactive-period figure."""
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=figsize,
+        dpi=dpi,
+        squeeze=False,
+        sharex=True,
+        gridspec_kw={"height_ratios": [2, 3]},
+    )
+    ax_top = axes[0, 0]
+    ax_bottom = axes[1, 0]
+
+    colors = {
+        "m1_face": "#4C72B0",
+        "m2_face": "#DD8452",
+        "m1_object": "#55A868",
+        "joint": "#C62828",
+        "threshold": "#1A1A1A",
+        "interactive": "#F2A65A",
+    }
+
+    lane_specs = [
+        ("m1 face", m1_face_binary, colors["m1_face"], 2),
+        ("m2 face", m2_face_binary, colors["m2_face"], 1),
+        ("m1 object", m1_object_binary, colors["m1_object"], 0),
+    ]
+    for _, binary, color, lane in lane_specs:
+        segments = _binary_segments(binary, sample_rate_hz)
+        if segments:
+            ax_top.broken_barh(
+                segments,
+                (lane + 0.10, 0.80),
+                facecolors=color,
+                edgecolors=color,
+                linewidth=0.8,
+                alpha=0.95,
+                zorder=3,
+            )
+
+    ax_top.set_ylim(0.0, 3.0)
+    ax_top.set_yticks([2.5, 1.5, 0.5])
+    ax_top.set_yticklabels([spec[0] for spec in lane_specs])
+    if settings.show_grid:
+        ax_top.grid(axis="x", alpha=0.24, linewidth=0.6)
+    ax_top.tick_params(axis="x", labelbottom=False)
+    ax_top.set_xlim(0.0, duration_seconds)
+    ax_top.set_ylabel("Fixation")
+
+    for start, stop in interactive_periods:
+        start_sec = float(start) / sample_rate_hz
+        stop_sec = float(stop + 1) / sample_rate_hz
+        ax_bottom.axvspan(
+            start_sec,
+            stop_sec,
+            facecolor=colors["interactive"],
+            edgecolor="none",
+            alpha=0.60,
+            zorder=1,
+            rasterized=block_rasterized,
+        )
+
+    line_m1_face = ax_bottom.plot(
+        x_m1_face,
+        y_m1_face,
+        linestyle=":",
+        linewidth=1.2,
+        color=colors["m1_face"],
+        label="m1 face density",
+        zorder=2,
+        rasterized=line_rasterized,
+    )[0]
+    line_m2_face = ax_bottom.plot(
+        x_m2_face,
+        y_m2_face,
+        linestyle=":",
+        linewidth=1.2,
+        color=colors["m2_face"],
+        label="m2 face density",
+        zorder=2,
+        rasterized=line_rasterized,
+    )[0]
+    line_m1_object = ax_bottom.plot(
+        x_m1_object,
+        y_m1_object,
+        linestyle=":",
+        linewidth=1.2,
+        color=colors["m1_object"],
+        label="m1 object density",
+        zorder=2,
+        rasterized=line_rasterized,
+    )[0]
+    line_joint = ax_bottom.plot(
+        x_joint,
+        y_joint,
+        linestyle="-",
+        linewidth=2.4,
+        color=colors["joint"],
+        label="joint face density",
+        zorder=3,
+        rasterized=line_rasterized,
+    )[0]
+    line_threshold = ax_bottom.axhline(
+        y=float(threshold),
+        linestyle="--",
+        linewidth=1.4,
+        color=colors["threshold"],
+        label=f"threshold={float(threshold):.3f}",
+        zorder=4,
+    )
+
+    if settings.show_grid:
+        ax_bottom.grid(alpha=0.24, linewidth=0.6)
+    ax_bottom.set_xlim(0.0, duration_seconds)
+    ax_bottom.set_xlabel("Time (s)")
+    ax_bottom.set_ylabel("Density")
+
+    interactive_patch = Patch(
+        facecolor=colors["interactive"],
+        edgecolor="none",
+        alpha=0.20,
+        label=settings.interactive_label.replace("_", " "),
+    )
+    legend_ncol = 1 if float(figsize[0]) <= 5.0 else 2
+    ax_bottom.legend(
+        handles=[
+            interactive_patch,
+            line_m1_face,
+            line_m2_face,
+            line_m1_object,
+            line_joint,
+            line_threshold,
+        ],
+        loc="upper right",
+        fontsize=8.8,
+        frameon=True,
+        ncol=legend_ncol,
+    )
+
+    fig.suptitle(
+        f"Interactive period detection | date={task['date']} session={task['session']}",
+        fontsize=12,
+    )
+    fig.tight_layout()
+    return fig
+
+
 def _plot_single_period(
     task: dict,
     *,
@@ -294,8 +542,8 @@ def _plot_single_period(
     plot_cfg: dict,
     figsize: list[float],
     dpi: int | None,
-) -> Optional[Path]:
-    """Render one session plot and return output path."""
+) -> list[Path]:
+    """Render one session plot and return all written output paths."""
     apply_plotting_config(plot_cfg)
 
     m1_fix_vecs = _extract_vectors(_load_pickle(task["m1_fix_vec_path"]))
@@ -306,7 +554,7 @@ def _plot_single_period(
     periods_df = _coerce_period_table(_load_pickle(task["periods_path"]))
 
     if joint_density is None or joint_density.size == 0:
-        return None
+        return []
 
     arrays = [
         np.asarray(joint_density, dtype=float).reshape(-1),
@@ -324,7 +572,7 @@ def _plot_single_period(
 
     n_samples = min((arr.size for arr in arrays if arr.size > 0), default=0)
     if n_samples <= 0:
-        return None
+        return []
 
     joint_density = joint_density[:n_samples]
     m1_face_density = np.asarray(
@@ -392,164 +640,87 @@ def _plot_single_period(
         joint_density,
         max_points=int(settings.max_density_points),
     )
+    sample_rate_hz = float(settings.sample_rate_hz)
+    base_name = (
+        f"interactive_period_detection_date={task['date']}_session={task['session']}"
+    )
+    main_ext = _normalize_ext(settings.output_extension, fallback="png")
+    out_paths: list[Path] = []
 
-    fig, axes = plt.subplots(
-        2,
-        1,
+    fig = _render_period_figure(
+        task=task,
+        settings=settings,
         figsize=figsize,
         dpi=dpi,
-        squeeze=False,
-        sharex=True,
-        gridspec_kw={"height_ratios": [2, 3]},
+        sample_rate_hz=sample_rate_hz,
+        duration_seconds=duration_seconds,
+        m1_face_binary=m1_face_binary,
+        m2_face_binary=m2_face_binary,
+        m1_object_binary=m1_object_binary,
+        x_m1_face=x_m1_face,
+        y_m1_face=y_m1_face,
+        x_m2_face=x_m2_face,
+        y_m2_face=y_m2_face,
+        x_m1_object=x_m1_object,
+        y_m1_object=y_m1_object,
+        x_joint=x_joint,
+        y_joint=y_joint,
+        interactive_periods=interactive_periods,
+        threshold=threshold,
+        line_rasterized=line_rasterized,
+        block_rasterized=block_rasterized,
     )
-    ax_top = axes[0, 0]
-    ax_bottom = axes[1, 0]
+    main_path = out_dir / f"{base_name}.{main_ext}"
+    _save_figure(fig, main_path, ext=main_ext, settings=settings)
+    out_paths.append(main_path)
 
-    colors = {
-        "m1_face": "#4C72B0",
-        "m2_face": "#DD8452",
-        "m1_object": "#55A868",
-        "joint": "#C62828",
-        "threshold": "#1A1A1A",
-        "interactive": "#F2A65A",
-    }
+    example_keys = set(settings.example_session_keys)
+    task_key = _session_key(task["date"], task["session"])
+    is_example = bool(example_keys) and task_key in example_keys
+    if is_example:
+        example_dir_name = str(settings.example_sessions_subfolder).strip() or "example_sessions"
+        example_dir = out_dir / example_dir_name
+        example_png_path = example_dir / f"{base_name}.png"
+        _save_figure(fig, example_png_path, ext="png", settings=settings)
+        out_paths.append(example_png_path)
 
-    lane_specs = [
-        ("m1 face", m1_face_binary, colors["m1_face"], 2),
-        ("m2 face", m2_face_binary, colors["m2_face"], 1),
-        ("m1 object", m1_object_binary, colors["m1_object"], 0),
-    ]
-    for _, binary, color, lane in lane_specs:
-        segments = _binary_segments(binary, float(settings.sample_rate_hz))
-        if segments:
-            ax_top.broken_barh(
-                segments,
-                (lane + 0.10, 0.80),
-                facecolors=color,
-                edgecolors=color,
-                linewidth=0.8,
-                alpha=0.95,
-                zorder=3,
+        pdf_fig = fig
+        if bool(settings.example_pdf_force_vector):
+            pdf_fig = _render_period_figure(
+                task=task,
+                settings=settings,
+                figsize=figsize,
+                dpi=dpi,
+                sample_rate_hz=sample_rate_hz,
+                duration_seconds=duration_seconds,
+                m1_face_binary=m1_face_binary,
+                m2_face_binary=m2_face_binary,
+                m1_object_binary=m1_object_binary,
+                x_m1_face=x_m1_face,
+                y_m1_face=y_m1_face,
+                x_m2_face=x_m2_face,
+                y_m2_face=y_m2_face,
+                x_m1_object=x_m1_object,
+                y_m1_object=y_m1_object,
+                x_joint=x_joint,
+                y_joint=y_joint,
+                interactive_periods=interactive_periods,
+                threshold=threshold,
+                line_rasterized=False,
+                block_rasterized=False,
             )
+        example_pdf_path = example_dir / f"{base_name}.pdf"
+        _save_figure(pdf_fig, example_pdf_path, ext="pdf", settings=settings)
+        out_paths.append(example_pdf_path)
 
-    ax_top.set_ylim(0.0, 3.0)
-    ax_top.set_yticks([2.5, 1.5, 0.5])
-    ax_top.set_yticklabels([spec[0] for spec in lane_specs])
-    ax_top.grid(axis="x", alpha=0.24, linewidth=0.6)
-    ax_top.tick_params(axis="x", labelbottom=False)
-    ax_top.set_xlim(0.0, duration_seconds)
-    ax_top.set_ylabel("Fixation")
+        if pdf_fig is not fig:
+            plt.close(pdf_fig)
 
-    for start, stop in interactive_periods:
-        start_sec = float(start) / float(settings.sample_rate_hz)
-        stop_sec = float(stop + 1) / float(settings.sample_rate_hz)
-        ax_bottom.axvspan(
-            start_sec,
-            stop_sec,
-            facecolor=colors["interactive"],
-            edgecolor="none",
-            alpha=0.60,
-            zorder=1,
-            rasterized=block_rasterized,
-        )
-
-    line_m1_face = ax_bottom.plot(
-        x_m1_face,
-        y_m1_face,
-        linestyle=":",
-        linewidth=1.2,
-        color=colors["m1_face"],
-        label="m1 face density",
-        zorder=2,
-        rasterized=line_rasterized,
-    )[0]
-    line_m2_face = ax_bottom.plot(
-        x_m2_face,
-        y_m2_face,
-        linestyle=":",
-        linewidth=1.2,
-        color=colors["m2_face"],
-        label="m2 face density",
-        zorder=2,
-        rasterized=line_rasterized,
-    )[0]
-    line_m1_object = ax_bottom.plot(
-        x_m1_object,
-        y_m1_object,
-        linestyle=":",
-        linewidth=1.2,
-        color=colors["m1_object"],
-        label="m1 object density",
-        zorder=2,
-        rasterized=line_rasterized,
-    )[0]
-    line_joint = ax_bottom.plot(
-        x_joint,
-        y_joint,
-        linestyle="-",
-        linewidth=2.4,
-        color=colors["joint"],
-        label="joint face density",
-        zorder=3,
-        rasterized=line_rasterized,
-    )[0]
-    line_threshold = ax_bottom.axhline(
-        y=float(threshold),
-        linestyle="--",
-        linewidth=1.4,
-        color=colors["threshold"],
-        label=f"threshold={float(threshold):.3f}",
-        zorder=4,
-    )
-
-    ax_bottom.grid(alpha=0.24, linewidth=0.6)
-    ax_bottom.set_xlim(0.0, duration_seconds)
-    ax_bottom.set_xlabel("Time (s)")
-    ax_bottom.set_ylabel("Density")
-
-    interactive_patch = Patch(
-        facecolor=colors["interactive"],
-        edgecolor="none",
-        alpha=0.20,
-        label=settings.interactive_label.replace("_", " "),
-    )
-    ax_bottom.legend(
-        handles=[
-            interactive_patch,
-            line_m1_face,
-            line_m2_face,
-            line_m1_object,
-            line_joint,
-            line_threshold,
-        ],
-        loc="upper right",
-        fontsize=8.8,
-        frameon=True,
-        ncol=2,
-    )
-
-    fig.suptitle(
-        f"Interactive period detection | date={task['date']} session={task['session']}",
-        fontsize=12,
-    )
-    fig.tight_layout()
-
-    ext = str(settings.output_extension).lstrip(".").lower() or "pdf"
-    date_out_dir = out_dir / f"date={task['date']}"
-    out_path = date_out_dir / (
-        f"interactive_period_detection_date={task['date']}_session={task['session']}.{ext}"
-    )
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    if ext == "pdf":
-        with mpl.rc_context({"pdf.compression": int(settings.pdf_compression)}):
-            fig.savefig(out_path, format=ext)
-    else:
-        fig.savefig(out_path, format=ext)
     plt.close(fig)
-    return out_path
+    return out_paths
 
 
-def _plot_single_period_worker(args) -> Optional[Path]:
+def _plot_single_period_worker(args) -> list[Path]:
     """Worker wrapper for parallel session plotting."""
     task, settings, out_dir, plot_cfg, figsize, dpi = args
     return _plot_single_period(
@@ -578,13 +749,27 @@ def plot_interactive_period_detection(
         ),
         interactive_label=str(interactive_cfg.get("high_label", settings.interactive_label)),
         threshold_factor=float(interactive_cfg.get("threshold_factor", settings.threshold_factor)),
+        example_session_keys=tuple(
+            sorted(_normalize_example_session_keys(settings.example_session_keys))
+        ),
     )
 
     tasks = _build_tasks(cfg, resolved_settings)
+    if resolved_settings.example_session_keys:
+        selected_keys = set(resolved_settings.example_session_keys)
+        tasks = [
+            task
+            for task in tasks
+            if _session_key(task["date"], task["session"]) in selected_keys
+        ]
     if not tasks:
+        if resolved_settings.example_session_keys:
+            raise RuntimeError(
+                "No sessions matched --example-session keys with all required plotting inputs."
+            )
         raise RuntimeError("No sessions found with all required plotting inputs.")
 
-    figsize, dpi = _resolve_period_figsize(plot_cfg)
+    figsize, dpi = _resolve_period_figsize(plot_cfg, resolved_settings)
     out_dir = (
         build_analysis_output_dir(cfg, resolved_settings.analysis_subdir)
         / resolved_settings.output_subdir
@@ -592,7 +777,7 @@ def plot_interactive_period_detection(
     out_dir.mkdir(parents=True, exist_ok=True)
 
     if resolved_settings.test_single:
-        out_path = _plot_single_period(
+        out_paths = _plot_single_period(
             tasks[0],
             settings=resolved_settings,
             out_dir=out_dir,
@@ -600,7 +785,7 @@ def plot_interactive_period_detection(
             figsize=figsize,
             dpi=dpi,
         )
-        return [out_path] if out_path is not None else []
+        return sorted(set(Path(path) for path in out_paths), key=lambda path: str(path))
 
     worker_args = [
         (task, resolved_settings, out_dir, plot_cfg, figsize, dpi)
@@ -612,19 +797,17 @@ def plot_interactive_period_detection(
         n_proc = get_n_processes(max_procs=int(resolved_settings.max_parallel_workers))
         with Pool(processes=n_proc) as pool:
             iterator = pool.imap_unordered(_plot_single_period_worker, worker_args)
-            for out_path in tqdm(
+            for session_out_paths in tqdm(
                 iterator,
                 total=len(worker_args),
                 desc=f"Plotting interactive period detection ({n_proc} workers)",
                 unit="session",
             ):
-                if out_path is not None:
-                    out_paths.append(Path(out_path))
+                out_paths.extend(Path(path) for path in session_out_paths)
     else:
         for args in tqdm(worker_args, desc="Plotting interactive period detection", unit="session"):
-            out_path = _plot_single_period_worker(args)
-            if out_path is not None:
-                out_paths.append(Path(out_path))
+            session_out_paths = _plot_single_period_worker(args)
+            out_paths.extend(Path(path) for path in session_out_paths)
 
     out_paths = sorted(set(out_paths), key=lambda path: str(path))
     return out_paths
