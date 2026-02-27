@@ -21,6 +21,12 @@ def main() -> None:
     )
     parser.add_argument("--date", default=None)
     parser.add_argument("--session", default=None)
+    parser.add_argument("--pupil-modality", default=None)
+    parser.add_argument(
+        "--correlation-method",
+        default=None,
+        choices=["pearson", "spearman"],
+    )
     parser.add_argument("--use-parallel", action="store_true")
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
@@ -38,6 +44,7 @@ def main() -> None:
             "joint_face_fixation_density",
         ),
         face_label=cfg.get("face_label", "face"),
+        correlation_method=cfg.get("correlation_method", "pearson"),
         output_subdir=cfg.get(
             "output_subdir",
             "pupil_fixation_density_correlation",
@@ -55,6 +62,10 @@ def main() -> None:
         settings.use_parallel = True
     if args.test_single:
         settings.test_single = True
+    if args.pupil_modality:
+        settings.pupil_modality = args.pupil_modality
+    if args.correlation_method:
+        settings.correlation_method = args.correlation_method
 
     run_pupil_fixation_density_correlation_analysis(
         settings,

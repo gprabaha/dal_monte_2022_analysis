@@ -130,6 +130,7 @@ def _finite_array(values: np.ndarray) -> np.ndarray:
 def _pairwise_significant_comparisons(
     panel_df: pd.DataFrame,
     *,
+    value_column: str,
     alpha: float,
 ) -> list[dict]:
     """Compute pairwise significance and keep comparisons with p < alpha.
@@ -138,7 +139,7 @@ def _pairwise_significant_comparisons(
     Falls back to Welch two-sample t-test if date/session columns are absent.
     """
     tests: list[dict] = []
-    use_paired = {"date", "session", "density_source", "pearson_r"}.issubset(panel_df.columns)
+    use_paired = {"date", "session", "density_source", value_column}.issubset(panel_df.columns)
     pivot = None
     if use_paired:
         pivot = (
@@ -146,7 +147,7 @@ def _pairwise_significant_comparisons(
             .pivot_table(
                 index=["date", "session"],
                 columns="density_source",
-                values="pearson_r",
+                values=value_column,
                 aggfunc="mean",
             )
             .sort_index()
@@ -169,10 +170,10 @@ def _pairwise_significant_comparisons(
             )
         else:
             left = _finite_array(
-                panel_df.loc[panel_df["density_source"] == left_source, "pearson_r"].to_numpy(dtype=float)
+                panel_df.loc[panel_df["density_source"] == left_source, value_column].to_numpy(dtype=float)
             )
             right = _finite_array(
-                panel_df.loc[panel_df["density_source"] == right_source, "pearson_r"].to_numpy(dtype=float)
+                panel_df.loc[panel_df["density_source"] == right_source, value_column].to_numpy(dtype=float)
             )
             if left.size < 2 or right.size < 2:
                 continue
@@ -318,6 +319,7 @@ def _plot_panel(
     comparisons: list[dict],
     violin_cfg: dict,
     one_sample_stars_by_source: dict[str, str],
+    value_column: str,
 ) -> None:
     """Render one pupil-agent violin panel."""
     color_family = style["colors"]["m1_family"] if pupil_agent == "m1" else style["colors"]["m2_family"]
@@ -328,7 +330,7 @@ def _plot_panel(
     plot_rows: list[dict] = []
     for source in _SOURCE_ORDER:
         vals = _finite_array(
-            panel_df.loc[panel_df["density_source"] == source, "pearson_r"].to_numpy(dtype=float)
+            panel_df.loc[panel_df["density_source"] == source, value_column].to_numpy(dtype=float)
         )
         values_by_source[source] = vals
         if vals.size > 0:
@@ -336,7 +338,7 @@ def _plot_panel(
             for value in vals:
                 plot_rows.append({
                     "density_source": source,
-                    "pearson_r": float(value),
+                    "corr_value": float(value),
                 })
 
     if not plot_rows:
@@ -351,7 +353,7 @@ def _plot_panel(
         ax=ax,
         data=plot_df,
         x="density_source",
-        y="pearson_r",
+        y="corr_value",
         hue="density_source",
         order=order_sources,
         hue_order=order_sources,
@@ -442,7 +444,17 @@ def plot_pupil_fixation_density_correlation_violin(
     style = _resolve_style(plot_cfg)
 
     corr_df, out_path = _load_correlation_df(cfg, settings)
-    required_cols = {"pupil_agent", "density_source", "pearson_r"}
+    if "correlation_r" in corr_df.columns:
+        value_column = "correlation_r"
+    elif "pearson_r" in corr_df.columns:
+        value_column = "pearson_r"
+    else:
+        raise RuntimeError(
+            "Correlation table missing required value columns. Expected "
+            "'correlation_r' (preferred) or 'pearson_r' (legacy)."
+        )
+
+    required_cols = {"pupil_agent", "density_source", value_column}
     missing = required_cols.difference(corr_df.columns)
     if missing:
         raise RuntimeError(f"Correlation table missing required columns: {sorted(missing)}")
@@ -450,7 +462,19 @@ def plot_pupil_fixation_density_correlation_violin(
     corr_df = corr_df.copy()
     corr_df["pupil_agent"] = corr_df["pupil_agent"].astype(str).str.lower()
     corr_df["density_source"] = corr_df["density_source"].astype(str).str.lower()
-    corr_df["pearson_r"] = pd.to_numeric(corr_df["pearson_r"], errors="coerce")
+    corr_df[value_column] = pd.to_numeric(corr_df[value_column], errors="coerce")
+    corr_method = "pearson"
+    if "correlation_method" in corr_df.columns:
+        method_tokens = (
+            corr_df["correlation_method"]
+            .astype(str)
+            .str.strip()
+            .str.lower()
+            .replace({"nan": ""})
+        )
+        uniq = sorted(set([m for m in method_tokens if m]))
+        if uniq:
+            corr_method = uniq[0]
 
     corr_df = corr_df[
         corr_df["pupil_agent"].isin({"m1", "m2"})
@@ -464,7 +488,7 @@ def plot_pupil_fixation_density_correlation_violin(
         "m2": corr_df[corr_df["pupil_agent"] == "m2"].copy(),
     }
 
-    finite_values = _finite_array(corr_df["pearson_r"].to_numpy(dtype=float))
+    finite_values = _finite_array(corr_df[value_column].to_numpy(dtype=float))
     if finite_values.size == 0:
         raise RuntimeError("No finite correlation values found for plotting.")
 
@@ -475,7 +499,11 @@ def plot_pupil_fixation_density_correlation_violin(
 
     alpha = float(style["significance_alpha"])
     comparisons_by_panel = {
-        agent: _pairwise_significant_comparisons(panel_data[agent], alpha=alpha)
+        agent: _pairwise_significant_comparisons(
+            panel_data[agent],
+            value_column=value_column,
+            alpha=alpha,
+        )
         for agent in ("m1", "m2")
     }
     one_sample_stars_by_panel: dict[str, dict[str, str]] = {}
@@ -484,7 +512,7 @@ def plot_pupil_fixation_density_correlation_violin(
         for source in _SOURCE_ORDER:
             vals = panel_data[agent].loc[
                 panel_data[agent]["density_source"] == source,
-                "pearson_r",
+                value_column,
             ].to_numpy(dtype=float)
             one_sample_stars_by_panel[agent][source] = _one_sample_positive_stars(
                 vals,
@@ -529,6 +557,7 @@ def plot_pupil_fixation_density_correlation_violin(
         comparisons=comparisons_by_panel["m1"],
         violin_cfg=violin_cfg,
         one_sample_stars_by_source=one_sample_stars_by_panel["m1"],
+        value_column=value_column,
     )
     _plot_panel(
         axes[1],
@@ -541,9 +570,16 @@ def plot_pupil_fixation_density_correlation_violin(
         comparisons=comparisons_by_panel["m2"],
         violin_cfg=violin_cfg,
         one_sample_stars_by_source=one_sample_stars_by_panel["m2"],
+        value_column=value_column,
     )
 
-    axes[0].set_ylabel(str(settings.y_label))
+    y_label = str(settings.y_label)
+    if y_label == PupilFixationDensityCorrelationPlotSettings.y_label:
+        if corr_method == "spearman":
+            y_label = "Spearman rho (pupil vs face-fix density)"
+        else:
+            y_label = "Pearson r (pupil vs face-fix density)"
+    axes[0].set_ylabel(y_label)
     axes[1].set_ylabel("")
     fig.tight_layout()
 

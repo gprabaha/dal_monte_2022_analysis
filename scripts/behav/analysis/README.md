@@ -18,6 +18,8 @@ Scripts:
 - `build_pupil_fixation_density_correlation.py`
   Computes per-session correlations between each pupil trace (`m1`, `m2`) and each face fixation density trace (`m1`, `m2`, `joint`).
   Supports session-level parallelization via config (`use_parallel`, `parallel_max_procs`) or CLI `--use-parallel`.
+  Supports modality/method overrides (e.g., raw `pupil_size` and `spearman`) via
+  `--pupil-modality` and `--correlation-method`.
 - `hpc_face_fix_crosscorr_shuffle_worker.py`
   Worker script used by array jobs for shuffled within-session cross-correlation pairs.
 - `hpc_out_of_roi_fix_crosscorr_shuffle_worker.py`
@@ -29,6 +31,7 @@ Primary configs:
 - `configs/face_fix_cross_correlation.yaml`
 - `configs/out_of_roi_fix_cross_correlation.yaml`
 - `configs/pupil_fixation_density_correlation.yaml`
+- `configs/pupil_fixation_density_correlation_raw_spearman.yaml` (raw-pupil + spearman variant)
 - `configs/hpc_face_fix_cross_correlation_shuffle.yaml` (for `shuffle_submit_hpc` mode)
 - `configs/hpc_out_of_roi_fix_cross_correlation_shuffle.yaml` (for `shuffle_submit_hpc` mode)
 

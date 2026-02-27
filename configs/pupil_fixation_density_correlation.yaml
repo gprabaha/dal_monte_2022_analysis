@@ -4,6 +4,7 @@ pupil_modality: smoothed_pupil_size
 fixation_density_modality: fixation_density_vectors
 joint_fixation_density_modality: joint_face_fixation_density
 face_label: face
+correlation_method: pearson
 
 output_subdir: pupil_fixation_density_correlation
 output_filename: within_session_pupil_vs_face_fixation_density_correlation.csv

@@ -1,0 +1,18 @@
+# Variant config for artifact checks:
+# - raw pupil signal (no smoothing)
+# - rank-based correlation (Spearman)
+
+pupil_modality: pupil_size
+fixation_density_modality: fixation_density_vectors
+joint_fixation_density_modality: joint_face_fixation_density
+face_label: face
+correlation_method: spearman
+
+output_subdir: pupil_fixation_density_correlation
+output_filename: within_session_pupil_vs_face_fixation_density_correlation_raw_spearman.csv
+plot_output_filename: pupil_fixation_density_correlation_violin_raw_spearman.pdf
+
+use_parallel: true
+parallel_max_procs: 32
+
+test_single: false
