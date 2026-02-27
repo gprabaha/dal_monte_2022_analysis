@@ -7,6 +7,7 @@ face_label: face
 
 output_subdir: pupil_fixation_density_correlation
 output_filename: within_session_pupil_vs_face_fixation_density_correlation.csv
+plot_output_filename: pupil_fixation_density_correlation_violin.pdf
 
 use_parallel: true
 parallel_max_procs: 32

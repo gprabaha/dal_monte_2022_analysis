@@ -174,7 +174,7 @@ def _truthy_interactive(value, interactive_label: str) -> bool:
     if isinstance(value, (int, np.integer)):
         return int(value) != 0
     if isinstance(value, (float, np.floating)):
-        return float(value) != 0.0
+        return float(value) != 0.0d
     token = str(value).strip().lower()
     return token in {
         "1",

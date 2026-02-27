@@ -92,3 +92,39 @@ violin:
     joint: "#E07B39"
     leader: "#4C72B0"
     follower: "#DD8452"
+
+# Pupil vs fixation-density correlation violin style.
+pupil_fixation_density_correlation:
+  # Fit roughly half of a US letter page width.
+  figsize: [4.2, 2.8]
+  y_max_ticks: 5
+  significance_alpha: 0.05
+  violin_width: 0.78
+  violin_edgecolor: "#1F1F1F"
+  violin_linewidth: 0.8
+  xtick_label_rotation: 20.0
+  xtick_label_ha: right
+  panel_titles:
+    m1: "m1 pupil"
+    m2: "m2 pupil"
+  colors:
+    m1_family: "#2abcb1"
+    m2_family: "#4b3b7d"
+  # Own-density violin is fully opaque, other-density is lighter, joint is intermediate.
+  alphas:
+    own: 1.0
+    other: 0.30
+    joint: 0.65
+  significance:
+    line_color: "#111111"
+    line_width: 0.9
+    text_size: 9
+    text_pad_frac: 0.012
+    bar_height_frac: 0.020
+    top_pad_frac: 0.050
+    step_frac: 0.080
+  zero_line:
+    color: "#1a1a1a"
+    linewidth: 0.9
+    linestyle: "-"
+  y_margin_frac_bottom: 0.08
