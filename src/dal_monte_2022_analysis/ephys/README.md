@@ -31,6 +31,9 @@ Current analysis utility:
 - `analysis/fixation_selectivity.py`
   Tests per-unit fixation-category selectivity for interactive face,
   non-interactive face, and object across multiple PSTH windows.
+- `analysis/fixation_neural_cross_correlation.py`
+  Computes fixation-level neural PSTH cross-correlations for within-region
+  and cross-region unit pairs (FFT-based xcorr per fixation/pair).
 
 Current plotting utility:
 - `plotting/fixation_psth.py`

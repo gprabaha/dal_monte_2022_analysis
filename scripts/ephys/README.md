@@ -18,6 +18,8 @@ Current implemented step:
 - `features/build_period_psth_trials.py`
 - `features/build_fixation_psth_averages.py`
 - `analysis/build_fixation_selective_units.py`
+- `analysis/build_within_region_fixation_neural_cross_correlation.py`
+- `analysis/build_cross_region_fixation_neural_cross_correlation.py`
 - `plotting/plot_fixation_psth_units.py`
 - `plotting/plot_period_psth_units.py`
 - `plotting/plot_fixation_selectivity_venn.py`

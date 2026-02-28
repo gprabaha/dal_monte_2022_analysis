@@ -44,6 +44,10 @@ With current settings, processed outputs are written under:
 - `face_fix_cross_correlation.yaml`
 - `out_of_roi_fix_cross_correlation.yaml`
 - `face_fixation_hsmm.yaml`
+- `ephys_fixation_neural_cross_correlation.yaml`
+  Settings for fixation-level neural PSTH cross-correlation outputs:
+  - within-region unit pairs (`nC2` within each region)
+  - cross-region unit pairs (`anchor_region` x `partner_regions`)
 
 Cross-correlation configs also hold optional leader-follower settings used by:
 - `scripts/behav/analysis/build_face_fix_crosscorr_leader_follower.py`

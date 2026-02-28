@@ -178,3 +178,8 @@ def load_ephys_fixation_psth_config(path: str | Path) -> dict[str, Any]:
 def load_ephys_period_psth_config(path: str | Path) -> dict[str, Any]:
     """Compatibility wrapper for generic config loading."""
     return load_config(path, config_type="generic")
+
+
+def load_ephys_fixation_neural_cross_correlation_config(path: str | Path) -> dict[str, Any]:
+    """Compatibility wrapper for generic config loading."""
+    return load_config(path, config_type="generic")

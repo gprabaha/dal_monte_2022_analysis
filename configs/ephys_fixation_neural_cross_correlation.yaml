@@ -1,0 +1,34 @@
+# configs/ephys_fixation_neural_cross_correlation.yaml
+# Settings for fixation-level neural PSTH cross-correlation analyses.
+
+# Input fixation PSTH trials (stored under processed_data_root).
+trial_input_modality: psth
+trial_input_filename: fixations.pkl
+
+# Outputs (stored under analysis_output_root).
+# Within-region and cross-region analyses are written separately.
+within_output_subdir: ephys/psth/fixation_neural_crosscorr/within_region
+cross_output_subdir: ephys/psth/fixation_neural_crosscorr/cross_region
+within_output_filename: fixations.pkl
+cross_output_filename: fixations.pkl
+
+# Region selection.
+# Cross-region analysis computes anchor_region x partner_regions neuron pairs.
+# Within-region analysis computes nC2 pairs for each included region.
+anchor_region: BLA
+partner_regions: [ACCg, dmPFC, OFC]
+# Optional global filter for unit regions before pair building.
+# Set null to keep all regions from the fixation PSTH trial rows.
+include_regions: [BLA, ACCg, dmPFC, OFC]
+
+# Signal processing and lag window.
+# signal_transform options: none | demean | zscore
+signal_transform: zscore
+# null keeps the full lag span for each pair.
+max_lag: null
+
+# Parallel/task controls.
+use_parallel: true
+max_procs: 16
+pair_chunk_size: 64
+test_single: false

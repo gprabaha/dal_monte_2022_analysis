@@ -174,7 +174,7 @@ def _truthy_interactive(value, interactive_label: str) -> bool:
     if isinstance(value, (int, np.integer)):
         return int(value) != 0
     if isinstance(value, (float, np.floating)):
-        return float(value) != 0.0d
+        return float(value) != 0.0
     token = str(value).strip().lower()
     return token in {
         "1",
@@ -565,4 +565,3 @@ def run_fixation_selectivity_analysis(
     }
     _save_pickle(result_obj, result_pkl)
     return result_obj
-

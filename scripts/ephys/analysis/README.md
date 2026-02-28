@@ -10,6 +10,12 @@ Current scripts:
   - `peri_fix` (-250 ms to 250 ms)
   - `post_fix` (0 ms to 500 ms)
   Pair is selective if any window is significant.
+- `build_within_region_fixation_neural_cross_correlation.py`
+  Computes fixation-level neural PSTH cross-correlations for within-region
+  unit pairs (nC2 per region per fixation).
+- `build_cross_region_fixation_neural_cross_correlation.py`
+  Computes fixation-level neural PSTH cross-correlations for cross-region
+  unit pairs (anchor-region units x partner-region units per fixation).
 
 Config:
 - `configs/ephys_fixation_psth.yaml`
@@ -23,3 +29,16 @@ Config:
   - `selective_min_trials_per_condition`
   - `selective_use_parallel`
   - `selective_windows_ms`
+- `configs/ephys_fixation_neural_cross_correlation.yaml`
+  - `trial_input_modality`
+  - `trial_input_filename`
+  - `within_output_subdir` / `cross_output_subdir`
+  - `within_output_filename` / `cross_output_filename`
+  - `anchor_region`
+  - `partner_regions`
+  - `include_regions`
+  - `signal_transform`
+  - `max_lag`
+  - `use_parallel`
+  - `max_procs`
+  - `pair_chunk_size`
