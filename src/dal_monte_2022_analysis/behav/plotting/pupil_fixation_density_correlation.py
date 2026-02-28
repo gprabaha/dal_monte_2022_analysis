@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -125,6 +124,39 @@ def _finite_array(values: np.ndarray) -> np.ndarray:
     """Return finite values as 1D float array."""
     arr = np.asarray(values, dtype=float).reshape(-1)
     return arr[np.isfinite(arr)]
+
+
+def _resolve_y_tick_step(
+    y_min: float,
+    y_max: float,
+    style: dict,
+) -> float:
+    """Choose a regular y-tick step (0.15 or 0.2 by default)."""
+    explicit = style.get("y_tick_step")
+    if explicit is not None:
+        step = float(explicit)
+        if step > 0:
+            return step
+    span = float(max(y_max - y_min, 1e-9))
+    return 0.15 if span <= 1.2 else 0.2
+
+
+def _build_regular_ticks_with_zero(
+    y_min: float,
+    y_max: float,
+    *,
+    step: float,
+) -> np.ndarray:
+    """Build regular y ticks that always include 0."""
+    step = float(max(step, 1e-9))
+    start = float(np.floor(y_min / step) * step)
+    stop = float(np.ceil(y_max / step) * step)
+    ticks = np.arange(start, stop + 0.5 * step, step, dtype=float)
+    if ticks.size == 0:
+        ticks = np.asarray([0.0], dtype=float)
+    if not np.any(np.isclose(ticks, 0.0, atol=step * 1e-6)):
+        ticks = np.sort(np.append(ticks, 0.0))
+    return np.round(ticks, 6)
 
 
 def _pairwise_significant_comparisons(
@@ -384,9 +416,8 @@ def _plot_panel(
     )
     ax.set_ylim(y_min, y_max)
     ax.grid(False)
-    ax.yaxis.set_major_locator(
-        mticker.LinearLocator(numticks=max(2, int(style["y_max_ticks"])))
-    )
+    tick_step = _resolve_y_tick_step(y_min, y_max, style)
+    ax.set_yticks(_build_regular_ticks_with_zero(y_min, y_max, step=tick_step))
 
     zero_cfg = style["zero_line"]
     zero_line = ax.axhline(
