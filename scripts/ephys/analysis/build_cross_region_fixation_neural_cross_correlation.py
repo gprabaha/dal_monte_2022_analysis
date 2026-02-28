@@ -135,10 +135,12 @@ def main() -> None:
         anchor_region=cfg.get("anchor_region", "BLA"),
         partner_regions=cfg.get("partner_regions", ("ACCg", "dmPFC", "OFC")),
         include_regions=cfg.get("include_regions"),
+        roi_groups=cfg.get("roi_groups"),
         signal_transform=cfg.get("signal_transform", "zscore"),
         max_lag=cfg.get("max_lag"),
         use_parallel=cfg.get("use_parallel", True),
-        max_procs=cfg.get("max_procs", 16),
+        max_procs=cfg.get("max_procs", 32),
+        parallelize_across_sessions=cfg.get("parallelize_across_sessions", True),
         pair_chunk_size=cfg.get("pair_chunk_size", 64),
         test_single=cfg.get("test_single", False),
     )

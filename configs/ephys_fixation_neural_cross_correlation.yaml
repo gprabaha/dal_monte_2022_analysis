@@ -20,6 +20,12 @@ partner_regions: [ACCg, dmPFC, OFC]
 # Optional global filter for unit regions before pair building.
 # Set null to keep all regions from the fixation PSTH trial rows.
 include_regions: [BLA, ACCg, dmPFC, OFC]
+# Canonical fixation category mapping retained in outputs (`fixation_category`)
+# even when `fixation_location` stores ROI lists.
+roi_groups:
+  face: [face, mouth, eyes_nf]
+  object: [right_nonsocial_object, left_nonsocial_object]
+  out_of_roi: [out_of_roi]
 
 # Signal processing and lag window.
 # signal_transform options: none | demean | zscore
@@ -29,6 +35,8 @@ max_lag: null
 
 # Parallel/task controls.
 use_parallel: true
-max_procs: 16
+max_procs: 32
+# Parallelize across sessions (each session computes fixation-neuron pairs serially).
+parallelize_across_sessions: true
 pair_chunk_size: 64
 test_single: false

@@ -5,7 +5,7 @@ from __future__ import annotations
 import pickle
 import random
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Optional, Sequence
@@ -23,6 +23,11 @@ WITHIN_ANALYSIS_KIND = "within_region"
 CROSS_ANALYSIS_KIND = "cross_region"
 _ALLOWED_SIGNAL_TRANSFORMS = {"none", "demean", "zscore"}
 _REGION_TOKEN_RE = re.compile(r"[^a-z0-9]+")
+DEFAULT_FIXATION_ROI_GROUPS: dict[str, tuple[str, ...]] = {
+    "face": ("face", "mouth", "eyes_nf"),
+    "object": ("right_nonsocial_object", "left_nonsocial_object"),
+    "out_of_roi": ("out_of_roi",),
+}
 
 
 @dataclass
@@ -39,10 +44,14 @@ class FixationNeuralCrossCorrelationSettings:
     anchor_region: str = "BLA"
     partner_regions: Optional[Sequence[str]] = ("ACCg", "dmPFC", "OFC")
     include_regions: Optional[Sequence[str]] = None
+    roi_groups: dict[str, Sequence[str]] = field(
+        default_factory=lambda: {k: tuple(v) for k, v in DEFAULT_FIXATION_ROI_GROUPS.items()},
+    )
     signal_transform: str = "zscore"
     max_lag: Optional[int] = None
     use_parallel: bool = True
-    max_procs: int = 16
+    max_procs: int = 32
+    parallelize_across_sessions: bool = True
     pair_chunk_size: int = 64
     test_single: bool = False
 
@@ -162,6 +171,53 @@ def _validate_signal_transform(transform: str) -> str:
     return token
 
 
+def _normalize_roi_groups(groups: Optional[dict[str, Sequence[str]]]) -> dict[str, list[str]]:
+    if not groups:
+        return {k: [str(v) for v in vals] for k, vals in DEFAULT_FIXATION_ROI_GROUPS.items()}
+    out: dict[str, list[str]] = {}
+    for group_name, labels in groups.items():
+        if labels is None:
+            continue
+        if isinstance(labels, (str, bytes)):
+            label_list = [str(labels)]
+        else:
+            label_list = [str(label) for label in labels]
+        out[str(group_name)] = [label.lower() for label in label_list if label]
+    for name, labels in DEFAULT_FIXATION_ROI_GROUPS.items():
+        out.setdefault(name, [str(v).lower() for v in labels])
+    return out
+
+
+def _canonical_fixation_category(value: Optional[str]) -> Optional[str]:
+    token = _as_optional_str(value)
+    if token is None:
+        return None
+    normalized = token.strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "face": "face",
+        "object": "object",
+        "out_of_roi": "out_of_roi",
+        "outofroi": "out_of_roi",
+        "outside_roi": "out_of_roi",
+    }
+    return aliases.get(normalized, None)
+
+
+def _infer_fixation_category_from_locations(
+    locations: tuple[str, ...],
+    roi_groups: dict[str, list[str]],
+) -> Optional[str]:
+    labels = [str(loc).lower() for loc in locations]
+    for group in ("face", "object", "out_of_roi"):
+        keywords = roi_groups.get(group, [])
+        if not keywords:
+            continue
+        for label in labels:
+            if any(keyword in label for keyword in keywords):
+                return group
+    return None
+
+
 def _iter_trial_files(
     cfg: dict,
     settings: FixationNeuralCrossCorrelationSettings,
@@ -221,13 +277,16 @@ def _build_fixation_key_and_meta(
     *,
     default_date: str,
     default_session: str,
+    roi_groups: dict[str, list[str]],
 ) -> tuple[tuple, dict]:
     date = _as_optional_str(getattr(row, "date", None)) or str(default_date)
     session = _as_optional_str(getattr(row, "session", None)) or str(default_session)
     fixation_agent = _as_optional_str(getattr(row, "fixation_agent", None))
     fixation_monkey_name = _as_optional_str(getattr(row, "fixation_monkey_name", None))
-    fixation_category = _as_optional_str(getattr(row, "fixation_category", None))
     fixation_location = _coerce_location_tuple(getattr(row, "fixation_location", None))
+    fixation_category = _canonical_fixation_category(getattr(row, "fixation_category", None))
+    if fixation_category is None:
+        fixation_category = _infer_fixation_category_from_locations(fixation_location, roi_groups)
     fixation_start_idx = _safe_int(getattr(row, "fixation_start_idx", None))
     fixation_stop_idx = _safe_int(getattr(row, "fixation_stop_idx", None))
     fixation_start_time_s = _safe_float(getattr(row, "fixation_start_time_s", None))
@@ -270,6 +329,7 @@ def _collect_fixation_groups(
     default_date: str,
     default_session: str,
     include_region_keys: Optional[set[str]],
+    roi_groups: dict[str, list[str]],
 ) -> list[dict]:
     grouped: dict[tuple, dict] = {}
     order: list[tuple] = []
@@ -297,6 +357,7 @@ def _collect_fixation_groups(
             row_index,
             default_date=default_date,
             default_session=default_session,
+            roi_groups=roi_groups,
         )
         if key not in grouped:
             fixation_meta["fixation_id"] = int(len(order))
@@ -599,6 +660,7 @@ def build_fixation_neural_cross_correlations_for_session(
     session_row: dict,
     *,
     analysis_kind: str,
+    show_progress: bool = True,
 ) -> Optional[dict]:
     """Compute fixation-level neural cross-correlations for one session file."""
     signal_transform = _validate_signal_transform(settings.signal_transform)
@@ -610,11 +672,13 @@ def build_fixation_neural_cross_correlations_for_session(
         return None
 
     include_region_keys = _normalize_region_keys(settings.include_regions)
+    roi_groups = _normalize_roi_groups(settings.roi_groups)
     fixation_groups = _collect_fixation_groups(
         trial_df,
         default_date=str(session_row["date"]),
         default_session=str(session_row["session"]),
         include_region_keys=include_region_keys,
+        roi_groups=roi_groups,
     )
     if not fixation_groups:
         return None
@@ -654,12 +718,14 @@ def build_fixation_neural_cross_correlations_for_session(
                 pair_tasks,
                 chunksize=chunk_size,
             )
-            for result in tqdm(
-                iterator,
-                total=len(pair_tasks),
-                desc=f"{analysis_kind} xcorr {session_row['date']}-{session_row['session']} ({n_proc} workers)",
-                unit="pair",
-            ):
+            if show_progress:
+                iterator = tqdm(
+                    iterator,
+                    total=len(pair_tasks),
+                    desc=f"{analysis_kind} xcorr {session_row['date']}-{session_row['session']} ({n_proc} workers)",
+                    unit="pair",
+                )
+            for result in iterator:
                 if result is None:
                     continue
                 lags = np.asarray(result.pop("lags"), dtype=np.int64)
@@ -670,11 +736,14 @@ def build_fixation_neural_cross_correlations_for_session(
                 rows.append(result)
     else:
         _init_pair_worker(fixation_meta, signal_entries, signal_transform, max_lag)
-        for task in tqdm(
-            pair_tasks,
-            desc=f"{analysis_kind} xcorr {session_row['date']}-{session_row['session']}",
-            unit="pair",
-        ):
+        iterator = pair_tasks
+        if show_progress:
+            iterator = tqdm(
+                iterator,
+                desc=f"{analysis_kind} xcorr {session_row['date']}-{session_row['session']}",
+                unit="pair",
+            )
+        for task in iterator:
             result = _compute_pair_xcorr_worker(task)
             if result is None:
                 continue
@@ -727,12 +796,14 @@ def process_and_save_fixation_neural_cross_correlations_for_session(
     session_row: dict,
     *,
     analysis_kind: str,
+    show_progress: bool = True,
 ) -> Optional[dict]:
     """Build and persist fixation-level neural cross-correlation output for one session."""
     data = build_fixation_neural_cross_correlations_for_session(
         settings,
         session_row,
         analysis_kind=analysis_kind,
+        show_progress=show_progress,
     )
     if data is None:
         return None
@@ -747,6 +818,24 @@ def process_and_save_fixation_neural_cross_correlations_for_session(
     )
     _save_pickle(data, out_path)
     return data
+
+
+def _process_and_save_session_worker(
+    args: tuple[FixationNeuralCrossCorrelationSettings, dict, str],
+) -> int:
+    settings, session_row, analysis_kind = args
+    local_settings = replace(
+        settings,
+        use_parallel=False,
+        test_single=False,
+    )
+    data = process_and_save_fixation_neural_cross_correlations_for_session(
+        local_settings,
+        session_row,
+        analysis_kind=analysis_kind,
+        show_progress=False,
+    )
+    return 1 if data is not None else 0
 
 
 def _run_fixation_neural_cross_correlation_analysis(
@@ -773,18 +862,38 @@ def _run_fixation_neural_cross_correlation_analysis(
         session_rows = [random.choice(session_rows)]
 
     n_written = 0
-    for session_row in tqdm(
-        session_rows,
-        desc=f"{analysis_kind} sessions",
-        unit="session",
-    ):
-        data = process_and_save_fixation_neural_cross_correlations_for_session(
-            settings,
-            session_row,
-            analysis_kind=analysis_kind,
-        )
-        if data is not None:
-            n_written += 1
+    run_session_pool = bool(
+        settings.use_parallel
+        and settings.parallelize_across_sessions
+        and len(session_rows) > 1
+    )
+    if run_session_pool:
+        n_proc = get_n_processes(max_procs=settings.max_procs)
+        worker_tasks = [(settings, row, analysis_kind) for row in session_rows]
+        with Pool(processes=n_proc) as pool:
+            iterator = pool.imap_unordered(_process_and_save_session_worker, worker_tasks, chunksize=1)
+            for wrote in tqdm(
+                iterator,
+                total=len(worker_tasks),
+                desc=f"{analysis_kind} sessions ({n_proc} workers)",
+                unit="session",
+            ):
+                n_written += int(wrote)
+    else:
+        local_settings = replace(settings, use_parallel=False)
+        for session_row in tqdm(
+            session_rows,
+            desc=f"{analysis_kind} sessions",
+            unit="session",
+        ):
+            data = process_and_save_fixation_neural_cross_correlations_for_session(
+                local_settings,
+                session_row,
+                analysis_kind=analysis_kind,
+                show_progress=True,
+            )
+            if data is not None:
+                n_written += 1
 
     return {
         "n_sessions_total": int(len(session_rows)),

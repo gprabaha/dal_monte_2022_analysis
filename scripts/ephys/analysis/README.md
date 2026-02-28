@@ -37,8 +37,10 @@ Config:
   - `anchor_region`
   - `partner_regions`
   - `include_regions`
+  - `roi_groups`
   - `signal_transform`
   - `max_lag`
   - `use_parallel`
+  - `parallelize_across_sessions`
   - `max_procs`
   - `pair_chunk_size`
