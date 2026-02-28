@@ -21,7 +21,9 @@ from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 WITHIN_ANALYSIS_KIND = "within_region"
 CROSS_ANALYSIS_KIND = "cross_region"
+_PLOT_ALLOWED_ANALYSIS_KINDS = (WITHIN_ANALYSIS_KIND, CROSS_ANALYSIS_KIND)
 _ALLOWED_SIGNAL_TRANSFORMS = {"none", "demean", "zscore"}
+_PLOT_CONDITION_ORDER = ("face_interactive", "face_non_interactive", "object")
 _REGION_TOKEN_RE = re.compile(r"[^a-z0-9]+")
 DEFAULT_FIXATION_ROI_GROUPS: dict[str, tuple[str, ...]] = {
     "face": ("face", "mouth", "eyes_nf"),
@@ -56,6 +58,21 @@ class FixationNeuralCrossCorrelationSettings:
     test_single: bool = False
 
 
+@dataclass
+class FixationNeuralCrossCorrelationPlotAggregationSettings:
+    """Configuration for analysis-side aggregation used by plotting."""
+
+    cfg_path: str
+    within_input_subdir: str = "ephys/psth/fixation_neural_crosscorr/within_region"
+    cross_input_subdir: str = "ephys/psth/fixation_neural_crosscorr/cross_region"
+    within_input_filename: str = "fixations.pkl"
+    cross_input_filename: str = "fixations.pkl"
+    face_label: str = "face"
+    object_label: str = "object"
+    interactive_label: str = "interactive"
+    condition_order: Sequence[str] = field(default_factory=lambda: tuple(_PLOT_CONDITION_ORDER))
+
+
 def _load_pickle(path: Path):
     with open(path, "rb") as f:
         return pickle.load(f)
@@ -86,7 +103,7 @@ def _as_optional_str(value: object) -> Optional[str]:
     return token or None
 
 
-def _as_bool(value: object) -> bool:
+def _as_bool(value: object, interactive_label: Optional[str] = None) -> bool:
     if value is None:
         return False
     if isinstance(value, (bool, np.bool_)):
@@ -96,7 +113,10 @@ def _as_bool(value: object) -> bool:
     if isinstance(value, (float, np.floating)):
         return float(value) != 0.0
     token = str(value).strip().lower()
-    return token in {"1", "true", "t", "yes", "y", "interactive"}
+    accepted = {"1", "true", "t", "yes", "y", "interactive"}
+    if interactive_label is not None:
+        accepted.add(str(interactive_label).strip().lower())
+    return token in accepted
 
 
 def _safe_int(value: object) -> Optional[int]:
@@ -262,6 +282,103 @@ def _extract_trials_df_and_meta(obj) -> tuple[pd.DataFrame, dict]:
     if isinstance(obj, pd.DataFrame):
         return obj, {}
     return pd.DataFrame(), {}
+
+
+def _iter_analysis_rows(
+    cfg: dict,
+    *,
+    subdir: str,
+    filename: str,
+    dates: Optional[Sequence[str]] = None,
+    sessions: Optional[Sequence[str]] = None,
+) -> list[dict]:
+    root = Path(cfg["analysis_output_root"]) / subdir
+    pattern = root / "date=*" / "session=*" / _ensure_pkl_filename(filename)
+
+    date_filter = None if dates is None else {str(val) for val in dates}
+    session_filter = None if sessions is None else {str(val) for val in sessions}
+
+    rows: list[dict] = []
+    for path in root.glob(str(pattern.relative_to(root))):
+        parts = path.parts
+        date_part = next((part for part in parts if part.startswith("date=")), None)
+        session_part = next((part for part in parts if part.startswith("session=")), None)
+        if date_part is None or session_part is None:
+            continue
+
+        date = date_part.split("=", 1)[1]
+        session = session_part.split("=", 1)[1]
+        if date_filter is not None and date not in date_filter:
+            continue
+        if session_filter is not None and session not in session_filter:
+            continue
+        rows.append({"date": date, "session": session, "path": path})
+
+    rows.sort(key=lambda row: (row["date"], row["session"]))
+    return rows
+
+
+def _extract_xcorr_dataframes_and_meta(obj) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    if isinstance(obj, dict) and "cross_correlations" in obj:
+        xcorr_df = obj["cross_correlations"]
+        pair_avg_df = obj.get("pair_averages")
+        meta = obj.get("meta", {}) or {}
+        return (
+            xcorr_df if isinstance(xcorr_df, pd.DataFrame) else pd.DataFrame(),
+            pair_avg_df if isinstance(pair_avg_df, pd.DataFrame) else pd.DataFrame(),
+            meta,
+        )
+    if isinstance(obj, pd.DataFrame):
+        return obj, pd.DataFrame(), {}
+    return pd.DataFrame(), pd.DataFrame(), {}
+
+
+def _resolve_plot_condition_from_row(
+    row,
+    *,
+    face_label: str,
+    object_label: str,
+    interactive_label: str,
+) -> Optional[str]:
+    category = _canonical_fixation_category(getattr(row, "fixation_category", None))
+    if category is None:
+        return None
+
+    if category == str(object_label):
+        return "object"
+    if category != str(face_label):
+        return None
+
+    if hasattr(row, "is_interactive"):
+        interactive = _as_bool(getattr(row, "is_interactive"), interactive_label)
+    else:
+        interactive = _as_bool(getattr(row, "interactive_state", None), interactive_label)
+    return "face_interactive" if interactive else "face_non_interactive"
+
+
+def _normalize_region_pair_label(region_1: Optional[str], region_2: Optional[str]) -> str:
+    left = _as_optional_str(region_1) or "unknown_1"
+    right = _as_optional_str(region_2) or "unknown_2"
+    return f"{left}__{right}"
+
+
+def _append_trace_sum(
+    accum: dict[tuple, list[object]],
+    key: tuple,
+    trace: np.ndarray,
+    *,
+    weight: float = 1.0,
+) -> None:
+    if key not in accum:
+        accum[key] = [np.zeros(trace.size, dtype=np.float64), 0.0]
+    bucket = accum[key]
+    if bucket[0].shape != trace.shape:
+        raise ValueError("Encountered mismatched cross-correlation trace lengths while aggregating.")
+    scalar = float(weight)
+    if not np.isfinite(scalar) or scalar <= 0.0:
+        return
+    bucket[0] += np.asarray(trace, dtype=np.float64) * scalar
+    bucket[1] = float(bucket[1]) + scalar
 
 
 def _resolve_region_for_row(row) -> Optional[str]:
@@ -634,6 +751,438 @@ def _sort_result_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df.sort_values(available).reset_index(drop=True)
 
 
+def _build_session_pair_average_dataframe(
+    xcorr_df: pd.DataFrame,
+    *,
+    analysis_kind: str,
+    lags: Optional[np.ndarray],
+    face_label: str,
+    object_label: str,
+    interactive_label: str,
+) -> pd.DataFrame:
+    if xcorr_df.empty or "cross_correlation" not in xcorr_df.columns:
+        return pd.DataFrame()
+
+    lags_ref = np.asarray(lags, dtype=np.int64).reshape(-1) if lags is not None else None
+    lags_shape = None if lags_ref is None else lags_ref.shape
+    trace_accum: dict[tuple, list[object]] = {}
+    for xrow in xcorr_df.itertuples(index=False):
+        condition = _resolve_plot_condition_from_row(
+            xrow,
+            face_label=face_label,
+            object_label=object_label,
+            interactive_label=interactive_label,
+        )
+        if condition is None:
+            continue
+
+        trace = np.asarray(getattr(xrow, "cross_correlation"), dtype=np.float64).reshape(-1)
+        if trace.size == 0:
+            continue
+        if lags_shape is not None and lags_shape != trace.shape:
+            continue
+
+        region_1 = _as_optional_str(getattr(xrow, "region_1", None)) or "unknown_1"
+        region_2 = _as_optional_str(getattr(xrow, "region_2", None)) or "unknown_2"
+        unit_uuid_1 = _as_optional_str(getattr(xrow, "unit_uuid_1", None)) or "unknown_unit_1"
+        unit_uuid_2 = _as_optional_str(getattr(xrow, "unit_uuid_2", None)) or "unknown_unit_2"
+        date = str(_as_optional_str(getattr(xrow, "date", None)) or "unknown_date")
+        session = str(_as_optional_str(getattr(xrow, "session", None)) or "unknown_session")
+
+        if analysis_kind == WITHIN_ANALYSIS_KIND:
+            group_label = region_1
+            pair_key = (date, session, group_label, region_1, region_1, unit_uuid_1, unit_uuid_2, condition)
+        elif analysis_kind == CROSS_ANALYSIS_KIND:
+            group_label = _normalize_region_pair_label(region_1, region_2)
+            pair_key = (date, session, group_label, region_1, region_2, unit_uuid_1, unit_uuid_2, condition)
+        else:
+            raise ValueError(f"Unsupported analysis kind '{analysis_kind}' for session pair averages.")
+
+        _append_trace_sum(trace_accum, pair_key, trace, weight=1.0)
+
+    rows: list[dict] = []
+    for key, (trace_sum, n_fix) in trace_accum.items():
+        if float(n_fix) <= 0.0:
+            continue
+
+        date, session, group_label, region_1, region_2, unit_uuid_1, unit_uuid_2, condition = key
+        pair_avg = np.asarray(trace_sum, dtype=np.float64) / float(n_fix)
+        if lags_ref is not None and lags_ref.size == pair_avg.size:
+            summary = _summarize_cross_correlation(lags_ref, pair_avg)
+        else:
+            summary = {
+                "n_lags": int(pair_avg.size),
+                "zero_lag_correlation": None,
+                "peak_lag": None,
+                "peak_correlation": float(np.max(pair_avg)) if pair_avg.size else None,
+            }
+
+        rows.append(
+            {
+                "analysis_kind": analysis_kind,
+                "date": date,
+                "session": session,
+                "group_label": group_label,
+                "condition": condition,
+                "region_1": region_1,
+                "region_2": region_2,
+                "unit_uuid_1": unit_uuid_1,
+                "unit_uuid_2": unit_uuid_2,
+                "n_fixations": int(round(float(n_fix))),
+                "cross_correlation": pair_avg.astype(np.float32),
+                **summary,
+            }
+        )
+
+    if not rows:
+        return pd.DataFrame()
+
+    out = pd.DataFrame(rows)
+    sort_cols = [
+        "date",
+        "session",
+        "group_label",
+        "region_1",
+        "unit_uuid_1",
+        "region_2",
+        "unit_uuid_2",
+        "condition",
+    ]
+    available = [col for col in sort_cols if col in out.columns]
+    if available:
+        out = out.sort_values(available).reset_index(drop=True)
+    return out
+
+
+def _aggregate_pair_averages_for_plotting(
+    settings: FixationNeuralCrossCorrelationPlotAggregationSettings,
+    *,
+    kind: str,
+    rows: Sequence[dict],
+    show_progress: bool,
+) -> tuple[dict, dict, Optional[np.ndarray], Optional[float], dict[str, int]]:
+    if not rows:
+        return {}, {}, None, None, {
+            "files": 0,
+            "files_using_pair_averages": 0,
+            "rows": 0,
+            "used_rows": 0,
+            "skipped_rows": 0,
+        }
+
+    lag_axis_ref: Optional[np.ndarray] = None
+    bin_size_ms_ref: Optional[float] = None
+    date_pair_accum: dict[tuple, list[object]] = {}
+    kind_label = "within-region" if kind == WITHIN_ANALYSIS_KIND else "cross-region"
+    valid_conditions = set(settings.condition_order)
+
+    counts = {
+        "files": 0,
+        "files_using_pair_averages": 0,
+        "rows": 0,
+        "used_rows": 0,
+        "skipped_rows": 0,
+    }
+
+    file_iter = rows
+    if show_progress:
+        file_iter = tqdm(rows, total=len(rows), desc=f"Aggregate {kind_label} files", unit="file")
+    for row in file_iter:
+        counts["files"] += 1
+        obj = _load_pickle(Path(row["path"]))
+        xcorr_df, pair_avg_df, meta = _extract_xcorr_dataframes_and_meta(obj)
+        has_pair_averages = bool(
+            not pair_avg_df.empty
+            and "cross_correlation" in pair_avg_df.columns
+            and "condition" in pair_avg_df.columns
+            and "n_fixations" in pair_avg_df.columns
+        )
+        if has_pair_averages:
+            counts["files_using_pair_averages"] += 1
+        source_df = pair_avg_df if has_pair_averages else xcorr_df
+        if source_df.empty or "cross_correlation" not in source_df.columns:
+            continue
+
+        local_lags = np.asarray(meta.get("lags", []), dtype=np.int64).reshape(-1)
+        if local_lags.size == 0 and "lags" in xcorr_df.columns and len(xcorr_df):
+            local_lags = np.asarray(xcorr_df.iloc[0]["lags"], dtype=np.int64).reshape(-1)
+        if local_lags.size == 0:
+            continue
+
+        if lag_axis_ref is None:
+            lag_axis_ref = local_lags
+        elif lag_axis_ref.shape != local_lags.shape or not np.array_equal(lag_axis_ref, local_lags):
+            print(f"[plot-xcorr] skipping file due to lag mismatch: {row['path']}")
+            continue
+
+        local_bin_size_ms = meta.get("bin_size_ms")
+        if local_bin_size_ms is not None:
+            try:
+                local_bin_size_ms = float(local_bin_size_ms)
+                if np.isfinite(local_bin_size_ms):
+                    if bin_size_ms_ref is None:
+                        bin_size_ms_ref = local_bin_size_ms
+                    elif not np.isclose(bin_size_ms_ref, local_bin_size_ms):
+                        bin_size_ms_ref = None
+            except Exception:
+                pass
+
+        date = str(row["date"])
+        for xrow in source_df.itertuples(index=False):
+            counts["rows"] += 1
+            trace = np.asarray(getattr(xrow, "cross_correlation"), dtype=np.float64).reshape(-1)
+            if lag_axis_ref is None or trace.shape != lag_axis_ref.shape:
+                counts["skipped_rows"] += 1
+                continue
+
+            if has_pair_averages:
+                condition = _as_optional_str(getattr(xrow, "condition", None))
+                if condition is None or condition not in valid_conditions:
+                    counts["skipped_rows"] += 1
+                    continue
+                weight = _safe_float(getattr(xrow, "n_fixations", None))
+                if weight is None or weight <= 0.0:
+                    counts["skipped_rows"] += 1
+                    continue
+            else:
+                condition = _resolve_plot_condition_from_row(
+                    xrow,
+                    face_label=settings.face_label,
+                    object_label=settings.object_label,
+                    interactive_label=settings.interactive_label,
+                )
+                weight = 1.0
+            if condition is None:
+                counts["skipped_rows"] += 1
+                continue
+
+            if kind == WITHIN_ANALYSIS_KIND:
+                region = _as_optional_str(getattr(xrow, "region_1", None))
+                group_label = region or "unknown_region"
+                pair_id = (
+                    _as_optional_str(getattr(xrow, "unit_uuid_1", None)) or "unknown_unit_1",
+                    _as_optional_str(getattr(xrow, "unit_uuid_2", None)) or "unknown_unit_2",
+                )
+            else:
+                region_1 = _as_optional_str(getattr(xrow, "region_1", None))
+                region_2 = _as_optional_str(getattr(xrow, "region_2", None))
+                group_label = _normalize_region_pair_label(region_1, region_2)
+                pair_id = (
+                    region_1 or "unknown_1",
+                    region_2 or "unknown_2",
+                    _as_optional_str(getattr(xrow, "unit_uuid_1", None)) or "unknown_unit_1",
+                    _as_optional_str(getattr(xrow, "unit_uuid_2", None)) or "unknown_unit_2",
+                )
+
+            key = (kind, date, group_label, condition, pair_id)
+            _append_trace_sum(date_pair_accum, key, trace, weight=float(weight))
+            counts["used_rows"] += 1
+
+        if show_progress and counts["files"] % 16 == 0 and hasattr(file_iter, "set_postfix"):
+            file_iter.set_postfix(
+                rows=counts["rows"],
+                used=counts["used_rows"],
+                skipped=counts["skipped_rows"],
+                refresh=False,
+            )
+
+    if lag_axis_ref is None:
+        return {}, {}, None, None, counts
+
+    date_plot_map: dict[tuple[str, str, str], dict[str, list[np.ndarray]]] = {}
+    global_plot_map: dict[tuple[str, str], dict[str, list[np.ndarray]]] = {}
+    pair_items = date_pair_accum.items()
+    if show_progress:
+        pair_items = tqdm(
+            pair_items,
+            total=len(date_pair_accum),
+            desc=f"Assemble {kind_label} pair averages",
+            unit="pair",
+        )
+    for key, (trace_sum, n) in pair_items:
+        if int(n) <= 0:
+            continue
+        kind_key, date, group_label, condition, _pair_id = key
+        pair_avg = (np.asarray(trace_sum, dtype=np.float64) / float(n)).astype(np.float64)
+
+        date_bucket = date_plot_map.setdefault(
+            (kind_key, date, group_label),
+            {name: [] for name in settings.condition_order},
+        )
+        date_bucket.setdefault(condition, []).append(pair_avg)
+
+        global_bucket = global_plot_map.setdefault(
+            (kind_key, group_label),
+            {name: [] for name in settings.condition_order},
+        )
+        global_bucket.setdefault(condition, []).append(pair_avg)
+
+    return date_plot_map, global_plot_map, lag_axis_ref, bin_size_ms_ref, counts
+
+
+def _build_plot_x_axis(
+    lags: Optional[np.ndarray],
+    bin_size_ms: Optional[float],
+) -> tuple[np.ndarray, str]:
+    if lags is None:
+        return np.array([], dtype=float), "Lag"
+    if bin_size_ms is None:
+        return np.asarray(lags, dtype=float), "Lag (bins)"
+    return np.asarray(lags, dtype=float) * float(bin_size_ms) / 1000.0, "Lag (s)"
+
+
+def _normalize_plot_analysis_kinds(
+    analysis_kinds: Optional[Sequence[str]],
+) -> tuple[str, ...]:
+    if analysis_kinds is None:
+        return tuple(_PLOT_ALLOWED_ANALYSIS_KINDS)
+    normalized: list[str] = []
+    for kind in analysis_kinds:
+        token = str(kind).strip()
+        if token not in _PLOT_ALLOWED_ANALYSIS_KINDS:
+            allowed = ", ".join(_PLOT_ALLOWED_ANALYSIS_KINDS)
+            raise ValueError(
+                f"Unsupported analysis kind for plot payload '{kind}'. Expected one of: {allowed}.",
+            )
+        normalized.append(token)
+    if not normalized:
+        raise ValueError("analysis_kinds cannot be empty.")
+    return tuple(dict.fromkeys(normalized))
+
+
+def build_fixation_neural_cross_correlation_plot_payload(
+    settings: FixationNeuralCrossCorrelationPlotAggregationSettings,
+    *,
+    dates: Optional[Sequence[str]] = None,
+    sessions: Optional[Sequence[str]] = None,
+    analysis_kinds: Optional[Sequence[str]] = None,
+    show_progress: bool = True,
+) -> dict:
+    """Aggregate fixation neural xcorr outputs into plot-ready date/global maps."""
+    cfg = load_config(settings.cfg_path)
+    selected_kinds = set(_normalize_plot_analysis_kinds(analysis_kinds))
+
+    empty_counts = {
+        "files": 0,
+        "files_using_pair_averages": 0,
+        "rows": 0,
+        "used_rows": 0,
+        "skipped_rows": 0,
+    }
+
+    within_date_map: dict[tuple[str, str, str], dict[str, list[np.ndarray]]] = {}
+    within_global_map: dict[tuple[str, str], dict[str, list[np.ndarray]]] = {}
+    within_lags: Optional[np.ndarray] = None
+    within_bin_ms: Optional[float] = None
+    within_counts = dict(empty_counts)
+
+    cross_date_map: dict[tuple[str, str, str], dict[str, list[np.ndarray]]] = {}
+    cross_global_map: dict[tuple[str, str], dict[str, list[np.ndarray]]] = {}
+    cross_lags: Optional[np.ndarray] = None
+    cross_bin_ms: Optional[float] = None
+    cross_counts = dict(empty_counts)
+
+    if WITHIN_ANALYSIS_KIND in selected_kinds:
+        within_rows = _iter_analysis_rows(
+            cfg,
+            subdir=settings.within_input_subdir,
+            filename=settings.within_input_filename,
+            dates=dates,
+            sessions=sessions,
+        )
+        within_date_map, within_global_map, within_lags, within_bin_ms, within_counts = (
+            _aggregate_pair_averages_for_plotting(
+                settings,
+                kind=WITHIN_ANALYSIS_KIND,
+                rows=within_rows,
+                show_progress=show_progress,
+            )
+        )
+
+    if CROSS_ANALYSIS_KIND in selected_kinds:
+        cross_rows = _iter_analysis_rows(
+            cfg,
+            subdir=settings.cross_input_subdir,
+            filename=settings.cross_input_filename,
+            dates=dates,
+            sessions=sessions,
+        )
+        cross_date_map, cross_global_map, cross_lags, cross_bin_ms, cross_counts = (
+            _aggregate_pair_averages_for_plotting(
+                settings,
+                kind=CROSS_ANALYSIS_KIND,
+                rows=cross_rows,
+                show_progress=show_progress,
+            )
+        )
+
+    x_axes: dict[str, np.ndarray] = {}
+    x_labels: dict[str, str] = {}
+    if WITHIN_ANALYSIS_KIND in selected_kinds:
+        within_x, within_x_label = _build_plot_x_axis(within_lags, within_bin_ms)
+        x_axes[WITHIN_ANALYSIS_KIND] = within_x
+        x_labels[WITHIN_ANALYSIS_KIND] = within_x_label
+    if CROSS_ANALYSIS_KIND in selected_kinds:
+        cross_x, cross_x_label = _build_plot_x_axis(cross_lags, cross_bin_ms)
+        x_axes[CROSS_ANALYSIS_KIND] = cross_x
+        x_labels[CROSS_ANALYSIS_KIND] = cross_x_label
+
+    date_plot_map: dict[tuple[str, str, str], dict[str, list[np.ndarray]]] = {}
+    if WITHIN_ANALYSIS_KIND in selected_kinds:
+        date_plot_map.update(within_date_map)
+    if CROSS_ANALYSIS_KIND in selected_kinds:
+        date_plot_map.update(cross_date_map)
+
+    global_plot_map: dict[tuple[str, str], dict[str, list[np.ndarray]]] = {}
+    if WITHIN_ANALYSIS_KIND in selected_kinds:
+        global_plot_map.update(within_global_map)
+    if CROSS_ANALYSIS_KIND in selected_kinds:
+        global_plot_map.update(cross_global_map)
+
+    return {
+        "cfg": cfg,
+        "analysis_kinds": tuple(sorted(selected_kinds)),
+        "date_plot_map": date_plot_map,
+        "global_plot_map": global_plot_map,
+        "x_axes": x_axes,
+        "x_labels": x_labels,
+        "within_counts": within_counts,
+        "cross_counts": cross_counts,
+    }
+
+
+def build_within_region_fixation_neural_cross_correlation_plot_payload(
+    settings: FixationNeuralCrossCorrelationPlotAggregationSettings,
+    *,
+    dates: Optional[Sequence[str]] = None,
+    sessions: Optional[Sequence[str]] = None,
+    show_progress: bool = True,
+) -> dict:
+    return build_fixation_neural_cross_correlation_plot_payload(
+        settings,
+        dates=dates,
+        sessions=sessions,
+        analysis_kinds=(WITHIN_ANALYSIS_KIND,),
+        show_progress=show_progress,
+    )
+
+
+def build_cross_region_fixation_neural_cross_correlation_plot_payload(
+    settings: FixationNeuralCrossCorrelationPlotAggregationSettings,
+    *,
+    dates: Optional[Sequence[str]] = None,
+    sessions: Optional[Sequence[str]] = None,
+    show_progress: bool = True,
+) -> dict:
+    return build_fixation_neural_cross_correlation_plot_payload(
+        settings,
+        dates=dates,
+        sessions=sessions,
+        analysis_kinds=(CROSS_ANALYSIS_KIND,),
+        show_progress=show_progress,
+    )
+
+
 def _build_session_output_path(
     cfg: dict,
     settings: FixationNeuralCrossCorrelationSettings,
@@ -758,6 +1307,14 @@ def build_fixation_neural_cross_correlations_for_session(
         return None
 
     result_df = _sort_result_dataframe(pd.DataFrame(rows))
+    pair_averages_df = _build_session_pair_average_dataframe(
+        result_df,
+        analysis_kind=analysis_kind,
+        lags=lag_axis,
+        face_label="face",
+        object_label="object",
+        interactive_label="interactive",
+    )
 
     meta = {
         "analysis_kind": analysis_kind,
@@ -778,6 +1335,7 @@ def build_fixation_neural_cross_correlations_for_session(
         "n_fixations_with_pairs": int(n_fixations_with_pairs),
         "n_pairs_requested": int(len(pair_tasks)),
         "n_pairs_computed": int(len(result_df)),
+        "n_pair_averages": int(len(pair_averages_df)),
         "lags": lag_axis,
     }
 
@@ -788,6 +1346,7 @@ def build_fixation_neural_cross_correlations_for_session(
     return {
         "meta": meta,
         "cross_correlations": result_df,
+        "pair_averages": pair_averages_df,
     }
 
 

@@ -13,9 +13,15 @@ Current scripts:
 - `build_within_region_fixation_neural_cross_correlation.py`
   Computes fixation-level neural PSTH cross-correlations for within-region
   unit pairs (nC2 per region per fixation).
+  Output pickle stores:
+  - `cross_correlations` (per-fixation pair traces)
+  - `pair_averages` (per-session pair averages by condition)
 - `build_cross_region_fixation_neural_cross_correlation.py`
   Computes fixation-level neural PSTH cross-correlations for cross-region
   unit pairs (anchor-region units x partner-region units per fixation).
+  Output pickle stores:
+  - `cross_correlations` (per-fixation pair traces)
+  - `pair_averages` (per-session pair averages by condition)
 
 Config:
 - `configs/ephys_fixation_psth.yaml`

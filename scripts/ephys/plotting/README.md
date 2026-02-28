@@ -98,3 +98,51 @@ Config:
   - `selective_example_significance_alpha`
   - `selective_example_significance_test`
   - `selective_example_significance_min_trials_per_condition`
+
+- `plot_within_region_fixation_neural_cross_correlation.py`
+  Within-region neural xcorr summary plotting:
+  - date-level (PNG): one figure per date and region
+  - global-level (PDF): one figure per region across all dates
+
+- `plot_cross_region_fixation_neural_cross_correlation.py`
+  Cross-region neural xcorr summary plotting:
+  - date-level (PNG): one figure per date and ordered region pair
+  - global-level (PDF): one figure per ordered region pair across all dates
+
+- `plot_fixation_neural_cross_correlation.py`
+  Combined neural xcorr summary plotting (within + cross) with optional filter:
+  - `--analysis-kind both|within|cross`
+  - same date/global outputs as above
+  - uses stored `pair_averages` from analysis outputs when available
+    (falls back to per-fixation `cross_correlations`)
+
+  Each figure has 3 condition panels:
+  - face interactive
+  - face non-interactive
+  - object
+
+  In each panel:
+  - background: individual neural-pair average traces (low alpha)
+  - foreground: mean trace across neural pairs (bold)
+
+  Config:
+  - `configs/ephys_fixation_neural_cross_correlation.yaml`
+  - `plot_output_subdir`
+  - `plot_date_output_extension`
+  - `plot_region_output_extension`
+  - `plot_date_output_dpi`
+  - `plot_region_output_dpi`
+  - `plot_date_figsize`
+  - `plot_region_figsize`
+  - `plot_condition_order`
+  - `plot_condition_labels`
+  - `plot_condition_colors`
+  - `plot_pair_trace_alpha`
+  - `plot_pair_trace_linewidth`
+  - `plot_mean_trace_linewidth`
+  - `plot_use_parallel`
+  - `plot_max_procs`
+  - `plot_parallelize_date_plots`
+  - `plot_parallelize_global_plots`
+  - `plot_max_pair_traces_per_plot`
+  - `plot_max_points_per_pdf_trace`

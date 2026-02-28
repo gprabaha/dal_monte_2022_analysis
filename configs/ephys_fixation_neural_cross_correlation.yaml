@@ -40,3 +40,35 @@ max_procs: 32
 parallelize_across_sessions: true
 pair_chunk_size: 64
 test_single: false
+
+# Plotting outputs from neural cross-correlation summaries.
+# Date-level plots: PNG per date and region/region-pair.
+# Global-level plots: PDF per region/region-pair across all dates.
+plot_output_subdir: ephys/psth/fixation_neural_crosscorr/plots
+plot_date_output_extension: png
+plot_region_output_extension: pdf
+plot_date_output_dpi: 220
+plot_region_output_dpi: 220
+plot_date_figsize: [12.0, 4.0]
+plot_region_figsize: [12.0, 4.0]
+plot_condition_order: [face_interactive, face_non_interactive, object]
+plot_condition_labels:
+  face_interactive: Face (interactive)
+  face_non_interactive: Face (non-interactive)
+  object: Object
+plot_condition_colors:
+  face_interactive: "#d62728"
+  face_non_interactive: "#1f77b4"
+  object: "#2ca02c"
+plot_pair_trace_alpha: 0.12
+plot_pair_trace_linewidth: 0.75
+plot_mean_trace_linewidth: 2.2
+plot_use_parallel: true
+plot_max_procs: 32
+plot_parallelize_date_plots: true
+plot_parallelize_global_plots: true
+# null -> keep all pair traces
+plot_max_pair_traces_per_plot: null
+# Optional vector-size control for PDF outputs. null -> keep full lag resolution.
+plot_max_points_per_pdf_trace: null
+plot_random_seed: 13

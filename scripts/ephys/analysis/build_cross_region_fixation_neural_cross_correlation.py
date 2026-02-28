@@ -46,9 +46,12 @@ def _print_example(path: Path, *, max_lags: int = 12) -> None:
     if isinstance(obj, dict) and "cross_correlations" in obj:
         meta = obj.get("meta", {})
         df = obj["cross_correlations"]
+        pair_avg_df = obj.get("pair_averages")
+        n_pair_avg_rows = len(pair_avg_df) if isinstance(pair_avg_df, pd.DataFrame) else 0
     elif isinstance(obj, pd.DataFrame):
         meta = {}
         df = obj
+        n_pair_avg_rows = 0
     else:
         print(f"[example] Unsupported output object type: {type(obj)}")
         return
@@ -64,13 +67,15 @@ def _print_example(path: Path, *, max_lags: int = 12) -> None:
     print("\nExample cross-region neural xcorr output:")
     print(f"  file: {path}")
     print(f"  n_rows: {len(df)}")
+    print(f"  n_pair_average_rows: {n_pair_avg_rows}")
     if meta:
         print(
             "  meta: "
             f"anchor_region={meta.get('anchor_region')}, "
             f"partner_regions={meta.get('partner_regions')}, "
             f"signal_transform={meta.get('signal_transform')}, "
-            f"max_lag={meta.get('max_lag')}"
+            f"max_lag={meta.get('max_lag')}, "
+            f"n_pair_averages={meta.get('n_pair_averages')}"
         )
     print(
         "  sample_row: "

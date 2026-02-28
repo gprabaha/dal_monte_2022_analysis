@@ -24,3 +24,6 @@ Current implemented step:
 - `plotting/plot_period_psth_units.py`
 - `plotting/plot_fixation_selectivity_venn.py`
 - `plotting/plot_selective_fixation_psth_units.py`
+- `plotting/plot_fixation_neural_cross_correlation.py`
+- `plotting/plot_within_region_fixation_neural_cross_correlation.py`
+- `plotting/plot_cross_region_fixation_neural_cross_correlation.py`
