@@ -101,13 +101,17 @@ Config:
 
 - `plot_within_region_fixation_neural_cross_correlation.py`
   Within-region neural xcorr summary plotting:
-  - date-level (PNG): one figure per date and region
-  - global-level (PDF): one figure per region across all dates
+  - date-level (PNG): one figure per date for `pairs` and one for `mean`,
+    each containing all regions as subplots
+  - global-level (PDF): one figure for `pairs` and one for `mean`,
+    each containing all regions as subplots
 
 - `plot_cross_region_fixation_neural_cross_correlation.py`
   Cross-region neural xcorr summary plotting:
-  - date-level (PNG): one figure per date and ordered region pair
-  - global-level (PDF): one figure per ordered region pair across all dates
+  - date-level (PNG): one figure per date for `pairs` and one for `mean`,
+    each containing all ordered region pairs as subplots
+  - global-level (PDF): one figure for `pairs` and one for `mean`,
+    each containing all ordered region pairs as subplots
 
 - `plot_fixation_neural_cross_correlation.py`
   Combined neural xcorr summary plotting (within + cross) with optional filter:
@@ -116,17 +120,19 @@ Config:
   - uses stored `pair_averages` from analysis outputs when available
     (falls back to per-fixation `cross_correlations`)
 
-  Each figure has 3 condition panels:
+  In each subplot, all 3 fixation-condition traces are overlaid in the same axis:
   - face interactive
   - face non-interactive
   - object
-
-  In each panel:
-  - background: individual neural-pair average traces (low alpha)
-  - foreground: mean trace across neural pairs (bold)
+  The script writes separate files for:
+  - `pairs` (individual neural-pair traces)
+  - `mean` (condition means across neural pairs)
+  Date-level files include `date=<date>` in filename (not date subfolders).
+  PNG outputs are saved with white background.
 
   Config:
   - `configs/ephys_fixation_neural_cross_correlation.yaml`
+  - `within_pair_average_output_filename` / `cross_pair_average_output_filename`
   - `plot_output_subdir`
   - `plot_date_output_extension`
   - `plot_region_output_extension`
@@ -140,6 +146,9 @@ Config:
   - `plot_pair_trace_alpha`
   - `plot_pair_trace_linewidth`
   - `plot_mean_trace_linewidth`
+  - `plot_subplot_ncols`
+  - `plot_normalize_traces`
+  - `plot_normalization_method`
   - `plot_use_parallel`
   - `plot_max_procs`
   - `plot_parallelize_date_plots`

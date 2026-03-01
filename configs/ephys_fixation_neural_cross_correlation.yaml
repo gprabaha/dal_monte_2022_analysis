@@ -11,6 +11,8 @@ within_output_subdir: ephys/psth/fixation_neural_crosscorr/within_region
 cross_output_subdir: ephys/psth/fixation_neural_crosscorr/cross_region
 within_output_filename: fixations.pkl
 cross_output_filename: fixations.pkl
+within_pair_average_output_filename: pair_averages.pkl
+cross_pair_average_output_filename: pair_averages.pkl
 
 # Region selection.
 # Cross-region analysis computes anchor_region x partner_regions neuron pairs.
@@ -30,6 +32,9 @@ roi_groups:
 # Signal processing and lag window.
 # signal_transform options: none | demean | zscore
 signal_transform: zscore
+# xcorr_normalization options: none | energy
+# `energy` scales each pair trace by ||x||*||y|| during xcorr computation.
+xcorr_normalization: energy
 # null keeps the full lag span for each pair.
 max_lag: null
 
@@ -63,6 +68,10 @@ plot_condition_colors:
 plot_pair_trace_alpha: 0.12
 plot_pair_trace_linewidth: 0.75
 plot_mean_trace_linewidth: 2.2
+plot_subplot_ncols: 3
+# Keep false because cross-correlation traces are normalized at analysis time.
+plot_normalize_traces: false
+plot_normalization_method: max_abs
 plot_use_parallel: true
 plot_max_procs: 32
 plot_parallelize_date_plots: true

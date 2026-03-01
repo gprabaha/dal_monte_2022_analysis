@@ -74,6 +74,7 @@ def _print_example(path: Path, *, max_lags: int = 12) -> None:
             f"anchor_region={meta.get('anchor_region')}, "
             f"partner_regions={meta.get('partner_regions')}, "
             f"signal_transform={meta.get('signal_transform')}, "
+            f"xcorr_normalization={meta.get('xcorr_normalization')}, "
             f"max_lag={meta.get('max_lag')}, "
             f"n_pair_averages={meta.get('n_pair_averages')}"
         )
@@ -118,6 +119,11 @@ def main() -> None:
         choices=["none", "demean", "zscore"],
         default=None,
     )
+    parser.add_argument(
+        "--xcorr-normalization",
+        choices=["none", "energy"],
+        default=None,
+    )
     parser.add_argument("--no-show-example", action="store_true")
     parser.add_argument("--example-max-lags", type=int, default=12)
     args = parser.parse_args()
@@ -137,11 +143,14 @@ def main() -> None:
         ),
         within_output_filename=cfg.get("within_output_filename", "fixations.pkl"),
         cross_output_filename=cfg.get("cross_output_filename", "fixations.pkl"),
+        within_pair_average_output_filename=cfg.get("within_pair_average_output_filename", "pair_averages.pkl"),
+        cross_pair_average_output_filename=cfg.get("cross_pair_average_output_filename", "pair_averages.pkl"),
         anchor_region=cfg.get("anchor_region", "BLA"),
         partner_regions=cfg.get("partner_regions", ("ACCg", "dmPFC", "OFC")),
         include_regions=cfg.get("include_regions"),
         roi_groups=cfg.get("roi_groups"),
         signal_transform=cfg.get("signal_transform", "zscore"),
+        xcorr_normalization=cfg.get("xcorr_normalization", "energy"),
         max_lag=cfg.get("max_lag"),
         use_parallel=cfg.get("use_parallel", True),
         max_procs=cfg.get("max_procs", 32),
@@ -166,6 +175,8 @@ def main() -> None:
         settings.max_lag = max(0, int(args.max_lag))
     if args.signal_transform is not None:
         settings.signal_transform = args.signal_transform
+    if args.xcorr_normalization is not None:
+        settings.xcorr_normalization = args.xcorr_normalization
 
     summary = run_cross_region_fixation_neural_cross_correlation(
         settings,

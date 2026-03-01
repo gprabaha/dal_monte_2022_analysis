@@ -40,11 +40,13 @@ Config:
   - `trial_input_filename`
   - `within_output_subdir` / `cross_output_subdir`
   - `within_output_filename` / `cross_output_filename`
+  - `within_pair_average_output_filename` / `cross_pair_average_output_filename`
   - `anchor_region`
   - `partner_regions`
   - `include_regions`
   - `roi_groups`
   - `signal_transform`
+  - `xcorr_normalization`
   - `max_lag`
   - `use_parallel`
   - `parallelize_across_sessions`

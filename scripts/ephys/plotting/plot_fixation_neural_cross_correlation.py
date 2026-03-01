@@ -43,6 +43,9 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
     parser.add_argument("--region-figsize", nargs=2, type=float, default=None)
     parser.add_argument("--max-pair-traces", type=int, default=None)
     parser.add_argument("--max-points-per-pdf-trace", type=int, default=None)
+    parser.add_argument("--subplot-ncols", type=int, default=None)
+    parser.add_argument("--normalize-traces", action="store_true")
+    parser.add_argument("--normalization-method", choices=["none", "max_abs", "zscore"], default=None)
     parser.add_argument("--max-procs", type=int, default=None)
     parser.add_argument("--no-parallel", action="store_true")
     parser.add_argument("--no-parallel-date-plots", action="store_true")
@@ -70,6 +73,14 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
         ),
         within_input_filename=cfg.get("within_output_filename", "fixations.pkl"),
         cross_input_filename=cfg.get("cross_output_filename", "fixations.pkl"),
+        within_pair_average_input_filename=cfg.get(
+            "within_pair_average_output_filename",
+            "pair_averages.pkl",
+        ),
+        cross_pair_average_input_filename=cfg.get(
+            "cross_pair_average_output_filename",
+            "pair_averages.pkl",
+        ),
         output_subdir=cfg.get(
             "plot_output_subdir",
             "ephys/psth/fixation_neural_crosscorr/plots",
@@ -108,6 +119,9 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
         mean_trace_linewidth=cfg.get("plot_mean_trace_linewidth", 2.2),
         max_pair_traces_per_plot=cfg.get("plot_max_pair_traces_per_plot"),
         max_points_per_pdf_trace=cfg.get("plot_max_points_per_pdf_trace"),
+        normalize_traces=cfg.get("plot_normalize_traces", False),
+        normalization_method=cfg.get("plot_normalization_method", "max_abs"),
+        subplot_ncols=cfg.get("plot_subplot_ncols", 3),
         use_parallel=cfg.get("plot_use_parallel", True),
         max_procs=cfg.get("plot_max_procs", 16),
         parallelize_date_plots=cfg.get("plot_parallelize_date_plots", True),
@@ -134,6 +148,12 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
         settings.max_pair_traces_per_plot = int(args.max_pair_traces)
     if args.max_points_per_pdf_trace is not None:
         settings.max_points_per_pdf_trace = int(args.max_points_per_pdf_trace)
+    if args.subplot_ncols is not None:
+        settings.subplot_ncols = max(1, int(args.subplot_ncols))
+    if args.normalize_traces:
+        settings.normalize_traces = True
+    if args.normalization_method is not None:
+        settings.normalization_method = str(args.normalization_method)
     if args.max_procs is not None:
         settings.max_procs = int(args.max_procs)
     if args.no_parallel:
@@ -161,11 +181,31 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
 
     date_outputs = result.get("date_outputs", [])
     global_outputs = result.get("global_outputs", [])
+    within_counts = result.get("within_counts", {}) or {}
+    cross_counts = result.get("cross_counts", {}) or {}
     print(
         "[plot] "
         f"analysis_kind={args.analysis_kind}: "
         f"wrote {len(date_outputs)} date-level plot(s) and {len(global_outputs)} global plot(s)"
     )
+    if within_counts:
+        print(
+            "[plot] within aggregation: "
+            f"files={within_counts.get('files', 0)}, "
+            f"pair_avg_files={within_counts.get('files_using_pair_averages', 0)}, "
+            f"rows={within_counts.get('rows', 0)}, "
+            f"used={within_counts.get('used_rows', 0)}, "
+            f"skipped={within_counts.get('skipped_rows', 0)}"
+        )
+    if cross_counts:
+        print(
+            "[plot] cross aggregation: "
+            f"files={cross_counts.get('files', 0)}, "
+            f"pair_avg_files={cross_counts.get('files_using_pair_averages', 0)}, "
+            f"rows={cross_counts.get('rows', 0)}, "
+            f"used={cross_counts.get('used_rows', 0)}, "
+            f"skipped={cross_counts.get('skipped_rows', 0)}"
+        )
     if date_outputs:
         print(f"[plot] first date-level output: {date_outputs[0]}")
     if global_outputs:

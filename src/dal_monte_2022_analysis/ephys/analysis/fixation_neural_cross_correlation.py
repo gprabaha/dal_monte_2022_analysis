@@ -23,6 +23,7 @@ WITHIN_ANALYSIS_KIND = "within_region"
 CROSS_ANALYSIS_KIND = "cross_region"
 _PLOT_ALLOWED_ANALYSIS_KINDS = (WITHIN_ANALYSIS_KIND, CROSS_ANALYSIS_KIND)
 _ALLOWED_SIGNAL_TRANSFORMS = {"none", "demean", "zscore"}
+_ALLOWED_XCORR_NORMALIZATIONS = {"none", "energy"}
 _PLOT_CONDITION_ORDER = ("face_interactive", "face_non_interactive", "object")
 _REGION_TOKEN_RE = re.compile(r"[^a-z0-9]+")
 DEFAULT_FIXATION_ROI_GROUPS: dict[str, tuple[str, ...]] = {
@@ -43,6 +44,8 @@ class FixationNeuralCrossCorrelationSettings:
     cross_output_subdir: str = "ephys/psth/fixation_neural_crosscorr/cross_region"
     within_output_filename: str = "fixations.pkl"
     cross_output_filename: str = "fixations.pkl"
+    within_pair_average_output_filename: str = "pair_averages.pkl"
+    cross_pair_average_output_filename: str = "pair_averages.pkl"
     anchor_region: str = "BLA"
     partner_regions: Optional[Sequence[str]] = ("ACCg", "dmPFC", "OFC")
     include_regions: Optional[Sequence[str]] = None
@@ -50,6 +53,7 @@ class FixationNeuralCrossCorrelationSettings:
         default_factory=lambda: {k: tuple(v) for k, v in DEFAULT_FIXATION_ROI_GROUPS.items()},
     )
     signal_transform: str = "zscore"
+    xcorr_normalization: str = "energy"
     max_lag: Optional[int] = None
     use_parallel: bool = True
     max_procs: int = 32
@@ -67,6 +71,8 @@ class FixationNeuralCrossCorrelationPlotAggregationSettings:
     cross_input_subdir: str = "ephys/psth/fixation_neural_crosscorr/cross_region"
     within_input_filename: str = "fixations.pkl"
     cross_input_filename: str = "fixations.pkl"
+    within_pair_average_input_filename: str = "pair_averages.pkl"
+    cross_pair_average_input_filename: str = "pair_averages.pkl"
     face_label: str = "face"
     object_label: str = "object"
     interactive_label: str = "interactive"
@@ -188,6 +194,16 @@ def _validate_signal_transform(transform: str) -> str:
     if token not in _ALLOWED_SIGNAL_TRANSFORMS:
         allowed = ", ".join(sorted(_ALLOWED_SIGNAL_TRANSFORMS))
         raise ValueError(f"Unsupported signal_transform='{transform}'. Expected one of: {allowed}.")
+    return token
+
+
+def _validate_xcorr_normalization(normalization: str) -> str:
+    token = str(normalization).strip().lower()
+    if token not in _ALLOWED_XCORR_NORMALIZATIONS:
+        allowed = ", ".join(sorted(_ALLOWED_XCORR_NORMALIZATIONS))
+        raise ValueError(
+            f"Unsupported xcorr_normalization='{normalization}'. Expected one of: {allowed}.",
+        )
     return token
 
 
@@ -318,9 +334,25 @@ def _iter_analysis_rows(
     return rows
 
 
+def _select_preferred_rows(
+    preferred_rows: Sequence[dict],
+    fallback_rows: Sequence[dict],
+) -> list[dict]:
+    by_key: dict[tuple[str, str], dict] = {}
+    for row in fallback_rows:
+        key = (str(row["date"]), str(row["session"]))
+        by_key[key] = row
+    for row in preferred_rows:
+        key = (str(row["date"]), str(row["session"]))
+        by_key[key] = row
+    out = list(by_key.values())
+    out.sort(key=lambda row: (row["date"], row["session"]))
+    return out
+
+
 def _extract_xcorr_dataframes_and_meta(obj) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    if isinstance(obj, dict) and "cross_correlations" in obj:
-        xcorr_df = obj["cross_correlations"]
+    if isinstance(obj, dict):
+        xcorr_df = obj.get("cross_correlations")
         pair_avg_df = obj.get("pair_averages")
         meta = obj.get("meta", {}) or {}
         return (
@@ -562,6 +594,27 @@ def _fft_cross_correlation(
     return lags, corr_full
 
 
+def _normalize_cross_correlation(
+    corr: np.ndarray,
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    normalization: str,
+) -> np.ndarray:
+    vec = np.asarray(corr, dtype=np.float64).reshape(-1)
+    token = _validate_xcorr_normalization(normalization)
+    if token == "none":
+        return vec
+    if token == "energy":
+        x_vec = np.asarray(x, dtype=np.float64).reshape(-1)
+        y_vec = np.asarray(y, dtype=np.float64).reshape(-1)
+        denom = float(np.linalg.norm(x_vec) * np.linalg.norm(y_vec))
+        if denom <= 0.0 or not np.isfinite(denom):
+            return np.zeros_like(vec)
+        return vec / denom
+    raise ValueError(f"Unsupported xcorr normalization '{normalization}'.")
+
+
 def _summarize_cross_correlation(lags: np.ndarray, corr: np.ndarray) -> dict:
     if corr.size == 0:
         return {
@@ -589,6 +642,7 @@ _GLOBAL_FIXATION_META: list[dict] = []
 _GLOBAL_SIGNAL_ENTRIES: list[dict] = []
 _GLOBAL_SIGNAL_TRANSFORM: str = "none"
 _GLOBAL_MAX_LAG: Optional[int] = None
+_GLOBAL_XCORR_NORMALIZATION: str = "energy"
 
 
 def _init_pair_worker(
@@ -596,13 +650,15 @@ def _init_pair_worker(
     signal_entries: list[dict],
     signal_transform: str,
     max_lag: Optional[int],
+    xcorr_normalization: str,
 ) -> None:
     global _GLOBAL_FIXATION_META, _GLOBAL_SIGNAL_ENTRIES
-    global _GLOBAL_SIGNAL_TRANSFORM, _GLOBAL_MAX_LAG
+    global _GLOBAL_SIGNAL_TRANSFORM, _GLOBAL_MAX_LAG, _GLOBAL_XCORR_NORMALIZATION
     _GLOBAL_FIXATION_META = fixation_meta
     _GLOBAL_SIGNAL_ENTRIES = signal_entries
     _GLOBAL_SIGNAL_TRANSFORM = signal_transform
     _GLOBAL_MAX_LAG = max_lag
+    _GLOBAL_XCORR_NORMALIZATION = _validate_xcorr_normalization(xcorr_normalization)
 
 
 def _compute_pair_xcorr_worker(task: tuple[int, int, int]) -> Optional[dict]:
@@ -619,6 +675,12 @@ def _compute_pair_xcorr_worker(task: tuple[int, int, int]) -> Optional[dict]:
     lags, corr = _fft_cross_correlation(signal_1, signal_2, max_lag=_GLOBAL_MAX_LAG)
     if corr.size == 0:
         return None
+    corr = _normalize_cross_correlation(
+        corr,
+        signal_1,
+        signal_2,
+        normalization=_GLOBAL_XCORR_NORMALIZATION,
+    )
 
     row = {
         **fixation_meta,
@@ -1083,13 +1145,21 @@ def build_fixation_neural_cross_correlation_plot_payload(
     cross_counts = dict(empty_counts)
 
     if WITHIN_ANALYSIS_KIND in selected_kinds:
-        within_rows = _iter_analysis_rows(
+        within_xcorr_rows = _iter_analysis_rows(
             cfg,
             subdir=settings.within_input_subdir,
             filename=settings.within_input_filename,
             dates=dates,
             sessions=sessions,
         )
+        within_pair_rows = _iter_analysis_rows(
+            cfg,
+            subdir=settings.within_input_subdir,
+            filename=settings.within_pair_average_input_filename,
+            dates=dates,
+            sessions=sessions,
+        )
+        within_rows = _select_preferred_rows(within_pair_rows, within_xcorr_rows)
         within_date_map, within_global_map, within_lags, within_bin_ms, within_counts = (
             _aggregate_pair_averages_for_plotting(
                 settings,
@@ -1100,13 +1170,21 @@ def build_fixation_neural_cross_correlation_plot_payload(
         )
 
     if CROSS_ANALYSIS_KIND in selected_kinds:
-        cross_rows = _iter_analysis_rows(
+        cross_xcorr_rows = _iter_analysis_rows(
             cfg,
             subdir=settings.cross_input_subdir,
             filename=settings.cross_input_filename,
             dates=dates,
             sessions=sessions,
         )
+        cross_pair_rows = _iter_analysis_rows(
+            cfg,
+            subdir=settings.cross_input_subdir,
+            filename=settings.cross_pair_average_input_filename,
+            dates=dates,
+            sessions=sessions,
+        )
+        cross_rows = _select_preferred_rows(cross_pair_rows, cross_xcorr_rows)
         cross_date_map, cross_global_map, cross_lags, cross_bin_ms, cross_counts = (
             _aggregate_pair_averages_for_plotting(
                 settings,
@@ -1188,15 +1266,25 @@ def _build_session_output_path(
     settings: FixationNeuralCrossCorrelationSettings,
     *,
     analysis_kind: str,
+    output_kind: str = "xcorr",
     date: str,
     session: str,
 ) -> Path:
+    if output_kind not in {"xcorr", "pair_averages"}:
+        raise ValueError("output_kind must be one of: xcorr, pair_averages.")
+
     if analysis_kind == WITHIN_ANALYSIS_KIND:
         subdir = settings.within_output_subdir
-        filename = settings.within_output_filename
+        if output_kind == "xcorr":
+            filename = settings.within_output_filename
+        else:
+            filename = settings.within_pair_average_output_filename
     elif analysis_kind == CROSS_ANALYSIS_KIND:
         subdir = settings.cross_output_subdir
-        filename = settings.cross_output_filename
+        if output_kind == "xcorr":
+            filename = settings.cross_output_filename
+        else:
+            filename = settings.cross_pair_average_output_filename
     else:
         raise ValueError(f"Unsupported analysis_kind='{analysis_kind}'.")
 
@@ -1213,6 +1301,7 @@ def build_fixation_neural_cross_correlations_for_session(
 ) -> Optional[dict]:
     """Compute fixation-level neural cross-correlations for one session file."""
     signal_transform = _validate_signal_transform(settings.signal_transform)
+    xcorr_normalization = _validate_xcorr_normalization(settings.xcorr_normalization)
     max_lag = None if settings.max_lag is None else int(max(0, int(settings.max_lag)))
 
     obj = _load_pickle(Path(session_row["path"]))
@@ -1260,7 +1349,7 @@ def build_fixation_neural_cross_correlations_for_session(
         with Pool(
             processes=n_proc,
             initializer=_init_pair_worker,
-            initargs=(fixation_meta, signal_entries, signal_transform, max_lag),
+            initargs=(fixation_meta, signal_entries, signal_transform, max_lag, xcorr_normalization),
         ) as pool:
             iterator = pool.imap_unordered(
                 _compute_pair_xcorr_worker,
@@ -1284,7 +1373,13 @@ def build_fixation_neural_cross_correlations_for_session(
                     _assert_lag_axis_match(lag_axis, lags)
                 rows.append(result)
     else:
-        _init_pair_worker(fixation_meta, signal_entries, signal_transform, max_lag)
+        _init_pair_worker(
+            fixation_meta,
+            signal_entries,
+            signal_transform,
+            max_lag,
+            xcorr_normalization,
+        )
         iterator = pair_tasks
         if show_progress:
             iterator = tqdm(
@@ -1323,6 +1418,7 @@ def build_fixation_neural_cross_correlations_for_session(
         "source_modality": settings.trial_input_modality,
         "source_filename": _ensure_pkl_filename(settings.trial_input_filename),
         "signal_transform": signal_transform,
+        "xcorr_normalization": xcorr_normalization,
         "max_lag": max_lag,
         "anchor_region": _as_optional_str(settings.anchor_region),
         "partner_regions": (
@@ -1368,14 +1464,41 @@ def process_and_save_fixation_neural_cross_correlations_for_session(
         return None
 
     cfg = load_config(settings.cfg_path)
-    out_path = _build_session_output_path(
+    xcorr_out_path = _build_session_output_path(
         cfg,
         settings,
         analysis_kind=analysis_kind,
+        output_kind="xcorr",
         date=str(session_row["date"]),
         session=str(session_row["session"]),
     )
-    _save_pickle(data, out_path)
+    pair_avg_out_path = _build_session_output_path(
+        cfg,
+        settings,
+        analysis_kind=analysis_kind,
+        output_kind="pair_averages",
+        date=str(session_row["date"]),
+        session=str(session_row["session"]),
+    )
+
+    if xcorr_out_path == pair_avg_out_path:
+        _save_pickle(data, xcorr_out_path)
+        return data
+
+    _save_pickle(
+        {
+            "meta": data.get("meta", {}),
+            "cross_correlations": data.get("cross_correlations", pd.DataFrame()),
+        },
+        xcorr_out_path,
+    )
+    _save_pickle(
+        {
+            "meta": data.get("meta", {}),
+            "pair_averages": data.get("pair_averages", pd.DataFrame()),
+        },
+        pair_avg_out_path,
+    )
     return data
 
 
