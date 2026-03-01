@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from itertools import combinations
 import re
 from dataclasses import dataclass, field
 from multiprocessing import Pool
@@ -15,6 +16,7 @@ mpl.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
+from scipy.stats import ttest_1samp, ttest_ind
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.behav.plotting.common import (
@@ -44,8 +46,9 @@ _CONDITION_COLORS = {
     "object": "#2ca02c",
 }
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
-_PLOT_MODES = ("pairs", "mean")
+_PLOT_MODES = ("mean",)
 _PLOT_NORMALIZATION_METHODS = ("none", "max_abs", "zscore")
+_SIGNIFICANCE_CORRECTIONS = ("none", "bonferroni", "holm", "fdr_bh")
 
 
 @dataclass
@@ -76,6 +79,12 @@ class FixationNeuralCrossCorrelationPlotSettings:
     pair_trace_alpha: float = 0.12
     pair_trace_linewidth: float = 0.75
     mean_trace_linewidth: float = 2.2
+    mean_nonsig_alpha: float = 0.5
+    significance_alpha: float = 0.05
+    significance_correction: str = "bonferroni"
+    min_samples_for_significance: int = 3
+    between_condition_marker_size: float = 5.0
+    between_condition_marker_alpha: float = 0.95
     max_pair_traces_per_plot: Optional[int] = None
     max_points_per_pdf_trace: Optional[int] = None
     normalize_traces: bool = False
@@ -165,6 +174,16 @@ def _resolve_normalization_method(settings: FixationNeuralCrossCorrelationPlotSe
     return token
 
 
+def _resolve_significance_correction(settings: FixationNeuralCrossCorrelationPlotSettings) -> str:
+    token = str(settings.significance_correction).strip().lower()
+    if token not in _SIGNIFICANCE_CORRECTIONS:
+        allowed = ", ".join(_SIGNIFICANCE_CORRECTIONS)
+        raise ValueError(
+            f"Unsupported significance_correction='{settings.significance_correction}'. Expected: {allowed}.",
+        )
+    return token
+
+
 def _normalize_trace(trace: np.ndarray, method: str) -> np.ndarray:
     vec = np.asarray(trace, dtype=np.float64).reshape(-1)
     if vec.size == 0:
@@ -220,10 +239,166 @@ def _pick_pair_traces(
     return [traces[int(idx)] for idx in picked]
 
 
+def _apply_pvalue_correction(
+    p_vals: np.ndarray,
+    *,
+    alpha: float,
+    correction: str,
+) -> np.ndarray:
+    vec = np.asarray(p_vals, dtype=np.float64).reshape(-1)
+    sig = np.zeros(vec.shape, dtype=bool)
+    finite = np.isfinite(vec)
+    if not finite.any():
+        return sig.reshape(np.asarray(p_vals).shape)
+
+    if correction == "none":
+        sig = finite & (vec < float(alpha))
+        return sig.reshape(np.asarray(p_vals).shape)
+
+    if correction == "bonferroni":
+        m = int(np.sum(finite))
+        if m <= 0:
+            return sig.reshape(np.asarray(p_vals).shape)
+        sig = finite & (vec < (float(alpha) / float(m)))
+        return sig.reshape(np.asarray(p_vals).shape)
+
+    if correction == "holm":
+        idx = np.flatnonzero(finite)
+        vals = vec[idx]
+        order = np.argsort(vals)
+        ranked = vals[order]
+        m = int(ranked.size)
+        if m <= 0:
+            return sig.reshape(np.asarray(p_vals).shape)
+        reject = np.zeros(m, dtype=bool)
+        for i, p in enumerate(ranked):
+            threshold = float(alpha) / float(m - i)
+            if p <= threshold:
+                reject[i] = True
+            else:
+                break
+        if np.any(reject):
+            max_i = int(np.max(np.flatnonzero(reject)))
+            keep_sorted = np.zeros(m, dtype=bool)
+            keep_sorted[: max_i + 1] = True
+            keep_original = np.zeros(m, dtype=bool)
+            keep_original[order] = keep_sorted
+            sig[idx] = keep_original
+        return sig.reshape(np.asarray(p_vals).shape)
+
+    # Benjamini-Hochberg FDR correction applied over lag bins.
+    if correction == "fdr_bh":
+        idx = np.flatnonzero(finite)
+        vals = vec[idx]
+        order = np.argsort(vals)
+        ranked = vals[order]
+        m = int(ranked.size)
+        if m <= 0:
+            return sig.reshape(np.asarray(p_vals).shape)
+        thresholds = float(alpha) * (np.arange(1, m + 1, dtype=np.float64) / float(m))
+        passed = ranked <= thresholds
+        if np.any(passed):
+            cutoff = ranked[int(np.max(np.flatnonzero(passed)))]
+            sig[idx] = vals <= cutoff
+        return sig.reshape(np.asarray(p_vals).shape)
+
+    raise ValueError(f"Unsupported p-value correction method '{correction}'.")
+
+
+def _compute_vs_zero_significance_mask(
+    stacked: np.ndarray,
+    *,
+    alpha: float,
+    min_samples: int,
+) -> np.ndarray:
+    mat = np.asarray(stacked, dtype=np.float64)
+    if mat.ndim != 2 or mat.shape[0] < int(max(2, min_samples)):
+        return np.zeros(mat.shape[-1] if mat.ndim == 2 else 0, dtype=bool)
+    res = ttest_1samp(mat, popmean=0.0, axis=0, nan_policy="omit")
+    stat = np.asarray(res.statistic, dtype=np.float64)
+    p_two = np.asarray(res.pvalue, dtype=np.float64)
+    mean_vec = np.nanmean(mat, axis=0)
+    # one-sided (greater than 0) from two-sided p-value and t-sign
+    p_one = np.where(stat > 0.0, p_two / 2.0, 1.0 - (p_two / 2.0))
+    return np.isfinite(mean_vec) & (mean_vec > 0.0) & np.isfinite(p_one) & (p_one < float(alpha))
+
+
+def _compute_between_condition_significance_masks(
+    stacked_by_condition: dict[str, np.ndarray],
+    *,
+    condition_order: Sequence[str],
+    alpha: float,
+    correction: str,
+    min_samples: int,
+) -> dict[tuple[str, str], np.ndarray]:
+    pair_keys = list(combinations(condition_order, 2))
+    if not pair_keys:
+        return {}
+
+    n_lags = 0
+    for mat in stacked_by_condition.values():
+        arr = np.asarray(mat, dtype=np.float64)
+        if arr.ndim == 2:
+            n_lags = max(n_lags, int(arr.shape[1]))
+    if n_lags <= 0:
+        return {pair_key: np.zeros(0, dtype=bool) for pair_key in pair_keys}
+
+    p_mat = np.full((len(pair_keys), n_lags), np.nan, dtype=np.float64)
+    min_n = int(max(2, min_samples))
+    for row_idx, (cond_a, cond_b) in enumerate(pair_keys):
+        mat_a = np.asarray(stacked_by_condition.get(cond_a, np.empty((0, n_lags))), dtype=np.float64)
+        mat_b = np.asarray(stacked_by_condition.get(cond_b, np.empty((0, n_lags))), dtype=np.float64)
+        if (
+            mat_a.ndim != 2
+            or mat_b.ndim != 2
+            or mat_a.shape[0] < min_n
+            or mat_b.shape[0] < min_n
+            or mat_a.shape[1] != n_lags
+            or mat_b.shape[1] != n_lags
+        ):
+            continue
+        res = ttest_ind(mat_a, mat_b, axis=0, equal_var=False, nan_policy="omit")
+        p_vals = np.asarray(res.pvalue, dtype=np.float64).reshape(-1)
+        if p_vals.shape[0] == n_lags:
+            p_mat[row_idx, :] = p_vals
+
+    sig_mat = np.zeros((len(pair_keys), n_lags), dtype=bool)
+    for lag_idx in range(n_lags):
+        p_vec = p_mat[:, lag_idx]
+        sig_vec = _apply_pvalue_correction(
+            p_vec,
+            alpha=float(alpha),
+            correction=str(correction),
+        )
+        sig_mat[:, lag_idx] = np.asarray(sig_vec, dtype=bool).reshape(-1)
+
+    return {pair_key: sig_mat[row_idx, :] for row_idx, pair_key in enumerate(pair_keys)}
+
+
+def _masked_by_significance(y: np.ndarray, sig_mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    vec = np.asarray(y, dtype=np.float64)
+    mask = np.asarray(sig_mask, dtype=bool)
+    if vec.shape != mask.shape:
+        raise ValueError("Mean trace and significance mask shapes do not match.")
+    sig_vec = np.where(mask, vec, np.nan)
+    nsig_vec = np.where(~mask, vec, np.nan)
+    return sig_vec, nsig_vec
+
+
 def _build_subplot_grid(n_panels: int, ncols: int) -> tuple[int, int]:
     cols = max(1, min(int(max(1, ncols)), int(max(1, n_panels))))
     rows = int(np.ceil(float(n_panels) / float(cols)))
     return rows, cols
+
+
+def _build_between_condition_marker_map(
+    condition_order: Sequence[str],
+) -> dict[tuple[str, str], str]:
+    marker_cycle = ("|", "x", "+", "1", "2", "3", "4", "o", "s", "^", "v", "d")
+    out: dict[tuple[str, str], str] = {}
+    for idx, pair_key in enumerate(combinations(condition_order, 2)):
+        out[pair_key] = marker_cycle[idx % len(marker_cycle)]
+    return out
 
 
 def _plot_group_grid_figure(
@@ -251,21 +426,31 @@ def _plot_group_grid_figure(
     n_rows, n_cols = _build_subplot_grid(len(group_items), settings.subplot_ncols)
     panel_w = max(3.8, float(figsize[0]) / max(1.0, float(settings.subplot_ncols)))
     panel_h = max(3.0, float(figsize[1]))
+    legend_h = max(0.9, 0.5 * panel_h)
     fig_w = panel_w * float(n_cols)
-    fig_h = panel_h * float(n_rows)
+    fig_h = panel_h * float(n_rows) + legend_h
+    legend_row_ratio = max(0.2, float(legend_h) / max(float(panel_h), 1e-6))
     fig, axes = plt.subplots(
-        n_rows,
+        n_rows + 1,
         n_cols,
         figsize=[fig_w, fig_h],
         squeeze=False,
         sharex=True,
         sharey=(plot_mode == "mean"),
         facecolor="white",
+        gridspec_kw={
+            "height_ratios": [1.0] * n_rows + [legend_row_ratio],
+        },
     )
-    axes_flat = list(np.ravel(axes))
+    axes_flat = list(np.ravel(axes[:-1, :]))
+    legend_axes = list(np.ravel(axes[-1, :]))
+    for legend_axis in legend_axes:
+        legend_axis.axis("off")
 
     is_pdf = str(output_path.suffix).lower() == ".pdf"
     max_points = settings.max_points_per_pdf_trace if is_pdf else None
+    sig_correction = _resolve_significance_correction(settings)
+    between_marker_map = _build_between_condition_marker_map(settings.condition_order)
 
     for axis_idx, axis in enumerate(axes_flat):
         if axis_idx >= len(group_items):
@@ -273,18 +458,22 @@ def _plot_group_grid_figure(
             continue
 
         group_label, traces_by_condition = group_items[axis_idx]
-        count_parts: list[str] = []
         any_data = False
+        stacked_by_condition: dict[str, np.ndarray] = {}
+        between_sig_masks: dict[tuple[str, str], np.ndarray] = {}
 
         for condition in settings.condition_order:
-            cond_label = settings.condition_labels.get(condition, condition)
             cond_color = settings.condition_colors.get(condition, "#333333")
             traces = [np.asarray(trace, dtype=np.float64) for trace in traces_by_condition.get(condition, [])]
-            count_parts.append(f"{cond_label}: {len(traces)}")
 
             if not traces:
                 continue
             any_data = True
+
+            stacked = np.vstack(traces)
+            if stacked.ndim != 2 or stacked.shape[1] != x_axis.size:
+                continue
+            stacked_by_condition[condition] = stacked
 
             if plot_mode == "pairs":
                 traces_to_plot = _pick_pair_traces(
@@ -303,9 +492,24 @@ def _plot_group_grid_figure(
                         zorder=1,
                     )
             elif plot_mode == "mean":
-                stacked = np.vstack(traces)
                 mean_trace = np.mean(stacked, axis=0)
-                x_plot, y_plot = _downsample_xy(x_axis, mean_trace, max_points)
+                sig_vs_zero_mask = _compute_vs_zero_significance_mask(
+                    stacked,
+                    alpha=float(settings.significance_alpha),
+                    min_samples=int(max(2, settings.min_samples_for_significance)),
+                )
+                y_sig, y_nsig = _masked_by_significance(mean_trace, sig_vs_zero_mask)
+
+                x_plot, y_plot = _downsample_xy(x_axis, y_nsig, max_points)
+                axis.plot(
+                    x_plot,
+                    y_plot,
+                    color=cond_color,
+                    alpha=float(settings.mean_nonsig_alpha),
+                    linewidth=float(settings.mean_trace_linewidth),
+                    zorder=2,
+                )
+                x_plot, y_plot = _downsample_xy(x_axis, y_sig, max_points)
                 axis.plot(
                     x_plot,
                     y_plot,
@@ -317,18 +521,47 @@ def _plot_group_grid_figure(
             else:
                 raise ValueError(f"Unsupported plot_mode='{plot_mode}'.")
 
-        if any_data:
-            axis.text(
-                0.02,
-                0.96,
-                " | ".join(count_parts),
-                transform=axis.transAxes,
-                ha="left",
-                va="top",
-                fontsize=8,
-                color="#222222",
+        if plot_mode == "mean" and stacked_by_condition:
+            between_sig_masks = _compute_between_condition_significance_masks(
+                stacked_by_condition,
+                condition_order=settings.condition_order,
+                alpha=float(settings.significance_alpha),
+                correction=sig_correction,
+                min_samples=int(max(2, settings.min_samples_for_significance)),
             )
-        else:
+            significant_pairs = [
+                (pair_key, mask)
+                for pair_key, mask in between_sig_masks.items()
+                if np.asarray(mask, dtype=bool).any()
+            ]
+            if significant_pairs:
+                y_min, y_max = axis.get_ylim()
+                span = float(y_max - y_min)
+                if not np.isfinite(span) or span <= 0.0:
+                    span = 1.0
+                top_pad = 0.08 * span * float(len(significant_pairs))
+                axis.set_ylim(y_min, y_max + top_pad)
+                y_min2, y_max2 = axis.get_ylim()
+                span2 = float(y_max2 - y_min2) if np.isfinite(y_max2 - y_min2) and (y_max2 > y_min2) else 1.0
+                for pair_idx, (pair_key, mask) in enumerate(significant_pairs):
+                    marker = between_marker_map.get(pair_key, "|")
+                    sig_mask = np.asarray(mask, dtype=bool)
+                    x_marks = x_axis[sig_mask]
+                    if x_marks.size == 0:
+                        continue
+                    y_level = y_max2 - ((pair_idx + 1) * 0.04 * span2)
+                    axis.plot(
+                        x_marks,
+                        np.full(x_marks.shape, y_level, dtype=np.float64),
+                        linestyle="None",
+                        marker=marker,
+                        color="#111111",
+                        alpha=float(settings.between_condition_marker_alpha),
+                        markersize=float(settings.between_condition_marker_size),
+                        zorder=4,
+                    )
+
+        if not any_data:
             axis.text(
                 0.5,
                 0.5,
@@ -357,15 +590,62 @@ def _plot_group_grid_figure(
         )
         for condition in settings.condition_order
     ]
-    fig.legend(
+    if plot_mode == "mean":
+        legend_handles.extend(
+            [
+                Line2D(
+                    [0],
+                    [0],
+                    color="#222222",
+                    linewidth=float(settings.mean_trace_linewidth),
+                    alpha=1.0,
+                    label=f"p < {float(settings.significance_alpha):g} vs 0",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    color="#222222",
+                    linewidth=float(settings.mean_trace_linewidth),
+                    alpha=float(settings.mean_nonsig_alpha),
+                    label=f"p >= {float(settings.significance_alpha):g} vs 0",
+                ),
+            ]
+        )
+        for pair_key in combinations(settings.condition_order, 2):
+            cond_a, cond_b = pair_key
+            label_a = settings.condition_labels.get(cond_a, cond_a)
+            label_b = settings.condition_labels.get(cond_b, cond_b)
+            legend_handles.append(
+                Line2D(
+                    [0],
+                    [0],
+                    color="#111111",
+                    marker=between_marker_map.get(pair_key, "|"),
+                    linestyle="None",
+                    markersize=float(settings.between_condition_marker_size),
+                    alpha=float(settings.between_condition_marker_alpha),
+                    label=(
+                        f"{label_a} vs {label_b} "
+                        f"(p < {float(settings.significance_alpha):g}, {sig_correction})"
+                    ),
+                ),
+            )
+    legend_anchor = legend_axes[len(legend_axes) // 2]
+    legend_anchor.legend(
         handles=legend_handles,
-        loc="upper center",
-        ncol=max(1, len(legend_handles)),
+        loc="center",
+        ncol=1,
         frameon=False,
-        bbox_to_anchor=(0.5, 1.01),
     )
-    fig.suptitle(title, y=1.04)
-    fig.tight_layout()
+    fig.suptitle(title, y=0.985)
+    fig.subplots_adjust(
+        left=0.065,
+        right=0.995,
+        top=0.93,
+        bottom=0.055,
+        wspace=0.24,
+        hspace=0.33,
+    )
     output_path.parent.mkdir(parents=True, exist_ok=True)
     save_kwargs = {"format": str(output_path.suffix).lstrip(".")}
     if dpi is not None:

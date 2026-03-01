@@ -46,6 +46,12 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
     parser.add_argument("--subplot-ncols", type=int, default=None)
     parser.add_argument("--normalize-traces", action="store_true")
     parser.add_argument("--normalization-method", choices=["none", "max_abs", "zscore"], default=None)
+    parser.add_argument("--significance-alpha", type=float, default=None)
+    parser.add_argument("--mean-nonsig-alpha", type=float, default=None)
+    parser.add_argument("--significance-correction", choices=["none", "bonferroni", "holm", "fdr_bh"], default=None)
+    parser.add_argument("--min-samples-for-significance", type=int, default=None)
+    parser.add_argument("--between-condition-marker-size", type=float, default=None)
+    parser.add_argument("--between-condition-marker-alpha", type=float, default=None)
     parser.add_argument("--max-procs", type=int, default=None)
     parser.add_argument("--no-parallel", action="store_true")
     parser.add_argument("--no-parallel-date-plots", action="store_true")
@@ -117,6 +123,12 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
         pair_trace_alpha=cfg.get("plot_pair_trace_alpha", 0.12),
         pair_trace_linewidth=cfg.get("plot_pair_trace_linewidth", 0.75),
         mean_trace_linewidth=cfg.get("plot_mean_trace_linewidth", 2.2),
+        mean_nonsig_alpha=cfg.get("plot_mean_nonsig_alpha", 0.5),
+        significance_alpha=cfg.get("plot_significance_alpha", 0.05),
+        significance_correction=cfg.get("plot_significance_correction", "bonferroni"),
+        min_samples_for_significance=cfg.get("plot_min_samples_for_significance", 3),
+        between_condition_marker_size=cfg.get("plot_between_condition_marker_size", 5.0),
+        between_condition_marker_alpha=cfg.get("plot_between_condition_marker_alpha", 0.95),
         max_pair_traces_per_plot=cfg.get("plot_max_pair_traces_per_plot"),
         max_points_per_pdf_trace=cfg.get("plot_max_points_per_pdf_trace"),
         normalize_traces=cfg.get("plot_normalize_traces", False),
@@ -154,6 +166,18 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
         settings.normalize_traces = True
     if args.normalization_method is not None:
         settings.normalization_method = str(args.normalization_method)
+    if args.significance_alpha is not None:
+        settings.significance_alpha = float(args.significance_alpha)
+    if args.mean_nonsig_alpha is not None:
+        settings.mean_nonsig_alpha = float(args.mean_nonsig_alpha)
+    if args.significance_correction is not None:
+        settings.significance_correction = str(args.significance_correction)
+    if args.min_samples_for_significance is not None:
+        settings.min_samples_for_significance = int(args.min_samples_for_significance)
+    if args.between_condition_marker_size is not None:
+        settings.between_condition_marker_size = float(args.between_condition_marker_size)
+    if args.between_condition_marker_alpha is not None:
+        settings.between_condition_marker_alpha = float(args.between_condition_marker_alpha)
     if args.max_procs is not None:
         settings.max_procs = int(args.max_procs)
     if args.no_parallel:

@@ -68,6 +68,14 @@ plot_condition_colors:
 plot_pair_trace_alpha: 0.12
 plot_pair_trace_linewidth: 0.75
 plot_mean_trace_linewidth: 2.2
+plot_mean_nonsig_alpha: 0.5
+plot_significance_alpha: 0.05
+# Applied only across the three fixation-condition pair tests at each lag.
+# Options: none | bonferroni | holm | fdr_bh
+plot_significance_correction: bonferroni
+plot_min_samples_for_significance: 3
+plot_between_condition_marker_size: 5.0
+plot_between_condition_marker_alpha: 0.95
 plot_subplot_ncols: 3
 # Keep false because cross-correlation traces are normalized at analysis time.
 plot_normalize_traces: false
