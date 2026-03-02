@@ -22,6 +22,7 @@ from dal_monte_2022_analysis.behav.plotting.cross_correlation_common import (
     significance_mask_per_lag,
     scope_y_bounds,
 )
+from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
     normalize_fix_cross_correlation_time_scope,
@@ -462,7 +463,7 @@ def _plot_observed_vs_control_for_basis(
     plot_dir = out_dir / settings.output_subdir
     plot_dir.mkdir(parents=True, exist_ok=True)
     out_path = plot_dir / output_filename
-    fig.savefig(out_path, format="pdf")
+    save_figure(fig, out_path, ext="pdf")
     plt.close(fig)
     return out_path
 

@@ -9,7 +9,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
 from dal_monte_2022_analysis.utils.paths import (
     build_processed_data_path,
@@ -109,8 +108,9 @@ def index_agent_paths(
     agent_b: str = "m2",
 ) -> tuple[dict, dict]:
     """Index two agent-specific modality paths by (date, session)."""
-    index_df = index_processed_dataset(cfg, modality)
-    rows = index_df.to_dict(orient="records")
+    rows = scan_processed_paths(cfg, modality)
+    if not rows:
+        raise RuntimeError(f"No processed files found for modality '{modality}'")
 
     a_paths: dict[tuple[str, str], object] = {}
     b_paths: dict[tuple[str, str], object] = {}
@@ -126,8 +126,9 @@ def index_agent_paths(
 
 def index_shared_paths(cfg: dict, modality: str) -> dict:
     """Index shared (agent-less) modality paths by (date, session)."""
-    index_df = index_processed_dataset(cfg, modality)
-    rows = index_df.to_dict(orient="records")
+    rows = scan_processed_paths(cfg, modality)
+    if not rows:
+        raise RuntimeError(f"No processed files found for modality '{modality}'")
 
     shared_paths: dict[tuple[str, str], object] = {}
     for row in rows:

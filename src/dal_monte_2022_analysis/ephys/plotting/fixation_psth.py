@@ -97,10 +97,6 @@ class FixationPSTHUnitPlotSettings:
     window_post_s: float = 1.0
 
 
-def _safe_optional_str(value) -> Optional[str]:
-    return _safe_optional_str_shared(value)
-
-
 def _ensure_ext(ext: str) -> str:
     return _ensure_ext_shared(ext, fallback="pdf")
 
@@ -119,47 +115,6 @@ def _iter_trial_rows(
         dates=dates,
         sessions=sessions,
     )
-
-
-def _extract_trials_df_and_meta(obj) -> tuple[pd.DataFrame, dict]:
-    return _extract_trials_df_and_meta_shared(obj)
-
-
-def _truthy_interactive(value, interactive_label: str) -> bool:
-    return _as_bool(value, interactive_label)
-
-
-def _stable_seed(base_seed: int, *parts: str) -> int:
-    return _stable_seed_shared(base_seed, *parts)
-
-
-def _sample_rows(df: pd.DataFrame, max_rows: Optional[int], seed: int) -> pd.DataFrame:
-    return _sample_rows_shared(df, max_rows, seed)
-
-
-def _row_counts(row, n_bins: int) -> Optional[np.ndarray]:
-    return _row_counts_shared(row, n_bins)
-
-
-def _counts_to_spike_times(
-    counts: np.ndarray,
-    bin_centers: np.ndarray,
-    bin_size_s: float,
-    *,
-    jitter_within_bin: bool,
-    rng: np.random.Generator,
-) -> np.ndarray:
-    return _counts_to_spike_times_shared(
-        counts,
-        bin_centers,
-        bin_size_s,
-        jitter_within_bin=jitter_within_bin,
-        rng=rng,
-    )
-
-
-def _resolve_bin_centers_from_meta(meta: dict) -> Optional[np.ndarray]:
-    return _resolve_bin_centers_from_meta_shared(meta)
 
 
 def _fallback_bin_centers(settings: FixationPSTHUnitPlotSettings) -> np.ndarray:
@@ -181,11 +136,11 @@ def _load_trials_for_date(
 
     for path in paths:
         obj = load_pickle_path(path)
-        trials_df, meta = _extract_trials_df_and_meta(obj)
+        trials_df, meta = _extract_trials_df_and_meta_shared(obj)
         if trials_df.empty or "psth_counts" not in trials_df.columns:
             continue
 
-        local_centers = _resolve_bin_centers_from_meta(meta)
+        local_centers = _resolve_bin_centers_from_meta_shared(meta)
         if local_centers is not None:
             if bin_centers_ref is None:
                 bin_centers_ref = local_centers
@@ -231,11 +186,11 @@ def _condition_masks(df: pd.DataFrame, interactive_label: str, face_label: str, 
 
     if "is_interactive" in df.columns:
         interactive_mask = df["is_interactive"].map(
-            lambda val: _truthy_interactive(val, interactive_label),
+            lambda val: _as_bool(val, interactive_label),
         )
     elif "interactive_state" in df.columns:
         interactive_mask = df["interactive_state"].map(
-            lambda val: _truthy_interactive(val, interactive_label),
+            lambda val: _as_bool(val, interactive_label),
         )
     else:
         interactive_mask = pd.Series(False, index=df.index)
@@ -275,21 +230,21 @@ def _build_unit_condition_payloads(
 
     for cond_key, cond_label in payload_order:
         cond_df = df_unit.loc[masks[cond_key]].copy()
-        seed = _stable_seed(settings.random_seed, unit_key, cond_key)
-        cond_df = _sample_rows(cond_df, settings.max_trials_per_condition, seed)
+        seed = _stable_seed_shared(settings.random_seed, unit_key, cond_key)
+        cond_df = _sample_rows_shared(cond_df, settings.max_trials_per_condition, seed)
 
         count_rows: list[np.ndarray] = []
         spike_rows: list[np.ndarray] = []
         for trial_i, row in enumerate(cond_df.itertuples(index=False)):
-            counts = _row_counts(row, n_bins)
+            counts = _row_counts_shared(row, n_bins)
             if counts is None:
                 continue
             count_rows.append(counts)
             trial_rng = np.random.default_rng(
-                _stable_seed(settings.random_seed, unit_key, cond_key, str(trial_i)),
+                _stable_seed_shared(settings.random_seed, unit_key, cond_key, str(trial_i)),
             )
             spike_rows.append(
-                _counts_to_spike_times(
+                _counts_to_spike_times_shared(
                     counts,
                     bin_centers,
                     bin_size_s,
@@ -367,7 +322,7 @@ def _collect_condition_rate_mats(
         cond_df = df_unit.loc[masks[cond]].copy()
         rows: list[np.ndarray] = []
         for row in cond_df.itertuples(index=False):
-            counts = _row_counts(row, n_bins)
+            counts = _row_counts_shared(row, n_bins)
             if counts is None:
                 continue
             rows.append(counts / float(bin_size_s))
@@ -594,8 +549,8 @@ def _plot_single_unit(
         )
 
     row0 = df_unit.iloc[0]
-    region = _safe_optional_str(row0.get("region")) if isinstance(row0, pd.Series) else None
-    channel = _safe_optional_str(row0.get("spike_channel")) if isinstance(row0, pd.Series) else None
+    region = _safe_optional_str_shared(row0.get("region")) if isinstance(row0, pd.Series) else None
+    channel = _safe_optional_str_shared(row0.get("spike_channel")) if isinstance(row0, pd.Series) else None
     title_bits = [f"Date {date}", f"Unit {unit_uuid}"]
     if region:
         title_bits.append(f"Region {region}")

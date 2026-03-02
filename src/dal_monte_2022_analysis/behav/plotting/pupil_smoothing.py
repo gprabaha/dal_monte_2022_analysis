@@ -15,6 +15,7 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     resolve_figsize,
 )
 from dal_monte_2022_analysis.runtime.io.processed_data import scan_processed_paths
+from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
 )
@@ -208,6 +209,6 @@ def plot_smoothed_pupil_timecourse_qc(settings: SmoothedPupilQCPlotSettings) -> 
     out_dir = build_analysis_output_dir(cfg, settings.analysis_subdir)
     out_path = out_dir / settings.output_filename
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, format="pdf")
+    save_figure(fig, out_path, ext="pdf")
     plt.close(fig)
     return out_path

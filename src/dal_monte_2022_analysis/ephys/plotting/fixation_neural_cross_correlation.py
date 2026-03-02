@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from itertools import combinations
 import re
 from dataclasses import dataclass, field
@@ -30,6 +29,11 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation im
     FixationNeuralCrossCorrelationPlotAggregationSettings,
     build_fixation_neural_cross_correlation_plot_payload,
 )
+from dal_monte_2022_analysis.ephys.plotting.common import (
+    ensure_ext as _ensure_ext_shared,
+    stable_seed as _stable_seed_shared,
+)
+from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
@@ -99,10 +103,7 @@ class FixationNeuralCrossCorrelationPlotSettings:
 
 
 def _ensure_ext(ext: str, *, fallback: str) -> str:
-    token = str(ext).strip().lower()
-    if not token:
-        return fallback
-    return token[1:] if token.startswith(".") else token
+    return _ensure_ext_shared(ext, fallback=fallback)
 
 
 def _slug(text: str) -> str:
@@ -112,9 +113,7 @@ def _slug(text: str) -> str:
 
 
 def _stable_seed(base_seed: int, *parts: str) -> int:
-    raw = "|".join(str(part) for part in parts)
-    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()
-    return (int(digest[:8], 16) + int(base_seed)) % (2**32 - 1)
+    return _stable_seed_shared(base_seed, *parts)
 
 
 def _downsample_xy(x: np.ndarray, y: np.ndarray, max_points: Optional[int]) -> tuple[np.ndarray, np.ndarray]:
@@ -646,13 +645,14 @@ def _plot_group_grid_figure(
         wspace=0.24,
         hspace=0.33,
     )
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    save_kwargs = {"format": str(output_path.suffix).lstrip(".")}
-    if dpi is not None:
-        save_kwargs["dpi"] = int(dpi)
-    save_kwargs["facecolor"] = "white"
-    save_kwargs["transparent"] = False
-    fig.savefig(output_path, **save_kwargs)
+    save_figure(
+        fig,
+        output_path,
+        ext=str(output_path.suffix).lstrip("."),
+        dpi=dpi,
+        facecolor="white",
+        transparent=False,
+    )
     plt.close(fig)
 
 

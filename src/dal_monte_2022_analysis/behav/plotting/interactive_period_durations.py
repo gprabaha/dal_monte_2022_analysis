@@ -15,6 +15,7 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     resolve_figsize,
 )
 from dal_monte_2022_analysis.runtime.io.processed_data import scan_processed_paths
+from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
 )
@@ -469,7 +470,7 @@ def plot_interactive_period_duration_distributions(
     out_dir = build_analysis_output_dir(cfg, resolved_settings.analysis_subdir) / resolved_settings.output_subdir
     out_path = out_dir / resolved_settings.output_filename
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, format="pdf")
+    save_figure(fig, out_path, ext="pdf")
     plt.close(fig)
 
     # Per-m1 grid (each row is one unique m1 monkey, pooled across its sessions/pairs).
@@ -492,7 +493,7 @@ def plot_interactive_period_duration_distributions(
 
     m1_out_path = out_dir / resolved_settings.m1_output_filename
     m1_out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig_m1.savefig(m1_out_path, format="pdf")
+    save_figure(fig_m1, m1_out_path, ext="pdf")
     plt.close(fig_m1)
 
     agg_height = min(4.0, max(2.2, 0.22 * float(figsize[1])))
@@ -529,6 +530,6 @@ def plot_interactive_period_duration_distributions(
 
     aggregate_out_path = out_dir / resolved_settings.aggregate_output_filename
     aggregate_out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig_agg.savefig(aggregate_out_path, format="pdf")
+    save_figure(fig_agg, aggregate_out_path, ext="pdf")
     plt.close(fig_agg)
     return [out_path, m1_out_path, aggregate_out_path]

@@ -17,6 +17,7 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
 )
+from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 
@@ -615,6 +616,6 @@ def plot_pupil_fixation_density_correlation_violin(
     fig.tight_layout()
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, format="pdf")
+    save_figure(fig, out_path, ext="pdf")
     plt.close(fig)
     return out_path

@@ -23,6 +23,7 @@ from dal_monte_2022_analysis.behav.plotting.cross_correlation_common import (
 )
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.common import apply_plotting_config, resolve_figsize
+from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
     normalize_fix_cross_correlation_time_scope,
@@ -462,7 +463,7 @@ def _plot_observed_vs_control(
         top_rect = 0.86 if is_overlay_group else 0.90
         fig.tight_layout(rect=[0, 0, 1, top_rect])
         out_path = plot_dir / group_filename
-        fig.savefig(out_path, format="pdf")
+        save_figure(fig, out_path, ext="pdf")
         plt.close(fig)
         out_paths.append(out_path)
 

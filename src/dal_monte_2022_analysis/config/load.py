@@ -192,71 +192,11 @@ def load_hpc_config(path: str | Path) -> dict[str, Any]:
     return load_config(path, config_type="hpc")
 
 
-def load_fixation_binary_vector_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
-def load_fixation_density_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
-def load_joint_fixation_density_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
-def load_interactive_periods_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
-def load_pupil_smoothing_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
-def load_face_fixation_probability_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
-def load_out_of_roi_fixation_probability_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
-def load_face_fix_cross_correlation_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
-def load_out_of_roi_fix_cross_correlation_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
-def load_plotting_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
 def load_face_fixation_hsmm_config(path: str | Path) -> dict[str, Any]:
     """Compatibility wrapper for generic config loading."""
     return load_config(path, config_type="generic")
 
 
 def load_ephys_fixation_psth_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
-def load_ephys_period_psth_config(path: str | Path) -> dict[str, Any]:
-    """Compatibility wrapper for generic config loading."""
-    return load_config(path, config_type="generic")
-
-
-def load_ephys_fixation_neural_cross_correlation_config(path: str | Path) -> dict[str, Any]:
     """Compatibility wrapper for generic config loading."""
     return load_config(path, config_type="generic")

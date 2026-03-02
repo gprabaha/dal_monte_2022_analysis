@@ -17,6 +17,7 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     format_p_value,
     resolve_figsize,
 )
+from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 
@@ -350,7 +351,7 @@ def _plot_leader_follower_monkey_role_violin(settings) -> Path:
 
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, format="pdf")
+    save_figure(fig, out_path, ext="pdf")
     plt.close(fig)
     return out_path
 
@@ -506,7 +507,7 @@ def plot_leader_follower_pupil_global_overlay_violin(
 
     fig.tight_layout()
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(out_path, format="pdf")
+    save_figure(fig, out_path, ext="pdf")
     plt.close(fig)
     return out_path
 
