@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from multiprocessing import Pool
 from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
 from scipy.interpolate import PchipInterpolator
-from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.records.behavioral import PupilSizeData, RecordingContext
@@ -19,7 +17,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     save_processed_pickle,
 )
-from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 
 
 @dataclass
@@ -360,17 +358,11 @@ def run_pupil_smoothing(
         print("No pupil smoothing tasks found.")
         return
 
-    if not parallel or len(tasks) == 1:
-        for task in tqdm(tasks, desc="Smoothing pupil (serial)", unit="session"):
-            _worker(task)
-        return
-
-    n_proc = get_n_processes(max_procs=8)
-    with Pool(processes=n_proc) as pool:
-        for _ in tqdm(
-            pool.imap_unordered(_worker, tasks),
-            total=len(tasks),
-            desc=f"Smoothing pupil ({n_proc} workers)",
-            unit="session",
-        ):
-            pass
+    run_tasks(
+        _worker,
+        tasks,
+        desc="Smoothing pupil",
+        unit="session",
+        use_parallel=parallel,
+        max_procs=8,
+    )

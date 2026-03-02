@@ -4,7 +4,7 @@ This folder defines the in-memory data model for the project. The dataclasses in
 `records/` mirror extracted modalities, and `transforms/cleaning.py` provides
 timeline pruning and interpolation helpers for behavioral streams.
 
-This module is intentionally shared across domains (`behav`, `ephys`, `combined`)
+This module is intentionally shared across domains (`behav`, `ephys`)
 rather than duplicated per-domain.
 
 Use:

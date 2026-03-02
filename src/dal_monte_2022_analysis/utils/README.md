@@ -1,7 +1,7 @@
 # utils
 
 Small, shared helpers that don’t belong to a specific domain module.
-These utilities are intentionally shared across behavioral, ephys, and combined codepaths.
+These utilities are intentionally shared across behavioral and ephys codepaths.
 
 Currently includes:
 - `paths.py` for consistent processed-data and analysis-output paths.

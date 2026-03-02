@@ -49,4 +49,4 @@ Current plotting utility:
 - `plotting/fixation_neural_cross_correlation.py`
   Builds date-level and all-date neural xcorr summary plots for within-region
   and cross-region pairs with condition-specific overlays.
-  Exposes combined and kind-specific plotting entrypoints.
+  Exposes date-aggregated and kind-specific plotting entrypoints.

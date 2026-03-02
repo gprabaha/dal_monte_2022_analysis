@@ -1,9 +1,5 @@
 """Clean previously extracted data by pruning timelines and interpolating gaps."""
 
-from multiprocessing import Pool
-
-from tqdm import tqdm
-
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.transforms.cleaning import prune_and_interpolate_session
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_dataset
@@ -12,7 +8,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     save_pickle_path,
 )
-from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 from dal_monte_2022_analysis.utils.paths import (
     build_processed_output_path,
 )
@@ -122,13 +118,11 @@ def clean_dataset(
         for row in rows
     ]
 
-    n_proc = get_n_processes(max_procs=8)
-
-    with Pool(processes=n_proc) as pool:
-        for _ in tqdm(
-            pool.imap_unordered(_clean_row, worker_args),
-            total=len(worker_args),
-            desc=f"Cleaning dataset ({n_proc} workers)",
-            unit="session",
-        ):
-            pass
+    run_tasks(
+        _clean_row,
+        worker_args,
+        desc="Cleaning dataset",
+        unit="session",
+        use_parallel=True,
+        max_procs=8,
+    )

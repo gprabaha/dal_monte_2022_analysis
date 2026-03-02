@@ -1,14 +1,12 @@
 """Dataset construction utilities that run extractors and persist results."""
 
 import pickle
-from multiprocessing import Pool
-from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_dataset
 from dal_monte_2022_analysis.behav.preprocessing.load_mat import load_mat_from_path
 from dal_monte_2022_analysis.data.records.behavioral import RecordingContext
-from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 from dal_monte_2022_analysis.utils.paths import build_processed_out_dir
 
 
@@ -88,21 +86,11 @@ def build_agent_dataset(
         for row in rows
     ]
 
-    if not use_parallel:
-        for args in tqdm(
-            worker_args,
-            desc=f"Extracting {modality} (serial)",
-            unit="file",
-        ):
-            _extract_and_save_row_data(args)
-        return
-
-    n_proc = get_n_processes(max_procs=8)
-    with Pool(processes=n_proc) as pool:
-        for _ in tqdm(
-            pool.imap_unordered(_extract_and_save_row_data, worker_args),
-            total=len(worker_args),
-            desc=f"Extracting {modality} ({n_proc} workers)",
-            unit="file",
-        ):
-            pass
+    run_tasks(
+        _extract_and_save_row_data,
+        worker_args,
+        desc=f"Extracting {modality}",
+        unit="file",
+        use_parallel=use_parallel,
+        max_procs=8,
+    )
