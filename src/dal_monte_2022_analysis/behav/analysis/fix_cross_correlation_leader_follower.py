@@ -24,7 +24,16 @@ from dal_monte_2022_analysis.utils.paths import (
     normalize_fix_cross_correlation_time_scope,
 )
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
-from dal_monte_2022_analysis.core.behav.roi_groups import keywords_for_fixation_label
+from dal_monte_2022_analysis.core.behav.analysis_primitives import (
+    clip_period as _clip_period,
+    extract_pupil_vector as _extract_pupil_vector_opt,
+    filter_interactive_periods as _filter_interactive_periods,
+)
+from dal_monte_2022_analysis.core.behav.roi_groups import (
+    coerce_location_labels as _coerce_location_labels,
+    keywords_for_fixation_label,
+    locations_match as _locations_match,
+)
 
 
 @dataclass
@@ -348,43 +357,6 @@ def _assign_consistency_label(
     return labels
 
 
-def _extract_pupil_vector(obj) -> np.ndarray:
-    """Extract 1D pupil-size vector from supported object layouts."""
-    if hasattr(obj, "d"):
-        values = getattr(obj, "d")
-    elif isinstance(obj, dict) and "d" in obj:
-        values = obj["d"]
-    else:
-        return np.asarray([], dtype=np.float64)
-    arr = np.asarray(values, dtype=np.float64).reshape(-1)
-    return arr if arr.size else np.asarray([], dtype=np.float64)
-
-
-def _coerce_location_labels(loc) -> list[str]:
-    """Normalize fixation location field into lowercase labels."""
-    if loc is None:
-        return []
-    if isinstance(loc, (list, tuple, set, np.ndarray)):
-        labels = [str(val).lower() for val in loc if val is not None]
-    else:
-        try:
-            if pd.isna(loc):
-                return []
-        except Exception:
-            pass
-        labels = [str(loc).lower()]
-    return labels
-
-
-def _location_matches_keywords(location_labels: list[str], keywords: tuple[str, ...]) -> bool:
-    """Return whether any location label contains any keyword substring."""
-    for label in location_labels:
-        for keyword in keywords:
-            if keyword in label:
-                return True
-    return False
-
-
 def _resolve_pupil_roi_keywords(
     settings: FixCrossCorrLeaderFollowerSettings,
 ) -> Optional[tuple[str, ...]]:
@@ -397,30 +369,6 @@ def _resolve_pupil_roi_keywords(
     if keywords:
         return tuple(str(val).lower() for val in keywords)
     return (str(settings.fixation_label).lower(),)
-
-
-def _clip_start_stop(
-    start,
-    stop,
-    *,
-    max_len: int,
-) -> Optional[tuple[int, int]]:
-    """Clip start/stop indices to valid bounds."""
-    if max_len <= 0:
-        return None
-    start_num = pd.to_numeric(start, errors="coerce")
-    stop_num = pd.to_numeric(stop, errors="coerce")
-    if pd.isna(start_num) or pd.isna(stop_num):
-        return None
-    start_i = int(start_num)
-    stop_i = int(stop_num)
-    if stop_i < 0 or start_i >= max_len:
-        return None
-    start_i = max(0, start_i)
-    stop_i = min(max_len - 1, stop_i)
-    if start_i > stop_i:
-        return None
-    return start_i, stop_i
 
 
 def _resolve_interactive_intervals(
@@ -444,24 +392,13 @@ def _resolve_interactive_intervals(
         else:
             cache[key] = None
 
-    periods = cache[key]
-    if periods is None or periods.empty:
-        return []
-    if "start" not in periods.columns or "stop" not in periods.columns:
-        return []
-
-    if state_label is not None and "state" in periods.columns:
-        periods = periods[periods["state"] == state_label]
+    periods = _filter_interactive_periods(cache[key], state_label)
     if periods.empty:
         return []
 
     intervals: list[tuple[int, int]] = []
     for _, period_row in periods.iterrows():
-        clipped = _clip_start_stop(
-            period_row.get("start"),
-            period_row.get("stop"),
-            max_len=max_len,
-        )
+        clipped = _clip_period(period_row.get("start"), period_row.get("stop"), max_len=max_len)
         if clipped is not None:
             intervals.append(clipped)
     return intervals
@@ -543,7 +480,12 @@ def _extract_pupil_during_fixations(
     if key not in pupil_cache:
         pupil_path = build_processed_pickle_path(cfg, row, pupil_modality, agent)
         if pupil_path.exists():
-            pupil_cache[key] = _extract_pupil_vector(load_pickle_path(pupil_path))
+            pupil_vec = _extract_pupil_vector_opt(load_pickle_path(pupil_path))
+            pupil_cache[key] = (
+                np.asarray(pupil_vec, dtype=np.float64)
+                if pupil_vec is not None
+                else np.asarray([], dtype=np.float64)
+            )
         else:
             pupil_cache[key] = np.asarray([], dtype=np.float64)
 
@@ -571,14 +513,10 @@ def _extract_pupil_during_fixations(
 
     segments: list[np.ndarray] = []
     for _, fix_row in fix_df.iterrows():
-        locations = _coerce_location_labels(fix_row.get("location"))
-        if roi_keywords is not None and not _location_matches_keywords(locations, roi_keywords):
+        locations = _coerce_location_labels(fix_row.get("location"), lowercase=True)
+        if roi_keywords is not None and not _locations_match(locations, roi_keywords):
             continue
-        clipped_fix = _clip_start_stop(
-            fix_row.get("start"),
-            fix_row.get("stop"),
-            max_len=n_samples,
-        )
+        clipped_fix = _clip_period(fix_row.get("start"), fix_row.get("stop"), max_len=n_samples)
         if clipped_fix is None:
             continue
         fix_start, fix_stop = clipped_fix
@@ -633,8 +571,8 @@ def _extract_fixation_duration_bins(
 
     total_bins = 0
     for _, fix_row in fix_df.iterrows():
-        locations = _coerce_location_labels(fix_row.get("location"))
-        if roi_keywords is not None and not _location_matches_keywords(locations, roi_keywords):
+        locations = _coerce_location_labels(fix_row.get("location"), lowercase=True)
+        if roi_keywords is not None and not _locations_match(locations, roi_keywords):
             continue
         start = pd.to_numeric(fix_row.get("start"), errors="coerce")
         stop = pd.to_numeric(fix_row.get("stop"), errors="coerce")
@@ -682,8 +620,8 @@ def _extract_fixation_count(
 
     n_fix = 0
     for _, fix_row in fix_df.iterrows():
-        locations = _coerce_location_labels(fix_row.get("location"))
-        if _location_matches_keywords(locations, roi_keywords):
+        locations = _coerce_location_labels(fix_row.get("location"), lowercase=True)
+        if _locations_match(locations, roi_keywords):
             n_fix += 1
     return int(n_fix)
 

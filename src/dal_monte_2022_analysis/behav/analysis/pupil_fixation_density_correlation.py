@@ -3,22 +3,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from multiprocessing import Pool
 from typing import Optional
 
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.core.behav.analysis_primitives import (
+    extract_monkey_name as _extract_monkey_name,
+    extract_pupil_vector as _extract_pupil_vector,
+)
+from dal_monte_2022_analysis.core.behav.feature_primitives import extract_density_vector
 from dal_monte_2022_analysis.data.records.behavioral import (
     FixationDensityVectorsData,
     JointFixationDensityData,
-    PupilSizeData,
 )
-from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
-from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    index_agent_paths as _index_agent_paths,
+    index_shared_paths as _index_shared_paths,
+)
+from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 
@@ -40,93 +45,21 @@ class PupilFixationDensityCorrelationSettings:
     parallel_max_procs: int = 32
     test_single: bool = False
 
-
-def _extract_monkey_name(obj) -> Optional[str]:
-    """Extract monkey name metadata when available."""
-    if isinstance(obj, (PupilSizeData, FixationDensityVectorsData, JointFixationDensityData)):
-        return obj.context.monkey_name
-    if isinstance(obj, dict):
-        context = obj.get("context")
-        if context is not None:
-            if hasattr(context, "monkey_name"):
-                return getattr(context, "monkey_name")
-            if isinstance(context, dict):
-                return context.get("monkey_name")
-        return obj.get("monkey_name")
-    return None
-
-
-def _extract_pupil_vector(obj) -> Optional[np.ndarray]:
-    """Extract a 1D pupil vector from supported object layouts."""
-    if isinstance(obj, PupilSizeData):
-        values = obj.d
-    elif isinstance(obj, dict) and "d" in obj:
-        values = obj["d"]
-    else:
-        return None
-    vec = np.asarray(values, dtype=float).reshape(-1)
-    return vec
-
-
 def _extract_face_density_vector(
     obj,
     face_label: str,
 ) -> Optional[np.ndarray]:
     """Extract a face-density vector from supported object layouts."""
-    if isinstance(obj, FixationDensityVectorsData):
-        vectors = obj.vectors
-    elif isinstance(obj, dict) and "vectors" in obj:
-        vectors = obj["vectors"]
-    elif isinstance(obj, dict):
-        vectors = obj
-    else:
+    if not isinstance(obj, (FixationDensityVectorsData, dict)):
         return None
-
-    if not vectors or face_label not in vectors:
-        return None
-    vec = np.asarray(vectors[face_label], dtype=float).reshape(-1)
-    return vec
+    return extract_density_vector(obj, key=face_label)
 
 
 def _extract_joint_density_vector(obj) -> Optional[np.ndarray]:
     """Extract a joint face-density vector from supported object layouts."""
-    if isinstance(obj, JointFixationDensityData):
-        values = obj.density
-    elif isinstance(obj, dict) and "density" in obj:
-        values = obj["density"]
-    else:
+    if not isinstance(obj, (JointFixationDensityData, dict)):
         return None
-    vec = np.asarray(values, dtype=float).reshape(-1)
-    return vec
-
-
-def _index_agent_paths(cfg: dict, modality: str) -> tuple[dict, dict]:
-    """Index m1/m2 pickle paths by (date, session)."""
-    index_df = index_processed_dataset(cfg, modality)
-    rows = index_df.to_dict(orient="records")
-
-    m1_paths: dict[tuple[str, str], object] = {}
-    m2_paths: dict[tuple[str, str], object] = {}
-    for row in rows:
-        agent = row.get("agent")
-        key = (row["date"], row["session"])
-        if agent == "m1":
-            m1_paths[key] = row["path"]
-        elif agent == "m2":
-            m2_paths[key] = row["path"]
-    return m1_paths, m2_paths
-
-
-def _index_shared_paths(cfg: dict, modality: str) -> dict:
-    """Index shared pickle paths by (date, session)."""
-    index_df = index_processed_dataset(cfg, modality)
-    rows = index_df.to_dict(orient="records")
-
-    shared_paths: dict[tuple[str, str], object] = {}
-    for row in rows:
-        if row.get("agent") is None:
-            shared_paths[(row["date"], row["session"])] = row["path"]
-    return shared_paths
+    return extract_density_vector(obj)
 
 
 def _pearson_coefficient(x: np.ndarray, y: np.ndarray) -> float:
@@ -227,20 +160,16 @@ def _build_within_session_rows(
     ]
 
     rows: list[dict] = []
-    if not settings.use_parallel:
-        for task in tqdm(tasks, desc="Pupil-density correlations", unit="session"):
-            rows.extend(_build_one_session_rows(task))
-        return rows
-
-    n_proc = get_n_processes(max_procs=settings.parallel_max_procs)
-    with Pool(processes=n_proc) as pool:
-        for session_rows in tqdm(
-            pool.imap_unordered(_build_one_session_rows, tasks),
-            total=len(tasks),
-            desc=f"Pupil-density correlations ({n_proc} workers)",
-            unit="session",
-        ):
-            rows.extend(session_rows)
+    session_rows_list = run_tasks(
+        _build_one_session_rows,
+        tasks,
+        desc="Pupil-density correlations",
+        unit="session",
+        use_parallel=settings.use_parallel,
+        max_procs=settings.parallel_max_procs,
+    )
+    for session_rows in session_rows_list:
+        rows.extend(session_rows)
     return rows
 
 

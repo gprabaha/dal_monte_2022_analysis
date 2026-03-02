@@ -15,8 +15,11 @@ import pandas as pd
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.data.records.behavioral import FixationBinaryVectorsData
-from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.core.behav.analysis_primitives import (
+    build_interactive_mask as _build_interactive_mask,
+    extract_fixation_vector as _extract_fixation_vector,
+    extract_monkey_name as _extract_monkey_name,
+)
 from dal_monte_2022_analysis.core.signal.cross_correlation import (
     assert_lag_axis_match as assert_lag_axis_match_shared,
     fft_cross_correlation,
@@ -24,6 +27,10 @@ from dal_monte_2022_analysis.core.signal.cross_correlation import (
     summarize_cross_correlation,
 )
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    index_agent_paths as _index_agent_paths,
+    index_shared_paths as _index_shared_paths,
+)
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
@@ -62,45 +69,6 @@ class FixCrossCorrelationSettings:
     test_single: bool = False
 
 
-def _extract_fixation_vector(
-    obj,
-    fixation_label: str,
-) -> Optional[np.ndarray]:
-    """Extract a fixation vector from supported object layouts."""
-    if isinstance(obj, FixationBinaryVectorsData):
-        vectors = obj.vectors
-    elif isinstance(obj, dict) and "vectors" in obj:
-        vectors = obj["vectors"]
-    elif isinstance(obj, dict):
-        vectors = obj
-    else:
-        return None
-
-    if not vectors or fixation_label not in vectors:
-        return None
-
-    vec = np.asarray(vectors[fixation_label])
-    if vec.ndim != 1:
-        vec = vec.reshape(-1)
-    return vec.astype(bool, copy=False)
-
-
-def _extract_monkey_name(obj) -> Optional[str]:
-    """Extract monkey name metadata if present."""
-    if isinstance(obj, FixationBinaryVectorsData):
-        return obj.context.monkey_name
-    if isinstance(obj, dict):
-        context = obj.get("context")
-        if context is not None:
-            if hasattr(context, "monkey_name"):
-                return getattr(context, "monkey_name")
-            if isinstance(context, dict) and "monkey_name" in context:
-                return context.get("monkey_name")
-        if "monkey_name" in obj:
-            return obj.get("monkey_name")
-    return None
-
-
 def _load_fixation_vector(
     path,
     fixation_label: str,
@@ -110,105 +78,12 @@ def _load_fixation_vector(
     return _extract_fixation_vector(obj, fixation_label), _extract_monkey_name(obj)
 
 
-def _index_agent_paths(cfg: dict, modality: str) -> tuple[dict, dict]:
-    """Index m1/m2 fixation vector paths by (date, session)."""
-    index_df = index_processed_dataset(cfg, modality)
-    rows = index_df.to_dict(orient="records")
-
-    m1_paths: dict[tuple[str, str], object] = {}
-    m2_paths: dict[tuple[str, str], object] = {}
-    for row in rows:
-        agent = row.get("agent")
-        if agent == "m1":
-            m1_paths[(row["date"], row["session"])] = row["path"]
-        elif agent == "m2":
-            m2_paths[(row["date"], row["session"])] = row["path"]
-
-    return m1_paths, m2_paths
-
-
-def _index_shared_paths(cfg: dict, modality: str) -> dict:
-    """Index shared (agent-less) modality paths by (date, session)."""
-    index_df = index_processed_dataset(cfg, modality)
-    rows = index_df.to_dict(orient="records")
-
-    shared_paths: dict[tuple[str, str], object] = {}
-    for row in rows:
-        if row.get("agent") is None:
-            shared_paths[(row["date"], row["session"])] = row["path"]
-    return shared_paths
-
-
 def _load_interactive_periods(path) -> Optional[pd.DataFrame]:
     """Load interactive periods from pickle (DataFrame expected)."""
     obj = load_pickle_path(path)
     if isinstance(obj, pd.DataFrame):
         return obj
     return None
-
-
-def _filter_interactive_periods(
-    df: Optional[pd.DataFrame],
-    state_label: Optional[str],
-) -> pd.DataFrame:
-    """Filter interactive period DataFrame to the requested state."""
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    periods = df
-    required_cols = {"start", "stop"}
-    if not required_cols.issubset(periods.columns):
-        return pd.DataFrame()
-
-    if state_label is not None and "state" in periods.columns:
-        periods = periods[periods["state"] == state_label]
-    if periods.empty:
-        return pd.DataFrame()
-
-    return periods.sort_values(["start", "stop"]).reset_index(drop=True)
-
-
-def _clip_period(
-    start,
-    stop,
-    max_len: int,
-) -> Optional[tuple[int, int]]:
-    """Clip a start/stop pair to [0, max_len - 1]."""
-    if max_len <= 0:
-        return None
-    try:
-        start_idx = int(start)
-        stop_idx = int(stop)
-    except (TypeError, ValueError):
-        return None
-    if stop_idx < 0 or start_idx >= max_len:
-        return None
-    start_idx = max(0, start_idx)
-    stop_idx = min(max_len - 1, stop_idx)
-    if start_idx > stop_idx:
-        return None
-    return start_idx, stop_idx
-
-
-def _build_interactive_mask(
-    periods_df: Optional[pd.DataFrame],
-    *,
-    n_samples: int,
-    state_label: Optional[str],
-) -> np.ndarray:
-    """Build a boolean interactive mask with shape (n_samples,)."""
-    mask = np.zeros(int(max(0, n_samples)), dtype=bool)
-    periods = _filter_interactive_periods(periods_df, state_label)
-    if periods.empty:
-        return mask
-
-    for _, row in periods.iterrows():
-        clipped = _clip_period(row.get("start"), row.get("stop"), int(n_samples))
-        if clipped is None:
-            continue
-        start, stop = clipped
-        mask[start : stop + 1] = True
-    return mask
 
 
 def _apply_time_scope_filter(

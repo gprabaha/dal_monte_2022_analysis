@@ -20,10 +20,18 @@ from dal_monte_2022_analysis.core.signal.cross_correlation import (
     normalize_cross_correlation_energy,
     summarize_cross_correlation,
 )
+from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
+    as_bool as _as_bool,
+    as_optional_str as _as_optional_str,
+    ensure_filename as _ensure_filename,
+    extract_trials_df_and_meta as _extract_trials_df_and_meta,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
+    scan_processed_paths_for_filename,
     save_pickle_path,
 )
+from dal_monte_2022_analysis.runtime.io.analysis_index import scan_analysis_paths
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 from dal_monte_2022_analysis.core.behav.roi_groups import (
@@ -88,41 +96,6 @@ class FixationNeuralCrossCorrelationPlotAggregationSettings:
     object_label: str = "object"
     interactive_label: str = "interactive"
     condition_order: Sequence[str] = field(default_factory=lambda: tuple(_PLOT_CONDITION_ORDER))
-
-
-def _ensure_pkl_filename(name: str) -> str:
-    token = str(name).strip()
-    if not token:
-        raise ValueError("Output filename cannot be empty.")
-    return token if token.endswith(".pkl") else f"{token}.pkl"
-
-
-def _as_optional_str(value: object) -> Optional[str]:
-    if value is None:
-        return None
-    try:
-        if pd.isna(value):
-            return None
-    except Exception:
-        pass
-    token = str(value).strip()
-    return token or None
-
-
-def _as_bool(value: object, interactive_label: Optional[str] = None) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, (bool, np.bool_)):
-        return bool(value)
-    if isinstance(value, (int, np.integer)):
-        return int(value) != 0
-    if isinstance(value, (float, np.floating)):
-        return float(value) != 0.0
-    token = str(value).strip().lower()
-    accepted = {"1", "true", "t", "yes", "y", "interactive"}
-    if interactive_label is not None:
-        accepted.add(str(interactive_label).strip().lower())
-    return token in accepted
 
 
 def _safe_int(value: object) -> Optional[int]:
@@ -229,86 +202,6 @@ def _infer_fixation_category_from_locations(
         ordered_groups=("face", "object", "out_of_roi"),
         allowed_categories=None,
     )
-
-
-def _iter_trial_files(
-    cfg: dict,
-    settings: FixationNeuralCrossCorrelationSettings,
-    *,
-    dates: Optional[Sequence[str]] = None,
-    sessions: Optional[Sequence[str]] = None,
-) -> list[dict]:
-    root = Path(cfg["processed_data_root"])
-    filename = _ensure_pkl_filename(settings.trial_input_filename)
-    pattern = root / "date=*" / "session=*" / settings.trial_input_modality / filename
-
-    date_filter = None if dates is None else {str(v) for v in dates}
-    session_filter = None if sessions is None else {str(v) for v in sessions}
-
-    rows: list[dict] = []
-    for path in root.glob(str(pattern.relative_to(root))):
-        parts = path.parts
-        try:
-            date_part = next(part for part in parts if part.startswith("date="))
-            session_part = next(part for part in parts if part.startswith("session="))
-        except StopIteration:
-            continue
-
-        date = date_part.split("=", 1)[1]
-        session = session_part.split("=", 1)[1]
-        if date_filter is not None and date not in date_filter:
-            continue
-        if session_filter is not None and session not in session_filter:
-            continue
-
-        rows.append({"date": date, "session": session, "path": path})
-
-    rows.sort(key=lambda row: (row["date"], row["session"]))
-    return rows
-
-
-def _extract_trials_df_and_meta(obj) -> tuple[pd.DataFrame, dict]:
-    if isinstance(obj, dict) and "trials" in obj:
-        trials = obj["trials"]
-        meta = obj.get("meta", {})
-        return (trials if isinstance(trials, pd.DataFrame) else pd.DataFrame(), meta or {})
-    if isinstance(obj, pd.DataFrame):
-        return obj, {}
-    return pd.DataFrame(), {}
-
-
-def _iter_analysis_rows(
-    cfg: dict,
-    *,
-    subdir: str,
-    filename: str,
-    dates: Optional[Sequence[str]] = None,
-    sessions: Optional[Sequence[str]] = None,
-) -> list[dict]:
-    root = Path(cfg["analysis_output_root"]) / subdir
-    pattern = root / "date=*" / "session=*" / _ensure_pkl_filename(filename)
-
-    date_filter = None if dates is None else {str(val) for val in dates}
-    session_filter = None if sessions is None else {str(val) for val in sessions}
-
-    rows: list[dict] = []
-    for path in root.glob(str(pattern.relative_to(root))):
-        parts = path.parts
-        date_part = next((part for part in parts if part.startswith("date=")), None)
-        session_part = next((part for part in parts if part.startswith("session=")), None)
-        if date_part is None or session_part is None:
-            continue
-
-        date = date_part.split("=", 1)[1]
-        session = session_part.split("=", 1)[1]
-        if date_filter is not None and date not in date_filter:
-            continue
-        if session_filter is not None and session not in session_filter:
-            continue
-        rows.append({"date": date, "session": session, "path": path})
-
-    rows.sort(key=lambda row: (row["date"], row["session"]))
-    return rows
 
 
 def _select_preferred_rows(
@@ -1076,17 +969,17 @@ def build_fixation_neural_cross_correlation_plot_payload(
     cross_counts = dict(empty_counts)
 
     if WITHIN_ANALYSIS_KIND in selected_kinds:
-        within_xcorr_rows = _iter_analysis_rows(
+        within_xcorr_rows = scan_analysis_paths(
             cfg,
-            subdir=settings.within_input_subdir,
-            filename=settings.within_input_filename,
+            settings.within_input_subdir,
+            filename=_ensure_filename(settings.within_input_filename, ".pkl"),
             dates=dates,
             sessions=sessions,
         )
-        within_pair_rows = _iter_analysis_rows(
+        within_pair_rows = scan_analysis_paths(
             cfg,
-            subdir=settings.within_input_subdir,
-            filename=settings.within_pair_average_input_filename,
+            settings.within_input_subdir,
+            filename=_ensure_filename(settings.within_pair_average_input_filename, ".pkl"),
             dates=dates,
             sessions=sessions,
         )
@@ -1101,17 +994,17 @@ def build_fixation_neural_cross_correlation_plot_payload(
         )
 
     if CROSS_ANALYSIS_KIND in selected_kinds:
-        cross_xcorr_rows = _iter_analysis_rows(
+        cross_xcorr_rows = scan_analysis_paths(
             cfg,
-            subdir=settings.cross_input_subdir,
-            filename=settings.cross_input_filename,
+            settings.cross_input_subdir,
+            filename=_ensure_filename(settings.cross_input_filename, ".pkl"),
             dates=dates,
             sessions=sessions,
         )
-        cross_pair_rows = _iter_analysis_rows(
+        cross_pair_rows = scan_analysis_paths(
             cfg,
-            subdir=settings.cross_input_subdir,
-            filename=settings.cross_pair_average_input_filename,
+            settings.cross_input_subdir,
+            filename=_ensure_filename(settings.cross_pair_average_input_filename, ".pkl"),
             dates=dates,
             sessions=sessions,
         )
@@ -1220,7 +1113,7 @@ def _build_session_output_path(
         raise ValueError(f"Unsupported analysis_kind='{analysis_kind}'.")
 
     output_root = build_analysis_output_dir(cfg, subdir)
-    return output_root / f"date={date}" / f"session={session}" / _ensure_pkl_filename(filename)
+    return output_root / f"date={date}" / f"session={session}" / _ensure_filename(filename, ".pkl")
 
 
 def build_fixation_neural_cross_correlations_for_session(
@@ -1347,7 +1240,7 @@ def build_fixation_neural_cross_correlations_for_session(
         "date": str(session_row["date"]),
         "session": str(session_row["session"]),
         "source_modality": settings.trial_input_modality,
-        "source_filename": _ensure_pkl_filename(settings.trial_input_filename),
+        "source_filename": _ensure_filename(settings.trial_input_filename, ".pkl"),
         "signal_transform": signal_transform,
         "xcorr_normalization": xcorr_normalization,
         "max_lag": max_lag,
@@ -1466,7 +1359,14 @@ def _run_fixation_neural_cross_correlation_analysis(
         settings.test_single = bool(test_single)
 
     cfg = load_config(settings.cfg_path)
-    session_rows = _iter_trial_files(cfg, settings, dates=dates, sessions=sessions)
+    session_rows = scan_processed_paths_for_filename(
+        cfg,
+        settings.trial_input_modality,
+        filename=_ensure_filename(settings.trial_input_filename, ".pkl"),
+        dates=dates,
+        sessions=sessions,
+        agents=(None,),
+    )
     if not session_rows:
         print("No fixation PSTH trial files found for neural cross-correlation analysis.")
         return {"n_sessions_total": 0, "n_sessions_written": 0}

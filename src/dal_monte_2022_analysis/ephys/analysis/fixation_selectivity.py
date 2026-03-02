@@ -4,21 +4,26 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from multiprocessing import Pool
-from pathlib import Path
 from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
 from scipy.stats import mannwhitneyu, ttest_ind
-from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
+    as_bool as _as_bool,
+    as_optional_str as _as_optional_str,
+    ensure_filename as _ensure_filename,
+    extract_trials_df_and_meta as _extract_trials_df_and_meta,
+    resolve_bin_centers_from_meta as _resolve_bin_centers_from_meta,
+)
+from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
+    scan_processed_paths_for_filename,
     save_pickle_path,
 )
-from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 
@@ -67,116 +72,12 @@ class FixationPSTHSelectivitySettings:
     window_post_s_fallback: float = 1.0
 
 
-def _as_optional_str(value) -> Optional[str]:
-    if value is None:
-        return None
-    try:
-        if pd.isna(value):
-            return None
-    except Exception:
-        pass
-    text = str(value).strip()
-    return text or None
-
-
-def _ensure_filename(name: str, suffix: str) -> str:
-    text = str(name).strip()
-    if not text:
-        raise ValueError("Output filename cannot be empty.")
-    return text if text.endswith(suffix) else f"{text}{suffix}"
-
-
-def _iter_trial_files(
-    cfg: dict,
-    settings: FixationPSTHSelectivitySettings,
-    *,
-    dates: Optional[Sequence[str]] = None,
-    sessions: Optional[Sequence[str]] = None,
-) -> list[dict]:
-    root = Path(cfg["processed_data_root"])
-    filename = _ensure_filename(settings.trial_input_filename, ".pkl")
-    pattern = root / "date=*" / "session=*" / settings.trial_input_modality / filename
-
-    date_filter = None if dates is None else {str(v) for v in dates}
-    session_filter = None if sessions is None else {str(v) for v in sessions}
-
-    rows: list[dict] = []
-    for path in root.glob(str(pattern.relative_to(root))):
-        parts = path.parts
-        try:
-            date_part = next(part for part in parts if part.startswith("date="))
-            session_part = next(part for part in parts if part.startswith("session="))
-        except StopIteration:
-            continue
-
-        date = date_part.split("=", 1)[1]
-        session = session_part.split("=", 1)[1]
-        if date_filter is not None and date not in date_filter:
-            continue
-        if session_filter is not None and session not in session_filter:
-            continue
-        rows.append({"date": date, "session": session, "path": path})
-
-    rows.sort(key=lambda row: (row["date"], row["session"]))
-    return rows
-
-
-def _extract_trials_df_and_meta(obj) -> tuple[pd.DataFrame, dict]:
-    if isinstance(obj, dict) and "trials" in obj:
-        df = obj["trials"]
-        meta = obj.get("meta", {}) or {}
-        return (df if isinstance(df, pd.DataFrame) else pd.DataFrame(), meta)
-    if isinstance(obj, pd.DataFrame):
-        return obj, {}
-    return pd.DataFrame(), {}
-
-
-def _resolve_bin_centers_from_meta(meta: dict) -> Optional[np.ndarray]:
-    centers = meta.get("bin_centers_s_rel")
-    if centers is not None:
-        arr = np.asarray(centers, dtype=float).reshape(-1)
-        if arr.size > 0:
-            return arr
-    edges = meta.get("bin_edges_s_rel")
-    if edges is not None:
-        arr = np.asarray(edges, dtype=float).reshape(-1)
-        if arr.size > 1:
-            return 0.5 * (arr[:-1] + arr[1:])
-    return None
-
-
 def _fallback_bin_centers(settings: FixationPSTHSelectivitySettings) -> np.ndarray:
     bin_size_s = float(settings.bin_size_ms_fallback) / 1000.0
     pre = float(settings.window_pre_s_fallback)
     post = float(settings.window_post_s_fallback)
     edges = np.arange(-pre, post + bin_size_s * 0.5, bin_size_s, dtype=float)
     return 0.5 * (edges[:-1] + edges[1:])
-
-
-def _truthy_interactive(value, interactive_label: str) -> bool:
-    if value is None:
-        return False
-    try:
-        if pd.isna(value):
-            return False
-    except Exception:
-        pass
-    if isinstance(value, (bool, np.bool_)):
-        return bool(value)
-    if isinstance(value, (int, np.integer)):
-        return int(value) != 0
-    if isinstance(value, (float, np.floating)):
-        return float(value) != 0.0
-    token = str(value).strip().lower()
-    return token in {
-        "1",
-        "true",
-        "t",
-        "yes",
-        "y",
-        str(interactive_label).strip().lower(),
-        "interactive",
-    }
 
 
 def _normalize_windows(
@@ -218,14 +119,21 @@ def _load_trial_table(
     sessions: Optional[Sequence[str]] = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     cfg = load_config(settings.cfg_path)
-    rows = _iter_trial_files(cfg, settings, dates=dates, sessions=sessions)
+    rows = scan_processed_paths_for_filename(
+        cfg,
+        settings.trial_input_modality,
+        filename=_ensure_filename(settings.trial_input_filename, ".pkl"),
+        dates=dates,
+        sessions=sessions,
+        agents=(None,),
+    )
     if not rows:
         return pd.DataFrame(), _fallback_bin_centers(settings)
 
     dfs: list[pd.DataFrame] = []
     bin_centers_ref = None
     for row in rows:
-        obj = load_pickle_path(Path(row["path"]))
+        obj = load_pickle_path(row["path"])
         trial_df, meta = _extract_trials_df_and_meta(obj)
         if trial_df.empty or "psth_counts" not in trial_df.columns:
             continue
@@ -262,9 +170,9 @@ def _resolve_condition_for_row(row, settings: FixationPSTHSelectivitySettings) -
 
     interactive = False
     if hasattr(row, "is_interactive"):
-        interactive = _truthy_interactive(getattr(row, "is_interactive"), settings.interactive_label)
+        interactive = _as_bool(getattr(row, "is_interactive"), settings.interactive_label)
     elif hasattr(row, "interactive_state"):
-        interactive = _truthy_interactive(getattr(row, "interactive_state"), settings.interactive_label)
+        interactive = _as_bool(getattr(row, "interactive_state"), settings.interactive_label)
     return "face_interactive" if interactive else "face_non_interactive"
 
 
@@ -496,24 +404,18 @@ def run_fixation_selectivity_analysis(
     pair_rows_all: list[dict] = []
     unit_rows_all: list[dict] = []
 
-    if settings.use_parallel and len(unit_tasks) > 1:
-        n_proc = get_n_processes(max_procs=settings.max_procs)
-        with Pool(processes=n_proc) as pool:
-            for window_rows, pair_rows, unit_row in tqdm(
-                pool.imap_unordered(_unit_worker, unit_tasks),
-                total=len(unit_tasks),
-                desc=f"Fixation selectivity ({n_proc} workers)",
-                unit="unit",
-            ):
-                window_rows_all.extend(window_rows)
-                pair_rows_all.extend(pair_rows)
-                unit_rows_all.append(unit_row)
-    else:
-        for task in tqdm(unit_tasks, desc="Fixation selectivity", unit="unit"):
-            window_rows, pair_rows, unit_row = _unit_worker(task)
-            window_rows_all.extend(window_rows)
-            pair_rows_all.extend(pair_rows)
-            unit_rows_all.append(unit_row)
+    results = run_tasks(
+        _unit_worker,
+        unit_tasks,
+        desc="Fixation selectivity",
+        unit="unit",
+        use_parallel=settings.use_parallel,
+        max_procs=settings.max_procs,
+    )
+    for window_rows, pair_rows, unit_row in results:
+        window_rows_all.extend(window_rows)
+        pair_rows_all.extend(pair_rows)
+        unit_rows_all.append(unit_row)
 
     window_df = pd.DataFrame(window_rows_all)
     pair_df = pd.DataFrame(pair_rows_all)
