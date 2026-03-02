@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import os
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.stats import ttest_rel
 
+from dal_monte_2022_analysis.core.stats.hypothesis import paired_ttest_per_lag
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.utils.paths import build_fix_cross_correlation_output_filename
 
@@ -55,6 +53,54 @@ def load_df_for_scope(
 def as_1d_float(arr) -> np.ndarray:
     """Coerce array-like to 1D float ndarray."""
     return np.asarray(arr, dtype=np.float64).reshape(-1)
+
+
+def stack_column_arrays(df: pd.DataFrame, col: str) -> np.ndarray:
+    """Stack fixed-length arrays from one dataframe column into 2D matrix."""
+    mats = [as_1d_float(v) for v in df[col].to_list()]
+    if not mats:
+        return np.empty((0, 0), dtype=np.float64)
+    n_lags = mats[0].size
+    for idx, row in enumerate(mats):
+        if row.size != n_lags:
+            raise RuntimeError(
+                f"Array-length mismatch at row={idx} col={col}: {row.size} != {n_lags}",
+            )
+    return np.vstack(mats)
+
+
+def paired_session_matrices(
+    within_df: pd.DataFrame,
+    control_df: pd.DataFrame,
+    *,
+    control_col: str,
+) -> tuple[np.ndarray, np.ndarray, int, int, int]:
+    """Align within/control by (date, session) and return paired matrices."""
+    within_cols = ["date", "session", "cross_correlation"]
+    control_cols = ["date", "session", control_col]
+    missing_within = set(within_cols).difference(within_df.columns)
+    missing_control = set(control_cols).difference(control_df.columns)
+    if missing_within:
+        raise RuntimeError(f"Within-session table missing columns: {sorted(missing_within)}")
+    if missing_control:
+        raise RuntimeError(f"Control table missing columns: {sorted(missing_control)}")
+
+    merged = within_df[within_cols].merge(
+        control_df[control_cols],
+        how="inner",
+        on=["date", "session"],
+    )
+    if merged.empty:
+        raise RuntimeError("No overlapping (date, session) rows between observed and control tables.")
+
+    observed = stack_column_arrays(merged, "cross_correlation")
+    control = stack_column_arrays(merged, control_col)
+    if observed.shape != control.shape:
+        raise RuntimeError(
+            "Observed/control paired matrices have different shapes: "
+            f"{observed.shape} vs {control.shape}"
+        )
+    return observed, control, int(len(within_df)), int(len(control_df)), int(len(merged))
 
 
 def nanmean_sem(mat: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -124,87 +170,23 @@ def scope_y_bounds(observed: np.ndarray, control: np.ndarray) -> tuple[float, fl
     return y_lo, y_hi
 
 
-def _paired_ttest_per_lag_chunk(
+def significance_mask_per_lag(
     observed: np.ndarray,
     control: np.ndarray,
     *,
-    start: int,
-    stop: int,
-) -> tuple[int, np.ndarray]:
-    """Compute paired t-test p-values for one [start:stop) lag chunk."""
-    x = observed[:, start:stop]
-    y = control[:, start:stop]
-    pvals = np.asarray(
-        ttest_rel(x, y, axis=0, nan_policy="omit").pvalue,
-        dtype=np.float64,
-    ).reshape(-1)
-    valid_counts = np.sum(np.isfinite(x) & np.isfinite(y), axis=0)
-    pvals[valid_counts < 2] = np.nan
-    return start, pvals
-
-
-def paired_ttest_per_lag(
-    observed: np.ndarray,
-    control: np.ndarray,
-    *,
+    alpha: float,
     parallel: bool,
     workers: int | None,
     min_lags_for_parallel: int,
     chunk_size: int,
 ) -> np.ndarray:
-    """Compute per-lag paired t-test p-values (optionally in parallel chunks)."""
-    if observed.shape != control.shape:
-        raise ValueError("Observed and control matrices must have same shape.")
-    n_lags = observed.shape[1]
-    if n_lags <= 0:
-        return np.array([], dtype=np.float64)
-
-    if (
-        not parallel
-        or n_lags < int(max(1, min_lags_for_parallel))
-        or int(max(1, chunk_size)) >= n_lags
-    ):
-        pvals = np.asarray(
-            ttest_rel(observed, control, axis=0, nan_policy="omit").pvalue,
-            dtype=np.float64,
-        ).reshape(-1)
-        valid_counts = np.sum(np.isfinite(observed) & np.isfinite(control), axis=0)
-        pvals[valid_counts < 2] = np.nan
-        return pvals
-
-    chunk = int(max(1, chunk_size))
-    starts = list(range(0, n_lags, chunk))
-    auto_workers = os.cpu_count() or 1
-    n_workers = int(max(1, workers if workers is not None else auto_workers))
-    n_workers = min(n_workers, len(starts))
-    pvals = np.full(n_lags, np.nan, dtype=np.float64)
-    if n_workers <= 1:
-        for start in starts:
-            stop = min(start + chunk, n_lags)
-            _, chunk_p = _paired_ttest_per_lag_chunk(
-                observed,
-                control,
-                start=start,
-                stop=stop,
-            )
-            pvals[start:stop] = chunk_p
-        return pvals
-
-    with ThreadPoolExecutor(max_workers=n_workers) as executor:
-        futures = []
-        for start in starts:
-            stop = min(start + chunk, n_lags)
-            futures.append(
-                executor.submit(
-                    _paired_ttest_per_lag_chunk,
-                    observed,
-                    control,
-                    start=start,
-                    stop=stop,
-                )
-            )
-        for future in futures:
-            start, chunk_p = future.result()
-            stop = start + int(chunk_p.size)
-            pvals[start:stop] = chunk_p
-    return pvals
+    """Return per-lag significance mask from paired t-test p-values."""
+    pvals = paired_ttest_per_lag(
+        observed,
+        control,
+        parallel=parallel,
+        workers=workers,
+        min_lags_for_parallel=min_lags_for_parallel,
+        chunk_size=chunk_size,
+    )
+    return np.isfinite(pvals) & (pvals < float(alpha))

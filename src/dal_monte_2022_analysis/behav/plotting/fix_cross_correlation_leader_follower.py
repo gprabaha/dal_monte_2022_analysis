@@ -19,7 +19,7 @@ from dal_monte_2022_analysis.behav.plotting.cross_correlation_common import (
     load_df_for_scope,
     load_lags_for_scope,
     nanmean_sem,
-    paired_ttest_per_lag,
+    significance_mask_per_lag,
     scope_y_bounds,
 )
 from dal_monte_2022_analysis.utils.paths import (
@@ -263,15 +263,15 @@ def _plot_one_scope(
 ) -> None:
     obs_mean, obs_sem = nanmean_sem(observed)
     ctl_mean, ctl_sem = nanmean_sem(control)
-    pvals = paired_ttest_per_lag(
+    sig = significance_mask_per_lag(
         observed,
         control,
+        alpha=alpha,
         parallel=ttest_parallel,
         workers=ttest_parallel_workers,
         min_lags_for_parallel=ttest_parallel_min_lags,
         chunk_size=ttest_parallel_chunk_size,
     )
-    sig = np.isfinite(pvals) & (pvals < float(alpha))
 
     idx = downsample_indices(int(lags_seconds.size), int(max_plot_points))
     lags_plot = lags_seconds[idx]
@@ -516,4 +516,3 @@ def plot_leader_follower_cross_correlation_comparisons(
             )
         )
     return outputs
-

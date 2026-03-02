@@ -11,14 +11,14 @@ import pandas as pd
 from matplotlib.ticker import MaxNLocator
 
 from dal_monte_2022_analysis.behav.plotting.cross_correlation_common import (
-    as_1d_float,
     downsample_indices,
     downsample_significance_mask,
     limit_true_markers,
     load_df_for_scope,
     load_lags_for_scope,
     nanmean_sem,
-    paired_ttest_per_lag,
+    paired_session_matrices,
+    significance_mask_per_lag,
     scope_y_bounds,
 )
 from dal_monte_2022_analysis.config.load import load_config
@@ -51,54 +51,6 @@ class M1M2CrossCorrComparisonPlotSettings:
     output_subdir: str = "plots/m1-m2"
     observed_vs_cross_filename: str = "observed_vs_cross_session_face_m1_m2_crosscorr.pdf"
     observed_vs_shuffle_filename: str = "observed_vs_shuffle_face_m1_m2_crosscorr.pdf"
-
-
-def _stack_column_arrays(df: pd.DataFrame, col: str) -> np.ndarray:
-    """Stack fixed-length arrays from one dataframe column into 2D matrix."""
-    mats = [as_1d_float(v) for v in df[col].to_list()]
-    if not mats:
-        return np.empty((0, 0), dtype=np.float64)
-    n_lags = mats[0].size
-    for idx, row in enumerate(mats):
-        if row.size != n_lags:
-            raise RuntimeError(
-                f"Array-length mismatch at row={idx} col={col}: {row.size} != {n_lags}"
-            )
-    return np.vstack(mats)
-
-
-def _paired_session_matrices(
-    within_df: pd.DataFrame,
-    control_df: pd.DataFrame,
-    *,
-    control_col: str,
-) -> tuple[np.ndarray, np.ndarray, int, int, int]:
-    """Align within/control by (date, session) and return paired matrices."""
-    within_cols = ["date", "session", "cross_correlation"]
-    control_cols = ["date", "session", control_col]
-    missing_within = set(within_cols).difference(within_df.columns)
-    missing_control = set(control_cols).difference(control_df.columns)
-    if missing_within:
-        raise RuntimeError(f"Within-session table missing columns: {sorted(missing_within)}")
-    if missing_control:
-        raise RuntimeError(f"Control table missing columns: {sorted(missing_control)}")
-
-    merged = within_df[within_cols].merge(
-        control_df[control_cols],
-        how="inner",
-        on=["date", "session"],
-    )
-    if merged.empty:
-        raise RuntimeError("No overlapping (date, session) rows between observed and control tables.")
-
-    observed = _stack_column_arrays(merged, "cross_correlation")
-    control = _stack_column_arrays(merged, control_col)
-    if observed.shape != control.shape:
-        raise RuntimeError(
-            "Observed/control paired matrices have different shapes: "
-            f"{observed.shape} vs {control.shape}"
-        )
-    return observed, control, int(len(within_df)), int(len(control_df)), int(len(merged))
 
 
 def _pretty_scope(scope: str) -> str:
@@ -236,15 +188,15 @@ def _plot_scope_trace(
     """Render one observed-vs-control trace pair on one axis."""
     obs_mean, obs_sem = nanmean_sem(observed)
     ctl_mean, ctl_sem = nanmean_sem(control)
-    pvals = paired_ttest_per_lag(
+    sig = significance_mask_per_lag(
         observed,
         control,
+        alpha=alpha,
         parallel=ttest_parallel,
         workers=ttest_parallel_workers,
         min_lags_for_parallel=ttest_parallel_min_lags,
         chunk_size=ttest_parallel_chunk_size,
     )
-    sig = np.isfinite(pvals) & (pvals < float(alpha))
 
     idx = downsample_indices(int(lags.size), int(max_plot_points))
     lags_plot = lags[idx]
@@ -362,7 +314,7 @@ def _plot_observed_vs_control(
             scope=scope,
             kind=control_kind,
         )
-        observed, control, n_obs_total, n_ctl_total, n_paired = _paired_session_matrices(
+        observed, control, n_obs_total, n_ctl_total, n_paired = paired_session_matrices(
             within_df,
             control_df,
             control_col=control_col,

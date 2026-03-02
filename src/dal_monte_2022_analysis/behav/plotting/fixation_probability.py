@@ -12,9 +12,9 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.collections import PolyCollection
-from scipy import stats
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.core.stats.hypothesis import two_sample_pvalues
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
@@ -239,22 +239,7 @@ def _safe_ratio(numer: np.ndarray, denom: np.ndarray) -> np.ndarray:
 
 def _compute_tests(a: np.ndarray, b: np.ndarray) -> dict:
     """Compute t-test, ranksum, and KS p-values for two samples."""
-    a = np.asarray(a, dtype=float)
-    b = np.asarray(b, dtype=float)
-    a = a[np.isfinite(a)]
-    b = b[np.isfinite(b)]
-    if a.size < 2 or b.size < 2:
-        return {"ttest": np.nan, "ranksum": np.nan, "ks": np.nan}
-
-    ttest_res = stats.ttest_ind(a, b, equal_var=False)
-    ranksum_res = stats.ranksums(a, b)
-    ks_res = stats.ks_2samp(a, b)
-
-    return {
-        "ttest": ttest_res.pvalue,
-        "ranksum": ranksum_res.pvalue,
-        "ks": ks_res.pvalue,
-    }
+    return two_sample_pvalues(a, b)
 
 
 def _title_with_pvalues(title: str, pvals: dict) -> str:
