@@ -18,10 +18,6 @@ from matplotlib.lines import Line2D
 from scipy.stats import ttest_1samp, ttest_ind
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.behav.plotting.common import (
-    apply_plotting_config,
-    resolve_figsize,
-)
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation import (
     CROSS_ANALYSIS_KIND,
@@ -30,7 +26,9 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation im
     build_fixation_neural_cross_correlation_plot_payload,
 )
 from dal_monte_2022_analysis.ephys.plotting.common import (
+    apply_plotting_config,
     ensure_ext as _ensure_ext_shared,
+    resolve_figsize,
     stable_seed as _stable_seed_shared,
 )
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure

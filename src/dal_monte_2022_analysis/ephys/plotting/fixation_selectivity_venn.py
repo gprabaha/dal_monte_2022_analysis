@@ -23,7 +23,7 @@ except Exception as exc:  # pragma: no cover - runtime dependency guard
 else:
     _MATPLOTLIB_VENN_IMPORT_ERROR = None
 
-from dal_monte_2022_analysis.behav.plotting.common import (
+from dal_monte_2022_analysis.ephys.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
 )
