@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -10,6 +10,7 @@ import matplotlib as mpl
 
 mpl.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
 import numpy as np
 import pandas as pd
 
@@ -37,13 +38,6 @@ RELATIVE_COLUMNS = (
     "relative_face_non_interactive",
     "relative_object",
 )
-DEFAULT_COLORS = {
-    "face_interactive": "#d62728",
-    "face_non_interactive": "#1f77b4",
-    "object": "#2ca02c",
-}
-
-
 @dataclass
 class FixationThreeWayTriangularPlotSettings:
     """Configuration for triangular three-way selectivity population plots."""
@@ -52,16 +46,18 @@ class FixationThreeWayTriangularPlotSettings:
     plotting_cfg_path: str = "configs/plotting.yaml"
     input_subdir: str = "ephys/psth/fixation_psth_selectivity"
     condition_summary_filename: str = "condition_window_means.csv"
+    unit_summary_filename: str = "unit_selectivity.csv"
     output_subdir: str = "ephys/psth/fixation_psth_selectivity_triangular"
     output_filename: str = "population_triangular"
     output_extension: str = "png"
     output_dpi: Optional[int] = 220
     min_units_per_panel: int = 1
-    point_size: float = 18.0
-    point_alpha: float = 0.68
+    point_size: float = 26.0
+    point_color: str = "#1f1f1f"
+    point_alpha_significant: float = 1.0
+    point_alpha_non_significant: float = 0.5
     marker_edge_width: float = 0.28
     draw_centroid: bool = True
-    condition_colors: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_COLORS))
 
 
 def _resolve_figsize_and_dpi(
@@ -78,9 +74,23 @@ def _resolve_figsize_and_dpi(
         figsize, cfg_dpi = (None, None)
 
     if figsize is None:
-        figsize = [max(3.0 * float(n_cols), 6.5), max(2.8 * float(n_rows), 5.4)]
+        # Favor taller panels so equal-aspect triangles fill more of each subplot.
+        figsize = [max(3.0 * float(n_cols), 7.5), max(4.2 * float(n_rows), 8.6)]
     dpi = settings.output_dpi if settings.output_dpi is not None else cfg_dpi
     return [float(figsize[0]), float(figsize[1])], dpi
+
+
+def _as_bool(value) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value) != 0
+    if isinstance(value, (float, np.floating)):
+        return float(value) != 0.0
+    if value is None:
+        return False
+    token = str(value).strip().lower()
+    return token in {"1", "true", "t", "yes", "y"}
 
 
 def _load_condition_summary_df(settings: FixationThreeWayTriangularPlotSettings) -> pd.DataFrame:
@@ -108,6 +118,32 @@ def _load_condition_summary_df(settings: FixationThreeWayTriangularPlotSettings)
         raise ValueError("condition summary is missing required column 'window_name'.")
 
     return df
+
+
+def _load_unit_summary_df(settings: FixationThreeWayTriangularPlotSettings) -> pd.DataFrame:
+    cfg = load_config(settings.cfg_path)
+    in_path = (
+        build_analysis_output_dir(cfg, settings.input_subdir)
+        / ensure_filename(settings.unit_summary_filename, ".csv")
+    )
+    if not in_path.exists():
+        return pd.DataFrame()
+
+    df = pd.read_csv(in_path)
+    if df.empty:
+        return df
+    if "is_selective_unit" not in df.columns:
+        return pd.DataFrame()
+    if "unit_key" not in df.columns and {"date", "unit_uuid"}.issubset(df.columns):
+        df["unit_key"] = df["date"].astype(str) + "|" + df["unit_uuid"].astype(str)
+    if "unit_key" not in df.columns:
+        return pd.DataFrame()
+
+    out = df.loc[:, ["unit_key", "is_selective_unit"]].copy()
+    out["unit_key"] = out["unit_key"].astype(str)
+    out["is_selective_unit"] = out["is_selective_unit"].map(_as_bool)
+    out = out.drop_duplicates(subset=["unit_key"], keep="last")
+    return out
 
 
 def _compute_relative_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -192,11 +228,11 @@ def _to_triangle_xy(rel_int: np.ndarray, rel_obj: np.ndarray) -> tuple[np.ndarra
 
 
 def _draw_triangle_frame(ax) -> None:
-    ax.plot([0.0, 1.0], [0.0, 0.0], color="#2e2e2e", linewidth=1.1)
-    ax.plot([0.0, 0.5], [0.0, TRIANGLE_HEIGHT], color="#2e2e2e", linewidth=1.1)
-    ax.plot([1.0, 0.5], [0.0, TRIANGLE_HEIGHT], color="#2e2e2e", linewidth=1.1)
-    ax.set_xlim(-0.08, 1.08)
-    ax.set_ylim(-0.09, TRIANGLE_HEIGHT + 0.12)
+    ax.plot([0.0, 1.0], [0.0, 0.0], color="#2e2e2e", linewidth=1.5)
+    ax.plot([0.0, 0.5], [0.0, TRIANGLE_HEIGHT], color="#2e2e2e", linewidth=1.5)
+    ax.plot([1.0, 0.5], [0.0, TRIANGLE_HEIGHT], color="#2e2e2e", linewidth=1.5)
+    ax.set_xlim(-0.03, 1.03)
+    ax.set_ylim(-0.035, TRIANGLE_HEIGHT + 0.07)
     ax.set_aspect("equal")
     ax.set_xticks([])
     ax.set_yticks([])
@@ -204,15 +240,21 @@ def _draw_triangle_frame(ax) -> None:
         spine.set_visible(False)
 
 
-def _dominant_colors(df: pd.DataFrame, color_map: dict[str, str]) -> list[str]:
-    if "dominant_condition" in df.columns:
-        out = [color_map.get(str(token), "#5e5e5e") for token in df["dominant_condition"].astype(str).tolist()]
-        return out
-
-    rel = df.loc[:, list(RELATIVE_COLUMNS)].to_numpy(dtype=float)
-    idx = np.nanargmax(rel, axis=1)
-    labels = np.asarray(["face_interactive", "face_non_interactive", "object"])[idx]
-    return [color_map.get(str(token), "#5e5e5e") for token in labels.tolist()]
+def _point_rgba_for_panel(
+    panel: pd.DataFrame,
+    *,
+    point_color: str,
+    alpha_sig: float,
+    alpha_nonsig: float,
+) -> np.ndarray:
+    n = int(len(panel))
+    rgba = np.tile(np.asarray(to_rgba(point_color), dtype=float), (n, 1))
+    if "is_selective_unit" in panel.columns:
+        selective = panel["is_selective_unit"].map(_as_bool).to_numpy(dtype=bool)
+    else:
+        selective = np.zeros(n, dtype=bool)
+    rgba[:, 3] = np.where(selective, float(alpha_sig), float(alpha_nonsig))
+    return rgba
 
 
 def _output_path(settings: FixationThreeWayTriangularPlotSettings, ext: str, root: Path) -> Path:
@@ -233,6 +275,13 @@ def plot_fixation_three_way_selectivity_triangular(
     if df.empty:
         print("[plot] no three-way condition summary rows found")
         return None
+
+    unit_summary_df = _load_unit_summary_df(settings)
+    if not unit_summary_df.empty and "unit_key" in df.columns:
+        df = df.merge(unit_summary_df, on="unit_key", how="left")
+    if "is_selective_unit" not in df.columns:
+        df["is_selective_unit"] = False
+    df["is_selective_unit"] = df["is_selective_unit"].map(_as_bool)
 
     if not set(RELATIVE_COLUMNS).issubset(df.columns):
         df = _compute_relative_columns(df)
@@ -288,13 +337,18 @@ def plot_fixation_three_way_selectivity_triangular(
             if n_units >= int(settings.min_units_per_panel):
                 rel = panel.loc[:, list(RELATIVE_COLUMNS)].to_numpy(dtype=float)
                 x, y = _to_triangle_xy(rel_int=rel[:, 0], rel_obj=rel[:, 2])
-                colors = _dominant_colors(panel, settings.condition_colors)
+                rgba = _point_rgba_for_panel(
+                    panel,
+                    point_color=settings.point_color,
+                    alpha_sig=settings.point_alpha_significant,
+                    alpha_nonsig=settings.point_alpha_non_significant,
+                )
                 ax.scatter(
                     x,
                     y,
                     s=float(settings.point_size),
-                    c=colors,
-                    alpha=float(settings.point_alpha),
+                    c=rgba,
+                    alpha=None,
                     linewidths=float(settings.marker_edge_width),
                     edgecolors="#1b1b1b",
                 )
@@ -333,7 +387,7 @@ def plot_fixation_three_way_selectivity_triangular(
                 ha="center",
                 va="bottom",
                 fontsize=7.8,
-                color=settings.condition_colors.get("face_interactive", "#111111"),
+                color="#111111",
             )
             ax.text(
                 -0.03,
@@ -343,7 +397,7 @@ def plot_fixation_three_way_selectivity_triangular(
                 ha="left",
                 va="top",
                 fontsize=7.0,
-                color=settings.condition_colors.get("face_non_interactive", "#111111"),
+                color="#111111",
             )
             ax.text(
                 1.03,
@@ -353,7 +407,7 @@ def plot_fixation_three_way_selectivity_triangular(
                 ha="right",
                 va="top",
                 fontsize=7.6,
-                color=settings.condition_colors.get("object", "#111111"),
+                color="#111111",
             )
 
             if row_idx == 0:
@@ -366,7 +420,14 @@ def plot_fixation_three_way_selectivity_triangular(
         fontsize=13.2,
         y=0.995,
     )
-    fig.tight_layout(rect=[0.02, 0.02, 1.0, 0.97], w_pad=0.8, h_pad=1.0)
+    fig.subplots_adjust(
+        left=0.035,
+        right=0.995,
+        top=0.95,
+        bottom=0.04,
+        wspace=0.12,
+        hspace=0.22,
+    )
 
     cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
@@ -391,4 +452,3 @@ def plot_fixation_three_way_selectivity_triangular(
         "windows": window_order,
         "panel_counts": panel_counts,
     }
-

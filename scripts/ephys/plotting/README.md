@@ -88,22 +88,28 @@ Config:
   - columns = regions
   - points = units positioned by normalized three-condition mean firing
     (`face_interactive`, `face_non_interactive`, `object`)
+  - point alpha encodes unit selectivity from `unit_selectivity.csv`:
+    - alpha = 1.0 for units selective in any fixation-pair comparison
+    - alpha = 0.5 for units selective in no pair comparisons
+  Points use a single fixed color (no condition-based color coding).
   Input comes from `condition_window_means.csv` produced by
   `build_fixation_selective_units.py`.
 
   Config:
   - `selective_output_subdir`
   - `selective_condition_summary_filename`
+  - `selective_unit_summary_filename`
   - `selective_triangular_output_subdir`
   - `selective_triangular_output_filename`
   - `selective_triangular_output_extension`
   - `selective_triangular_output_dpi`
   - `selective_triangular_min_units_per_panel`
   - `selective_triangular_point_size`
-  - `selective_triangular_point_alpha`
+  - `selective_triangular_point_color`
+  - `selective_triangular_point_alpha_significant`
+  - `selective_triangular_point_alpha_non_significant`
   - `selective_triangular_marker_edge_width`
   - `selective_triangular_draw_centroid`
-  - `plot_condition_colors`
 
 - `plot_selective_fixation_psth_units.py`
   Selective-unit PSTH plotting with two modes:

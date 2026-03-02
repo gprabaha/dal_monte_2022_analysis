@@ -73,8 +73,10 @@ selective_triangular_output_filename: population_triangular
 selective_triangular_output_extension: png
 selective_triangular_output_dpi: 220
 selective_triangular_min_units_per_panel: 1
-selective_triangular_point_size: 18.0
-selective_triangular_point_alpha: 0.68
+selective_triangular_point_size: 26.0
+selective_triangular_point_color: "#1f1f1f"
+selective_triangular_point_alpha_significant: 1.0
+selective_triangular_point_alpha_non_significant: 0.5
 selective_triangular_marker_edge_width: 0.28
 selective_triangular_draw_centroid: true
 

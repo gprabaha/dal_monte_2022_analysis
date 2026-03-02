@@ -11,7 +11,6 @@ if str(_SRC_ROOT) not in sys.path:
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.plotting.fixation_three_way_selectivity_triangular import (
-    DEFAULT_COLORS,
     FixationThreeWayTriangularPlotSettings,
     plot_fixation_three_way_selectivity_triangular,
 )
@@ -34,15 +33,13 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_config(args.ephys_fixation_psth_cfg)
-    condition_colors = cfg.get("plot_condition_colors", dict(DEFAULT_COLORS))
-    if not isinstance(condition_colors, dict):
-        condition_colors = dict(DEFAULT_COLORS)
 
     settings = FixationThreeWayTriangularPlotSettings(
         cfg_path=args.dataset_cfg,
         plotting_cfg_path=args.plotting_cfg,
         input_subdir=cfg.get("selective_output_subdir", "ephys/psth/fixation_psth_selectivity"),
         condition_summary_filename=cfg.get("selective_condition_summary_filename", "condition_window_means.csv"),
+        unit_summary_filename=cfg.get("selective_unit_summary_filename", "unit_selectivity.csv"),
         output_subdir=cfg.get("selective_triangular_output_subdir", "ephys/psth/fixation_psth_selectivity_triangular"),
         output_filename=(
             args.output_filename
@@ -56,11 +53,12 @@ def main() -> None:
         ),
         output_dpi=cfg.get("selective_triangular_output_dpi", 220),
         min_units_per_panel=cfg.get("selective_triangular_min_units_per_panel", 1),
-        point_size=cfg.get("selective_triangular_point_size", 18.0),
-        point_alpha=cfg.get("selective_triangular_point_alpha", 0.68),
+        point_size=cfg.get("selective_triangular_point_size", 26.0),
+        point_color=cfg.get("selective_triangular_point_color", "#1f1f1f"),
+        point_alpha_significant=cfg.get("selective_triangular_point_alpha_significant", 1.0),
+        point_alpha_non_significant=cfg.get("selective_triangular_point_alpha_non_significant", 0.5),
         marker_edge_width=cfg.get("selective_triangular_marker_edge_width", 0.28),
         draw_centroid=cfg.get("selective_triangular_draw_centroid", True),
-        condition_colors={str(k): str(v) for k, v in condition_colors.items()},
     )
 
     result = plot_fixation_three_way_selectivity_triangular(
