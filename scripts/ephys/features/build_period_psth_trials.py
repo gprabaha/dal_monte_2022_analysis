@@ -13,6 +13,9 @@ from dal_monte_2022_analysis.ephys.features.period_psth import (
     PeriodPSTHSettings,
     run_period_psth_trial_build,
 )
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    scan_processed_paths_for_filename,
+)
 
 
 def _iter_trial_output_paths(
@@ -24,12 +27,15 @@ def _iter_trial_output_paths(
     session: Optional[str] = None,
 ) -> list[Path]:
     cfg = load_config(dataset_cfg_path)
-    root = Path(cfg["processed_data_root"])
-    date_glob = f"date={date}" if date else "date=*"
-    session_glob = f"session={session}" if session else "session=*"
-    filename = output_filename if output_filename.endswith(".pkl") else f"{output_filename}.pkl"
-    pattern = root / date_glob / session_glob / output_modality / filename
-    return sorted(root.glob(str(pattern.relative_to(root))))
+    rows = scan_processed_paths_for_filename(
+        cfg,
+        output_modality,
+        filename=output_filename,
+        dates=[date] if date is not None else None,
+        sessions=[session] if session is not None else None,
+        agents=[None],
+    )
+    return [row["path"] for row in rows]
 
 
 def _print_trial_example(path: Path, *, max_bins: int = 12) -> None:

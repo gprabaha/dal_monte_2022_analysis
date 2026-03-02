@@ -13,6 +13,9 @@ from dal_monte_2022_analysis.ephys.features.fixation_psth import (
     FixationPSTHAverageSettings,
     run_fixation_psth_average_build,
 )
+from dal_monte_2022_analysis.runtime.io.analysis_index import (
+    scan_analysis_date_paths,
+)
 
 
 def _iter_average_output_paths(
@@ -23,11 +26,13 @@ def _iter_average_output_paths(
     date: Optional[str] = None,
 ) -> list[Path]:
     cfg = load_config(dataset_cfg_path)
-    root = Path(cfg["analysis_output_root"]) / output_subdir
-    date_glob = f"date={date}" if date else "date=*"
-    filename = output_filename if output_filename.endswith(".pkl") else f"{output_filename}.pkl"
-    pattern = root / date_glob / filename
-    return sorted(root.glob(str(pattern.relative_to(root))))
+    rows = scan_analysis_date_paths(
+        cfg,
+        output_subdir,
+        filename=output_filename,
+        dates=[date] if date is not None else None,
+    )
+    return [row["path"] for row in rows]
 
 
 def _print_average_example(path: Path, *, max_bins: int = 12) -> None:

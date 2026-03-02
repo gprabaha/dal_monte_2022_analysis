@@ -21,6 +21,10 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     index_shared_paths,
     scan_processed_paths,
 )
+from dal_monte_2022_analysis.runtime.io.analysis_index import (
+    scan_analysis_date_paths,
+    scan_analysis_paths,
+)
 if _HAS_MPL:
     from dal_monte_2022_analysis.runtime.io.plot_output import (
         normalize_extension,
@@ -67,6 +71,64 @@ class TestProcessedDataIo(unittest.TestCase):
                 index_agent_paths(cfg, "missing_modality")
             with self.assertRaises(RuntimeError):
                 index_shared_paths(cfg, "missing_modality")
+
+
+class TestAnalysisIndexIo(unittest.TestCase):
+    """Regression checks for analysis-output indexing helpers."""
+
+    def test_scan_analysis_paths_date_session_partition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (
+                root
+                / "ephys/psth/fixation_neural_crosscorr/within_region/date=01012020/session=s1/fixations.pkl"
+            ).parent.mkdir(parents=True, exist_ok=True)
+            (
+                root
+                / "ephys/psth/fixation_neural_crosscorr/within_region/date=01012020/session=s1/fixations.pkl"
+            ).write_bytes(b"")
+            (
+                root
+                / "ephys/psth/fixation_neural_crosscorr/within_region/date=01022020/session=s2/fixations.pkl"
+            ).parent.mkdir(parents=True, exist_ok=True)
+            (
+                root
+                / "ephys/psth/fixation_neural_crosscorr/within_region/date=01022020/session=s2/fixations.pkl"
+            ).write_bytes(b"")
+
+            cfg = {"analysis_output_root": root}
+            rows = scan_analysis_paths(
+                cfg,
+                "ephys/psth/fixation_neural_crosscorr/within_region",
+                filename="fixations.pkl",
+            )
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["date"], "01012020")
+            self.assertEqual(rows[0]["session"], "s1")
+
+    def test_scan_analysis_date_paths_date_partition(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (
+                root
+                / "ephys/psth/fixation_psth_averages/date=01012020/fixations.pkl"
+            ).parent.mkdir(parents=True, exist_ok=True)
+            (root / "ephys/psth/fixation_psth_averages/date=01012020/fixations.pkl").write_bytes(b"")
+            (
+                root
+                / "ephys/psth/fixation_psth_averages/date=01022020/fixations.pkl"
+            ).parent.mkdir(parents=True, exist_ok=True)
+            (root / "ephys/psth/fixation_psth_averages/date=01022020/fixations.pkl").write_bytes(b"")
+
+            cfg = {"analysis_output_root": root}
+            rows = scan_analysis_date_paths(
+                cfg,
+                "ephys/psth/fixation_psth_averages",
+                filename="fixations.pkl",
+            )
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["date"], "01012020")
+            self.assertEqual(rows[1]["date"], "01022020")
 
 @unittest.skipUnless(_HAS_MPL, "matplotlib is required for runtime plot-output tests")
 class TestPlotOutputIo(unittest.TestCase):

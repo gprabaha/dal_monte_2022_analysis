@@ -26,6 +26,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     save_pickle_path,
     scan_processed_paths,
+    scan_processed_paths_for_filename,
 )
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
@@ -599,29 +600,14 @@ def _iter_trial_files(
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
 ) -> list[dict]:
-    root = Path(cfg["processed_data_root"])
-    filename = _ensure_pkl_filename(settings.trial_input_filename)
-    pattern = root / "date=*" / "session=*" / settings.trial_input_modality / filename
-
-    date_filter = None if dates is None else {str(v) for v in dates}
-    session_filter = None if sessions is None else {str(v) for v in sessions}
-    rows: list[dict] = []
-    for path in root.glob(str(pattern.relative_to(root))):
-        parts = path.parts
-        try:
-            date_part = next(part for part in parts if part.startswith("date="))
-            session_part = next(part for part in parts if part.startswith("session="))
-        except StopIteration:
-            continue
-        date = date_part.split("=", 1)[1]
-        session = session_part.split("=", 1)[1]
-        if date_filter is not None and date not in date_filter:
-            continue
-        if session_filter is not None and session not in session_filter:
-            continue
-        rows.append({"date": date, "session": session, "path": path})
-    rows.sort(key=lambda row: (row["date"], row["session"]))
-    return rows
+    return scan_processed_paths_for_filename(
+        cfg,
+        settings.trial_input_modality,
+        filename=_ensure_pkl_filename(settings.trial_input_filename),
+        dates=dates,
+        sessions=sessions,
+        agents=[None],
+    )
 
 
 def _extract_trials_df(obj) -> tuple[pd.DataFrame, Optional[np.ndarray], Optional[np.ndarray]]:
