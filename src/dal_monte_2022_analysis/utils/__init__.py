@@ -1,1 +1,1 @@
-"""Utility helpers for IO, paths, parallelism, fixation, and HPC helpers."""
+"""Utility helpers for generic IO, paths, and filename operations."""
