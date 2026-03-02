@@ -11,7 +11,7 @@ from dal_monte_2022_analysis.behav.analysis.fix_cross_correlation import (
     run_fix_cross_correlation_analysis,
 )
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.utils.hpc import (
+from dal_monte_2022_analysis.runtime.hpc.jobs import (
     generate_fix_cross_correlation_shuffle_job_file,
     submit_dsq_array_job,
     track_job_completion,

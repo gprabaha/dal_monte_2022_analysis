@@ -6,8 +6,8 @@ These utilities are intentionally shared across behavioral, ephys, and combined 
 Currently includes:
 - `paths.py` for consistent processed-data and analysis-output paths.
 - `parallel.py` for worker-count selection (SLURM-aware).
-- `fixation.py` as the canonical fixation/saccade API.
-- `hpc.py` as the canonical HPC job API.
+- `fixation.py` as a compatibility shim (canonical: `core/behav/fixation_detection.py`).
+- `hpc.py` as a compatibility shim (canonical: `runtime/hpc/jobs.py`).
 
 `paths.build_processed_data_path` is the main helper for constructing
 `.../date=<date>/session=<session>/<modality>/agent=<agent>.pkl` or `shared.pkl` paths.

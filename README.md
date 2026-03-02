@@ -6,7 +6,7 @@ Script-driven pipeline for extracting, cleaning, and analyzing gaze data from th
 
 - `configs/`: YAML configuration for dataset paths, feature settings, analysis settings, plotting, and HPC submission.
 - `scripts/`: domain-first CLI wrappers under `scripts/behav/`, `scripts/ephys/`, and `scripts/combined/`.
-- `src/dal_monte_2022_analysis/`: domain-first package code under `behav/`, `ephys/`, and `combined/`, plus shared `data/`, `config/`, and `utils/`.
+- `src/dal_monte_2022_analysis/`: domain-first package code under `behav/`, `ephys/`, and `combined/`, plus shared `core/`, `runtime/`, `data/`, `config/`, and `utils/`.
 - `hpc/`: generated job files, sbatch scripts, and logs for dSQ/SLURM runs.
 - `notebooks/`: exploratory notebooks.
 - `plots/`: exported figure outputs.
@@ -16,6 +16,7 @@ See folder-specific docs in:
 - `scripts/README.md`
 - `src/dal_monte_2022_analysis/README.md`
 - `hpc/README.md`
+- `docs/repo_target_architecture.md`
 
 ## Data layout
 

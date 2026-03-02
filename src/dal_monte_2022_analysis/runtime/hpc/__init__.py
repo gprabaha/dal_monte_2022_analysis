@@ -1,10 +1,6 @@
-"""Compatibility shim for HPC job helpers.
+"""HPC runtime helpers."""
 
-Canonical import path:
-`dal_monte_2022_analysis.runtime.hpc.jobs`.
-"""
-
-from dal_monte_2022_analysis.runtime.hpc.jobs import (  # noqa: F401
+from .jobs import (
     generate_fix_cross_correlation_shuffle_job_file,
     generate_fixation_job_file,
     generate_gaze_event_job_file,
@@ -21,3 +17,4 @@ __all__ = [
     "track_job_completion",
     "write_job_file",
 ]
+
