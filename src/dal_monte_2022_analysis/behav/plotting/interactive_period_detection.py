@@ -7,7 +7,6 @@ from multiprocessing import Pool
 from pathlib import Path
 from typing import Optional
 
-import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -23,6 +22,10 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     build_processed_pickle_path,
     load_processed_pickle,
     scan_processed_paths,
+)
+from dal_monte_2022_analysis.runtime.io.plot_output import (
+    normalize_extension,
+    save_figure,
 )
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
@@ -66,12 +69,6 @@ class InteractivePeriodDetectionPlotSettings:
     rasterize_density_traces: bool = True
     rasterize_interactive_blocks: bool = True
     pdf_compression: int = 6
-
-
-def _normalize_ext(ext: str, fallback: str) -> str:
-    """Normalize extension token to a lowercase suffix without leading dot."""
-    text = str(ext).strip().lower().lstrip(".")
-    return text if text else str(fallback).strip().lower().lstrip(".")
 
 
 def _session_key(date: str, session: str) -> str:
@@ -332,22 +329,6 @@ def _build_tasks(
     if settings.test_single and tasks:
         return [tasks[0]]
     return tasks
-
-
-def _save_figure(
-    fig: plt.Figure,
-    out_path: Path,
-    *,
-    ext: str,
-    settings: InteractivePeriodDetectionPlotSettings,
-) -> None:
-    """Save figure with PDF compression when applicable."""
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    if ext == "pdf":
-        with mpl.rc_context({"pdf.compression": int(settings.pdf_compression)}):
-            fig.savefig(out_path, format=ext)
-        return
-    fig.savefig(out_path, format=ext)
 
 
 def _render_period_figure(
@@ -644,7 +625,7 @@ def _plot_single_period(
     base_name = (
         f"interactive_period_detection_date={task['date']}_session={task['session']}"
     )
-    main_ext = _normalize_ext(settings.output_extension, fallback="png")
+    main_ext = normalize_extension(settings.output_extension, fallback="png")
     out_paths: list[Path] = []
 
     fig = _render_period_figure(
@@ -671,7 +652,13 @@ def _plot_single_period(
         block_rasterized=block_rasterized,
     )
     main_path = out_dir / f"{base_name}.{main_ext}"
-    _save_figure(fig, main_path, ext=main_ext, settings=settings)
+    save_figure(
+        fig,
+        main_path,
+        ext=main_ext,
+        dpi=dpi,
+        pdf_compression=int(settings.pdf_compression),
+    )
     out_paths.append(main_path)
 
     example_keys = set(settings.example_session_keys)
@@ -681,7 +668,13 @@ def _plot_single_period(
         example_dir_name = str(settings.example_sessions_subfolder).strip() or "example_sessions"
         example_dir = out_dir / example_dir_name
         example_png_path = example_dir / f"{base_name}.png"
-        _save_figure(fig, example_png_path, ext="png", settings=settings)
+        save_figure(
+            fig,
+            example_png_path,
+            ext="png",
+            dpi=dpi,
+            pdf_compression=int(settings.pdf_compression),
+        )
         out_paths.append(example_png_path)
 
         pdf_fig = fig
@@ -710,7 +703,13 @@ def _plot_single_period(
                 block_rasterized=False,
             )
         example_pdf_path = example_dir / f"{base_name}.pdf"
-        _save_figure(pdf_fig, example_pdf_path, ext="pdf", settings=settings)
+        save_figure(
+            pdf_fig,
+            example_pdf_path,
+            ext="pdf",
+            dpi=dpi,
+            pdf_compression=int(settings.pdf_compression),
+        )
         out_paths.append(example_pdf_path)
 
         if pdf_fig is not fig:

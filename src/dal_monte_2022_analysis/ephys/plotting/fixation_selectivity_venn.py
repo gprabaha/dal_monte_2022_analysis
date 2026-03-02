@@ -29,6 +29,10 @@ from dal_monte_2022_analysis.behav.plotting.common import (
 )
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.io.plot_output import (
+    normalize_extension,
+    save_figure,
+)
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 
@@ -326,13 +330,14 @@ def _render_region_venn(summary: dict, settings: FixationSelectivityVennPlotSett
     ax.axis("off")
     fig.subplots_adjust(left=0.05, right=0.76, top=0.9, bottom=0.06)
 
-    ext = settings.output_extension if str(settings.output_extension).startswith(".") else f".{settings.output_extension}"
-    out_path = out_root / f"region={_safe_region(region)}{ext}"
+    ext = normalize_extension(settings.output_extension, fallback="pdf")
+    out_path = out_root / f"region={_safe_region(region)}.{ext}"
     fig.patch.set_facecolor("white")
     ax.set_facecolor("white")
-    fig.savefig(
+    save_figure(
+        fig,
         out_path,
-        format=ext.lstrip("."),
+        ext=ext,
         dpi=dpi,
         facecolor="white",
         edgecolor="white",

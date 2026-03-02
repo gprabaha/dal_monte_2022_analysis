@@ -38,6 +38,7 @@ from dal_monte_2022_analysis.ephys.plotting.common import (
     row_counts as _row_counts_shared,
 )
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
+from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
@@ -471,13 +472,13 @@ def _plot_single_unit(
 
     ext = _ensure_ext(settings.output_extension)
     out_path = out_dir / f"date={date}__unit={_safe_unit_filename(unit_uuid)}.{ext}"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.patch.set_facecolor("white")
     ax_raster.set_facecolor("white")
     ax_rate.set_facecolor("white")
-    fig.savefig(
+    save_figure(
+        fig,
         out_path,
-        format=ext,
+        ext=ext,
         dpi=dpi,
         facecolor="white",
         edgecolor="white",

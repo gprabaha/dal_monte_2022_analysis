@@ -15,6 +15,7 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     resolve_figsize,
 )
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.runtime.io.plot_output import normalize_extension
 
 
 def safe_optional_str(value) -> Optional[str]:
@@ -30,10 +31,7 @@ def safe_optional_str(value) -> Optional[str]:
 
 
 def ensure_ext(ext: str, *, fallback: str) -> str:
-    text = str(ext).strip().lower()
-    if not text:
-        return str(fallback)
-    return text[1:] if text.startswith(".") else text
+    return normalize_extension(ext, fallback=fallback)
 
 
 def iter_trial_rows(
