@@ -1,6 +1,6 @@
 """Data classes and shared helpers for behavioral and ephys datasets."""
 
-from dal_monte_2022_analysis.data.annotate import (
+from dal_monte_2022_analysis.data.transforms.annotate import (
     annotate_ephys_dates_with_pair_context,
     annotate_with_pair_context,
     load_pair_context_table,
