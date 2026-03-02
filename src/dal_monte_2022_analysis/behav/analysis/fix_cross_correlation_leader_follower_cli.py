@@ -55,27 +55,34 @@ def _default_leader_follower_filenames(tag: str) -> dict[str, str]:
 def build_leader_follower_settings_from_config(
     *,
     dataset_cfg_path: str,
-    fix_crosscorr_cfg_path: str,
+    fix_cross_correlation_cfg_path: str | None = None,
+    fix_crosscorr_cfg_path: str | None = None,
     default_fixation_label: str,
     default_tag: str,
 ) -> FixCrossCorrLeaderFollowerSettings:
     """Build leader/follower settings from dataset + task config paths."""
-    cfg = load_config(fix_crosscorr_cfg_path)
+    cfg_path = fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path
+    if cfg_path is None:
+        raise ValueError("Expected one of fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path.")
+    cfg = load_config(cfg_path)
     defaults = _default_leader_follower_filenames(default_tag)
     fixation_label = cfg.get("fixation_label", cfg.get("face_label", default_fixation_label))
-    crosscorr_subdir = cfg.get(
-        "crosscorr_output_subdir",
-        cfg.get("output_subdir", "fix_cross_correlation"),
+    cross_correlation_subdir = cfg.get(
+        "cross_correlation_output_subdir",
+        cfg.get(
+            "crosscorr_output_subdir",
+            cfg.get("output_subdir", "fix_cross_correlation"),
+        ),
     )
     leader_follower_subdir = cfg.get(
         "leader_follower_output_subdir",
-        f"{crosscorr_subdir}/leader_follower",
+        f"{cross_correlation_subdir}/leader_follower",
     )
     return FixCrossCorrLeaderFollowerSettings(
         cfg_path=dataset_cfg_path,
         fixation_label=fixation_label,
         output_subdir=leader_follower_subdir,
-        crosscorr_input_subdir=crosscorr_subdir,
+        cross_correlation_input_subdir=cross_correlation_subdir,
         within_filename=cfg.get("within_filename"),
         lags_filename=cfg.get("lags_filename"),
         time_scope=normalize_fix_cross_correlation_time_scope(cfg.get("leader_follower_time_scope", "whole")),
@@ -168,4 +175,3 @@ def apply_leader_follower_cli_overrides(
     if tie_epsilon is not None:
         settings.tie_epsilon = max(0.0, float(tie_epsilon))
     return settings
-

@@ -48,7 +48,7 @@ class FixCrossCorrLeaderFollowerSettings:
     cfg_path: str
     fixation_label: str = "face"
     output_subdir: str = "fix_cross_correlation"
-    crosscorr_input_subdir: Optional[str] = None
+    cross_correlation_input_subdir: Optional[str] = None
     within_filename: Optional[str] = None
     lags_filename: Optional[str] = None
     time_scope: str = "whole"
@@ -102,6 +102,15 @@ class FixCrossCorrLeaderFollowerSettings:
     pupil_parallelize_sessions: bool = True
     pupil_parallel_max_procs: int = 16
     tie_epsilon: float = 0.0
+
+    @property
+    def crosscorr_input_subdir(self) -> Optional[str]:
+        """Backward-compatible alias for legacy setting name."""
+        return self.cross_correlation_input_subdir
+
+    @crosscorr_input_subdir.setter
+    def crosscorr_input_subdir(self, value: Optional[str]) -> None:
+        self.cross_correlation_input_subdir = value
 
 
 LEADER_DELTA_COL = "leader_minus_follower_fixation_count"
@@ -1731,7 +1740,7 @@ def run_fix_cross_correlation_leader_follower_analysis(
     """Build simplified leader/follower outputs (session, date, pair)."""
     cfg = load_config(settings.cfg_path)
     scope = normalize_fix_cross_correlation_time_scope(settings.time_scope)
-    input_subdir = settings.crosscorr_input_subdir or settings.output_subdir
+    input_subdir = settings.cross_correlation_input_subdir or settings.output_subdir
     input_dir = build_analysis_output_dir(cfg, input_subdir)
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
     within_path = input_dir / resolve_fix_cross_correlation_filename(

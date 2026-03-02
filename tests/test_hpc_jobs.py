@@ -54,7 +54,7 @@ class TestHpcJobs(unittest.TestCase):
                 worker_script=Path("/tmp/worker.py"),
                 env_name="analysis-env",
                 dataset_cfg_path="/tmp/dataset.yaml",
-                fix_crosscorr_cfg_path="/tmp/fix.yaml",
+                fix_cross_correlation_cfg_path="/tmp/fix.yaml",
                 time_scope="interactive",
             )
             line = job_file.read_text().strip()

@@ -27,12 +27,15 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.face_fix_cross_correlation_cfg)
-    crosscorr_subdir = cfg.get("crosscorr_output_subdir", cfg.get("output_subdir", "crosscorr_outputs"))
+    cross_correlation_subdir = cfg.get(
+        "cross_correlation_output_subdir",
+        cfg.get("crosscorr_output_subdir", cfg.get("output_subdir", "cross_correlation_outputs")),
+    )
 
     settings = M1M2CrossCorrComparisonPlotSettings(
         cfg_path=args.dataset_cfg,
         plotting_cfg_path=args.plotting_cfg,
-        analysis_subdir=crosscorr_subdir,
+        analysis_subdir=cross_correlation_subdir,
         fixation_label=cfg.get("fixation_label", "face"),
         scopes=tuple(cfg.get("m1_m2_plot_scopes", ("whole", "interactive", "non_interactive"))),
         significance_alpha=float(cfg.get("m1_m2_plot_significance_alpha", 0.05)),

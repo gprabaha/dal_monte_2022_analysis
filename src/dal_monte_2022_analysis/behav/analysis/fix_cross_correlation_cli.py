@@ -24,20 +24,27 @@ from dal_monte_2022_analysis.utils.paths import normalize_fix_cross_correlation_
 def build_fix_cross_correlation_settings_from_config(
     *,
     dataset_cfg_path: str,
-    fix_crosscorr_cfg_path: str,
+    fix_cross_correlation_cfg_path: Optional[str] = None,
+    fix_crosscorr_cfg_path: Optional[str] = None,
     default_fixation_label: str,
     default_shuffle_pairs_subdir: str,
 ) -> FixCrossCorrelationSettings:
     """Build cross-correlation settings from dataset + task config paths."""
-    cfg = load_config(fix_crosscorr_cfg_path)
+    cfg_path = fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path
+    if cfg_path is None:
+        raise ValueError("Expected one of fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path.")
+    cfg = load_config(cfg_path)
     fixation_label = cfg.get("fixation_label", cfg.get("face_label", default_fixation_label))
     return FixCrossCorrelationSettings(
         cfg_path=dataset_cfg_path,
         input_modality=cfg.get("input_modality", "fixation_binary_vectors"),
         fixation_label=fixation_label,
         output_subdir=cfg.get(
-            "crosscorr_output_subdir",
-            cfg.get("output_subdir", "crosscorr_outputs"),
+            "cross_correlation_output_subdir",
+            cfg.get(
+                "crosscorr_output_subdir",
+                cfg.get("output_subdir", "cross_correlation_outputs"),
+            ),
         ),
         within_filename=cfg.get("within_filename"),
         cross_filename=cfg.get("cross_filename"),
@@ -50,7 +57,10 @@ def build_fix_cross_correlation_settings_from_config(
         cross_pairs_seed=cfg.get("cross_pairs_seed", 13),
         cross_exclude_same_session=cfg.get("cross_exclude_same_session", True),
         cross_exclude_same_date=cfg.get("cross_exclude_same_date", False),
-        parallelize_across_crosscorr_pairs=cfg.get("parallelize_across_crosscorr_pairs", False),
+        parallelize_across_cross_correlation_pairs=cfg.get(
+            "parallelize_across_cross_correlation_pairs",
+            cfg.get("parallelize_across_crosscorr_pairs", False),
+        ),
         shuffle_output_filename=cfg.get("shuffle_output_filename"),
         shuffle_pairs_subdir=cfg.get("shuffle_pairs_subdir", default_shuffle_pairs_subdir),
         shuffle_n_shuffles=cfg.get("shuffle_n_shuffles", 1000),
@@ -69,6 +79,7 @@ def apply_fix_cross_correlation_cli_overrides(
     max_cross_pairs: Optional[int] = None,
     exclude_same_date: bool = False,
     include_same_session: bool = False,
+    parallelize_across_cross_correlation_pairs: bool = False,
     parallelize_across_crosscorr_pairs: bool = False,
     max_lag: Optional[int] = None,
     time_scope: Optional[str] = None,
@@ -87,8 +98,8 @@ def apply_fix_cross_correlation_cli_overrides(
         settings.cross_exclude_same_date = True
     if include_same_session:
         settings.cross_exclude_same_session = False
-    if parallelize_across_crosscorr_pairs:
-        settings.parallelize_across_crosscorr_pairs = True
+    if parallelize_across_cross_correlation_pairs or parallelize_across_crosscorr_pairs:
+        settings.parallelize_across_cross_correlation_pairs = True
     if max_lag is not None:
         settings.max_lag = max(0, int(max_lag))
     if time_scope is not None:
@@ -111,7 +122,8 @@ def run_fix_cross_correlation_shuffle_submit_hpc(
     *,
     hpc_cfg_path: str,
     dataset_cfg_path: str,
-    fix_crosscorr_cfg_path: str,
+    fix_cross_correlation_cfg_path: Optional[str] = None,
+    fix_crosscorr_cfg_path: Optional[str] = None,
 ) -> None:
     """Submit one-array-task-per-within-pair shuffle jobs, then collate."""
     hpc_cfg = load_config(hpc_cfg_path)
@@ -120,16 +132,20 @@ def run_fix_cross_correlation_shuffle_submit_hpc(
         print("No within-session pairs found for shuffled cross-correlation.")
         return
 
+    fix_cfg_path = fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path
+    if fix_cfg_path is None:
+        raise ValueError("Expected one of fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path.")
+
     worker_script = Path(hpc_cfg["worker_script_path"]).resolve()
     dataset_cfg_resolved = str(Path(dataset_cfg_path).resolve())
-    fix_cfg_resolved = str(Path(fix_crosscorr_cfg_path).resolve())
+    fix_cfg_resolved = str(Path(fix_cfg_path).resolve())
     generate_fix_cross_correlation_shuffle_job_file(
         tasks=tasks,
         job_file_path=hpc_cfg["job_file_path"],
         worker_script=worker_script,
         env_name=hpc_cfg["env_name"],
         dataset_cfg_path=dataset_cfg_resolved,
-        fix_crosscorr_cfg_path=fix_cfg_resolved,
+        fix_cross_correlation_cfg_path=fix_cfg_resolved,
         time_scope=settings.time_scope,
     )
 
@@ -156,6 +172,7 @@ def run_fix_cross_correlation_mode(
     session: Optional[str] = None,
     hpc_cfg_path: Optional[str] = None,
     dataset_cfg_path: Optional[str] = None,
+    fix_cross_correlation_cfg_path: Optional[str] = None,
     fix_crosscorr_cfg_path: Optional[str] = None,
 ) -> None:
     """Run one cross-correlation workflow mode based on CLI mode flags."""
@@ -164,13 +181,14 @@ def run_fix_cross_correlation_mode(
         return
 
     if mode == "shuffle_submit_hpc":
-        if hpc_cfg_path is None or dataset_cfg_path is None or fix_crosscorr_cfg_path is None:
-            raise RuntimeError("shuffle_submit_hpc mode requires hpc/dataset/fix-crosscorr config paths.")
+        fix_cfg_path = fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path
+        if hpc_cfg_path is None or dataset_cfg_path is None or fix_cfg_path is None:
+            raise RuntimeError("shuffle_submit_hpc mode requires hpc/dataset/fix-cross-correlation config paths.")
         run_fix_cross_correlation_shuffle_submit_hpc(
             settings,
             hpc_cfg_path=hpc_cfg_path,
             dataset_cfg_path=dataset_cfg_path,
-            fix_crosscorr_cfg_path=fix_crosscorr_cfg_path,
+            fix_cross_correlation_cfg_path=fix_cfg_path,
         )
         return
 
@@ -199,4 +217,3 @@ def run_fix_cross_correlation_mode(
         return
 
     raise RuntimeError(f"Unsupported mode: {mode}")
-

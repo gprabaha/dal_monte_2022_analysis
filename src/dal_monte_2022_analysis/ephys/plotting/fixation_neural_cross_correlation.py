@@ -61,13 +61,13 @@ class FixationNeuralCrossCorrelationPlotSettings:
 
     cfg_path: str
     plotting_cfg_path: str = "configs/plotting.yaml"
-    within_input_subdir: str = "ephys/psth/fixation_neural_crosscorr/within_region"
-    cross_input_subdir: str = "ephys/psth/fixation_neural_crosscorr/cross_region"
+    within_input_subdir: str = "ephys/psth/fixation_neural_cross_correlation/within_region"
+    cross_input_subdir: str = "ephys/psth/fixation_neural_cross_correlation/cross_region"
     within_input_filename: str = "fixations.pkl"
     cross_input_filename: str = "fixations.pkl"
     within_pair_average_input_filename: str = "pair_averages.pkl"
     cross_pair_average_input_filename: str = "pair_averages.pkl"
-    output_subdir: str = "ephys/psth/fixation_neural_crosscorr/plots"
+    output_subdir: str = "ephys/psth/fixation_neural_cross_correlation/plots"
     date_output_extension: str = "png"
     region_output_extension: str = "pdf"
     date_output_dpi: Optional[int] = 220

@@ -36,7 +36,7 @@ class M1M2CrossCorrComparisonPlotSettings:
 
     cfg_path: str
     plotting_cfg_path: str = "configs/plotting.yaml"
-    analysis_subdir: str = "crosscorr_outputs"
+    analysis_subdir: str = "cross_correlation_outputs"
     fixation_label: str = "face"
     scopes: tuple[str, ...] = ("whole", "interactive", "non_interactive")
     significance_alpha: float = 0.05

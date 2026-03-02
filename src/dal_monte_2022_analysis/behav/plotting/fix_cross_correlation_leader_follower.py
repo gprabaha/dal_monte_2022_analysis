@@ -37,8 +37,8 @@ class LeaderFollowerCrossCorrComparisonPlotSettings:
 
     cfg_path: str
     plotting_cfg_path: str = "configs/plotting.yaml"
-    crosscorr_analysis_subdir: str = "crosscorr_outputs"
-    leader_follower_subdir: str = "crosscorr_outputs/leader_follower"
+    cross_correlation_analysis_subdir: str = "cross_correlation_outputs"
+    leader_follower_subdir: str = "cross_correlation_outputs/leader_follower"
     fixation_label: str = "face"
     scopes: tuple[str, ...] = ("whole", "interactive", "non_interactive")
     leader_bases: tuple[str, ...] = ("session", "date", "pair")
@@ -63,6 +63,15 @@ class LeaderFollowerCrossCorrComparisonPlotSettings:
     observed_vs_shuffle_filename_template: str = (
         "observed_vs_shuffle_face_leader_follower_basis={basis}.pdf"
     )
+
+    @property
+    def crosscorr_analysis_subdir(self) -> str:
+        """Backward-compatible alias for legacy setting name."""
+        return str(self.cross_correlation_analysis_subdir)
+
+    @crosscorr_analysis_subdir.setter
+    def crosscorr_analysis_subdir(self, value: str) -> None:
+        self.cross_correlation_analysis_subdir = str(value)
 
 
 def _resolve_pair_key(df: pd.DataFrame) -> pd.Series:
@@ -347,7 +356,7 @@ def _plot_observed_vs_control_for_basis(
     plot_cfg = load_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
-    out_dir = build_analysis_output_dir(cfg, settings.crosscorr_analysis_subdir)
+    out_dir = build_analysis_output_dir(cfg, settings.cross_correlation_analysis_subdir)
     scopes = tuple(normalize_fix_cross_correlation_time_scope(scope) for scope in settings.scopes)
     if len(scopes) != 3:
         raise RuntimeError("Expected exactly 3 scopes for plotting (whole, interactive, non_interactive).")

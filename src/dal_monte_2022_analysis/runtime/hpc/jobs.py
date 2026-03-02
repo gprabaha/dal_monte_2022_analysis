@@ -94,10 +94,14 @@ def generate_fix_cross_correlation_shuffle_job_file(
     worker_script: Path,
     env_name: str,
     dataset_cfg_path: str,
-    fix_crosscorr_cfg_path: str,
+    fix_cross_correlation_cfg_path: Optional[str] = None,
+    fix_crosscorr_cfg_path: Optional[str] = None,
     time_scope: Optional[str] = None,
 ) -> None:
     """Generate a job file for within-session shuffled cross-correlation pairs."""
+    cfg_path = fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path
+    if cfg_path is None:
+        raise ValueError("Expected one of fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path.")
     commands: List[str] = []
     for date, session in tasks:
         scope_arg = f" --time-scope {time_scope}" if time_scope else ""
@@ -109,7 +113,7 @@ def generate_fix_cross_correlation_shuffle_job_file(
             "python "
             f"{worker_script} "
             f"--dataset-cfg {dataset_cfg_path} "
-            f"--fix-crosscorr-cfg {fix_crosscorr_cfg_path} "
+            f"--fix-cross-correlation-cfg {cfg_path} "
             f"--date {date} "
             f"--session {session}"
             f"{scope_arg}"
@@ -212,4 +216,3 @@ def track_job_completion(job_id: str, poll_secs: int = 30, log_every_secs: int =
             last_log = time.time()
 
         time.sleep(poll_secs)
-

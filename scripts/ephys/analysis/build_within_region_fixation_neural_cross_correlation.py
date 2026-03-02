@@ -18,7 +18,9 @@ def main() -> None:
     )
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
     parser.add_argument(
+        "--ephys-fixation-neural-cross-correlation-cfg",
         "--ephys-fixation-neural-crosscorr-cfg",
+        dest="ephys_fixation_neural_cross_correlation_cfg",
         default="configs/ephys_fixation_neural_cross_correlation.yaml",
     )
     parser.add_argument("--date", default=None)
@@ -43,7 +45,7 @@ def main() -> None:
 
     settings = build_fixation_neural_cross_correlation_settings_from_config(
         dataset_cfg_path=args.dataset_cfg,
-        ephys_fixation_neural_crosscorr_cfg_path=args.ephys_fixation_neural_crosscorr_cfg,
+        ephys_fixation_neural_cross_correlation_cfg_path=args.ephys_fixation_neural_cross_correlation_cfg,
     )
     settings = apply_fixation_neural_cross_correlation_cli_overrides(
         settings,

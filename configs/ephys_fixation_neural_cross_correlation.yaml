@@ -7,8 +7,8 @@ trial_input_filename: fixations.pkl
 
 # Outputs (stored under analysis_output_root).
 # Within-region and cross-region analyses are written separately.
-within_output_subdir: ephys/psth/fixation_neural_crosscorr/within_region
-cross_output_subdir: ephys/psth/fixation_neural_crosscorr/cross_region
+within_output_subdir: ephys/psth/fixation_neural_cross_correlation/within_region
+cross_output_subdir: ephys/psth/fixation_neural_cross_correlation/cross_region
 within_output_filename: fixations.pkl
 cross_output_filename: fixations.pkl
 within_pair_average_output_filename: pair_averages.pkl
@@ -49,7 +49,7 @@ test_single: false
 # Plotting outputs from neural cross-correlation summaries.
 # Date-level plots: PNG per date and region/region-pair.
 # Global-level plots: PDF per region/region-pair across all dates.
-plot_output_subdir: ephys/psth/fixation_neural_crosscorr/plots
+plot_output_subdir: ephys/psth/fixation_neural_cross_correlation/plots
 plot_date_output_extension: png
 plot_region_output_extension: pdf
 plot_date_output_dpi: 220

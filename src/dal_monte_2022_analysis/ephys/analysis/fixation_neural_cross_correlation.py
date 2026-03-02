@@ -59,8 +59,8 @@ class FixationNeuralCrossCorrelationSettings:
     cfg_path: str
     trial_input_modality: str = "psth"
     trial_input_filename: str = "fixations.pkl"
-    within_output_subdir: str = "ephys/psth/fixation_neural_crosscorr/within_region"
-    cross_output_subdir: str = "ephys/psth/fixation_neural_crosscorr/cross_region"
+    within_output_subdir: str = "ephys/psth/fixation_neural_cross_correlation/within_region"
+    cross_output_subdir: str = "ephys/psth/fixation_neural_cross_correlation/cross_region"
     within_output_filename: str = "fixations.pkl"
     cross_output_filename: str = "fixations.pkl"
     within_pair_average_output_filename: str = "pair_averages.pkl"
@@ -86,8 +86,8 @@ class FixationNeuralCrossCorrelationPlotAggregationSettings:
     """Configuration for analysis-side aggregation used by plotting."""
 
     cfg_path: str
-    within_input_subdir: str = "ephys/psth/fixation_neural_crosscorr/within_region"
-    cross_input_subdir: str = "ephys/psth/fixation_neural_crosscorr/cross_region"
+    within_input_subdir: str = "ephys/psth/fixation_neural_cross_correlation/within_region"
+    cross_input_subdir: str = "ephys/psth/fixation_neural_cross_correlation/cross_region"
     within_input_filename: str = "fixations.pkl"
     cross_input_filename: str = "fixations.pkl"
     within_pair_average_input_filename: str = "pair_averages.pkl"
@@ -109,21 +109,31 @@ def coerce_nonempty_str_list(values) -> Optional[list[str]]:
 def build_fixation_neural_cross_correlation_settings_from_config(
     *,
     dataset_cfg_path: str,
-    ephys_fixation_neural_crosscorr_cfg_path: str,
+    ephys_fixation_neural_cross_correlation_cfg_path: str | None = None,
+    ephys_fixation_neural_crosscorr_cfg_path: str | None = None,
 ) -> FixationNeuralCrossCorrelationSettings:
     """Build analysis settings from dataset + task config paths."""
-    cfg = load_config(ephys_fixation_neural_crosscorr_cfg_path)
+    cfg_path = (
+        ephys_fixation_neural_cross_correlation_cfg_path
+        or ephys_fixation_neural_crosscorr_cfg_path
+    )
+    if cfg_path is None:
+        raise ValueError(
+            "Expected one of ephys_fixation_neural_cross_correlation_cfg_path "
+            "or ephys_fixation_neural_crosscorr_cfg_path.",
+        )
+    cfg = load_config(cfg_path)
     return FixationNeuralCrossCorrelationSettings(
         cfg_path=dataset_cfg_path,
         trial_input_modality=cfg.get("trial_input_modality", "psth"),
         trial_input_filename=cfg.get("trial_input_filename", "fixations.pkl"),
         within_output_subdir=cfg.get(
             "within_output_subdir",
-            "ephys/psth/fixation_neural_crosscorr/within_region",
+            "ephys/psth/fixation_neural_cross_correlation/within_region",
         ),
         cross_output_subdir=cfg.get(
             "cross_output_subdir",
-            "ephys/psth/fixation_neural_crosscorr/cross_region",
+            "ephys/psth/fixation_neural_cross_correlation/cross_region",
         ),
         within_output_filename=cfg.get("within_output_filename", "fixations.pkl"),
         cross_output_filename=cfg.get("cross_output_filename", "fixations.pkl"),

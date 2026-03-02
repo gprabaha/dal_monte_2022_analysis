@@ -29,7 +29,9 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
     parser.add_argument("--plotting-cfg", default="configs/plotting.yaml")
     parser.add_argument(
+        "--ephys-fixation-neural-cross-correlation-cfg",
         "--ephys-fixation-neural-crosscorr-cfg",
+        dest="ephys_fixation_neural_cross_correlation_cfg",
         default="configs/ephys_fixation_neural_cross_correlation.yaml",
     )
     parser.add_argument("--date", default=None)
@@ -65,17 +67,17 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
 
-    cfg = load_config(args.ephys_fixation_neural_crosscorr_cfg)
+    cfg = load_config(args.ephys_fixation_neural_cross_correlation_cfg)
     settings = FixationNeuralCrossCorrelationPlotSettings(
         cfg_path=args.dataset_cfg,
         plotting_cfg_path=args.plotting_cfg,
         within_input_subdir=cfg.get(
             "within_output_subdir",
-            "ephys/psth/fixation_neural_crosscorr/within_region",
+            "ephys/psth/fixation_neural_cross_correlation/within_region",
         ),
         cross_input_subdir=cfg.get(
             "cross_output_subdir",
-            "ephys/psth/fixation_neural_crosscorr/cross_region",
+            "ephys/psth/fixation_neural_cross_correlation/cross_region",
         ),
         within_input_filename=cfg.get("within_output_filename", "fixations.pkl"),
         cross_input_filename=cfg.get("cross_output_filename", "fixations.pkl"),
@@ -89,7 +91,7 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
         ),
         output_subdir=cfg.get(
             "plot_output_subdir",
-            "ephys/psth/fixation_neural_crosscorr/plots",
+            "ephys/psth/fixation_neural_cross_correlation/plots",
         ),
         date_output_extension=cfg.get("plot_date_output_extension", "png"),
         region_output_extension=cfg.get("plot_region_output_extension", "pdf"),

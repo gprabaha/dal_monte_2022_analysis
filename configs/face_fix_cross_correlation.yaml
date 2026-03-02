@@ -6,8 +6,8 @@ fixation_label: face
 # Folder for leader/follower CSV outputs.
 output_subdir: fix_cross_correlation
 # Folder for cross-correlation pickle outputs.
-crosscorr_output_subdir: crosscorr_outputs
-# Folder (inside crosscorr_output_subdir) for m1-m2 comparison PDFs.
+cross_correlation_output_subdir: cross_correlation_outputs
+# Folder (inside cross_correlation_output_subdir) for m1-m2 comparison PDFs.
 m1_m2_plot_output_subdir: plots/m1-m2
 # Scope order for m1-m2 comparison panels.
 m1_m2_plot_scopes: [whole, interactive, non_interactive]
@@ -73,7 +73,7 @@ cross_pairs_max: null
 cross_pairs_seed: 13
 cross_exclude_same_session: true
 cross_exclude_same_date: false
-parallelize_across_crosscorr_pairs: true
+parallelize_across_cross_correlation_pairs: true
 
 # Optional: limit to a single session/few pairs for quick testing.
 test_single: false
@@ -90,7 +90,7 @@ shuffle_log_every: 100
 
 # Optional leader-follower analysis settings (used by
 # scripts/behav/analysis/build_face_fix_cross_correlation_leader_follower.py).
-leader_follower_output_subdir: crosscorr_outputs/leader_follower
+leader_follower_output_subdir: cross_correlation_outputs/leader_follower
 leader_follower_time_scope: whole
 leader_follower_tie_epsilon: 0.0
 leader_follower_session_filename: within_session_face_fix_crosscorr_leader_follower.pkl

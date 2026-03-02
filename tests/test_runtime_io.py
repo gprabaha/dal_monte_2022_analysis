@@ -81,25 +81,25 @@ class TestAnalysisIndexIo(unittest.TestCase):
             root = Path(tmp_dir)
             (
                 root
-                / "ephys/psth/fixation_neural_crosscorr/within_region/date=01012020/session=s1/fixations.pkl"
+                / "ephys/psth/fixation_neural_cross_correlation/within_region/date=01012020/session=s1/fixations.pkl"
             ).parent.mkdir(parents=True, exist_ok=True)
             (
                 root
-                / "ephys/psth/fixation_neural_crosscorr/within_region/date=01012020/session=s1/fixations.pkl"
+                / "ephys/psth/fixation_neural_cross_correlation/within_region/date=01012020/session=s1/fixations.pkl"
             ).write_bytes(b"")
             (
                 root
-                / "ephys/psth/fixation_neural_crosscorr/within_region/date=01022020/session=s2/fixations.pkl"
+                / "ephys/psth/fixation_neural_cross_correlation/within_region/date=01022020/session=s2/fixations.pkl"
             ).parent.mkdir(parents=True, exist_ok=True)
             (
                 root
-                / "ephys/psth/fixation_neural_crosscorr/within_region/date=01022020/session=s2/fixations.pkl"
+                / "ephys/psth/fixation_neural_cross_correlation/within_region/date=01022020/session=s2/fixations.pkl"
             ).write_bytes(b"")
 
             cfg = {"analysis_output_root": root}
             rows = scan_analysis_paths(
                 cfg,
-                "ephys/psth/fixation_neural_crosscorr/within_region",
+                "ephys/psth/fixation_neural_cross_correlation/within_region",
                 filename="fixations.pkl",
             )
             self.assertEqual(len(rows), 2)

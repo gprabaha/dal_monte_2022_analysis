@@ -30,10 +30,13 @@ def main():
         print("[plot] skipping monkey-role pupil violin (disabled in config).")
         return
 
-    crosscorr_subdir = cfg.get("crosscorr_output_subdir", cfg.get("output_subdir", "fix_cross_correlation"))
+    cross_correlation_subdir = cfg.get(
+        "cross_correlation_output_subdir",
+        cfg.get("crosscorr_output_subdir", cfg.get("output_subdir", "fix_cross_correlation")),
+    )
     leader_follower_subdir = cfg.get(
         "leader_follower_output_subdir",
-        f"{crosscorr_subdir}/leader_follower",
+        f"{cross_correlation_subdir}/leader_follower",
     )
     settings = LeaderFollowerMonkeyRolePupilPlotSettings(
         cfg_path=args.dataset_cfg,

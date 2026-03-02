@@ -38,12 +38,12 @@ Primary configs:
 Leader-follower scripts reuse the corresponding cross-correlation configs above and read:
 - within-session cross-correlation pickle (`within_filename` or algorithmic default)
 - lag axis pickle (`lags_filename` or algorithmic default)
-- by default they read from `crosscorr_output_subdir` at `leader_follower_time_scope` (default `whole`)
-  and write outputs to `leader_follower_output_subdir` (default `<crosscorr_output_subdir>/leader_follower`).
+- by default they read from `cross_correlation_output_subdir` at `leader_follower_time_scope` (default `whole`)
+  and write outputs to `leader_follower_output_subdir` (default `<cross_correlation_output_subdir>/leader_follower`).
 
 Cross-correlation naming/layout notes:
-- Cross-correlation pickles are written to `crosscorr_output_subdir` (default: `crosscorr_outputs`).
-- Leader-follower pickles are written to `leader_follower_output_subdir` (default: `<crosscorr_output_subdir>/leader_follower`).
+- Cross-correlation pickles are written to `cross_correlation_output_subdir` (default: `cross_correlation_outputs`).
+- Leader-follower pickles are written to `leader_follower_output_subdir` (default: `<cross_correlation_output_subdir>/leader_follower`).
 - If `within_filename`/`cross_filename`/`shuffle_output_filename`/`lags_filename` are null,
   names are generated from fixation label + `time_scope` (whole / interactive / non_interactive).
 

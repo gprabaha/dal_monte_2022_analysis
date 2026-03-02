@@ -31,7 +31,7 @@ def main():
 
     settings = build_leader_follower_settings_from_config(
         dataset_cfg_path=args.dataset_cfg,
-        fix_crosscorr_cfg_path=args.out_of_roi_fix_cross_correlation_cfg,
+        fix_cross_correlation_cfg_path=args.out_of_roi_fix_cross_correlation_cfg,
         default_fixation_label="out_of_roi",
         default_tag="out_of_roi",
     )

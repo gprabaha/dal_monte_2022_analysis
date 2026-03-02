@@ -31,7 +31,7 @@ def main():
 
     settings = build_leader_follower_settings_from_config(
         dataset_cfg_path=args.dataset_cfg,
-        fix_crosscorr_cfg_path=args.face_fix_cross_correlation_cfg,
+        fix_cross_correlation_cfg_path=args.face_fix_cross_correlation_cfg,
         default_fixation_label="face",
         default_tag="face",
     )

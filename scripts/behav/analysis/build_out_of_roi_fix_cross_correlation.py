@@ -41,7 +41,12 @@ def main():
     parser.add_argument("--max-cross-pairs", type=int, default=None)
     parser.add_argument("--exclude-same-date", action="store_true")
     parser.add_argument("--include-same-session", action="store_true")
-    parser.add_argument("--parallelize-across-crosscorr-pairs", action="store_true")
+    parser.add_argument(
+        "--parallelize-across-cross-correlation-pairs",
+        "--parallelize-across-crosscorr-pairs",
+        dest="parallelize_across_cross_correlation_pairs",
+        action="store_true",
+    )
     parser.add_argument("--max-lag", type=int, default=None)
     parser.add_argument(
         "--time-scope",
@@ -58,7 +63,7 @@ def main():
     args = parser.parse_args()
     settings = build_fix_cross_correlation_settings_from_config(
         dataset_cfg_path=args.dataset_cfg,
-        fix_crosscorr_cfg_path=args.out_of_roi_fix_cross_correlation_cfg,
+        fix_cross_correlation_cfg_path=args.out_of_roi_fix_cross_correlation_cfg,
         default_fixation_label="out_of_roi",
         default_shuffle_pairs_subdir="within_session_out_of_roi_shuffle_pair_results",
     )
@@ -68,7 +73,7 @@ def main():
         max_cross_pairs=args.max_cross_pairs,
         exclude_same_date=args.exclude_same_date,
         include_same_session=args.include_same_session,
-        parallelize_across_crosscorr_pairs=args.parallelize_across_crosscorr_pairs,
+        parallelize_across_cross_correlation_pairs=args.parallelize_across_cross_correlation_pairs,
         max_lag=args.max_lag,
         time_scope=args.time_scope,
         shuffle_n_shuffles=args.shuffle_n_shuffles,
@@ -85,7 +90,7 @@ def main():
         session=args.session,
         hpc_cfg_path=args.hpc_cfg,
         dataset_cfg_path=args.dataset_cfg,
-        fix_crosscorr_cfg_path=args.out_of_roi_fix_cross_correlation_cfg,
+        fix_cross_correlation_cfg_path=args.out_of_roi_fix_cross_correlation_cfg,
     )
 
 

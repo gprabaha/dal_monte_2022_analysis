@@ -48,7 +48,7 @@ class FixCrossCorrelationSettings:
     cfg_path: str
     input_modality: str = "fixation_binary_vectors"
     fixation_label: str = "face"
-    output_subdir: str = "crosscorr_outputs"
+    output_subdir: str = "cross_correlation_outputs"
     within_filename: Optional[str] = None
     cross_filename: Optional[str] = None
     lags_filename: Optional[str] = None
@@ -60,7 +60,7 @@ class FixCrossCorrelationSettings:
     cross_pairs_seed: int = 13
     cross_exclude_same_session: bool = True
     cross_exclude_same_date: bool = False
-    parallelize_across_crosscorr_pairs: bool = False
+    parallelize_across_cross_correlation_pairs: bool = False
     shuffle_output_filename: Optional[str] = None
     shuffle_pairs_subdir: str = "within_session_shuffle_pair_results"
     shuffle_n_shuffles: int = 1000
@@ -69,6 +69,15 @@ class FixCrossCorrelationSettings:
     shuffle_parallelize_within_pair: bool = True
     shuffle_log_every: int = 100
     test_single: bool = False
+
+    @property
+    def parallelize_across_crosscorr_pairs(self) -> bool:
+        """Backward-compatible alias for legacy setting name."""
+        return bool(self.parallelize_across_cross_correlation_pairs)
+
+    @parallelize_across_crosscorr_pairs.setter
+    def parallelize_across_crosscorr_pairs(self, value: bool) -> None:
+        self.parallelize_across_cross_correlation_pairs = bool(value)
 
 
 def _load_fixation_vector(
@@ -710,7 +719,7 @@ def _build_within_session_rows(
         )
 
     use_parallel = (
-        settings.parallelize_across_crosscorr_pairs
+        settings.parallelize_across_cross_correlation_pairs
         and not settings.test_single
         and len(tasks) > 1
     )
@@ -874,7 +883,7 @@ def _build_cross_session_control_rows(
         return mean.astype(np.float32), std.astype(np.float32), n_pairs
 
     use_parallel = (
-        settings.parallelize_across_crosscorr_pairs
+        settings.parallelize_across_cross_correlation_pairs
         and not settings.test_single
         and len(tasks) > 1
     )

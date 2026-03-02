@@ -27,16 +27,19 @@ def main():
     args = parser.parse_args()
 
     cfg = load_config(args.face_fix_cross_correlation_cfg)
-    crosscorr_subdir = cfg.get("crosscorr_output_subdir", cfg.get("output_subdir", "crosscorr_outputs"))
+    cross_correlation_subdir = cfg.get(
+        "cross_correlation_output_subdir",
+        cfg.get("crosscorr_output_subdir", cfg.get("output_subdir", "cross_correlation_outputs")),
+    )
     leader_follower_subdir = cfg.get(
         "leader_follower_output_subdir",
-        f"{crosscorr_subdir}/leader_follower",
+        f"{cross_correlation_subdir}/leader_follower",
     )
 
     settings = LeaderFollowerCrossCorrComparisonPlotSettings(
         cfg_path=args.dataset_cfg,
         plotting_cfg_path=args.plotting_cfg,
-        crosscorr_analysis_subdir=crosscorr_subdir,
+        cross_correlation_analysis_subdir=cross_correlation_subdir,
         leader_follower_subdir=leader_follower_subdir,
         fixation_label=cfg.get("fixation_label", "face"),
         scopes=tuple(cfg.get("lf_plot_scopes", ("whole", "interactive", "non_interactive"))),
