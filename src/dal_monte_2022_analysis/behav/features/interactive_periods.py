@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Iterable, Optional
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.core.behav.feature_primitives import (
+    extract_density_vector,
+    find_contiguous_periods,
+)
 from dal_monte_2022_analysis.data.records.behavioral import JointFixationDensityData
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.runtime.io.processed_data import (
@@ -36,29 +40,12 @@ class InteractivePeriodsSettings:
 def _as_density(obj) -> Optional[np.ndarray]:
     """Extract a 1D density array from supported inputs."""
     if isinstance(obj, JointFixationDensityData):
-        return np.asarray(obj.density).astype(float)
+        return extract_density_vector(obj)
     if isinstance(obj, np.ndarray):
-        return np.asarray(obj).astype(float)
-    if isinstance(obj, dict) and "density" in obj:
-        return np.asarray(obj["density"]).astype(float)
+        return extract_density_vector(obj)
+    if isinstance(obj, dict):
+        return extract_density_vector(obj)
     return None
-
-
-def _find_contiguous_periods(mask: Iterable[bool]) -> list[tuple[int, int, bool]]:
-    """Return start/stop indices for contiguous periods of a boolean mask."""
-    periods: list[tuple[int, int, bool]] = []
-    mask_list = list(mask)
-    if not mask_list:
-        return periods
-    start = 0
-    current = mask_list[0]
-    for idx in range(1, len(mask_list)):
-        if mask_list[idx] != current:
-            periods.append((start, idx - 1, current))
-            start = idx
-            current = mask_list[idx]
-    periods.append((start, len(mask_list) - 1, current))
-    return periods
 
 
 def build_interactive_periods_for_row(
@@ -76,7 +63,7 @@ def build_interactive_periods_for_row(
     mean_density = float(np.mean(density))
     threshold = settings.threshold_factor * mean_density
     mask = density > threshold
-    periods = _find_contiguous_periods(mask)
+    periods = find_contiguous_periods(mask)
 
     rows = []
     for start, stop, is_high in periods:

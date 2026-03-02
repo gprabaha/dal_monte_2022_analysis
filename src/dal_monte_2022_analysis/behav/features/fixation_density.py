@@ -23,6 +23,11 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     save_processed_pickle,
 )
 from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
+from dal_monte_2022_analysis.core.behav.feature_primitives import (
+    extract_monkey_name,
+    fixation_durations,
+    minmax_normalize,
+)
 from dal_monte_2022_analysis.core.behav.roi_groups import (
     DEFAULT_FIXATION_ROI_GROUPS,
     coerce_location_labels,
@@ -106,8 +111,8 @@ def _compute_fixation_stats(
     inter_fixation_fallback: str,
 ) -> tuple[float, float]:
     """Compute mean fixation duration and inter-fixation gap length."""
-    durations = [stop - start + 1 for start, stop in events if stop >= start]
-    avg_fix = float(np.mean(durations)) if durations else 0.0
+    durations = fixation_durations(events)
+    avg_fix = float(np.mean(durations)) if durations.size else 0.0
 
     gaps = []
     for (_, prev_stop), (next_start, _) in zip(events, events[1:]):
@@ -142,27 +147,6 @@ def _compute_kernel_from_binwidth(
     sigma = max(settings.sigma_floor, sigma)
     truncate = max(0.0, float(settings.truncate_sigmas))
     return binwidth, sigma, truncate
-
-
-def _minmax_normalize(values: np.ndarray) -> np.ndarray:
-    """Normalize an array between 0 and 1."""
-    if values.size == 0:
-        return values
-    min_val = float(values.min())
-    max_val = float(values.max())
-    if np.isclose(max_val, min_val):
-        return np.zeros_like(values, dtype=float)
-    return (values - min_val) / (max_val - min_val)
-
-
-def _extract_monkey_name(fix_df: pd.DataFrame) -> Optional[str]:
-    """Extract a monkey name from a fixation DataFrame if available."""
-    if fix_df is None or fix_df.empty or "monkey_name" not in fix_df.columns:
-        return None
-    valid = fix_df["monkey_name"].dropna()
-    if valid.empty:
-        return None
-    return str(valid.iloc[0])
 
 
 def _compute_global_face_kernel_parameters(
@@ -304,7 +288,7 @@ def build_fixation_density_for_row(
             truncate=shared_truncate,
         )
         if settings.normalize:
-            density = _minmax_normalize(density)
+            density = minmax_normalize(density)
         density_vectors[group] = density.astype(np.float32)
 
     if context is None:
@@ -312,7 +296,7 @@ def build_fixation_density_for_row(
             date=row["date"],
             session=row["session"],
             agent=agent,
-            monkey_name=_extract_monkey_name(fix_df),
+            monkey_name=extract_monkey_name(fix_df),
         )
 
     return FixationDensityVectorsData(context=context, vectors=density_vectors)

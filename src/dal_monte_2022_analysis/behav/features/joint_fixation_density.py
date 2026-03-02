@@ -9,6 +9,10 @@ from typing import Optional
 import numpy as np
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.core.behav.feature_primitives import (
+    extract_density_vector,
+    minmax_normalize,
+)
 from dal_monte_2022_analysis.data.records.behavioral import (
     FixationDensityVectorsData,
     JointFixationDensityData,
@@ -34,28 +38,13 @@ class JointFixationDensitySettings:
     test_single: bool = False
 
 
-def _minmax_normalize(values: np.ndarray) -> np.ndarray:
-    """Normalize an array between 0 and 1."""
-    if values.size == 0:
-        return values
-    min_val = float(values.min())
-    max_val = float(values.max())
-    if np.isclose(max_val, min_val):
-        return np.zeros_like(values, dtype=float)
-    return (values - min_val) / (max_val - min_val)
-
-
 def _extract_face_density(obj, face_label: str) -> Optional[np.ndarray]:
     """Return the face density vector from a fixation density object."""
     if isinstance(obj, FixationDensityVectorsData):
-        vectors = obj.vectors
-    elif isinstance(obj, dict):
-        vectors = obj
-    else:
-        return None
-    if not vectors or face_label not in vectors:
-        return None
-    return np.asarray(vectors[face_label]).astype(float)
+        return extract_density_vector(obj, key=face_label)
+    if isinstance(obj, dict):
+        return extract_density_vector(obj, key=face_label)
+    return None
 
 
 def build_joint_face_density_for_row(
@@ -78,7 +67,7 @@ def build_joint_face_density_for_row(
 
     joint = np.sqrt(m1_face * m2_face)
     if settings.normalize:
-        joint = _minmax_normalize(joint)
+        joint = minmax_normalize(joint)
 
     context = RecordingContext(
         date=row["date"],

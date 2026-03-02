@@ -18,6 +18,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     save_processed_pickle,
 )
 from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
+from dal_monte_2022_analysis.core.behav.feature_primitives import extract_monkey_name
 from dal_monte_2022_analysis.core.behav.roi_groups import (
     DEFAULT_FIXATION_ROI_GROUPS,
     coerce_location_labels,
@@ -61,16 +62,6 @@ def _resolve_roi_groups(
 def _apply_interval(vector: np.ndarray, start: int, stop: int) -> None:
     """Set a vector interval (inclusive) to 1s."""
     vector[start:stop + 1] = 1
-
-
-def _extract_monkey_name(fix_df: pd.DataFrame) -> Optional[str]:
-    """Extract a monkey name from a fixation DataFrame if available."""
-    if fix_df is None or fix_df.empty or "monkey_name" not in fix_df.columns:
-        return None
-    valid = fix_df["monkey_name"].dropna()
-    if valid.empty:
-        return None
-    return str(valid.iloc[0])
 
 
 def build_fixation_binary_vectors_for_row(
@@ -134,7 +125,7 @@ def build_fixation_binary_vectors_for_row(
                 if locations_match(locations, keywords):
                     _apply_interval(vectors[group], start, stop)
 
-    monkey_name = _extract_monkey_name(fix_df) if isinstance(fix_df, pd.DataFrame) else None
+    monkey_name = extract_monkey_name(fix_df) if isinstance(fix_df, pd.DataFrame) else None
     context = RecordingContext(
         date=row["date"],
         session=row["session"],
