@@ -15,6 +15,7 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import FixationBinaryVectorsData
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
@@ -103,10 +104,7 @@ class GroupFitResult:
     n_iterations: int
 
 
-def _load_pickle(path):
-    """Load a pickled object from disk."""
-    with open(path, "rb") as f:
-        return pickle.load(f)
+_load_pickle = load_pickle
 
 
 def _extract_fixation_vector(

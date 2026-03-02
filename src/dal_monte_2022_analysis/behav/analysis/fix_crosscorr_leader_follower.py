@@ -20,6 +20,7 @@ from dal_monte_2022_analysis.utils.paths import (
     build_processed_data_path,
     normalize_fix_crosscorr_time_scope,
 )
+from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.roi_groups import keywords_for_fixation_label
 
@@ -345,10 +346,7 @@ def _assign_consistency_label(
     return labels
 
 
-def _load_pickle(path: Path):
-    """Load a pickled object from disk."""
-    with open(path, "rb") as f:
-        return pickle.load(f)
+_load_pickle = load_pickle
 
 
 def _extract_pupil_vector(obj) -> np.ndarray:

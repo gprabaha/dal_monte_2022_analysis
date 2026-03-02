@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
 import random
 from dataclasses import dataclass
 from multiprocessing import Pool
@@ -15,6 +14,7 @@ from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.load import load_ephys_units
+from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_processed_data_path,
@@ -47,15 +47,8 @@ class PeriodPSTHSettings:
     restrict_units_to_date: bool = True
 
 
-def _load_pickle(path: Path):
-    with open(path, "rb") as f:
-        return pickle.load(f)
-
-
-def _save_pickle(obj, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        pickle.dump(obj, f)
+_load_pickle = load_pickle
+_save_pickle = save_pickle
 
 
 def _as_optional_str(value: object) -> Optional[str]:

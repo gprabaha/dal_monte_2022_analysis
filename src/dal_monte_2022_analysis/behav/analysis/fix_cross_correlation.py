@@ -23,6 +23,7 @@ from dal_monte_2022_analysis.utils.cross_correlation import (
     normalize_cross_correlation_sqrt_bin_count,
     summarize_cross_correlation,
 )
+from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
@@ -61,10 +62,7 @@ class FixCrossCorrelationSettings:
     test_single: bool = False
 
 
-def _load_pickle(path):
-    """Load a pickled object from disk."""
-    with open(path, "rb") as f:
-        return pickle.load(f)
+_load_pickle = load_pickle
 
 
 def _extract_fixation_vector(

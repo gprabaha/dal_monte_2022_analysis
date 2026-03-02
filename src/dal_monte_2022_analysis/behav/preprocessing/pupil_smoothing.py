@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
 from dataclasses import dataclass
 from multiprocessing import Pool
 from pathlib import Path
@@ -16,6 +15,7 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import PupilSizeData, RecordingContext
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 
@@ -38,17 +38,8 @@ class PupilSmoothingSettings:
     agents: Optional[Sequence[str]] = None
 
 
-def _load_pickle(path: Path):
-    """Load a pickled object from disk."""
-    with open(path, "rb") as f:
-        return pickle.load(f)
-
-
-def _save_pickle(obj, path: Path):
-    """Write an object to a pickle file, creating parent directories."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        pickle.dump(obj, f)
+_load_pickle = load_pickle
+_save_pickle = save_pickle
 
 
 def _coerce_intervals(

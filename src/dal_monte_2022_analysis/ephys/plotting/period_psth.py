@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import pickle
 import random
 from dataclasses import dataclass, field
 from multiprocessing import Pool
@@ -25,6 +24,7 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     resolve_figsize,
 )
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
@@ -72,9 +72,7 @@ class PeriodPSTHUnitPlotSettings:
     window_post_s: float = 14.0
 
 
-def _load_pickle(path: Path):
-    with open(path, "rb") as f:
-        return pickle.load(f)
+_load_pickle = load_pickle
 
 
 def _safe_optional_str(value) -> Optional[str]:

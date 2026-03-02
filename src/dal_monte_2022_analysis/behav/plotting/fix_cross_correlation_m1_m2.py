@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import pickle
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -16,6 +15,7 @@ from scipy.stats import ttest_rel
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.common import apply_plotting_config, resolve_figsize
+from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
     build_fix_crosscorr_output_filename,
@@ -47,10 +47,7 @@ class M1M2CrossCorrComparisonPlotSettings:
     observed_vs_shuffle_filename: str = "observed_vs_shuffle_face_m1_m2_crosscorr.pdf"
 
 
-def _load_pickle(path: Path):
-    """Load pickle object."""
-    with open(path, "rb") as f:
-        return pickle.load(f)
+_load_pickle = load_pickle
 
 
 def _load_lags_for_scope(

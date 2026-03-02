@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
@@ -16,6 +15,7 @@ from dal_monte_2022_analysis.data.behavioral_data import (
     FixationDensityVectorsData,
     JointFixationDensityData,
 )
+from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.paths import (
     list_processed_modalities,
     scan_processed_data_paths,
@@ -44,9 +44,7 @@ class FeatureItem:
     data: object
 
 
-def _load_pickle(path: Path):
-    with open(path, "rb") as f:
-        return pickle.load(f)
+_load_pickle = load_pickle
 
 
 def _validate_feature_modality(modality: str, allowed: set[str]) -> str:

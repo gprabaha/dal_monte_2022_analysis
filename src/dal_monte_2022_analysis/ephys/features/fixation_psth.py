@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
 import random
 from dataclasses import dataclass, field
 from multiprocessing import Pool
@@ -16,6 +15,7 @@ from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.load import load_ephys_units
+from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
@@ -81,9 +81,7 @@ class FixationPSTHAverageSettings:
     categories: Optional[Sequence[str]] = ("face", "object", "out_of_roi")
 
 
-def _load_pickle(path: Path):
-    with open(path, "rb") as f:
-        return pickle.load(f)
+_load_pickle = load_pickle
 
 
 def _as_optional_str(value: object) -> Optional[str]:
@@ -98,10 +96,7 @@ def _as_optional_str(value: object) -> Optional[str]:
     return text or None
 
 
-def _save_pickle(obj, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        pickle.dump(obj, f)
+_save_pickle = save_pickle
 
 
 def _resolve_roi_groups(settings: FixationPSTHSettings, agent: str) -> Dict[str, list[str]]:

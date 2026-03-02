@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
 import random
 from dataclasses import dataclass, field
 from multiprocessing import Pool
@@ -17,6 +16,7 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
 
 
 DEFAULT_SELECTIVITY_WINDOWS_MS: dict[str, tuple[float, float]] = {
@@ -64,15 +64,8 @@ class FixationPSTHSelectivitySettings:
     window_post_s_fallback: float = 1.0
 
 
-def _load_pickle(path: Path):
-    with open(path, "rb") as f:
-        return pickle.load(f)
-
-
-def _save_pickle(obj, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        pickle.dump(obj, f)
+_load_pickle = load_pickle
+_save_pickle = save_pickle
 
 
 def _as_optional_str(value) -> Optional[str]:

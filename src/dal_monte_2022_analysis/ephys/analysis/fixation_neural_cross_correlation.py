@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
 import random
 import re
 from dataclasses import dataclass, field, replace
@@ -21,6 +20,7 @@ from dal_monte_2022_analysis.utils.cross_correlation import (
     normalize_cross_correlation_energy,
     summarize_cross_correlation,
 )
+from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 from dal_monte_2022_analysis.utils.roi_groups import (
@@ -87,15 +87,8 @@ class FixationNeuralCrossCorrelationPlotAggregationSettings:
     condition_order: Sequence[str] = field(default_factory=lambda: tuple(_PLOT_CONDITION_ORDER))
 
 
-def _load_pickle(path: Path):
-    with open(path, "rb") as f:
-        return pickle.load(f)
-
-
-def _save_pickle(obj, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        pickle.dump(obj, f)
+_load_pickle = load_pickle
+_save_pickle = save_pickle
 
 
 def _ensure_pkl_filename(name: str) -> str:

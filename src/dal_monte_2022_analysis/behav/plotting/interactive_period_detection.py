@@ -19,6 +19,7 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
 )
+from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
@@ -108,7 +109,7 @@ def _normalize_example_session_keys(raw_keys: tuple[str, ...]) -> set[str]:
 
 def _load_pickle(path: Path):
     """Load a pickle object from disk."""
-    return pd.read_pickle(path)
+    return load_pickle(path)
 
 
 def _extract_vectors(obj) -> dict[str, np.ndarray]:
