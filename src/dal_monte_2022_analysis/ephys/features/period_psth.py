@@ -13,7 +13,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.data.load import load_ephys_units
+from dal_monte_2022_analysis.data.loaders.behavioral import load_ephys_units
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     build_processed_pickle_path,
     load_pickle_path,

@@ -2,10 +2,10 @@
 
 Older ephys pickles may store class references under
 `dal_monte_2022_analysis.data.spike_data`. The canonical module is now
-`dal_monte_2022_analysis.data.ephys_records`.
+`dal_monte_2022_analysis.data.records.ephys`.
 """
 
-from dal_monte_2022_analysis.data.ephys_records import (
+from dal_monte_2022_analysis.data.records.ephys import (
     EphysUnitContext,
     UnitSpikeData,
     WidebandChannelContext,

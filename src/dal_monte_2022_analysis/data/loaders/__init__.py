@@ -1,10 +1,6 @@
-"""Compatibility shim for data loaders.
+"""Canonical data loader APIs."""
 
-Canonical import path:
-`dal_monte_2022_analysis.data.loaders.behavioral`.
-"""
-
-from dal_monte_2022_analysis.data.loaders.behavioral import (  # noqa: F401
+from .behavioral import (
     BehavioralDataItem,
     group_behavioral_items,
     index_behavioral_data,
@@ -25,3 +21,4 @@ __all__ = [
     "load_ephys_unit_dataframe",
     "load_ephys_units",
 ]
+

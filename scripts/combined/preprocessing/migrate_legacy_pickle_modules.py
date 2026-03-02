@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from dal_monte_2022_analysis.data.pickle_migration import (
+from dal_monte_2022_analysis.data.migrations.pickle_modules import (
     migrate_legacy_pickle_modules,
 )
 

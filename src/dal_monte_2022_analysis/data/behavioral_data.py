@@ -1,6 +1,6 @@
 """Backward-compatible shim for behavioral record dataclasses."""
 
-from dal_monte_2022_analysis.data.behavioral_records import (
+from dal_monte_2022_analysis.data.records.behavioral import (
     BehaviorRunContext,
     FixationBinaryVectorsData,
     FixationDensityVectorsData,

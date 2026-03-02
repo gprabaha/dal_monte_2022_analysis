@@ -3,10 +3,10 @@
 
 Older processed pickles may store class references under
 `dal_monte_2022_analysis.data.gaze_data`. The canonical module is now
-`dal_monte_2022_analysis.data.behavioral_data`.
+`dal_monte_2022_analysis.data.records.behavioral`.
 """
 
-from dal_monte_2022_analysis.data.behavioral_data import (
+from dal_monte_2022_analysis.data.records.behavioral import (
     BehaviorRunContext,
     FixationBinaryVectorsData,
     FixationDensityVectorsData,

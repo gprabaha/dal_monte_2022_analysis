@@ -1,10 +1,6 @@
-"""Compatibility shim for behavioral data records.
+"""Canonical data record types."""
 
-Canonical import path:
-`dal_monte_2022_analysis.data.records.behavioral`.
-"""
-
-from dal_monte_2022_analysis.data.records.behavioral import (  # noqa: F401
+from .behavioral import (
     BehaviorRunContext,
     FixationBinaryVectorsData,
     FixationDensityVectorsData,
@@ -14,6 +10,12 @@ from dal_monte_2022_analysis.data.records.behavioral import (  # noqa: F401
     PupilSizeData,
     RecordingContext,
     ROIRectsData,
+)
+from .ephys import (
+    EphysUnitContext,
+    UnitSpikeData,
+    WidebandChannelContext,
+    WidebandChannelData,
 )
 
 __all__ = [
@@ -26,4 +28,9 @@ __all__ = [
     "FixationBinaryVectorsData",
     "FixationDensityVectorsData",
     "JointFixationDensityData",
+    "EphysUnitContext",
+    "UnitSpikeData",
+    "WidebandChannelContext",
+    "WidebandChannelData",
 ]
+
