@@ -1,7 +1,7 @@
 """Clean previously extracted data by pruning timelines and interpolating gaps."""
 
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.data.transforms.cleaning import prune_and_interpolate_session
+from dal_monte_2022_analysis.core.behav.session_cleaning import prune_and_interpolate_session
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_dataset
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     build_processed_pickle_path,
