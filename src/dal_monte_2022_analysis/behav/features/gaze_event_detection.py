@@ -1,5 +1,6 @@
 """Gaze event (fixation/saccade) detection pipeline."""
 
+import warnings
 from dataclasses import dataclass
 from multiprocessing import Pool
 from typing import List, Optional, Tuple
@@ -232,7 +233,14 @@ def detect_and_save_gaze_events_for_row(
     agent: str,
 ) -> Tuple[Optional[pd.DataFrame], Optional[pd.DataFrame]]:
     """Deprecated: use process_and_save_gaze_events_for_row."""
-    print("WARNING: detect_and_save_gaze_events_for_row is deprecated; use process_and_save_gaze_events_for_row.")
+    warnings.warn(
+        (
+            "detect_and_save_gaze_events_for_row is deprecated; "
+            "use process_and_save_gaze_events_for_row instead."
+        ),
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return process_and_save_gaze_events_for_row(settings, row, agent)
 
 

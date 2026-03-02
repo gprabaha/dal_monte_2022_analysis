@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 from dal_monte_2022_analysis.behav.analysis.fix_cross_correlation_leader_follower import (
     FixCrossCorrLeaderFollowerSettings,
 )
@@ -61,6 +63,15 @@ def build_leader_follower_settings_from_config(
     default_tag: str,
 ) -> FixCrossCorrLeaderFollowerSettings:
     """Build leader/follower settings from dataset + task config paths."""
+    if fix_cross_correlation_cfg_path is None and fix_crosscorr_cfg_path is not None:
+        warnings.warn(
+            (
+                "fix_crosscorr_cfg_path is deprecated; "
+                "use fix_cross_correlation_cfg_path instead."
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
     cfg_path = fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path
     if cfg_path is None:
         raise ValueError("Expected one of fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path.")

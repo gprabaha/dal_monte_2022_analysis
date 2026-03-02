@@ -3,6 +3,7 @@
 import shlex
 import subprocess
 import time
+import warnings
 from pathlib import Path
 from typing import Iterable, List, Optional
 
@@ -98,7 +99,14 @@ def generate_fixation_job_file(
         Parameters are kept for backward compatibility; only dataset cfg path
         is forwarded to the newer gaze-event job generator.
     """
-    print("WARNING: generate_fixation_job_file is deprecated; use generate_gaze_event_job_file.")
+    warnings.warn(
+        (
+            "generate_fixation_job_file is deprecated; "
+            "use generate_gaze_event_job_file instead."
+        ),
+        DeprecationWarning,
+        stacklevel=2,
+    )
     generate_gaze_event_job_file(
         tasks=tasks,
         job_file_path=job_file_path,
@@ -121,6 +129,18 @@ def generate_fix_cross_correlation_shuffle_job_file(
     time_scope: Optional[str] = None,
 ) -> None:
     """Generate a job file for within-session shuffled cross-correlation pairs."""
+    if (
+        fix_cross_correlation_cfg_path is None
+        and fix_crosscorr_cfg_path is not None
+    ):
+        warnings.warn(
+            (
+                "fix_crosscorr_cfg_path is deprecated; "
+                "use fix_cross_correlation_cfg_path instead."
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
     cfg_path = fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path
     if cfg_path is None:
         raise ValueError("Expected one of fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path.")

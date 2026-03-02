@@ -5,11 +5,13 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import unittest
+import warnings
 from pathlib import Path
 from unittest.mock import patch
 
 from dal_monte_2022_analysis.runtime.hpc.jobs import (
     generate_fix_cross_correlation_shuffle_job_file,
+    generate_fixation_job_file,
     generate_gaze_event_job_file,
     submit_dsq_array_job,
     track_job_completion,
@@ -59,6 +61,43 @@ class TestHpcJobs(unittest.TestCase):
             )
             line = job_file.read_text().strip()
             self.assertIn("--time-scope interactive", line)
+
+    def test_generate_fix_crosscorr_job_file_accepts_legacy_cfg_alias_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            job_file = Path(tmp_dir) / "shuffle_jobs.txt"
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", DeprecationWarning)
+                generate_fix_cross_correlation_shuffle_job_file(
+                    tasks=[("01012020", "session_a")],
+                    job_file_path=job_file,
+                    worker_script=Path("/tmp/worker.py"),
+                    env_name="analysis-env",
+                    dataset_cfg_path="/tmp/dataset.yaml",
+                    fix_crosscorr_cfg_path="/tmp/fix.yaml",
+                    time_scope=None,
+                )
+            self.assertTrue(any(item.category is DeprecationWarning for item in caught))
+            self.assertIn("--fix-cross-correlation-cfg /tmp/fix.yaml", job_file.read_text().strip())
+
+    def test_generate_fixation_job_file_emits_deprecation_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            job_file = Path(tmp_dir) / "legacy_fix_jobs.txt"
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always", DeprecationWarning)
+                generate_fixation_job_file(
+                    tasks=[("01012020", "session_a", "m1")],
+                    job_file_path=job_file,
+                    worker_script=Path("/tmp/worker.py"),
+                    env_name="analysis-env",
+                    cfg_path="/tmp/dataset.yaml",
+                    input_modality="gaze_position",
+                    output_fixations_modality="fixations",
+                    output_saccades_modality="saccades",
+                )
+            self.assertTrue(any(item.category is DeprecationWarning for item in caught))
+            line = job_file.read_text().strip()
+            self.assertIn("--dataset-cfg /tmp/dataset.yaml", line)
+            self.assertIn("--gaze-event-cfg /tmp/dataset.yaml", line)
 
     def test_submit_dsq_array_job_returns_job_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -110,4 +149,3 @@ class TestHpcJobs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

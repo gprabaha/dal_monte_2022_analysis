@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional, Sequence
+import warnings
 
 import numpy as np
 
@@ -81,6 +82,18 @@ def build_fixation_neural_cross_correlation_settings_from_config(
     ephys_fixation_neural_crosscorr_cfg_path: str | None = None,
 ) -> FixationNeuralCrossCorrelationSettings:
     """Build analysis settings from dataset + task config paths."""
+    if (
+        ephys_fixation_neural_cross_correlation_cfg_path is None
+        and ephys_fixation_neural_crosscorr_cfg_path is not None
+    ):
+        warnings.warn(
+            (
+                "ephys_fixation_neural_crosscorr_cfg_path is deprecated; "
+                "use ephys_fixation_neural_cross_correlation_cfg_path instead."
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
     cfg_path = (
         ephys_fixation_neural_cross_correlation_cfg_path
         or ephys_fixation_neural_crosscorr_cfg_path

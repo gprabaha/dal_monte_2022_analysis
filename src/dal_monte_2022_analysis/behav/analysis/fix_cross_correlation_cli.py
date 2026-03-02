@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Optional
 
@@ -30,6 +31,15 @@ def build_fix_cross_correlation_settings_from_config(
     default_shuffle_pairs_subdir: str,
 ) -> FixCrossCorrelationSettings:
     """Build cross-correlation settings from dataset + task config paths."""
+    if fix_cross_correlation_cfg_path is None and fix_crosscorr_cfg_path is not None:
+        warnings.warn(
+            (
+                "fix_crosscorr_cfg_path is deprecated; "
+                "use fix_cross_correlation_cfg_path instead."
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
     cfg_path = fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path
     if cfg_path is None:
         raise ValueError("Expected one of fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path.")
@@ -98,6 +108,15 @@ def apply_fix_cross_correlation_cli_overrides(
         settings.cross_exclude_same_date = True
     if include_same_session:
         settings.cross_exclude_same_session = False
+    if parallelize_across_crosscorr_pairs:
+        warnings.warn(
+            (
+                "parallelize_across_crosscorr_pairs is deprecated; "
+                "use parallelize_across_cross_correlation_pairs instead."
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
     if parallelize_across_cross_correlation_pairs or parallelize_across_crosscorr_pairs:
         settings.parallelize_across_cross_correlation_pairs = True
     if max_lag is not None:
@@ -132,6 +151,15 @@ def run_fix_cross_correlation_shuffle_submit_hpc(
         print("No within-session pairs found for shuffled cross-correlation.")
         return
 
+    if fix_cross_correlation_cfg_path is None and fix_crosscorr_cfg_path is not None:
+        warnings.warn(
+            (
+                "fix_crosscorr_cfg_path is deprecated; "
+                "use fix_cross_correlation_cfg_path instead."
+            ),
+            DeprecationWarning,
+            stacklevel=2,
+        )
     fix_cfg_path = fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path
     if fix_cfg_path is None:
         raise ValueError("Expected one of fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path.")
@@ -181,6 +209,15 @@ def run_fix_cross_correlation_mode(
         return
 
     if mode == "shuffle_submit_hpc":
+        if fix_cross_correlation_cfg_path is None and fix_crosscorr_cfg_path is not None:
+            warnings.warn(
+                (
+                    "fix_crosscorr_cfg_path is deprecated; "
+                    "use fix_cross_correlation_cfg_path instead."
+                ),
+                DeprecationWarning,
+                stacklevel=2,
+            )
         fix_cfg_path = fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path
         if hpc_cfg_path is None or dataset_cfg_path is None or fix_cfg_path is None:
             raise RuntimeError("shuffle_submit_hpc mode requires hpc/dataset/fix-cross-correlation config paths.")
