@@ -8,7 +8,11 @@ from typing import Any
 import yaml
 
 _DATASET_REQUIRED_KEYS = {"raw_data_root", "processed_data_root"}
+_PROJECT_REQUIRED_KEYS = {"dataset_cfg_path", "ephys_data_cfg_path"}
 _HPC_KEYS = {"job_file_path", "sbatch_script_path", "log_dir", "worker_script_path"}
+DEFAULT_PROJECT_CONFIG_PATH = Path("configs/project.yaml")
+DEFAULT_DATASET_CONFIG_PATH = Path("configs/dataset.yaml")
+DEFAULT_EPHYS_CONFIG_PATH = Path("configs/ephys_data.yaml")
 
 
 def _resolve_paths(cfg: dict, keys, base_dir: Path, *, alt_base_dir: Path | None = None) -> dict:
@@ -36,6 +40,8 @@ def _infer_config_type(path: Path, cfg: dict[str, Any]) -> str:
     stem = path.stem.lower()
     cfg_keys = set(cfg.keys())
 
+    if stem == "project" or _PROJECT_REQUIRED_KEYS.issubset(cfg_keys):
+        return "project"
     if stem == "dataset" or _DATASET_REQUIRED_KEYS.issubset(cfg_keys):
         return "dataset"
     if stem == "ephys_data" or "ephys_data_path" in cfg:
@@ -74,8 +80,22 @@ def _normalize_hpc_paths(cfg: dict[str, Any], cfg_path: Path) -> dict[str, Any]:
     )
 
 
+def _normalize_project_paths(cfg: dict[str, Any], cfg_path: Path) -> dict[str, Any]:
+    base_dir = cfg_path.resolve().parent
+    cfg = _resolve_paths(
+        cfg,
+        keys=["dataset_cfg_path", "ephys_data_cfg_path", "plotting_cfg_path"],
+        base_dir=base_dir,
+    )
+    for key in ("raw_data_root", "processed_data_root", "analysis_output_root"):
+        if key in cfg:
+            cfg[key] = Path(cfg[key])
+    return cfg
+
+
 _NORMALIZERS = {
     "generic": lambda cfg, _cfg_path: cfg,
+    "project": _normalize_project_paths,
     "dataset": _normalize_dataset_paths,
     "ephys_data": _normalize_ephys_paths,
     "hpc": _normalize_hpc_paths,
@@ -98,6 +118,63 @@ def load_config(path: str | Path, *, config_type: str | None = None) -> dict[str
 def load_dataset_config(path: str | Path) -> dict[str, Any]:
     """Compatibility wrapper for dataset config loading."""
     return load_config(path, config_type="dataset")
+
+
+def load_project_config(path: str | Path = DEFAULT_PROJECT_CONFIG_PATH) -> dict[str, Any]:
+    """Load project-level config and normalize referenced config paths."""
+    return load_config(path, config_type="project")
+
+
+def resolve_dataset_cfg_path(path: str | Path = DEFAULT_PROJECT_CONFIG_PATH) -> Path:
+    """Resolve a dataset config path from dataset/project config input."""
+    cfg_path = Path(path)
+    if cfg_path.exists():
+        cfg = _load_yaml(cfg_path)
+        cfg_type = _infer_config_type(cfg_path, cfg)
+        if cfg_type == "project":
+            project_cfg = load_project_config(cfg_path)
+            dataset_cfg = project_cfg.get("dataset_cfg_path")
+            if dataset_cfg is None:
+                raise KeyError(f"Project config missing required key 'dataset_cfg_path': {cfg_path}")
+            return Path(dataset_cfg).resolve()
+        return cfg_path.resolve()
+
+    if cfg_path == DEFAULT_PROJECT_CONFIG_PATH and DEFAULT_DATASET_CONFIG_PATH.exists():
+        return DEFAULT_DATASET_CONFIG_PATH.resolve()
+    raise FileNotFoundError(f"Config path does not exist: {cfg_path}")
+
+
+def resolve_ephys_cfg_path(
+    path: str | Path = DEFAULT_EPHYS_CONFIG_PATH,
+    *,
+    project_cfg_path: str | Path | None = None,
+) -> Path:
+    """Resolve an ephys-data config path from ephys/project config input."""
+    cfg_path = Path(path)
+    if cfg_path.exists():
+        cfg = _load_yaml(cfg_path)
+        cfg_type = _infer_config_type(cfg_path, cfg)
+        if cfg_type == "project":
+            project_cfg = load_project_config(cfg_path)
+            ephys_cfg = project_cfg.get("ephys_data_cfg_path")
+            if ephys_cfg is None:
+                raise KeyError(f"Project config missing required key 'ephys_data_cfg_path': {cfg_path}")
+            return Path(ephys_cfg).resolve()
+        return cfg_path.resolve()
+
+    if project_cfg_path is not None:
+        project_path = Path(project_cfg_path)
+        if project_path.exists():
+            project_cfg = load_project_config(project_path)
+            ephys_cfg = project_cfg.get("ephys_data_cfg_path")
+            if ephys_cfg is not None:
+                return Path(ephys_cfg).resolve()
+
+    if cfg_path == DEFAULT_EPHYS_CONFIG_PATH:
+        fallback = DEFAULT_EPHYS_CONFIG_PATH
+        if fallback.exists():
+            return fallback.resolve()
+    raise FileNotFoundError(f"Config path does not exist: {cfg_path}")
 
 
 def load_ephys_data_config(path: str | Path) -> dict[str, Any]:

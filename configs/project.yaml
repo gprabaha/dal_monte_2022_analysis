@@ -1,0 +1,9 @@
+# configs/project.yaml
+# Top-level project config that points to canonical dataset/ephys/task configs.
+
+project_name: dal_monte_2022_analysis
+
+# Canonical core config references.
+dataset_cfg_path: dataset.yaml
+ephys_data_cfg_path: ephys_data.yaml
+plotting_cfg_path: plotting.yaml

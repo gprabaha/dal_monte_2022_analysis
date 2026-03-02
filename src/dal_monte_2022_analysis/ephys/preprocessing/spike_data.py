@@ -9,7 +9,11 @@ from typing import Optional
 
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.config.load import (
+    load_config,
+    resolve_dataset_cfg_path,
+    resolve_ephys_cfg_path,
+)
 
 
 DEFAULT_EPHYS_DATA_FILENAME = "ephys_unit_data.pkl"
@@ -36,8 +40,13 @@ def _resolve_ephys_table_path(
     if input_path:
         return Path(input_path).expanduser().resolve()
 
-    dataset_cfg = load_config(cfg_path)
-    ephys_cfg = load_config(ephys_cfg_path)
+    dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
+    resolved_ephys_cfg_path = resolve_ephys_cfg_path(
+        ephys_cfg_path,
+        project_cfg_path=cfg_path,
+    )
+    dataset_cfg = load_config(dataset_cfg_path)
+    ephys_cfg = load_config(resolved_ephys_cfg_path)
     ephys_data_path = ephys_cfg.get("ephys_data_path")
     if ephys_data_path:
         return Path(ephys_data_path).expanduser().resolve()
@@ -107,7 +116,7 @@ def add_date_column_from_session_name(
 
 def add_date_column_to_ephys_pickle(
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     ephys_cfg_path: str = "configs/ephys_data.yaml",
     input_path: Optional[str] = None,
     output_path: Optional[str] = None,

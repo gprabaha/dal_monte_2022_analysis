@@ -4,10 +4,10 @@ import argparse
 
 from dal_monte_2022_analysis.behav.analysis.fix_crosscorr_leader_follower import (
     FixCrossCorrLeaderFollowerSettings,
-    run_fix_crosscorr_leader_follower_analysis,
+    run_fix_cross_correlation_leader_follower_analysis,
 )
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.utils.paths import normalize_fix_crosscorr_time_scope
+from dal_monte_2022_analysis.utils.paths import normalize_fix_cross_correlation_time_scope
 
 
 def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
@@ -31,7 +31,7 @@ def _build_settings(args) -> FixCrossCorrLeaderFollowerSettings:
         crosscorr_input_subdir=crosscorr_subdir,
         within_filename=cfg.get("within_filename"),
         lags_filename=cfg.get("lags_filename"),
-        time_scope=normalize_fix_crosscorr_time_scope(
+        time_scope=normalize_fix_cross_correlation_time_scope(
             cfg.get("leader_follower_time_scope", "whole")
         ),
         session_output_filename=cfg.get(
@@ -154,7 +154,7 @@ def main():
     args = parser.parse_args()
 
     settings = _build_settings(args)
-    run_fix_crosscorr_leader_follower_analysis(settings)
+    run_fix_cross_correlation_leader_follower_analysis(settings)
 
 
 if __name__ == "__main__":

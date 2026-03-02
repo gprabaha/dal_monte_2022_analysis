@@ -7,7 +7,7 @@ from dal_monte_2022_analysis.behav.analysis.fix_cross_correlation import (
     process_and_save_within_session_shuffle_pair,
 )
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.utils.paths import normalize_fix_crosscorr_time_scope
+from dal_monte_2022_analysis.utils.paths import normalize_fix_cross_correlation_time_scope
 
 
 def main():
@@ -40,7 +40,7 @@ def main():
         cross_filename=cfg.get("cross_filename"),
         lags_filename=cfg.get("lags_filename"),
         max_lag=cfg.get("max_lag", 60000),
-        time_scope=normalize_fix_crosscorr_time_scope(cfg.get("time_scope", "whole")),
+        time_scope=normalize_fix_cross_correlation_time_scope(cfg.get("time_scope", "whole")),
         interactive_modality=cfg.get("interactive_modality", "interactive_periods"),
         interactive_state_label=cfg.get("interactive_state_label", "interactive"),
         cross_pairs_max=cfg.get("cross_pairs_max"),
@@ -61,7 +61,7 @@ def main():
         test_single=False,
     )
     if args.time_scope is not None:
-        settings.time_scope = normalize_fix_crosscorr_time_scope(args.time_scope)
+        settings.time_scope = normalize_fix_cross_correlation_time_scope(args.time_scope)
 
     process_and_save_within_session_shuffle_pair(
         settings=settings,

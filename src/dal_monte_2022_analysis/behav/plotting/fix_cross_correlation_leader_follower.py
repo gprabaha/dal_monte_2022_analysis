@@ -17,8 +17,8 @@ from dal_monte_2022_analysis.behav.plotting.common import apply_plotting_config,
 from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
-    build_fix_crosscorr_output_filename,
-    normalize_fix_crosscorr_time_scope,
+    build_fix_cross_correlation_output_filename,
+    normalize_fix_cross_correlation_time_scope,
 )
 
 _VALID_LEADER_BASES = ("session", "date", "pair")
@@ -67,7 +67,7 @@ def _load_lags_for_scope(
     fixation_label: str,
     scope: str,
 ) -> np.ndarray:
-    lags_path = out_dir / build_fix_crosscorr_output_filename(
+    lags_path = out_dir / build_fix_cross_correlation_output_filename(
         fixation_label,
         "lags",
         time_scope=scope,
@@ -87,7 +87,7 @@ def _load_df_for_scope(
     scope: str,
     kind: str,
 ) -> pd.DataFrame:
-    data_path = out_dir / build_fix_crosscorr_output_filename(
+    data_path = out_dir / build_fix_cross_correlation_output_filename(
         fixation_label,
         kind,
         time_scope=scope,
@@ -531,7 +531,7 @@ def _plot_observed_vs_control_for_basis(
     apply_plotting_config(plot_cfg)
 
     out_dir = build_analysis_output_dir(cfg, settings.crosscorr_analysis_subdir)
-    scopes = tuple(normalize_fix_crosscorr_time_scope(scope) for scope in settings.scopes)
+    scopes = tuple(normalize_fix_cross_correlation_time_scope(scope) for scope in settings.scopes)
     if len(scopes) != 3:
         raise RuntimeError("Expected exactly 3 scopes for plotting (whole, interactive, non_interactive).")
     if float(settings.lag_sampling_rate_hz) <= 0:
@@ -651,7 +651,7 @@ def _plot_observed_vs_control_for_basis(
     return out_path
 
 
-def plot_leader_follower_crosscorr_comparisons(
+def plot_leader_follower_cross_correlation_comparisons(
     settings: LeaderFollowerCrossCorrComparisonPlotSettings,
 ) -> list[Path]:
     """Create leader-aligned observed-vs-cross and observed-vs-shuffle figures."""
@@ -659,7 +659,7 @@ def plot_leader_follower_crosscorr_comparisons(
     leader_dir = build_analysis_output_dir(cfg, settings.leader_follower_subdir)
     session_df, date_df, pair_df = _load_leader_tables(leader_dir, settings)
 
-    ref_scope = normalize_fix_crosscorr_time_scope(settings.leader_reference_scope)
+    ref_scope = normalize_fix_cross_correlation_time_scope(settings.leader_reference_scope)
     if "time_scope" in session_df.columns:
         session_df = session_df[session_df["time_scope"].astype(str) == ref_scope]
     if "time_scope" in date_df.columns:
@@ -700,3 +700,10 @@ def plot_leader_follower_crosscorr_comparisons(
             )
         )
     return outputs
+
+
+def plot_leader_follower_crosscorr_comparisons(
+    settings: LeaderFollowerCrossCorrComparisonPlotSettings,
+) -> list[Path]:
+    """Compatibility alias for plot_leader_follower_cross_correlation_comparisons."""
+    return plot_leader_follower_cross_correlation_comparisons(settings)

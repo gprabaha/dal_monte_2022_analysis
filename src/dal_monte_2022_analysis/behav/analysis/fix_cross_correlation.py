@@ -27,8 +27,8 @@ from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
-    build_fix_crosscorr_output_filename,
-    normalize_fix_crosscorr_time_scope,
+    build_fix_cross_correlation_output_filename,
+    normalize_fix_cross_correlation_time_scope,
 )
 
 
@@ -222,7 +222,7 @@ def _apply_time_scope_filter(
     interactive_state_label: Optional[str],
 ) -> np.ndarray:
     """Filter fixation vector to whole/interactive/non-interactive scope."""
-    scope = normalize_fix_crosscorr_time_scope(time_scope)
+    scope = normalize_fix_cross_correlation_time_scope(time_scope)
     vec = np.asarray(vec_bool, dtype=bool)
 
     if scope == "whole":
@@ -753,7 +753,7 @@ def _within_session_row_from_result(
     key = result["key1"]
     return {
         "fixation_label": settings.fixation_label,
-        "time_scope": normalize_fix_crosscorr_time_scope(settings.time_scope),
+        "time_scope": normalize_fix_cross_correlation_time_scope(settings.time_scope),
         "date": key[0],
         "session": key[1],
         "n_samples_m1": result["n_samples_m1"],
@@ -799,7 +799,7 @@ def _build_within_session_rows(
     if settings.test_single and shared_keys:
         shared_keys = [random.choice(shared_keys)]
 
-    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
+    scope = normalize_fix_cross_correlation_time_scope(settings.time_scope)
     tasks = []
     missing_interactive = 0
     for key in shared_keys:
@@ -919,7 +919,7 @@ def _build_cross_session_control_rows(
     if settings.test_single and pairs:
         pairs = [random.choice(pairs)]
 
-    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
+    scope = normalize_fix_cross_correlation_time_scope(settings.time_scope)
     tasks = []
     missing_interactive = 0
     for key1, key2 in pairs:
@@ -1090,7 +1090,7 @@ def _build_cross_session_control_rows(
 
         rows.append({
             "fixation_label": settings.fixation_label,
-            "time_scope": normalize_fix_crosscorr_time_scope(settings.time_scope),
+            "time_scope": normalize_fix_cross_correlation_time_scope(settings.time_scope),
             "date": key[0],
             "session": key[1],
             "monkey_name_m1": meta.get("monkey_name_m1"),
@@ -1121,7 +1121,7 @@ def build_within_session_pair_tasks(
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
     shared_keys = sorted(set(m1_paths).intersection(m2_paths))
 
-    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
+    scope = normalize_fix_cross_correlation_time_scope(settings.time_scope)
     if scope != "whole":
         interactive_paths = _index_shared_paths(cfg, settings.interactive_modality)
         shared_keys = [key for key in shared_keys if key in interactive_paths]
@@ -1133,7 +1133,7 @@ def build_within_session_pair_tasks(
 
 def _shuffle_pair_output_dir(cfg: dict, settings: FixCrossCorrelationSettings) -> Path:
     """Return output directory for per-pair shuffled results."""
-    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
+    scope = normalize_fix_cross_correlation_time_scope(settings.time_scope)
     return build_analysis_output_dir(
         cfg,
         f"{settings.output_subdir}/{settings.shuffle_pairs_subdir}/phase={scope}",
@@ -1199,7 +1199,7 @@ def _build_within_session_shuffle_row(
 
     return {
         "fixation_label": settings.fixation_label,
-        "time_scope": normalize_fix_crosscorr_time_scope(settings.time_scope),
+        "time_scope": normalize_fix_cross_correlation_time_scope(settings.time_scope),
         "date": key[0],
         "session": key[1],
         "monkey_name_m1": m1_name,
@@ -1226,7 +1226,7 @@ def process_and_save_within_session_shuffle_pair(
     """Compute and save shuffled-summary output for one within-session pair."""
     cfg = load_config(settings.cfg_path)
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
-    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
+    scope = normalize_fix_cross_correlation_time_scope(settings.time_scope)
     key = (str(date), str(session))
     if key not in m1_paths or key not in m2_paths:
         print(f"[shuffle-worker] missing within-session pair for date={date} session={session}")
@@ -1381,7 +1381,7 @@ def _resolve_within_filename(settings: FixCrossCorrelationSettings) -> str:
     """Return within-session output filename."""
     if settings.within_filename:
         return settings.within_filename
-    return build_fix_crosscorr_output_filename(
+    return build_fix_cross_correlation_output_filename(
         settings.fixation_label,
         "within",
         time_scope=settings.time_scope,
@@ -1392,7 +1392,7 @@ def _resolve_cross_filename(settings: FixCrossCorrelationSettings) -> str:
     """Return cross-session output filename."""
     if settings.cross_filename:
         return settings.cross_filename
-    return build_fix_crosscorr_output_filename(
+    return build_fix_cross_correlation_output_filename(
         settings.fixation_label,
         "cross",
         time_scope=settings.time_scope,
@@ -1403,7 +1403,7 @@ def _resolve_shuffle_output_filename(settings: FixCrossCorrelationSettings) -> s
     """Return shuffled-summary output filename."""
     if settings.shuffle_output_filename:
         return settings.shuffle_output_filename
-    return build_fix_crosscorr_output_filename(
+    return build_fix_cross_correlation_output_filename(
         settings.fixation_label,
         "shuffle",
         time_scope=settings.time_scope,
@@ -1414,7 +1414,7 @@ def _resolve_lags_filename(settings: FixCrossCorrelationSettings) -> str:
     """Return lag-axis output filename."""
     if settings.lags_filename:
         return settings.lags_filename
-    return build_fix_crosscorr_output_filename(
+    return build_fix_cross_correlation_output_filename(
         settings.fixation_label,
         "lags",
         time_scope=settings.time_scope,
@@ -1502,7 +1502,7 @@ def run_fix_cross_correlation_analysis(
     """
     cfg = load_config(settings.cfg_path)
     m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
-    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
+    scope = normalize_fix_cross_correlation_time_scope(settings.time_scope)
 
     if not m1_paths or not m2_paths:
         raise RuntimeError(

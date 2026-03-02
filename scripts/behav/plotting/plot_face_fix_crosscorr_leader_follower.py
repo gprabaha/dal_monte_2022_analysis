@@ -5,7 +5,7 @@ import argparse
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.fix_cross_correlation_leader_follower import (
     LeaderFollowerCrossCorrComparisonPlotSettings,
-    plot_leader_follower_crosscorr_comparisons,
+    plot_leader_follower_cross_correlation_comparisons,
 )
 
 
@@ -75,7 +75,7 @@ def main():
         ),
     )
 
-    out_paths = plot_leader_follower_crosscorr_comparisons(settings)
+    out_paths = plot_leader_follower_cross_correlation_comparisons(settings)
     for path in out_paths:
         print(f"[plot] wrote leader-follower crosscorr figure: {path}")
 

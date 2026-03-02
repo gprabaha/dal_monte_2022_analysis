@@ -87,7 +87,7 @@ def generate_fixation_job_file(
     )
 
 
-def generate_fix_crosscorr_shuffle_job_file(
+def generate_fix_cross_correlation_shuffle_job_file(
     *,
     tasks: Iterable[tuple[str, str]],
     job_file_path: Path,
@@ -117,6 +117,28 @@ def generate_fix_crosscorr_shuffle_job_file(
         commands.append(cmd)
 
     write_job_file(job_file_path, commands)
+
+
+def generate_fix_crosscorr_shuffle_job_file(
+    *,
+    tasks: Iterable[tuple[str, str]],
+    job_file_path: Path,
+    worker_script: Path,
+    env_name: str,
+    dataset_cfg_path: str,
+    fix_crosscorr_cfg_path: str,
+    time_scope: Optional[str] = None,
+) -> None:
+    """Compatibility alias for generate_fix_cross_correlation_shuffle_job_file."""
+    generate_fix_cross_correlation_shuffle_job_file(
+        tasks=tasks,
+        job_file_path=job_file_path,
+        worker_script=worker_script,
+        env_name=env_name,
+        dataset_cfg_path=dataset_cfg_path,
+        fix_crosscorr_cfg_path=fix_crosscorr_cfg_path,
+        time_scope=time_scope,
+    )
 
 
 def submit_dsq_array_job(

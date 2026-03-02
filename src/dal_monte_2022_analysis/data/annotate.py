@@ -7,15 +7,16 @@ from typing import Optional
 
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.config.load import load_config, resolve_dataset_cfg_path
 
 
 def load_pair_context_table(
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
 ) -> pd.DataFrame:
     """Load one row per date with m1/m2 monkey names and pair label."""
-    dataset_cfg = load_config(cfg_path)
+    dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
+    dataset_cfg = load_config(dataset_cfg_path)
     pair_path = Path(dataset_cfg["raw_data_root"]) / "ephys_days_and_monkeys.pkl"
     if not pair_path.exists():
         raise FileNotFoundError(f"Missing ephys metadata file: {pair_path}")
@@ -61,7 +62,7 @@ def annotate_with_pair_context(
     *,
     date_col: str = "date",
     output_date_col: Optional[str] = None,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
 ) -> pd.DataFrame:
     """Attach m1/m2/pair metadata to any table with a date column."""
     if df.empty:
@@ -82,7 +83,7 @@ def annotate_with_pair_context(
 def annotate_ephys_dates_with_pair_context(
     ephys_df: pd.DataFrame,
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
 ) -> pd.DataFrame:
     """Attach monkey pair context to ephys tables."""
     date_col = "date" if "date" in ephys_df.columns else "day"

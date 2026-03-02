@@ -10,7 +10,11 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.config.load import (
+    load_config,
+    resolve_dataset_cfg_path,
+    resolve_ephys_cfg_path,
+)
 from dal_monte_2022_analysis.data.behavioral_records import (
     NeuralTimelineData,
     PositionData,
@@ -82,13 +86,14 @@ def _resolve_behavioral_modalities(cfg: dict, modality: Optional[Sequence[str] |
 def index_behavioral_data(
     modality: Optional[Sequence[str] | str] = None,
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
     agents: Optional[Sequence[Optional[str]]] = None,
 ) -> pd.DataFrame:
     """Index behavioral data files on disk without loading file contents."""
-    cfg = load_config(cfg_path)
+    dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
+    cfg = load_config(dataset_cfg_path)
     modalities = _resolve_behavioral_modalities(cfg, modality)
 
     rows: list[dict] = []
@@ -195,13 +200,14 @@ def _behavioral_object_to_df(obj, row_meta: dict) -> pd.DataFrame:
 def load_behavioral_data_objects(
     modality: str,
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
     agents: Optional[Sequence[Optional[str]]] = None,
 ) -> list[BehavioralDataItem]:
     """Load behavioral data objects for one data modality."""
-    cfg = load_config(cfg_path)
+    dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
+    cfg = load_config(dataset_cfg_path)
     mod = _resolve_behavioral_modalities(cfg, modality)[0]
     rows = scan_processed_data_paths(cfg, mod, dates=dates, sessions=sessions, agents=agents)
     return [
@@ -220,7 +226,7 @@ def load_behavioral_data_objects(
 def load_behavioral_data_dataframe(
     modality: str,
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
     agents: Optional[Sequence[Optional[str]]] = None,
@@ -272,7 +278,7 @@ def group_behavioral_items(
 def load_behavioral_data_modality(
     modality: str,
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
     agents: Optional[Sequence[Optional[str]]] = None,
@@ -397,14 +403,19 @@ def _first_present_column(df: pd.DataFrame, candidates: Sequence[str]) -> Option
 
 def load_ephys_unit_dataframe(
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     ephys_cfg_path: str = "configs/ephys_data.yaml",
     dates: Optional[Sequence[str]] = None,
     regions: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
     """Load and normalize unit-level ephys data."""
-    dataset_cfg = load_config(cfg_path)
-    ephys_cfg = load_config(ephys_cfg_path)
+    dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
+    resolved_ephys_cfg_path = resolve_ephys_cfg_path(
+        ephys_cfg_path,
+        project_cfg_path=cfg_path,
+    )
+    dataset_cfg = load_config(dataset_cfg_path)
+    ephys_cfg = load_config(resolved_ephys_cfg_path)
     ephys_path = _resolve_ephys_data_path(dataset_cfg, ephys_cfg)
     if not ephys_path.exists():
         raise FileNotFoundError(f"Ephys data file not found: {ephys_path}")
@@ -442,16 +453,20 @@ def load_ephys_unit_dataframe(
 
 def load_ephys_units(
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     ephys_cfg_path: str = "configs/ephys_data.yaml",
     dates: Optional[Sequence[str]] = None,
     regions: Optional[Sequence[str]] = None,
 ) -> list[UnitSpikeData]:
     """Load unit-level ephys data as dataclass objects."""
-    ephys_cfg = load_config(ephys_cfg_path)
+    resolved_ephys_cfg_path = resolve_ephys_cfg_path(
+        ephys_cfg_path,
+        project_cfg_path=cfg_path,
+    )
+    ephys_cfg = load_config(resolved_ephys_cfg_path)
     df = load_ephys_unit_dataframe(
         cfg_path=cfg_path,
-        ephys_cfg_path=ephys_cfg_path,
+        ephys_cfg_path=str(resolved_ephys_cfg_path),
         dates=dates,
         regions=regions,
     )

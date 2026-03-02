@@ -2,6 +2,14 @@
 
 Configuration files for the full pipeline.
 
+## Project config
+
+- `project.yaml`
+  Top-level config that references canonical core config files:
+  `dataset_cfg_path`, `ephys_data_cfg_path`, and `plotting_cfg_path`.
+  Use this when you want one stable entrypoint for future repo-wide config
+  reorganization.
+
 ## Core dataset config
 
 - `dataset.yaml`

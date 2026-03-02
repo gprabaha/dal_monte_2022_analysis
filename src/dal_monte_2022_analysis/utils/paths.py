@@ -175,7 +175,7 @@ def build_analysis_output_dir(cfg: dict, subdir: str) -> Path:
     return root / subdir
 
 
-_CROSSCORR_SCOPE_ALIASES = {
+_CROSS_CORRELATION_SCOPE_ALIASES = {
     "whole": "whole",
     "whole_session": "whole",
     "all": "whole",
@@ -188,21 +188,26 @@ _CROSSCORR_SCOPE_ALIASES = {
 }
 
 
-def normalize_fix_crosscorr_time_scope(scope: Optional[str]) -> str:
+def normalize_fix_cross_correlation_time_scope(scope: Optional[str]) -> str:
     """Normalize cross-correlation time-scope labels to canonical values."""
     if scope is None:
         raw = "whole"
     else:
         raw = str(scope).strip().lower()
     token = raw.replace("-", "_").replace(" ", "_")
-    normalized = _CROSSCORR_SCOPE_ALIASES.get(token)
+    normalized = _CROSS_CORRELATION_SCOPE_ALIASES.get(token)
     if normalized is None:
-        allowed = ", ".join(sorted(set(_CROSSCORR_SCOPE_ALIASES.values())))
+        allowed = ", ".join(sorted(set(_CROSS_CORRELATION_SCOPE_ALIASES.values())))
         raise ValueError(f"Unsupported cross-correlation time scope '{scope}'. Allowed: {allowed}.")
     return normalized
 
 
-def build_fix_crosscorr_output_filename(
+def normalize_fix_crosscorr_time_scope(scope: Optional[str]) -> str:
+    """Compatibility alias for normalize_fix_cross_correlation_time_scope."""
+    return normalize_fix_cross_correlation_time_scope(scope)
+
+
+def build_fix_cross_correlation_output_filename(
     fixation_label: str,
     output_kind: str,
     *,
@@ -218,7 +223,7 @@ def build_fix_crosscorr_output_filename(
     Returns:
         Deterministic pickle filename with explicit phase tag.
     """
-    scope = normalize_fix_crosscorr_time_scope(time_scope)
+    scope = normalize_fix_cross_correlation_time_scope(time_scope)
     label = str(fixation_label).strip().lower().replace(" ", "_")
     kind = str(output_kind).strip().lower()
 
@@ -237,3 +242,17 @@ def build_fix_crosscorr_output_filename(
         )
 
     return f"{stem}__phase={scope}.pkl"
+
+
+def build_fix_crosscorr_output_filename(
+    fixation_label: str,
+    output_kind: str,
+    *,
+    time_scope: Optional[str] = "whole",
+) -> str:
+    """Compatibility alias for build_fix_cross_correlation_output_filename."""
+    return build_fix_cross_correlation_output_filename(
+        fixation_label=fixation_label,
+        output_kind=output_kind,
+        time_scope=time_scope,
+    )

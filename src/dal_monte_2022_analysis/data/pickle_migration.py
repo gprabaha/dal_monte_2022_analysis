@@ -8,7 +8,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
-from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.config.load import (
+    load_config,
+    resolve_dataset_cfg_path,
+    resolve_ephys_cfg_path,
+)
 
 # Import compatibility shims so legacy module paths can be resolved during unpickle.
 import dal_monte_2022_analysis.data.gaze_data  # noqa: F401
@@ -100,7 +104,7 @@ def _build_backup_path(path: Path, suffix: str) -> Path:
 
 def migrate_legacy_pickle_modules(
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     ephys_cfg_path: str = "configs/ephys_data.yaml",
     roots: Optional[Sequence[str]] = None,
     include_ephys_table: bool = True,
@@ -110,8 +114,13 @@ def migrate_legacy_pickle_modules(
     backup_suffix: str = ".pre_module_migration.bak",
 ) -> PickleMigrationSummary:
     """Rewrite pickles so they no longer depend on legacy module paths."""
-    dataset_cfg = load_config(cfg_path)
-    ephys_cfg = load_config(ephys_cfg_path)
+    dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
+    resolved_ephys_cfg_path = resolve_ephys_cfg_path(
+        ephys_cfg_path,
+        project_cfg_path=cfg_path,
+    )
+    dataset_cfg = load_config(dataset_cfg_path)
+    ephys_cfg = load_config(resolved_ephys_cfg_path)
 
     scan_roots: list[Path] = []
     if roots:

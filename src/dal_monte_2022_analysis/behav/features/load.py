@@ -9,7 +9,7 @@ from typing import Iterable, Optional, Sequence
 import numpy as np
 import pandas as pd
 
-from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.config.load import load_config, resolve_dataset_cfg_path
 from dal_monte_2022_analysis.data.behavioral_data import (
     FixationBinaryVectorsData,
     FixationDensityVectorsData,
@@ -78,13 +78,14 @@ def _resolve_feature_modalities(cfg: dict, modality: Optional[Sequence[str] | st
 def index_feature_data(
     modality: Optional[Sequence[str] | str] = None,
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
     agents: Optional[Sequence[Optional[str]]] = None,
 ) -> pd.DataFrame:
     """Index feature product files without loading contents."""
-    cfg = load_config(cfg_path)
+    dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
+    cfg = load_config(dataset_cfg_path)
     modalities = _resolve_feature_modalities(cfg, modality)
 
     rows: list[dict] = []
@@ -182,13 +183,14 @@ def _feature_object_to_df(obj, row_meta: dict) -> pd.DataFrame:
 def load_feature_objects(
     modality: str,
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
     agents: Optional[Sequence[Optional[str]]] = None,
 ) -> list[FeatureItem]:
     """Load feature objects for one feature modality."""
-    cfg = load_config(cfg_path)
+    dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
+    cfg = load_config(dataset_cfg_path)
     mod = _resolve_feature_modalities(cfg, modality)[0]
     rows = scan_processed_data_paths(cfg, mod, dates=dates, sessions=sessions, agents=agents)
     return [
@@ -207,7 +209,7 @@ def load_feature_objects(
 def load_feature_dataframe(
     modality: str,
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
     agents: Optional[Sequence[Optional[str]]] = None,
@@ -255,7 +257,7 @@ def group_feature_items(items: Iterable[FeatureItem], *, key: str = "date_sessio
 def load_feature_modality(
     modality: str,
     *,
-    cfg_path: str = "configs/dataset.yaml",
+    cfg_path: str = "configs/project.yaml",
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
     agents: Optional[Sequence[Optional[str]]] = None,

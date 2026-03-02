@@ -16,9 +16,9 @@ from scipy.stats import ttest_ind
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
-    build_fix_crosscorr_output_filename,
+    build_fix_cross_correlation_output_filename,
     build_processed_data_path,
-    normalize_fix_crosscorr_time_scope,
+    normalize_fix_cross_correlation_time_scope,
 )
 from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
@@ -277,7 +277,7 @@ def _resolve_lags_filename(settings: FixCrossCorrLeaderFollowerSettings) -> str:
     """Return lag-axis filename."""
     if settings.lags_filename:
         return settings.lags_filename
-    return build_fix_crosscorr_output_filename(
+    return build_fix_cross_correlation_output_filename(
         settings.fixation_label,
         "lags",
         time_scope=settings.time_scope,
@@ -288,7 +288,7 @@ def _resolve_within_filename(settings: FixCrossCorrLeaderFollowerSettings) -> st
     """Return within-session cross-correlation filename."""
     if settings.within_filename:
         return settings.within_filename
-    return build_fix_crosscorr_output_filename(
+    return build_fix_cross_correlation_output_filename(
         settings.fixation_label,
         "within",
         time_scope=settings.time_scope,
@@ -1814,12 +1814,12 @@ def _print_monkey_role_fixation_count_summary(
     print("[leader-follower] -----------------------------------------------\n")
 
 
-def run_fix_crosscorr_leader_follower_analysis(
+def run_fix_cross_correlation_leader_follower_analysis(
     settings: FixCrossCorrLeaderFollowerSettings,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Build simplified leader/follower outputs (session, date, pair)."""
     cfg = load_config(settings.cfg_path)
-    scope = normalize_fix_crosscorr_time_scope(settings.time_scope)
+    scope = normalize_fix_cross_correlation_time_scope(settings.time_scope)
     input_subdir = settings.crosscorr_input_subdir or settings.output_subdir
     input_dir = build_analysis_output_dir(cfg, input_subdir)
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
@@ -1868,3 +1868,10 @@ def run_fix_crosscorr_leader_follower_analysis(
     )
 
     return session_df, date_summary_df, pair_summary_df
+
+
+def run_fix_crosscorr_leader_follower_analysis(
+    settings: FixCrossCorrLeaderFollowerSettings,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Compatibility alias for run_fix_cross_correlation_leader_follower_analysis."""
+    return run_fix_cross_correlation_leader_follower_analysis(settings)

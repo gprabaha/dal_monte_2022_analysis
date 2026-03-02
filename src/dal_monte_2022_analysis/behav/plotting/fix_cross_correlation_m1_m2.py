@@ -18,8 +18,8 @@ from dal_monte_2022_analysis.behav.plotting.common import apply_plotting_config,
 from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
-    build_fix_crosscorr_output_filename,
-    normalize_fix_crosscorr_time_scope,
+    build_fix_cross_correlation_output_filename,
+    normalize_fix_cross_correlation_time_scope,
 )
 
 
@@ -57,7 +57,7 @@ def _load_lags_for_scope(
     scope: str,
 ) -> np.ndarray:
     """Load lag axis for one scope."""
-    lags_path = out_dir / build_fix_crosscorr_output_filename(
+    lags_path = out_dir / build_fix_cross_correlation_output_filename(
         fixation_label,
         "lags",
         time_scope=scope,
@@ -78,7 +78,7 @@ def _load_df_for_scope(
     kind: str,
 ) -> pd.DataFrame:
     """Load cross-correlation dataframe for one scope and output kind."""
-    data_path = out_dir / build_fix_crosscorr_output_filename(
+    data_path = out_dir / build_fix_cross_correlation_output_filename(
         fixation_label,
         kind,
         time_scope=scope,
@@ -516,7 +516,7 @@ def _plot_observed_vs_control(
     apply_plotting_config(plot_cfg)
 
     out_dir = build_analysis_output_dir(cfg, settings.analysis_subdir)
-    scopes = tuple(dict.fromkeys(normalize_fix_crosscorr_time_scope(scope) for scope in settings.scopes))
+    scopes = tuple(dict.fromkeys(normalize_fix_cross_correlation_time_scope(scope) for scope in settings.scopes))
     required_scopes = ("whole", "interactive", "non_interactive")
     missing_scopes = sorted(set(required_scopes).difference(scopes))
     if missing_scopes:

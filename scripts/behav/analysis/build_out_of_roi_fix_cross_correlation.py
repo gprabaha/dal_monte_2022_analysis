@@ -12,11 +12,11 @@ from dal_monte_2022_analysis.behav.analysis.fix_cross_correlation import (
 )
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.utils.hpc_utils import (
-    generate_fix_crosscorr_shuffle_job_file,
+    generate_fix_cross_correlation_shuffle_job_file,
     submit_dsq_array_job,
     track_job_completion,
 )
-from dal_monte_2022_analysis.utils.paths import normalize_fix_crosscorr_time_scope
+from dal_monte_2022_analysis.utils.paths import normalize_fix_cross_correlation_time_scope
 
 
 def _build_settings(args) -> FixCrossCorrelationSettings:
@@ -37,7 +37,7 @@ def _build_settings(args) -> FixCrossCorrelationSettings:
         cross_filename=cfg.get("cross_filename"),
         lags_filename=cfg.get("lags_filename"),
         max_lag=cfg.get("max_lag", 60000),
-        time_scope=normalize_fix_crosscorr_time_scope(cfg.get("time_scope", "whole")),
+        time_scope=normalize_fix_cross_correlation_time_scope(cfg.get("time_scope", "whole")),
         interactive_modality=cfg.get("interactive_modality", "interactive_periods"),
         interactive_state_label=cfg.get("interactive_state_label", "interactive"),
         cross_pairs_max=cfg.get("cross_pairs_max"),
@@ -74,7 +74,7 @@ def _build_settings(args) -> FixCrossCorrelationSettings:
     if args.max_lag is not None:
         settings.max_lag = max(0, args.max_lag)
     if args.time_scope is not None:
-        settings.time_scope = normalize_fix_crosscorr_time_scope(args.time_scope)
+        settings.time_scope = normalize_fix_cross_correlation_time_scope(args.time_scope)
     if args.shuffle_n_shuffles is not None:
         settings.shuffle_n_shuffles = max(0, args.shuffle_n_shuffles)
     if args.shuffle_seed is not None:
@@ -100,7 +100,7 @@ def _run_shuffle_submit_hpc(settings: FixCrossCorrelationSettings, args) -> None
     worker_script = Path(hpc_cfg["worker_script_path"]).resolve()
     dataset_cfg_path = str(Path(args.dataset_cfg).resolve())
     fix_cfg_path = str(Path(args.out_of_roi_fix_cross_correlation_cfg).resolve())
-    generate_fix_crosscorr_shuffle_job_file(
+    generate_fix_cross_correlation_shuffle_job_file(
         tasks=tasks,
         job_file_path=hpc_cfg["job_file_path"],
         worker_script=worker_script,
