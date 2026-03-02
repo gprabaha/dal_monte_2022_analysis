@@ -11,13 +11,13 @@ import numpy as np
 import pandas as pd
 
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.data.behavioral_data import (
+from dal_monte_2022_analysis.data.behavioral_records import (
     NeuralTimelineData,
     PositionData,
     PupilSizeData,
     ROIRectsData,
 )
-from dal_monte_2022_analysis.data.ephys_data import EphysUnitContext, UnitSpikeData
+from dal_monte_2022_analysis.data.ephys_records import EphysUnitContext, UnitSpikeData
 from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.paths import (
     list_processed_modalities,
@@ -305,7 +305,7 @@ DEFAULT_EPHYS_COLUMN_ALIASES = {
 DEFAULT_RECORDED_MONKEY_CANDIDATES = ("recorded_monkey", "monkey_name", "monkey", "animal")
 DEFAULT_RECORDED_AGENT_CANDIDATES = ("recorded_agent", "agent", "recording_agent")
 DEFAULT_AREA_CANDIDATES = ("area", "brain_area", "region")
-_SESSION_NAME_PATTERN = re.compile(r"^(?P<date>\d{8})(?:[-_](?P<session>.+))?$")
+_SESSION_NAME_PATTERN = re.compile(r"^(?P<date>\d{8})(?:[-_](?P<suffix>.+))?$")
 
 
 def _as_optional_str(value: object) -> Optional[str]:
@@ -320,7 +320,7 @@ def _as_optional_str(value: object) -> Optional[str]:
     return text or None
 
 
-def _parse_session_name(session_name: object) -> tuple[str, Optional[str]]:
+def _extract_ephys_date_from_session_name(session_name: object) -> tuple[str, Optional[str], str]:
     token = _as_optional_str(session_name)
     if token is None:
         raise ValueError("session_name is empty.")
@@ -329,7 +329,7 @@ def _parse_session_name(session_name: object) -> tuple[str, Optional[str]]:
     matched = _SESSION_NAME_PATTERN.fullmatch(token)
     if matched is None:
         raise ValueError(f"session_name must look like MMDDYYYY or MMDDYYYY_<session>; got '{token}'.")
-    return matched.group("date"), _as_optional_str(matched.group("session"))
+    return matched.group("date"), _as_optional_str(matched.group("suffix")), token
 
 
 def _coerce_spike_times(value: object) -> np.ndarray:
@@ -418,10 +418,13 @@ def load_ephys_unit_dataframe(
     if missing:
         raise RuntimeError(f"Ephys table is missing required columns {missing}; available: {list(df.columns)}")
 
-    parsed = [_parse_session_name(value) for value in df["session_name"]]
+    parsed = [_extract_ephys_date_from_session_name(value) for value in df["session_name"]]
     out = df.copy()
-    out["date"] = [date for date, _ in parsed]
-    out["session"] = [session for _, session in parsed]
+    out["date"] = [date for date, _, _ in parsed]
+    # Ephys data is date-level; retain parsed suffix only as legacy metadata.
+    out["legacy_session_token"] = [suffix for _, suffix, _ in parsed]
+    out["session_name"] = [source_token for _, _, source_token in parsed]
+    out["session"] = None
     out["spike_channel"] = out["spike_channel"].map(_as_optional_str)
     out["spike_times"] = out["spike_times"].map(_coerce_spike_times)
     out["n_spikes"] = out["spike_times"].map(lambda arr: int(arr.size))
@@ -472,6 +475,7 @@ def load_ephys_units(
         "session_name",
         "date",
         "session",
+        "legacy_session_token",
         "region",
         "unit_uuid",
         "spike_channel",
@@ -492,7 +496,7 @@ def load_ephys_units(
             date=str(row["date"]),
             session_name=str(row["session_name"]),
             unit_uuid=str(row["unit_uuid"]),
-            session=_as_optional_str(row.get("session")),
+            legacy_session_token=_as_optional_str(row.get("legacy_session_token")),
             region=_as_optional_str(row.get("region")),
             spike_channel=_as_optional_str(row.get("spike_channel")),
             recorded_agent=(_as_optional_str(row.get(agent_col)) if agent_col else "m1") or "m1",

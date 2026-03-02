@@ -5,7 +5,7 @@ from dal_monte_2022_analysis.data.annotate import (
     annotate_with_pair_context,
     load_pair_context_table,
 )
-from dal_monte_2022_analysis.data.behavioral_data import (
+from dal_monte_2022_analysis.data.behavioral_records import (
     BehaviorRunContext,
     FixationBinaryVectorsData,
     FixationDensityVectorsData,
@@ -16,7 +16,7 @@ from dal_monte_2022_analysis.data.behavioral_data import (
     RecordingContext,
     ROIRectsData,
 )
-from dal_monte_2022_analysis.data.ephys_data import (
+from dal_monte_2022_analysis.data.ephys_records import (
     EphysUnitContext,
     UnitSpikeData,
     WidebandChannelContext,

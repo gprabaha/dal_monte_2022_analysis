@@ -1,5 +1,7 @@
 # configs/ephys_data.yaml
 # Unit-level ephys table loader configuration.
+# Note: the source column is historically named `session_name`, but ephys
+# recordings in this project are treated as date-level (no session split).
 
 # Defaults to the historical file name until a dedicated ephys filename is used.
 ephys_data_filename: spike_data.pkl
