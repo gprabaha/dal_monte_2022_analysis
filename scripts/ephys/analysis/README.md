@@ -10,6 +10,12 @@ Current scripts:
   - `peri_fix` (-250 ms to 250 ms)
   - `post_fix` (0 ms to 500 ms)
   Pair is selective if any window is significant.
+  Also writes one per-unit/per-window three-condition summary table
+  (`condition_window_means.csv`) with mean firing rates for:
+  - interactive face
+  - non-interactive face
+  - object
+  and normalized relative components for triangular plotting.
 - `build_within_region_fixation_neural_cross_correlation.py`
   Computes fixation-level neural PSTH cross-correlations for within-region
   unit pairs (nC2 per region per fixation).
@@ -29,6 +35,7 @@ Config:
   - `selective_window_stats_filename`
   - `selective_pair_summary_filename`
   - `selective_unit_summary_filename`
+  - `selective_condition_summary_filename`
   - `selective_output_pickle_filename`
   - `selective_alpha`
   - `selective_test`

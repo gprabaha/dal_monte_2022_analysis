@@ -82,6 +82,29 @@ Config:
   - `selective_venn_use_parallel`
   - `selective_venn_min_units_per_region`
 
+- `plot_fixation_three_way_selectivity_triangular.py`
+  Generates one large triangular-population summary with:
+  - rows = fixation PSTH windows
+  - columns = regions
+  - points = units positioned by normalized three-condition mean firing
+    (`face_interactive`, `face_non_interactive`, `object`)
+  Input comes from `condition_window_means.csv` produced by
+  `build_fixation_selective_units.py`.
+
+  Config:
+  - `selective_output_subdir`
+  - `selective_condition_summary_filename`
+  - `selective_triangular_output_subdir`
+  - `selective_triangular_output_filename`
+  - `selective_triangular_output_extension`
+  - `selective_triangular_output_dpi`
+  - `selective_triangular_min_units_per_panel`
+  - `selective_triangular_point_size`
+  - `selective_triangular_point_alpha`
+  - `selective_triangular_marker_edge_width`
+  - `selective_triangular_draw_centroid`
+  - `plot_condition_colors`
+
 - `plot_selective_fixation_psth_units.py`
   Selective-unit PSTH plotting with two modes:
   - batch mode (default): generate PNG plots for all selective units

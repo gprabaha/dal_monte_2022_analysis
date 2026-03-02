@@ -30,6 +30,7 @@ Ephys CLI entrypoints.
 4. Plotting
 - PSTH unit plots
 - selectivity Venn summaries
+- three-way triangular selectivity population summary
 - neural cross-correlation summaries
 
 Detailed script-level descriptions are in each subfolder README.

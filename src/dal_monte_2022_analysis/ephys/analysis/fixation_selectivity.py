@@ -51,6 +51,7 @@ class FixationPSTHSelectivitySettings:
     window_stats_filename: str = "window_stats.csv"
     pair_summary_filename: str = "pair_selectivity.csv"
     unit_summary_filename: str = "unit_selectivity.csv"
+    condition_summary_filename: str = "condition_window_means.csv"
     output_pickle_filename: str = "results.pkl"
     interactive_label: str = "interactive"
     face_label: str = "face"
@@ -132,10 +133,16 @@ def _load_trial_table(
 
     dfs: list[pd.DataFrame] = []
     bin_centers_ref = None
+    n_empty_trials = 0
+    n_missing_psth_counts = 0
     for row in rows:
         obj = load_pickle_path(row["path"])
         trial_df, meta = _extract_trials_df_and_meta(obj)
-        if trial_df.empty or "psth_counts" not in trial_df.columns:
+        if trial_df.empty:
+            n_empty_trials += 1
+            continue
+        if "psth_counts" not in trial_df.columns:
+            n_missing_psth_counts += 1
             continue
 
         centers = _resolve_bin_centers_from_meta(meta)
@@ -153,6 +160,11 @@ def _load_trial_table(
         dfs.append(df)
 
     if not dfs:
+        print(
+            "[analysis] trial PSTH files were found but usable trial rows were not. "
+            f"n_files={len(rows)}, empty_trials={n_empty_trials}, "
+            f"missing_psth_counts={n_missing_psth_counts}"
+        )
         return pd.DataFrame(), _fallback_bin_centers(settings)
 
     out_df = pd.concat(dfs, axis=0, ignore_index=True)
@@ -240,6 +252,86 @@ def _run_pair_test(
     )
 
 
+def _build_condition_summary_rows(
+    *,
+    unit_key: str,
+    date: str,
+    unit_uuid: str,
+    region: Optional[str],
+    spike_channel: Optional[str],
+    recorded_agent: Optional[str],
+    recorded_monkey: Optional[str],
+    area: Optional[str],
+    n_sessions: int,
+    windows_ms: dict[str, tuple[float, float]],
+    condition_map: dict[str, dict[str, np.ndarray]],
+    settings: FixationPSTHSelectivitySettings,
+) -> list[dict]:
+    rows: list[dict] = []
+    condition_keys = ("face_interactive", "face_non_interactive", "object")
+    for win_name, (start_ms, stop_ms) in windows_ms.items():
+        arr_int = condition_map.get("face_interactive", {}).get(win_name, np.array([], dtype=float))
+        arr_nonint = condition_map.get("face_non_interactive", {}).get(win_name, np.array([], dtype=float))
+        arr_obj = condition_map.get("object", {}).get(win_name, np.array([], dtype=float))
+
+        n_int = int(arr_int.size)
+        n_nonint = int(arr_nonint.size)
+        n_obj = int(arr_obj.size)
+        mean_int = float(np.mean(arr_int)) if n_int > 0 else np.nan
+        mean_nonint = float(np.mean(arr_nonint)) if n_nonint > 0 else np.nan
+        mean_obj = float(np.mean(arr_obj)) if n_obj > 0 else np.nan
+
+        means = np.asarray([mean_int, mean_nonint, mean_obj], dtype=float)
+        total_mean_hz = float(np.sum(means)) if np.all(np.isfinite(means)) else np.nan
+
+        rel = np.full(3, np.nan, dtype=float)
+        dominant_condition = None
+        dominant_relative_value = np.nan
+        if np.all(np.isfinite(means)) and float(total_mean_hz) > 0.0:
+            rel = means / float(total_mean_hz)
+            dominant_idx = int(np.argmax(rel))
+            dominant_condition = condition_keys[dominant_idx]
+            dominant_relative_value = float(rel[dominant_idx])
+
+        meets_min_trials = (
+            n_int >= int(settings.min_trials_per_condition)
+            and n_nonint >= int(settings.min_trials_per_condition)
+            and n_obj >= int(settings.min_trials_per_condition)
+        )
+        rows.append(
+            {
+                "unit_key": unit_key,
+                "date": date,
+                "unit_uuid": unit_uuid,
+                "region": region,
+                "spike_channel": spike_channel,
+                "recorded_agent": recorded_agent,
+                "recorded_monkey": recorded_monkey,
+                "area": area,
+                "n_sessions": n_sessions,
+                "window_name": win_name,
+                "window_start_ms": float(start_ms),
+                "window_stop_ms": float(stop_ms),
+                "n_trials_face_interactive": n_int,
+                "n_trials_face_non_interactive": n_nonint,
+                "n_trials_object": n_obj,
+                "n_trials_total": int(n_int + n_nonint + n_obj),
+                "mean_fr_face_interactive_hz": mean_int,
+                "mean_fr_face_non_interactive_hz": mean_nonint,
+                "mean_fr_object_hz": mean_obj,
+                "total_mean_fr_hz": total_mean_hz,
+                "relative_face_interactive": float(rel[0]) if np.isfinite(rel[0]) else np.nan,
+                "relative_face_non_interactive": float(rel[1]) if np.isfinite(rel[1]) else np.nan,
+                "relative_object": float(rel[2]) if np.isfinite(rel[2]) else np.nan,
+                "all_conditions_observed": bool(n_int > 0 and n_nonint > 0 and n_obj > 0),
+                "meets_min_trials": bool(meets_min_trials),
+                "dominant_condition": dominant_condition,
+                "dominant_relative_value": dominant_relative_value,
+            }
+        )
+    return rows
+
+
 def _unit_worker(args):
     unit_key, df_unit, bin_centers_s, settings = args
     windows_ms = _normalize_windows(settings.windows_ms)
@@ -262,6 +354,20 @@ def _unit_worker(args):
 
     window_rows: list[dict] = []
     pair_rows: list[dict] = []
+    condition_rows: list[dict] = _build_condition_summary_rows(
+        unit_key=unit_key,
+        date=date,
+        unit_uuid=unit_uuid,
+        region=region,
+        spike_channel=spike_channel,
+        recorded_agent=recorded_agent,
+        recorded_monkey=recorded_monkey,
+        area=area,
+        n_sessions=n_sessions,
+        windows_ms=windows_ms,
+        condition_map=condition_map,
+        settings=settings,
+    )
 
     for cond_a, cond_b in settings.condition_pairs:
         pair_label = f"{cond_a}__vs__{cond_b}"
@@ -365,7 +471,7 @@ def _unit_worker(args):
         "n_tested_pairs": n_tested_pairs,
         "selective_pairs": "|".join(selective_labels),
     }
-    return window_rows, pair_rows, unit_row
+    return window_rows, pair_rows, unit_row, condition_rows
 
 
 def run_fixation_selectivity_analysis(
@@ -379,14 +485,24 @@ def run_fixation_selectivity_analysis(
     trial_df, bin_centers_s = _load_trial_table(settings, dates=dates, sessions=sessions)
     if trial_df.empty or "unit_uuid" not in trial_df.columns:
         print("[analysis] no trial PSTH rows found for fixation selectivity analysis")
-        return {"window_stats": pd.DataFrame(), "pair_summary": pd.DataFrame(), "unit_summary": pd.DataFrame()}
+        return {
+            "window_stats": pd.DataFrame(),
+            "pair_summary": pd.DataFrame(),
+            "unit_summary": pd.DataFrame(),
+            "condition_summary": pd.DataFrame(),
+        }
 
     if unit_uuids is not None:
         allowed_units = {str(unit) for unit in unit_uuids}
         trial_df = trial_df.loc[trial_df["unit_uuid"].astype(str).isin(allowed_units)].copy()
     if trial_df.empty:
         print("[analysis] no matching units found after unit filter")
-        return {"window_stats": pd.DataFrame(), "pair_summary": pd.DataFrame(), "unit_summary": pd.DataFrame()}
+        return {
+            "window_stats": pd.DataFrame(),
+            "pair_summary": pd.DataFrame(),
+            "unit_summary": pd.DataFrame(),
+            "condition_summary": pd.DataFrame(),
+        }
 
     if "date" not in trial_df.columns:
         trial_df["date"] = "unknown"
@@ -403,6 +519,7 @@ def run_fixation_selectivity_analysis(
     window_rows_all: list[dict] = []
     pair_rows_all: list[dict] = []
     unit_rows_all: list[dict] = []
+    condition_rows_all: list[dict] = []
 
     results = run_tasks(
         _unit_worker,
@@ -412,14 +529,16 @@ def run_fixation_selectivity_analysis(
         use_parallel=settings.use_parallel,
         max_procs=settings.max_procs,
     )
-    for window_rows, pair_rows, unit_row in results:
+    for window_rows, pair_rows, unit_row, condition_rows in results:
         window_rows_all.extend(window_rows)
         pair_rows_all.extend(pair_rows)
         unit_rows_all.append(unit_row)
+        condition_rows_all.extend(condition_rows)
 
     window_df = pd.DataFrame(window_rows_all)
     pair_df = pd.DataFrame(pair_rows_all)
     unit_df = pd.DataFrame(unit_rows_all)
+    condition_df = pd.DataFrame(condition_rows_all)
 
     if not window_df.empty:
         window_df = window_df.sort_values(["date", "region", "unit_uuid", "pair_label", "window_name"]).reset_index(drop=True)
@@ -427,6 +546,8 @@ def run_fixation_selectivity_analysis(
         pair_df = pair_df.sort_values(["date", "region", "unit_uuid", "pair_label"]).reset_index(drop=True)
     if not unit_df.empty:
         unit_df = unit_df.sort_values(["date", "region", "unit_uuid"]).reset_index(drop=True)
+    if not condition_df.empty:
+        condition_df = condition_df.sort_values(["date", "region", "unit_uuid", "window_name"]).reset_index(drop=True)
 
     cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
@@ -435,11 +556,13 @@ def run_fixation_selectivity_analysis(
     window_csv = out_root / _ensure_filename(settings.window_stats_filename, ".csv")
     pair_csv = out_root / _ensure_filename(settings.pair_summary_filename, ".csv")
     unit_csv = out_root / _ensure_filename(settings.unit_summary_filename, ".csv")
+    condition_csv = out_root / _ensure_filename(settings.condition_summary_filename, ".csv")
     result_pkl = out_root / _ensure_filename(settings.output_pickle_filename, ".pkl")
 
     window_df.to_csv(window_csv, index=False)
     pair_df.to_csv(pair_csv, index=False)
     unit_df.to_csv(unit_csv, index=False)
+    condition_df.to_csv(condition_csv, index=False)
 
     result_obj = {
         "meta": {
@@ -456,6 +579,7 @@ def run_fixation_selectivity_analysis(
         "window_stats": window_df,
         "pair_summary": pair_df,
         "unit_summary": unit_df,
+        "condition_summary": condition_df,
     }
     save_pickle_path(result_obj, result_pkl)
     return result_obj

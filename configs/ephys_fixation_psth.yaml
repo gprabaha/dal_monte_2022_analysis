@@ -47,6 +47,7 @@ selective_output_subdir: ephys/psth/fixation_psth_selectivity
 selective_window_stats_filename: window_stats.csv
 selective_pair_summary_filename: pair_selectivity.csv
 selective_unit_summary_filename: unit_selectivity.csv
+selective_condition_summary_filename: condition_window_means.csv
 selective_output_pickle_filename: results.pkl
 selective_alpha: 0.05
 selective_test: welch_ttest
@@ -65,6 +66,17 @@ selective_venn_output_extension: pdf
 selective_venn_output_dpi: 220
 selective_venn_use_parallel: true
 selective_venn_min_units_per_region: 1
+
+# Region-by-window triangular population plotting from three-way condition means
+selective_triangular_output_subdir: ephys/psth/fixation_psth_selectivity_triangular
+selective_triangular_output_filename: population_triangular
+selective_triangular_output_extension: png
+selective_triangular_output_dpi: 220
+selective_triangular_min_units_per_panel: 1
+selective_triangular_point_size: 18.0
+selective_triangular_point_alpha: 0.68
+selective_triangular_marker_edge_width: 0.28
+selective_triangular_draw_centroid: true
 
 # Selective-unit firing-rate plotting
 selective_plot_output_subdir: ephys/psth/fixation_psth_selective_unit_plots
