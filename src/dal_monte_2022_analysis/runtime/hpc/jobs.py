@@ -1,5 +1,6 @@
 """HPC runtime helpers for job array submission."""
 
+import shlex
 import subprocess
 import time
 from pathlib import Path
@@ -18,6 +19,23 @@ def write_job_file(job_file_path: Path, commands: Iterable[str]) -> None:
         for cmd in commands:
             f.write(cmd + "\n")
     print(f"Wrote job file to {job_file_path}")
+
+
+def _build_conda_python_command(
+    *,
+    env_name: str,
+    python_argv: list[str],
+) -> str:
+    """Build one shell command that activates conda env and runs python argv."""
+    return "; ".join(
+        [
+            "module load miniconda",
+            "conda init",
+            "conda deactivate",
+            f"conda activate {shlex.quote(str(env_name))}",
+            shlex.join([str(token) for token in python_argv]),
+        ],
+    )
 
 
 def generate_gaze_event_job_file(
@@ -41,18 +59,22 @@ def generate_gaze_event_job_file(
     """
     commands: List[str] = []
     for date, session, agent in tasks:
-        cmd = (
-            "module load miniconda; "
-            "conda init; "
-            "conda deactivate; "
-            f"conda activate {env_name}; "
-            "python "
-            f"{worker_script} "
-            f"--dataset-cfg {dataset_cfg_path} "
-            f"--gaze-event-cfg {gaze_event_cfg_path} "
-            f"--date {date} "
-            f"--session {session} "
-            f"--agent {agent}"
+        cmd = _build_conda_python_command(
+            env_name=env_name,
+            python_argv=[
+                "python",
+                str(worker_script),
+                "--dataset-cfg",
+                str(dataset_cfg_path),
+                "--gaze-event-cfg",
+                str(gaze_event_cfg_path),
+                "--date",
+                str(date),
+                "--session",
+                str(session),
+                "--agent",
+                str(agent),
+            ],
         )
         commands.append(cmd)
 
@@ -104,19 +126,23 @@ def generate_fix_cross_correlation_shuffle_job_file(
         raise ValueError("Expected one of fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path.")
     commands: List[str] = []
     for date, session in tasks:
-        scope_arg = f" --time-scope {time_scope}" if time_scope else ""
-        cmd = (
-            "module load miniconda; "
-            "conda init; "
-            "conda deactivate; "
-            f"conda activate {env_name}; "
-            "python "
-            f"{worker_script} "
-            f"--dataset-cfg {dataset_cfg_path} "
-            f"--fix-cross-correlation-cfg {cfg_path} "
-            f"--date {date} "
-            f"--session {session}"
-            f"{scope_arg}"
+        python_argv = [
+            "python",
+            str(worker_script),
+            "--dataset-cfg",
+            str(dataset_cfg_path),
+            "--fix-cross-correlation-cfg",
+            str(cfg_path),
+            "--date",
+            str(date),
+            "--session",
+            str(session),
+        ]
+        if time_scope:
+            python_argv.extend(["--time-scope", str(time_scope)])
+        cmd = _build_conda_python_command(
+            env_name=env_name,
+            python_argv=python_argv,
         )
         commands.append(cmd)
 
@@ -151,29 +177,46 @@ def submit_dsq_array_job(
     """
     log_dir.mkdir(parents=True, exist_ok=True)
 
+    dsq_cmd = [
+        "dsq",
+        "--job-file",
+        str(job_file_path),
+        "--batch-file",
+        str(sbatch_script_path),
+        "-o",
+        str(log_dir),
+        "--status-dir",
+        str(log_dir),
+        "--partition",
+        str(partition),
+        "--cpus-per-task",
+        str(cpus_per_task),
+        "--mem-per-cpu",
+        str(mem_per_cpu),
+        "-t",
+        str(time_limit),
+        "--mail-type",
+        "FAIL",
+    ]
     subprocess.run(
-        f"module load dSQ; dsq --job-file {job_file_path} --batch-file {sbatch_script_path} "
-        f"-o {log_dir} --status-dir {log_dir} --partition {partition} "
-        f"--cpus-per-task {cpus_per_task} --mem-per-cpu {mem_per_cpu} "
-        f"-t {time_limit} --mail-type FAIL",
-        shell=True,
+        ["bash", "-lc", f"module load dSQ && {shlex.join(dsq_cmd)}"],
         check=True,
-        executable="/bin/bash",
     )
 
     if not sbatch_script_path.exists():
         raise RuntimeError(f"dSQ job script was not created: {sbatch_script_path}")
 
     result = subprocess.run(
-        f"sbatch --job-name=dsq_{job_name} "
-        f"--output={log_dir}/{job_name}_%a.out "
-        f"--error={log_dir}/{job_name}_%a.err "
-        f"{sbatch_script_path}",
-        shell=True,
+        [
+            "sbatch",
+            f"--job-name=dsq_{job_name}",
+            f"--output={log_dir}/{job_name}_%a.out",
+            f"--error={log_dir}/{job_name}_%a.err",
+            str(sbatch_script_path),
+        ],
         check=True,
         capture_output=True,
         text=True,
-        executable="/bin/bash",
     )
 
     job_id = result.stdout.strip().split()[-1]
@@ -195,11 +238,9 @@ def track_job_completion(job_id: str, poll_secs: int = 30, log_every_secs: int =
 
     while True:
         result = subprocess.run(
-            f"squeue --job {job_id} -h -o %T",
-            shell=True,
+            ["squeue", "--job", str(job_id), "-h", "-o", "%T"],
             capture_output=True,
             text=True,
-            executable="/bin/bash",
         )
 
         if result.returncode != 0:
