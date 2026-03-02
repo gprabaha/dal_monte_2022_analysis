@@ -58,8 +58,8 @@ With current settings, processed outputs are written under:
   - cross-region unit pairs (`anchor_region` x `partner_regions`)
 
 Cross-correlation configs also hold optional leader-follower settings used by:
-- `scripts/behav/analysis/build_face_fix_crosscorr_leader_follower.py`
-- `scripts/behav/analysis/build_out_of_roi_fix_crosscorr_leader_follower.py`
+- `scripts/behav/analysis/build_face_fix_cross_correlation_leader_follower.py`
+- `scripts/behav/analysis/build_out_of_roi_fix_cross_correlation_leader_follower.py`
 
 ## HPC configs
 

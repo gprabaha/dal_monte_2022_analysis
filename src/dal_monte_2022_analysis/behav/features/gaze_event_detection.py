@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
-from dal_monte_2022_analysis.utils.fixation_utils import detect_fixations_and_saccades
+from dal_monte_2022_analysis.utils.fixation import detect_fixations_and_saccades
 from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_processed_data_path

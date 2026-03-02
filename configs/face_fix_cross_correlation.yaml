@@ -89,7 +89,7 @@ shuffle_parallelize_within_pair: true
 shuffle_log_every: 100
 
 # Optional leader-follower analysis settings (used by
-# scripts/behav/analysis/build_face_fix_crosscorr_leader_follower.py).
+# scripts/behav/analysis/build_face_fix_cross_correlation_leader_follower.py).
 leader_follower_output_subdir: crosscorr_outputs/leader_follower
 leader_follower_time_scope: whole
 leader_follower_tie_epsilon: 0.0

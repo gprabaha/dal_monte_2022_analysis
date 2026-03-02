@@ -65,7 +65,8 @@ def _load_pair_lookup(cfg: dict) -> pd.DataFrame:
         raise FileNotFoundError(f"Missing ephys metadata file: {ephys_path}")
 
     ephys_df = pd.read_pickle(ephys_path)
-    required_cols = {"session_name", "m1", "m2"}
+    date_col = "date" if "date" in ephys_df.columns else "session_name"
+    required_cols = {date_col, "m1", "m2"}
     missing = required_cols.difference(ephys_df.columns)
     if missing:
         raise RuntimeError(
@@ -73,7 +74,7 @@ def _load_pair_lookup(cfg: dict) -> pd.DataFrame:
             f"(missing: {sorted(missing)}, found: {list(ephys_df.columns)})"
         )
 
-    session_str = ephys_df["session_name"].astype(str).str.strip()
+    session_str = ephys_df[date_col].astype(str).str.strip()
     session_str = session_str.apply(lambda value: value.zfill(8) if len(value) == 7 else value)
     bad_vals = session_str[~session_str.str.fullmatch(r"\d{8}")].head(5).tolist()
     if bad_vals:
@@ -306,6 +307,75 @@ def _resolve_figure_size(
     return [width, height], dpi
 
 
+def _plot_grouped_state_histograms(
+    *,
+    grouped_df: pd.DataFrame,
+    group_column: str,
+    group_values: list[str],
+    duration_column: str,
+    state_specs: list[tuple[str, str]],
+    bins: np.ndarray,
+    x_max: float,
+    figsize: list[float],
+    dpi: int | None,
+    x_label: str,
+    y_label: str,
+    mean_color: str,
+    summary_color: str,
+) -> plt.Figure:
+    """Plot one two-column histogram grid for grouped interactive states."""
+    fig, axes = plt.subplots(
+        len(group_values),
+        2,
+        figsize=figsize,
+        dpi=dpi,
+        squeeze=False,
+        sharex=True,
+    )
+    for row_idx, group_label in enumerate(group_values):
+        group_df = grouped_df[grouped_df[group_column].astype(str) == str(group_label)]
+        for col_idx, (state_label, hist_color) in enumerate(state_specs):
+            ax = axes[row_idx, col_idx]
+            state_values = group_df.loc[
+                group_df["state"] == state_label,
+                duration_column,
+            ].to_numpy(dtype=float)
+            _plot_histogram_with_stats(
+                ax=ax,
+                values=state_values,
+                bins=bins,
+                hist_color=hist_color,
+                mean_color=mean_color,
+                summary_color=summary_color,
+            )
+            ax.set_xlim(0.0, x_max)
+            ax.grid(axis="y", alpha=0.24, linewidth=0.6)
+            if row_idx == 0:
+                ax.set_title(state_label.replace("_", " "))
+            if col_idx == 0:
+                ax.text(
+                    0.98,
+                    0.06,
+                    str(group_label),
+                    transform=ax.transAxes,
+                    ha="right",
+                    va="bottom",
+                    fontsize=10,
+                    fontweight="bold",
+                    bbox={
+                        "boxstyle": "round,pad=0.20",
+                        "facecolor": "white",
+                        "edgecolor": "#DDDDDD",
+                        "alpha": 0.9,
+                    },
+                )
+
+    fig.supxlabel(x_label)
+    fig.supylabel(y_label)
+    fig.tight_layout()
+    return fig
+
+
 def plot_interactive_period_duration_distributions(
     settings: InteractivePeriodDurationDistributionPlotSettings,
 ) -> list[Path]:
@@ -376,59 +446,25 @@ def plot_interactive_period_duration_distributions(
     mean_color = "#C62828"
     summary_color = "#1A1A1A"
 
-    fig, axes = plt.subplots(
-        len(pair_labels),
-        2,
-        figsize=figsize,
-        dpi=dpi,
-        squeeze=False,
-        sharex=True,
-    )
     state_specs = [
         (resolved_settings.high_label, interactive_color),
         (resolved_settings.low_label, non_interactive_color),
     ]
-    for row_idx, pair_label in enumerate(pair_labels):
-        pair_df = durations_df[durations_df["pair_label"].astype(str) == pair_label]
-        for col_idx, (state_label, hist_color) in enumerate(state_specs):
-            ax = axes[row_idx, col_idx]
-            state_values = pair_df.loc[
-                pair_df["state"] == state_label,
-                resolved_settings.duration_column,
-            ].to_numpy(dtype=float)
-            _plot_histogram_with_stats(
-                ax=ax,
-                values=state_values,
-                bins=bins,
-                hist_color=hist_color,
-                mean_color=mean_color,
-                summary_color=summary_color,
-            )
-            ax.set_xlim(0.0, x_max)
-            ax.grid(axis="y", alpha=0.24, linewidth=0.6)
-            if row_idx == 0:
-                ax.set_title(state_label.replace("_", " "))
-            if col_idx == 0:
-                ax.text(
-                    0.98,
-                    0.06,
-                    pair_label,
-                    transform=ax.transAxes,
-                    ha="right",
-                    va="bottom",
-                    fontsize=10,
-                    fontweight="bold",
-                    bbox={
-                        "boxstyle": "round,pad=0.20",
-                        "facecolor": "white",
-                        "edgecolor": "#DDDDDD",
-                        "alpha": 0.9,
-                    },
-                )
-
-    fig.supxlabel(resolved_settings.x_label)
-    fig.supylabel(resolved_settings.y_label)
-    fig.tight_layout()
+    fig = _plot_grouped_state_histograms(
+        grouped_df=durations_df,
+        group_column="pair_label",
+        group_values=pair_labels,
+        duration_column=resolved_settings.duration_column,
+        state_specs=state_specs,
+        bins=bins,
+        x_max=x_max,
+        figsize=figsize,
+        dpi=dpi,
+        x_label=resolved_settings.x_label,
+        y_label=resolved_settings.y_label,
+        mean_color=mean_color,
+        summary_color=summary_color,
+    )
 
     out_dir = build_analysis_output_dir(cfg, resolved_settings.analysis_subdir) / resolved_settings.output_subdir
     out_path = out_dir / resolved_settings.output_filename
@@ -438,55 +474,21 @@ def plot_interactive_period_duration_distributions(
 
     # Per-m1 grid (each row is one unique m1 monkey, pooled across its sessions/pairs).
     m1_figsize, _ = _resolve_figure_size(n_rows=len(m1_labels), plot_cfg=plot_cfg)
-    fig_m1, axes_m1 = plt.subplots(
-        len(m1_labels),
-        2,
+    fig_m1 = _plot_grouped_state_histograms(
+        grouped_df=durations_df,
+        group_column="m1_label",
+        group_values=m1_labels,
+        duration_column=resolved_settings.duration_column,
+        state_specs=state_specs,
+        bins=bins,
+        x_max=x_max,
         figsize=m1_figsize,
         dpi=dpi,
-        squeeze=False,
-        sharex=True,
+        x_label=resolved_settings.x_label,
+        y_label=resolved_settings.y_label,
+        mean_color=mean_color,
+        summary_color=summary_color,
     )
-    for row_idx, m1_label in enumerate(m1_labels):
-        m1_df = durations_df[durations_df["m1_label"].astype(str) == m1_label]
-        for col_idx, (state_label, hist_color) in enumerate(state_specs):
-            ax = axes_m1[row_idx, col_idx]
-            state_values = m1_df.loc[
-                m1_df["state"] == state_label,
-                resolved_settings.duration_column,
-            ].to_numpy(dtype=float)
-            _plot_histogram_with_stats(
-                ax=ax,
-                values=state_values,
-                bins=bins,
-                hist_color=hist_color,
-                mean_color=mean_color,
-                summary_color=summary_color,
-            )
-            ax.set_xlim(0.0, x_max)
-            ax.grid(axis="y", alpha=0.24, linewidth=0.6)
-            if row_idx == 0:
-                ax.set_title(state_label.replace("_", " "))
-            if col_idx == 0:
-                ax.text(
-                    0.98,
-                    0.06,
-                    m1_label,
-                    transform=ax.transAxes,
-                    ha="right",
-                    va="bottom",
-                    fontsize=10,
-                    fontweight="bold",
-                    bbox={
-                        "boxstyle": "round,pad=0.20",
-                        "facecolor": "white",
-                        "edgecolor": "#DDDDDD",
-                        "alpha": 0.9,
-                    },
-                )
-
-    fig_m1.supxlabel(resolved_settings.x_label)
-    fig_m1.supylabel(resolved_settings.y_label)
-    fig_m1.tight_layout()
 
     m1_out_path = out_dir / resolved_settings.m1_output_filename
     m1_out_path.parent.mkdir(parents=True, exist_ok=True)

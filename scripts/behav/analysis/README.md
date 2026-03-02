@@ -11,18 +11,18 @@ Scripts:
   Computes within-session and cross-session face fixation cross-correlation outputs, and supports shuffled control workflows.
 - `build_out_of_roi_fix_cross_correlation.py`
   Computes within-session and cross-session out-of-ROI fixation cross-correlation outputs, and supports shuffled control workflows.
-- `build_face_fix_crosscorr_leader_follower.py`
+- `build_face_fix_cross_correlation_leader_follower.py`
   Computes face fixation leader-follower labels from within-session cross-correlation outputs and reports date-level, pair-level, and global summaries.
-- `build_out_of_roi_fix_crosscorr_leader_follower.py`
+- `build_out_of_roi_fix_cross_correlation_leader_follower.py`
   Computes out-of-ROI fixation leader-follower labels from within-session cross-correlation outputs and reports date-level, pair-level, and global summaries.
 - `build_pupil_fixation_density_correlation.py`
   Computes per-session correlations between each pupil trace (`m1`, `m2`) and each face fixation density trace (`m1`, `m2`, `joint`).
   Supports session-level parallelization via config (`use_parallel`, `parallel_max_procs`) or CLI `--use-parallel`.
   Supports modality/method overrides (e.g., raw `pupil_size` and `spearman`) via
   `--pupil-modality` and `--correlation-method`.
-- `hpc_face_fix_crosscorr_shuffle_worker.py`
+- `hpc_face_fix_cross_correlation_shuffle_worker.py`
   Worker script used by array jobs for shuffled within-session cross-correlation pairs.
-- `hpc_out_of_roi_fix_crosscorr_shuffle_worker.py`
+- `hpc_out_of_roi_fix_cross_correlation_shuffle_worker.py`
   Worker script used by array jobs for shuffled within-session out-of-ROI cross-correlation pairs.
 
 Primary configs:
