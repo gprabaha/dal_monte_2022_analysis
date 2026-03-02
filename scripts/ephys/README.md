@@ -24,6 +24,7 @@ Ephys CLI entrypoints.
 
 3. Analysis
 - `build_fixation_selective_units.py`
+- `build_fixation_three_way_region_comparison.py`
 - `build_within_region_fixation_neural_cross_correlation.py`
 - `build_cross_region_fixation_neural_cross_correlation.py`
 
@@ -31,6 +32,7 @@ Ephys CLI entrypoints.
 - PSTH unit plots
 - selectivity Venn summaries
 - three-way triangular selectivity population summary
+- three-way region-comparison heatmaps
 - neural cross-correlation summaries
 
 Detailed script-level descriptions are in each subfolder README.

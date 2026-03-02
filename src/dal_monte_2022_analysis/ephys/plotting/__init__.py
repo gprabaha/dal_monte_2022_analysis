@@ -16,6 +16,10 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_three_way_selectivity_trian
     FixationThreeWayTriangularPlotSettings,
     plot_fixation_three_way_selectivity_triangular,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_three_way_region_comparison import (
+    FixationThreeWayRegionComparisonPlotSettings,
+    plot_fixation_three_way_region_comparison_heatmaps,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_neural_cross_correlation import (
     FixationNeuralCrossCorrelationPlotSettings,
     plot_cross_region_fixation_neural_cross_correlation_summaries,
@@ -32,6 +36,8 @@ __all__ = [
     "build_fixation_selectivity_venn_summaries",
     "FixationThreeWayTriangularPlotSettings",
     "plot_fixation_three_way_selectivity_triangular",
+    "FixationThreeWayRegionComparisonPlotSettings",
+    "plot_fixation_three_way_region_comparison_heatmaps",
     "FixationNeuralCrossCorrelationPlotSettings",
     "plot_fixation_neural_cross_correlation_summaries",
     "plot_within_region_fixation_neural_cross_correlation_summaries",

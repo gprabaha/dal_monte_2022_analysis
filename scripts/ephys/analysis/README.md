@@ -16,6 +16,12 @@ Current scripts:
   - non-interactive face
   - object
   and normalized relative components for triangular plotting.
+- `build_fixation_three_way_region_comparison.py`
+  Compares three-way fixation-response compositions across regions per
+  analysis window using permutation pseudo-F tests in ILR space.
+  Writes:
+  - `pairwise_region_comparisons.csv`
+  - `window_region_comparisons.csv`
 - `build_within_region_fixation_neural_cross_correlation.py`
   Computes fixation-level neural PSTH cross-correlations for within-region
   unit pairs (nC2 per region per fixation).
@@ -42,6 +48,19 @@ Config:
   - `selective_min_trials_per_condition`
   - `selective_use_parallel`
   - `selective_windows_ms`
+  - `selective_region_comparison_output_subdir`
+  - `selective_region_comparison_pairwise_filename`
+  - `selective_region_comparison_window_filename`
+  - `selective_region_comparison_output_pickle_filename`
+  - `selective_region_comparison_min_units_per_region`
+  - `selective_region_comparison_min_regions_per_window`
+  - `selective_region_comparison_n_permutations`
+  - `selective_region_comparison_random_seed`
+  - `selective_region_comparison_pvalue_correction`
+  - `selective_region_comparison_alpha`
+  - `selective_region_comparison_require_all_conditions_observed`
+  - `selective_region_comparison_require_meets_min_trials`
+  - `selective_region_comparison_pseudo_count`
 - `configs/ephys_fixation_neural_cross_correlation.yaml`
   - `trial_input_modality`
   - `trial_input_filename`

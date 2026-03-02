@@ -15,10 +15,16 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_selectivity import (
     FixationPSTHSelectivitySettings,
     run_fixation_selectivity_analysis,
 )
+from dal_monte_2022_analysis.ephys.analysis.fixation_three_way_region_comparison import (
+    FixationThreeWayRegionComparisonSettings,
+    run_fixation_three_way_region_comparison,
+)
 
 __all__ = [
     "FixationPSTHSelectivitySettings",
     "run_fixation_selectivity_analysis",
+    "FixationThreeWayRegionComparisonSettings",
+    "run_fixation_three_way_region_comparison",
     "WITHIN_ANALYSIS_KIND",
     "CROSS_ANALYSIS_KIND",
     "FixationNeuralCrossCorrelationSettings",

@@ -111,6 +111,26 @@ Config:
   - `selective_triangular_marker_edge_width`
   - `selective_triangular_draw_centroid`
 
+- `plot_fixation_three_way_region_comparison.py`
+  Plots cross-region comparison heatmaps for each time window from
+  `pairwise_region_comparisons.csv` and `window_region_comparisons.csv`.
+  The figure shows:
+  - centroid-distance (ILR) matrices across regions
+  - `-log10(adjusted p)` matrices for pairwise region tests
+  - per-window global adjusted p-values in row labels
+
+  Config:
+  - `selective_region_comparison_output_subdir`
+  - `selective_region_comparison_pairwise_filename`
+  - `selective_region_comparison_window_filename`
+  - `selective_region_comparison_plot_output_subdir`
+  - `selective_region_comparison_plot_output_filename`
+  - `selective_region_comparison_plot_output_extension`
+  - `selective_region_comparison_plot_output_dpi`
+  - `selective_region_comparison_alpha`
+  - `selective_region_comparison_plot_pvalue_floor`
+  - `selective_region_comparison_plot_annotation_max_regions`
+
 - `plot_selective_fixation_psth_units.py`
   Selective-unit PSTH plotting with two modes:
   - batch mode (default): generate PNG plots for all selective units
