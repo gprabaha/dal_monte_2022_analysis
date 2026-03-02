@@ -25,7 +25,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     save_processed_pickle,
 )
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.roi_groups import (
+from dal_monte_2022_analysis.core.behav.roi_groups import (
     DEFAULT_FIXATION_ROI_GROUPS,
     coerce_location_labels,
     locations_match,

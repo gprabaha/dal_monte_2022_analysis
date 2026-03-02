@@ -3,6 +3,10 @@
 This package holds the reusable core of the project:
 - `config/` loads dataset configuration and normalizes paths.
 - `core/` contains pure domain logic and invariants (no plotting, filesystem, or HPC code), plus shared contracts under `core/contracts/`.
+  Current canonical core modules include:
+  `core/behav/fixation_detection.py`,
+  `core/behav/roi_groups.py`,
+  and `core/signal/cross_correlation.py`.
 - `data/` defines typed data containers, shared annotation helpers, and ephys loaders.
 - `behav/` contains behavioral workflows organized by stage:
   `preprocessing/`, `features/`, `analysis/`, `plotting/`, `modeling/`.

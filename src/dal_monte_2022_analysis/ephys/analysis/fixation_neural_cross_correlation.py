@@ -14,7 +14,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.utils.cross_correlation import (
+from dal_monte_2022_analysis.core.signal.cross_correlation import (
     assert_lag_axis_match as assert_lag_axis_match_shared,
     fft_cross_correlation,
     normalize_cross_correlation_energy,
@@ -26,7 +26,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
 )
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
-from dal_monte_2022_analysis.utils.roi_groups import (
+from dal_monte_2022_analysis.core.behav.roi_groups import (
     DEFAULT_FIXATION_ROI_GROUPS as DEFAULT_SHARED_FIXATION_ROI_GROUPS,
     canonical_fixation_category,
     categorize_locations,

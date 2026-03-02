@@ -26,7 +26,7 @@ from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
     build_processed_out_dir,
 )
-from dal_monte_2022_analysis.utils.roi_groups import (
+from dal_monte_2022_analysis.core.behav.roi_groups import (
     DEFAULT_FIXATION_ROI_GROUPS as DEFAULT_SHARED_FIXATION_ROI_GROUPS,
     categorize_locations,
     coerce_location_labels,

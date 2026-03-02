@@ -1,10 +1,6 @@
-"""Compatibility shim for cross-correlation helpers.
+"""Signal-processing domain logic."""
 
-Canonical import path:
-`dal_monte_2022_analysis.core.signal.cross_correlation`.
-"""
-
-from dal_monte_2022_analysis.core.signal.cross_correlation import (  # noqa: F401
+from .cross_correlation import (
     assert_lag_axis_match,
     fft_cross_correlation,
     normalize_cross_correlation_energy,
@@ -19,3 +15,4 @@ __all__ = [
     "normalize_cross_correlation_sqrt_bin_count",
     "summarize_cross_correlation",
 ]
+

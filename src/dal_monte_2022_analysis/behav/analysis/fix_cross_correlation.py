@@ -17,7 +17,7 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import FixationBinaryVectorsData
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
-from dal_monte_2022_analysis.utils.cross_correlation import (
+from dal_monte_2022_analysis.core.signal.cross_correlation import (
     assert_lag_axis_match as assert_lag_axis_match_shared,
     fft_cross_correlation,
     normalize_cross_correlation_sqrt_bin_count,

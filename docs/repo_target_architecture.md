@@ -18,6 +18,9 @@ src/dal_monte_2022_analysis/
     contracts/
     behav/
       fixation_detection.py
+      roi_groups.py
+    signal/
+      cross_correlation.py
     ephys/
     combined/
   data/                        # Data containers, records, migration helpers

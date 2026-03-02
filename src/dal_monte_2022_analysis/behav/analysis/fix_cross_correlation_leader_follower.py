@@ -24,7 +24,7 @@ from dal_monte_2022_analysis.utils.paths import (
     normalize_fix_cross_correlation_time_scope,
 )
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.roi_groups import keywords_for_fixation_label
+from dal_monte_2022_analysis.core.behav.roi_groups import keywords_for_fixation_label
 
 
 @dataclass
