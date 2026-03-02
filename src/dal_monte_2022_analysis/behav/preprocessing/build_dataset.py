@@ -8,7 +8,7 @@ from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_dataset
 from dal_monte_2022_analysis.behav.preprocessing.load_mat import load_mat_from_path
 from dal_monte_2022_analysis.data.behavioral_data import RecordingContext
-from dal_monte_2022_analysis.utils.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_processed_out_dir
 
 

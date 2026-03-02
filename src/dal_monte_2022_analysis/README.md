@@ -14,7 +14,7 @@ This package holds the reusable core of the project:
   `preprocessing/`, `features/`, `analysis/`, `plotting/`, `modeling/`.
 - `combined/` contains joint behavioral+ephys workflows organized by stage:
   `preprocessing/`, `features/`, `analysis/`, `plotting/`, `modeling/`.
-- `runtime/` contains environment-specific adapters (HPC orchestration, processed-data IO, job submission).
+- `runtime/` contains environment-specific adapters (execution/parallelism, processed-data IO, HPC job submission).
 - behavioral feature-product loading lives in `behav/features/load.py`.
 - `utils/` provides shared helpers (paths, parallelism, io) plus compatibility shims for older imports.
 

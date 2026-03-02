@@ -12,7 +12,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     save_pickle_path,
 )
-from dal_monte_2022_analysis.utils.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_processed_output_path,
 )

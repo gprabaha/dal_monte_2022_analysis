@@ -25,6 +25,8 @@ src/dal_monte_2022_analysis/
     combined/
   data/                        # Data containers, records, migration helpers
   runtime/                     # Environment-specific adapters
+    execution/
+      parallel.py
     io/
     hpc/
       jobs.py

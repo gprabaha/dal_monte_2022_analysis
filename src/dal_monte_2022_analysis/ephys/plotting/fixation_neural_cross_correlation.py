@@ -30,7 +30,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation im
     FixationNeuralCrossCorrelationPlotAggregationSettings,
     build_fixation_neural_cross_correlation_plot_payload,
 )
-from dal_monte_2022_analysis.utils.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 

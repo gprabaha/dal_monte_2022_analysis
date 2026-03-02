@@ -24,7 +24,7 @@ from dal_monte_2022_analysis.core.signal.cross_correlation import (
     summarize_cross_correlation,
 )
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
-from dal_monte_2022_analysis.utils.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
     build_fix_cross_correlation_output_filename,

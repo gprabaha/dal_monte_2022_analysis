@@ -24,7 +24,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_processed_pickle,
     scan_processed_paths,
 )
-from dal_monte_2022_analysis.utils.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
 )
