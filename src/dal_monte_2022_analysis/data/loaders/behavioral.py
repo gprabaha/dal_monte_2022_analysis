@@ -271,28 +271,10 @@ def group_behavioral_items(
     return grouped
 
 
-def load_behavioral_data_modality(
-    modality: str,
-    *,
-    cfg_path: str = "configs/project.yaml",
-    dates: Optional[Sequence[str]] = None,
-    sessions: Optional[Sequence[str]] = None,
-    agents: Optional[Sequence[Optional[str]]] = None,
-) -> pd.DataFrame:
-    """Alias for load_behavioral_data_dataframe."""
-    return load_behavioral_data_dataframe(
-        modality,
-        cfg_path=cfg_path,
-        dates=dates,
-        sessions=sessions,
-        agents=agents,
-    )
-
 __all__ = [
     "BehavioralDataItem",
     "group_behavioral_items",
     "index_behavioral_data",
     "load_behavioral_data_dataframe",
-    "load_behavioral_data_modality",
     "load_behavioral_data_objects",
 ]

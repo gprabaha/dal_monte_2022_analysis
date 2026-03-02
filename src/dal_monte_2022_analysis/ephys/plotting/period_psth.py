@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import random
 from dataclasses import dataclass, field
 from multiprocessing import Pool
@@ -13,17 +12,31 @@ import matplotlib as mpl
 
 mpl.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.colors import to_rgb
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 from tqdm import tqdm
 
-from dal_monte_2022_analysis.behav.plotting.common import (
-    apply_plotting_config,
-    resolve_figsize,
-)
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
+    as_bool as _as_bool,
+    extract_trials_df_and_meta as _extract_trials_df_and_meta_shared,
+    resolve_bin_centers_from_meta as _resolve_bin_centers_from_meta_shared,
+)
+from dal_monte_2022_analysis.ephys.plotting.common import (
+    counts_to_spike_times as _counts_to_spike_times_shared,
+    darken_color as _darken_color_shared,
+    ensure_ext as _ensure_ext_shared,
+    fallback_bin_centers as _fallback_bin_centers_shared,
+    iter_trial_rows as _iter_trial_rows_shared,
+    resolve_figsize_and_dpi as _resolve_figsize_and_dpi_shared,
+    safe_optional_str as _safe_optional_str_shared,
+    safe_region_folder as _safe_region_folder_shared,
+    safe_unit_filename as _safe_unit_filename_shared,
+    sample_rows as _sample_rows_shared,
+    stable_seed as _stable_seed_shared,
+    row_counts as _row_counts_shared,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
@@ -73,22 +86,11 @@ class PeriodPSTHUnitPlotSettings:
 
 
 def _safe_optional_str(value) -> Optional[str]:
-    if value is None:
-        return None
-    try:
-        if pd.isna(value):
-            return None
-    except Exception:
-        pass
-    text = str(value).strip()
-    return text or None
+    return _safe_optional_str_shared(value)
 
 
 def _ensure_ext(ext: str) -> str:
-    text = str(ext).strip().lower()
-    if not text:
-        return "png"
-    return text[1:] if text.startswith(".") else text
+    return _ensure_ext_shared(ext, fallback="png")
 
 
 def _iter_trial_rows(
@@ -98,93 +100,33 @@ def _iter_trial_rows(
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
 ) -> list[dict]:
-    root = Path(cfg["processed_data_root"])
-    filename = (
-        settings.trial_input_filename
-        if str(settings.trial_input_filename).endswith(".pkl")
-        else f"{settings.trial_input_filename}.pkl"
+    return _iter_trial_rows_shared(
+        cfg,
+        modality=settings.trial_input_modality,
+        filename=settings.trial_input_filename,
+        dates=dates,
+        sessions=sessions,
     )
-    pattern = root / "date=*" / "session=*" / settings.trial_input_modality / filename
-
-    date_filter = None if dates is None else {str(v) for v in dates}
-    session_filter = None if sessions is None else {str(v) for v in sessions}
-
-    rows: list[dict] = []
-    for path in root.glob(str(pattern.relative_to(root))):
-        parts = path.parts
-        try:
-            date_part = next(part for part in parts if part.startswith("date="))
-            session_part = next(part for part in parts if part.startswith("session="))
-        except StopIteration:
-            continue
-
-        date = date_part.split("=", 1)[1]
-        session = session_part.split("=", 1)[1]
-        if date_filter is not None and date not in date_filter:
-            continue
-        if session_filter is not None and session not in session_filter:
-            continue
-        rows.append({"date": date, "session": session, "path": path})
-
-    rows.sort(key=lambda row: (row["date"], row["session"]))
-    return rows
 
 
 def _extract_trials_df_and_meta(obj) -> tuple[pd.DataFrame, dict]:
-    if isinstance(obj, dict) and "trials" in obj:
-        df = obj["trials"]
-        meta = obj.get("meta", {}) or {}
-        return (df if isinstance(df, pd.DataFrame) else pd.DataFrame(), meta)
-    if isinstance(obj, pd.DataFrame):
-        return obj, {}
-    return pd.DataFrame(), {}
+    return _extract_trials_df_and_meta_shared(obj)
 
 
 def _truthy_interactive(value, interactive_label: str) -> bool:
-    if value is None:
-        return False
-    try:
-        if pd.isna(value):
-            return False
-    except Exception:
-        pass
-    if isinstance(value, (bool, np.bool_)):
-        return bool(value)
-    if isinstance(value, (int, np.integer)):
-        return int(value) != 0
-    if isinstance(value, (float, np.floating)):
-        return float(value) != 0.0
-    token = str(value).strip().lower()
-    return token in {
-        "1",
-        "true",
-        "t",
-        "yes",
-        "y",
-        str(interactive_label).strip().lower(),
-        "interactive",
-    }
+    return _as_bool(value, interactive_label)
 
 
 def _stable_seed(base_seed: int, *parts: str) -> int:
-    text = "|".join(str(part) for part in parts)
-    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()
-    return (int(digest[:8], 16) + int(base_seed)) % (2**32 - 1)
+    return _stable_seed_shared(base_seed, *parts)
 
 
 def _sample_rows(df: pd.DataFrame, max_rows: Optional[int], seed: int) -> pd.DataFrame:
-    if max_rows is None or max_rows <= 0 or len(df) <= int(max_rows):
-        return df
-    rng = np.random.default_rng(seed)
-    picked = np.sort(rng.choice(len(df), size=int(max_rows), replace=False))
-    return df.iloc[picked]
+    return _sample_rows_shared(df, max_rows, seed)
 
 
 def _row_counts(row, n_bins: int) -> Optional[np.ndarray]:
-    counts = np.asarray(getattr(row, "psth_counts"), dtype=float).reshape(-1)
-    if counts.size != n_bins:
-        return None
-    return counts
+    return _row_counts_shared(row, n_bins)
 
 
 def _counts_to_spike_times(
@@ -196,41 +138,26 @@ def _counts_to_spike_times(
     rng: np.random.Generator,
     max_spikes_per_bin: Optional[int],
 ) -> np.ndarray:
-    spike_bins = np.clip(np.rint(np.asarray(counts, dtype=float)).astype(int), 0, None)
-    if max_spikes_per_bin is not None and int(max_spikes_per_bin) > 0:
-        spike_bins = np.minimum(spike_bins, int(max_spikes_per_bin))
-    if spike_bins.size != bin_centers.size:
-        return np.array([], dtype=float)
-    bin_indices = np.repeat(np.arange(spike_bins.size), spike_bins)
-    if bin_indices.size == 0:
-        return np.array([], dtype=float)
-    spike_ts = np.asarray(bin_centers[bin_indices], dtype=float)
-    if jitter_within_bin and float(bin_size_s) > 0:
-        jitter = (rng.random(spike_ts.size) - 0.5) * float(bin_size_s)
-        spike_ts = spike_ts + jitter
-    return np.sort(spike_ts)
+    return _counts_to_spike_times_shared(
+        counts,
+        bin_centers,
+        bin_size_s,
+        jitter_within_bin=jitter_within_bin,
+        rng=rng,
+        max_spikes_per_bin=max_spikes_per_bin,
+    )
 
 
 def _resolve_bin_centers_from_meta(meta: dict) -> Optional[np.ndarray]:
-    centers = meta.get("bin_centers_s_rel")
-    if centers is not None:
-        arr = np.asarray(centers, dtype=float).reshape(-1)
-        if arr.size > 0:
-            return arr
-    edges = meta.get("bin_edges_s_rel")
-    if edges is not None:
-        arr = np.asarray(edges, dtype=float).reshape(-1)
-        if arr.size > 1:
-            return 0.5 * (arr[:-1] + arr[1:])
-    return None
+    return _resolve_bin_centers_from_meta_shared(meta)
 
 
 def _fallback_bin_centers(settings: PeriodPSTHUnitPlotSettings) -> np.ndarray:
-    bin_size_s = float(settings.bin_size_ms_fallback) / 1000.0
-    pre = float(settings.window_pre_s)
-    post = float(settings.window_post_s)
-    edges = np.arange(-pre, post + bin_size_s * 0.5, bin_size_s, dtype=float)
-    return 0.5 * (edges[:-1] + edges[1:])
+    return _fallback_bin_centers_shared(
+        bin_size_ms_fallback=settings.bin_size_ms_fallback,
+        window_pre_s=settings.window_pre_s,
+        window_post_s=settings.window_post_s,
+    )
 
 
 def _load_trials_for_date(
@@ -280,17 +207,11 @@ def _load_trials_for_date(
 
 
 def _resolve_figsize_and_dpi(settings: PeriodPSTHUnitPlotSettings) -> tuple[list[float], Optional[int]]:
-    if settings.plotting_cfg_path and Path(settings.plotting_cfg_path).exists():
-        plot_cfg = load_config(settings.plotting_cfg_path)
-        apply_plotting_config(plot_cfg)
-        figsize, cfg_dpi = resolve_figsize(plot_cfg)
-    else:
-        figsize, cfg_dpi = (None, None)
-
-    if figsize is None:
-        figsize = [11.0, 8.0]
-    dpi = settings.output_dpi if settings.output_dpi is not None else cfg_dpi
-    return [float(figsize[0]), float(figsize[1])], dpi
+    return _resolve_figsize_and_dpi_shared(
+        plotting_cfg_path=settings.plotting_cfg_path,
+        output_dpi=settings.output_dpi,
+        default_figsize=[11.0, 8.0],
+    )
 
 
 def _condition_masks(
@@ -423,24 +344,15 @@ def _build_unit_condition_payloads(
 
 
 def _safe_unit_filename(unit_uuid: str) -> str:
-    safe = str(unit_uuid).strip().replace("/", "_").replace("\\", "_").replace(":", "_")
-    safe = safe.replace(" ", "_")
-    return safe if safe else "unknown"
+    return _safe_unit_filename_shared(unit_uuid)
 
 
 def _safe_region_folder(region: Optional[str]) -> str:
-    if region is None:
-        return "region=unknown"
-    safe = str(region).strip().replace("/", "_").replace("\\", "_").replace(":", "_")
-    safe = safe.replace(" ", "_")
-    safe = safe if safe else "unknown"
-    return f"region={safe}"
+    return _safe_region_folder_shared(region)
 
 
 def _darken_color(hex_color: str, factor: float) -> str:
-    fac = min(max(float(factor), 0.0), 1.0)
-    r, g, b = to_rgb(hex_color)
-    return (r * fac, g * fac, b * fac)
+    return _darken_color_shared(hex_color, factor)
 
 
 def _plot_single_unit(

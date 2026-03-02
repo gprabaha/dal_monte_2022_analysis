@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import pickle
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,10 +12,7 @@ from dal_monte_2022_analysis.config.load import (
     resolve_dataset_cfg_path,
     resolve_ephys_cfg_path,
 )
-
-# Import compatibility shims so legacy module paths can be resolved during unpickle.
-import dal_monte_2022_analysis.data.gaze_data  # noqa: F401
-import dal_monte_2022_analysis.data.spike_data  # noqa: F401
+from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
 
 
 LEGACY_MODULE_TOKENS = (
@@ -170,10 +166,8 @@ def migrate_legacy_pickle_modules(
                 backup_path = _build_backup_path(path, backup_suffix)
                 shutil.copy2(path, backup_path)
 
-            with open(path, "rb") as f:
-                obj = pickle.load(f)
-            with open(path, "wb") as f:
-                pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
+            obj = load_pickle(path)
+            save_pickle(obj, path)
 
             summary.records.append(
                 PickleMigrationRecord(
