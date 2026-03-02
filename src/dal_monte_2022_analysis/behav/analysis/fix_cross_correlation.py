@@ -17,6 +17,12 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import FixationBinaryVectorsData
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.utils.cross_correlation import (
+    assert_lag_axis_match as assert_lag_axis_match_shared,
+    fft_cross_correlation,
+    normalize_cross_correlation_sqrt_bin_count,
+    summarize_cross_correlation,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
@@ -340,37 +346,8 @@ def _fft_cross_correlation(
     *,
     max_lag: Optional[int] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute full linear cross-correlation via FFT.
-
-    Returns lags spanning [-(len(y)-1), len(x)-1] and correlation counts.
-    """
-    x = np.asarray(x_bool, dtype=np.float64)
-    y = np.asarray(y_bool, dtype=np.float64)
-    n = int(x.size)
-    m = int(y.size)
-    if n == 0 or m == 0:
-        return np.array([], dtype=np.int64), np.array([], dtype=np.float64)
-
-    full_len = n + m - 1
-    nfft = 1 << (full_len - 1).bit_length()
-    corr_circular = np.fft.irfft(
-        np.fft.rfft(x, nfft) * np.conj(np.fft.rfft(y, nfft)),
-        nfft,
-    )
-    if m == 1:
-        corr_full = corr_circular[:n]
-    else:
-        corr_full = np.concatenate([corr_circular[-(m - 1):], corr_circular[:n]])
-    lags = np.arange(-(m - 1), n, dtype=np.int64)
-
-    if max_lag is not None:
-        max_lag = max(0, int(max_lag))
-        keep = np.abs(lags) <= max_lag
-        lags = lags[keep]
-        corr_full = corr_full[keep]
-
-    corr_full = np.rint(corr_full).astype(np.int64)
-    return lags, corr_full
+    """Compute full linear cross-correlation via FFT."""
+    return fft_cross_correlation(x_bool, y_bool, max_lag=max_lag, round_to_int=True)
 
 
 def _summarize_corr(
@@ -378,34 +355,12 @@ def _summarize_corr(
     corr: np.ndarray,
 ) -> dict:
     """Compute summary stats for one cross-correlation trace."""
-    if corr.size == 0:
-        return {
-            "n_lags": 0,
-            "zero_lag_correlation": None,
-            "peak_lag": None,
-            "peak_correlation": None,
-        }
-
-    zero_lag_corr = None
-    zero_matches = np.where(lags == 0)[0]
-    if zero_matches.size > 0:
-        zero_lag_corr = float(corr[int(zero_matches[0])])
-
-    peak_idx = int(np.argmax(corr))
-    return {
-        "n_lags": int(corr.size),
-        "zero_lag_correlation": zero_lag_corr,
-        "peak_lag": int(lags[peak_idx]),
-        "peak_correlation": float(corr[peak_idx]),
-    }
+    return summarize_cross_correlation(lags, corr)
 
 
 def _normalize_corr(corr: np.ndarray, x_bin_count: int, y_bin_count: int) -> np.ndarray:
     """Normalize cross-correlation by sqrt(m1_fixation_bins * m2_fixation_bins)."""
-    norm_factor = float(np.sqrt(float(x_bin_count) * float(y_bin_count)))
-    if norm_factor <= 0.0:
-        return np.zeros(corr.size, dtype=np.float32)
-    return (np.asarray(corr, dtype=np.float64) / norm_factor).astype(np.float32)
+    return normalize_cross_correlation_sqrt_bin_count(corr, x_bin_count, y_bin_count)
 
 
 def _count_fixation_events(vec_bool: np.ndarray) -> int:
@@ -782,11 +737,14 @@ def _build_pair_result_worker(
 
 def _assert_lags_match(expected_lags: np.ndarray, lags: np.ndarray) -> None:
     """Validate that all results share the same lag axis."""
-    if expected_lags.shape != lags.shape or not np.array_equal(expected_lags, lags):
-        raise RuntimeError(
+    assert_lag_axis_match_shared(
+        expected_lags,
+        lags,
+        message=(
             "Encountered mismatched lag vectors across pairs. "
             "Use a fixed max_lag (e.g., 60000) so lags are consistent."
-        )
+        ),
+    )
 
 
 def _within_session_row_from_result(

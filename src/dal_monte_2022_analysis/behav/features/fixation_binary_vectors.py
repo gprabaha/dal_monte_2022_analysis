@@ -8,7 +8,7 @@ import pickle
 from dataclasses import dataclass, field
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Sequence
+from typing import Dict, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -19,13 +19,15 @@ from dal_monte_2022_analysis.data.behavioral_data import FixationBinaryVectorsDa
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_processed_data_path
+from dal_monte_2022_analysis.utils.roi_groups import (
+    DEFAULT_FIXATION_ROI_GROUPS,
+    coerce_location_labels,
+    locations_match,
+    resolve_agent_roi_groups,
+)
 
 
-DEFAULT_ROI_GROUPS: Dict[str, Sequence[str]] = {
-    "face": ("face", "mouth", "eyes_nf"),
-    "object": ("right_nonsocial_object", "left_nonsocial_object"),
-    "out_of_roi": ("out_of_roi"),
-}
+DEFAULT_ROI_GROUPS: Dict[str, Sequence[str]] = DEFAULT_FIXATION_ROI_GROUPS
 
 
 @dataclass
@@ -57,52 +59,17 @@ def _save_pickle(obj, path: Path):
         pickle.dump(obj, f)
 
 
-def _normalize_roi_groups(groups: Dict[str, Sequence[str]]) -> Dict[str, list[str]]:
-    """Normalize ROI group keywords to lowercase lists."""
-    normalized: Dict[str, list[str]] = {}
-    for group_name, labels in (groups or {}).items():
-        if labels is None:
-            continue
-        if isinstance(labels, (str, bytes)):
-            label_list = [labels]
-        else:
-            label_list = list(labels)
-        normalized[str(group_name)] = [str(label).lower() for label in label_list]
-    return normalized
-
-
 def _resolve_roi_groups(
     settings: FixationBinaryVectorSettings,
     agent: str,
 ) -> Dict[str, list[str]]:
     """Resolve ROI groups for an agent (per-agent overrides take precedence)."""
-    if settings.agent_roi_groups and agent in settings.agent_roi_groups:
-        return _normalize_roi_groups(settings.agent_roi_groups[agent])
-    return _normalize_roi_groups(settings.roi_groups)
-
-
-def _coerce_location(loc) -> list[str]:
-    """Normalize a location entry to a list of strings."""
-    if loc is None:
-        return []
-    if isinstance(loc, (list, tuple, set, np.ndarray)):
-        return [str(val) for val in loc if val is not None]
-    try:
-        if pd.isna(loc):
-            return []
-    except Exception:
-        pass
-    return [str(loc)]
-
-
-def _locations_match(locations: Iterable[str], keywords: Sequence[str]) -> bool:
-    """Check whether any location label matches any keyword (substring match)."""
-    for loc in locations:
-        loc_lower = str(loc).lower()
-        for keyword in keywords:
-            if keyword in loc_lower:
-                return True
-    return False
+    return resolve_agent_roi_groups(
+        agent=agent,
+        roi_groups=settings.roi_groups,
+        agent_roi_groups=settings.agent_roi_groups,
+        include_defaults=False,
+    )
 
 
 def _apply_interval(vector: np.ndarray, start: int, stop: int) -> None:
@@ -176,9 +143,9 @@ def build_fixation_binary_vectors_for_row(
             if start > stop:
                 continue
 
-            locations = [loc.lower() for loc in _coerce_location(fix_row.get("location"))]
+            locations = coerce_location_labels(fix_row.get("location"), lowercase=True)
             for group, keywords in roi_groups.items():
-                if _locations_match(locations, keywords):
+                if locations_match(locations, keywords):
                     _apply_interval(vectors[group], start, stop)
 
     monkey_name = _extract_monkey_name(fix_df) if isinstance(fix_df, pd.DataFrame) else None

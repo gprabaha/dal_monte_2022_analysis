@@ -21,6 +21,7 @@ from dal_monte_2022_analysis.utils.paths import (
     normalize_fix_crosscorr_time_scope,
 )
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
+from dal_monte_2022_analysis.utils.roi_groups import keywords_for_fixation_label
 
 
 @dataclass
@@ -271,13 +272,6 @@ MONKEY_ROLE_FIXATION_DURATION_SUMMARY_COLUMNS = [
     "sig",
     "higher",
 ]
-DEFAULT_ROI_KEYWORDS_BY_FIXATION_LABEL = {
-    "face": ("face", "eyes_nf", "mouth"),
-    "out_of_roi": ("out_of_roi",),
-    "object": ("right_nonsocial_object", "left_nonsocial_object"),
-}
-
-
 def _resolve_lags_filename(settings: FixCrossCorrLeaderFollowerSettings) -> str:
     """Return lag-axis filename."""
     if settings.lags_filename:
@@ -402,7 +396,7 @@ def _resolve_pupil_roi_keywords(
         return None
     if settings.pupil_roi_keywords:
         return tuple(str(val).lower() for val in settings.pupil_roi_keywords)
-    keywords = DEFAULT_ROI_KEYWORDS_BY_FIXATION_LABEL.get(str(settings.fixation_label).lower())
+    keywords = keywords_for_fixation_label(str(settings.fixation_label))
     if keywords:
         return tuple(str(val).lower() for val in keywords)
     return (str(settings.fixation_label).lower(),)

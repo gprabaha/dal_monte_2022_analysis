@@ -7,7 +7,7 @@ import random
 from dataclasses import dataclass, field
 from multiprocessing import Pool
 from pathlib import Path
-from typing import Dict, Iterable, Optional, Sequence
+from typing import Dict, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -23,13 +23,15 @@ from dal_monte_2022_analysis.utils.paths import (
     build_processed_out_dir,
     scan_processed_data_paths,
 )
+from dal_monte_2022_analysis.utils.roi_groups import (
+    DEFAULT_FIXATION_ROI_GROUPS as DEFAULT_SHARED_FIXATION_ROI_GROUPS,
+    categorize_locations,
+    coerce_location_labels,
+    resolve_agent_roi_groups,
+)
 
 
-DEFAULT_FIXATION_ROI_GROUPS: Dict[str, Sequence[str]] = {
-    "face": ("face", "mouth", "eyes_nf"),
-    "object": ("right_nonsocial_object", "left_nonsocial_object"),
-    "out_of_roi": ("out_of_roi",),
-}
+DEFAULT_FIXATION_ROI_GROUPS: Dict[str, Sequence[str]] = DEFAULT_SHARED_FIXATION_ROI_GROUPS
 
 
 @dataclass
@@ -102,45 +104,13 @@ def _save_pickle(obj, path: Path) -> None:
         pickle.dump(obj, f)
 
 
-def _normalize_roi_groups(groups: Dict[str, Sequence[str]]) -> Dict[str, list[str]]:
-    normalized: Dict[str, list[str]] = {}
-    for group_name, labels in (groups or {}).items():
-        if labels is None:
-            continue
-        if isinstance(labels, (str, bytes)):
-            label_list = [labels]
-        else:
-            label_list = list(labels)
-        normalized[str(group_name)] = [str(label).lower() for label in label_list]
-    return normalized
-
-
 def _resolve_roi_groups(settings: FixationPSTHSettings, agent: str) -> Dict[str, list[str]]:
-    if settings.agent_roi_groups and agent in settings.agent_roi_groups:
-        return _normalize_roi_groups(settings.agent_roi_groups[agent])
-    return _normalize_roi_groups(settings.roi_groups)
-
-
-def _coerce_location(loc) -> list[str]:
-    if loc is None:
-        return []
-    if isinstance(loc, (list, tuple, set, np.ndarray)):
-        return [str(val) for val in loc if val is not None]
-    try:
-        if pd.isna(loc):
-            return []
-    except Exception:
-        pass
-    return [str(loc)]
-
-
-def _locations_match(locations: Iterable[str], keywords: Sequence[str]) -> bool:
-    for loc in locations:
-        loc_lower = str(loc).lower()
-        for keyword in keywords:
-            if keyword in loc_lower:
-                return True
-    return False
+    return resolve_agent_roi_groups(
+        agent=agent,
+        roi_groups=settings.roi_groups,
+        agent_roi_groups=settings.agent_roi_groups,
+        include_defaults=False,
+    )
 
 
 def _ensure_pkl_filename(filename: str) -> str:
@@ -206,16 +176,12 @@ def _categorize_fixation(
     roi_groups: Dict[str, list[str]],
     allowed_categories: Optional[set[str]],
 ) -> Optional[str]:
-    labels = [loc.lower() for loc in locations]
-    for group in ("face", "object", "out_of_roi"):
-        keywords = roi_groups.get(group)
-        if not keywords:
-            continue
-        if _locations_match(labels, keywords):
-            if allowed_categories is not None and group not in allowed_categories:
-                return None
-            return group
-    return None
+    return categorize_locations(
+        locations,
+        roi_groups,
+        ordered_groups=("face", "object", "out_of_roi"),
+        allowed_categories=allowed_categories,
+    )
 
 
 def _build_fixation_tasks(
@@ -299,7 +265,7 @@ def _build_session_events(
             if not np.isfinite(start_time_s):
                 continue
 
-            location_raw = _coerce_location(getattr(fix_row, "location", None))
+            location_raw = coerce_location_labels(getattr(fix_row, "location", None))
             category = _categorize_fixation(location_raw, roi_groups, allowed_categories)
             if category is None:
                 continue

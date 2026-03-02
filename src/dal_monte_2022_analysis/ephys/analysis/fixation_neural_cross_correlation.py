@@ -15,8 +15,20 @@ import pandas as pd
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.utils.cross_correlation import (
+    assert_lag_axis_match as assert_lag_axis_match_shared,
+    fft_cross_correlation,
+    normalize_cross_correlation_energy,
+    summarize_cross_correlation,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.utils.roi_groups import (
+    DEFAULT_FIXATION_ROI_GROUPS as DEFAULT_SHARED_FIXATION_ROI_GROUPS,
+    canonical_fixation_category,
+    categorize_locations,
+    normalize_roi_groups,
+)
 
 
 WITHIN_ANALYSIS_KIND = "within_region"
@@ -26,11 +38,7 @@ _ALLOWED_SIGNAL_TRANSFORMS = {"none", "demean", "zscore"}
 _ALLOWED_XCORR_NORMALIZATIONS = {"none", "energy"}
 _PLOT_CONDITION_ORDER = ("face_interactive", "face_non_interactive", "object")
 _REGION_TOKEN_RE = re.compile(r"[^a-z0-9]+")
-DEFAULT_FIXATION_ROI_GROUPS: dict[str, tuple[str, ...]] = {
-    "face": ("face", "mouth", "eyes_nf"),
-    "object": ("right_nonsocial_object", "left_nonsocial_object"),
-    "out_of_roi": ("out_of_roi",),
-}
+DEFAULT_FIXATION_ROI_GROUPS: dict[str, tuple[str, ...]] = DEFAULT_SHARED_FIXATION_ROI_GROUPS
 
 
 @dataclass
@@ -208,50 +216,27 @@ def _validate_xcorr_normalization(normalization: str) -> str:
 
 
 def _normalize_roi_groups(groups: Optional[dict[str, Sequence[str]]]) -> dict[str, list[str]]:
-    if not groups:
-        return {k: [str(v) for v in vals] for k, vals in DEFAULT_FIXATION_ROI_GROUPS.items()}
-    out: dict[str, list[str]] = {}
-    for group_name, labels in groups.items():
-        if labels is None:
-            continue
-        if isinstance(labels, (str, bytes)):
-            label_list = [str(labels)]
-        else:
-            label_list = [str(label) for label in labels]
-        out[str(group_name)] = [label.lower() for label in label_list if label]
-    for name, labels in DEFAULT_FIXATION_ROI_GROUPS.items():
-        out.setdefault(name, [str(v).lower() for v in labels])
-    return out
+    return normalize_roi_groups(
+        groups,
+        include_defaults=True,
+        default_groups=DEFAULT_FIXATION_ROI_GROUPS,
+    )
 
 
 def _canonical_fixation_category(value: Optional[str]) -> Optional[str]:
-    token = _as_optional_str(value)
-    if token is None:
-        return None
-    normalized = token.strip().lower().replace("-", "_").replace(" ", "_")
-    aliases = {
-        "face": "face",
-        "object": "object",
-        "out_of_roi": "out_of_roi",
-        "outofroi": "out_of_roi",
-        "outside_roi": "out_of_roi",
-    }
-    return aliases.get(normalized, None)
+    return canonical_fixation_category(value)
 
 
 def _infer_fixation_category_from_locations(
     locations: tuple[str, ...],
     roi_groups: dict[str, list[str]],
 ) -> Optional[str]:
-    labels = [str(loc).lower() for loc in locations]
-    for group in ("face", "object", "out_of_roi"):
-        keywords = roi_groups.get(group, [])
-        if not keywords:
-            continue
-        for label in labels:
-            if any(keyword in label for keyword in keywords):
-                return group
-    return None
+    return categorize_locations(
+        list(locations),
+        roi_groups,
+        ordered_groups=("face", "object", "out_of_roi"),
+        allowed_categories=None,
+    )
 
 
 def _iter_trial_files(
@@ -566,32 +551,7 @@ def _fft_cross_correlation(
     *,
     max_lag: Optional[int],
 ) -> tuple[np.ndarray, np.ndarray]:
-    x_vec = np.asarray(x, dtype=np.float64).reshape(-1)
-    y_vec = np.asarray(y, dtype=np.float64).reshape(-1)
-    n = int(x_vec.size)
-    m = int(y_vec.size)
-    if n == 0 or m == 0:
-        return np.array([], dtype=np.int64), np.array([], dtype=np.float64)
-
-    full_len = n + m - 1
-    nfft = 1 << (full_len - 1).bit_length()
-    corr_circular = np.fft.irfft(
-        np.fft.rfft(x_vec, nfft) * np.conj(np.fft.rfft(y_vec, nfft)),
-        nfft,
-    )
-
-    if m == 1:
-        corr_full = corr_circular[:n]
-    else:
-        corr_full = np.concatenate([corr_circular[-(m - 1):], corr_circular[:n]])
-    lags = np.arange(-(m - 1), n, dtype=np.int64)
-
-    if max_lag is not None:
-        keep = np.abs(lags) <= int(max(0, int(max_lag)))
-        lags = lags[keep]
-        corr_full = corr_full[keep]
-
-    return lags, corr_full
+    return fft_cross_correlation(x, y, max_lag=max_lag, round_to_int=False)
 
 
 def _normalize_cross_correlation(
@@ -606,36 +566,12 @@ def _normalize_cross_correlation(
     if token == "none":
         return vec
     if token == "energy":
-        x_vec = np.asarray(x, dtype=np.float64).reshape(-1)
-        y_vec = np.asarray(y, dtype=np.float64).reshape(-1)
-        denom = float(np.linalg.norm(x_vec) * np.linalg.norm(y_vec))
-        if denom <= 0.0 or not np.isfinite(denom):
-            return np.zeros_like(vec)
-        return vec / denom
+        return normalize_cross_correlation_energy(vec, x, y)
     raise ValueError(f"Unsupported xcorr normalization '{normalization}'.")
 
 
 def _summarize_cross_correlation(lags: np.ndarray, corr: np.ndarray) -> dict:
-    if corr.size == 0:
-        return {
-            "n_lags": 0,
-            "zero_lag_correlation": None,
-            "peak_lag": None,
-            "peak_correlation": None,
-        }
-
-    zero_lag = None
-    zero_idx = np.where(lags == 0)[0]
-    if zero_idx.size > 0:
-        zero_lag = float(corr[int(zero_idx[0])])
-
-    peak_idx = int(np.argmax(corr))
-    return {
-        "n_lags": int(corr.size),
-        "zero_lag_correlation": zero_lag,
-        "peak_lag": int(lags[peak_idx]),
-        "peak_correlation": float(corr[peak_idx]),
-    }
+    return summarize_cross_correlation(lags, corr)
 
 
 _GLOBAL_FIXATION_META: list[dict] = []
@@ -789,11 +725,14 @@ def _build_pair_tasks(
 
 
 def _assert_lag_axis_match(reference_lags: np.ndarray, lags: np.ndarray) -> None:
-    if reference_lags.shape != lags.shape or not np.array_equal(reference_lags, lags):
-        raise RuntimeError(
+    assert_lag_axis_match_shared(
+        reference_lags,
+        lags,
+        message=(
             "Encountered inconsistent lag vectors across fixation-neuron pairs. "
             "Use consistent PSTH windows/binning and a fixed max_lag."
-        )
+        ),
+    )
 
 
 def _sort_result_dataframe(df: pd.DataFrame) -> pd.DataFrame:
