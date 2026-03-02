@@ -20,7 +20,10 @@ from dal_monte_2022_analysis.utils.cross_correlation import (
     normalize_cross_correlation_energy,
     summarize_cross_correlation,
 )
-from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    load_pickle_path,
+    save_pickle_path,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 from dal_monte_2022_analysis.utils.roi_groups import (
@@ -85,10 +88,6 @@ class FixationNeuralCrossCorrelationPlotAggregationSettings:
     object_label: str = "object"
     interactive_label: str = "interactive"
     condition_order: Sequence[str] = field(default_factory=lambda: tuple(_PLOT_CONDITION_ORDER))
-
-
-_load_pickle = load_pickle
-_save_pickle = save_pickle
 
 
 def _ensure_pkl_filename(name: str) -> str:
@@ -883,7 +882,7 @@ def _aggregate_pair_averages_for_plotting(
         file_iter = tqdm(rows, total=len(rows), desc=f"Aggregate {kind_label} files", unit="file")
     for row in file_iter:
         counts["files"] += 1
-        obj = _load_pickle(Path(row["path"]))
+        obj = load_pickle_path(Path(row["path"]))
         xcorr_df, pair_avg_df, meta = _extract_xcorr_dataframes_and_meta(obj)
         has_pair_averages = bool(
             not pair_avg_df.empty
@@ -1236,7 +1235,7 @@ def build_fixation_neural_cross_correlations_for_session(
     xcorr_normalization = _validate_xcorr_normalization(settings.xcorr_normalization)
     max_lag = None if settings.max_lag is None else int(max(0, int(settings.max_lag)))
 
-    obj = _load_pickle(Path(session_row["path"]))
+    obj = load_pickle_path(Path(session_row["path"]))
     trial_df, trial_meta = _extract_trials_df_and_meta(obj)
     if trial_df.empty or "psth_counts" not in trial_df.columns:
         return None
@@ -1414,17 +1413,17 @@ def process_and_save_fixation_neural_cross_correlations_for_session(
     )
 
     if xcorr_out_path == pair_avg_out_path:
-        _save_pickle(data, xcorr_out_path)
+        save_pickle_path(data, xcorr_out_path)
         return data
 
-    _save_pickle(
+    save_pickle_path(
         {
             "meta": data.get("meta", {}),
             "cross_correlations": data.get("cross_correlations", pd.DataFrame()),
         },
         xcorr_out_path,
     )
-    _save_pickle(
+    save_pickle_path(
         {
             "meta": data.get("meta", {}),
             "pair_averages": data.get("pair_averages", pd.DataFrame()),

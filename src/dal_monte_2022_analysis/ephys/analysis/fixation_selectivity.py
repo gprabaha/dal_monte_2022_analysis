@@ -14,9 +14,12 @@ from scipy.stats import mannwhitneyu, ttest_ind
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    load_pickle_path,
+    save_pickle_path,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
-from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
 
 
 DEFAULT_SELECTIVITY_WINDOWS_MS: dict[str, tuple[float, float]] = {
@@ -62,10 +65,6 @@ class FixationPSTHSelectivitySettings:
     bin_size_ms_fallback: float = 10.0
     window_pre_s_fallback: float = 1.0
     window_post_s_fallback: float = 1.0
-
-
-_load_pickle = load_pickle
-_save_pickle = save_pickle
 
 
 def _as_optional_str(value) -> Optional[str]:
@@ -226,7 +225,7 @@ def _load_trial_table(
     dfs: list[pd.DataFrame] = []
     bin_centers_ref = None
     for row in rows:
-        obj = _load_pickle(Path(row["path"]))
+        obj = load_pickle_path(Path(row["path"]))
         trial_df, meta = _extract_trials_df_and_meta(obj)
         if trial_df.empty or "psth_counts" not in trial_df.columns:
             continue
@@ -556,5 +555,5 @@ def run_fixation_selectivity_analysis(
         "pair_summary": pair_df,
         "unit_summary": unit_df,
     }
-    _save_pickle(result_obj, result_pkl)
+    save_pickle_path(result_obj, result_pkl)
     return result_obj

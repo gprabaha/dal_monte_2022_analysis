@@ -15,7 +15,7 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import FixationBinaryVectorsData
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
-from dal_monte_2022_analysis.utils.io import load_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
@@ -102,9 +102,6 @@ class GroupFitResult:
     final_score: float
     converged: bool
     n_iterations: int
-
-
-_load_pickle = load_pickle
 
 
 def _extract_fixation_vector(
@@ -208,8 +205,8 @@ def _build_session_sequences(
         if session_filter is not None and session not in session_filter:
             continue
 
-        m1_obj = _load_pickle(m1_paths[(date, session)])
-        m2_obj = _load_pickle(m2_paths[(date, session)])
+        m1_obj = load_pickle_path(m1_paths[(date, session)])
+        m2_obj = load_pickle_path(m2_paths[(date, session)])
         m1_vec = _extract_fixation_vector(m1_obj, settings.fixation_label)
         m2_vec = _extract_fixation_vector(m2_obj, settings.fixation_label)
         if m1_vec is None or m2_vec is None:

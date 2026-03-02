@@ -22,10 +22,12 @@ from dal_monte_2022_analysis.data.behavioral_records import (
     ROIRectsData,
 )
 from dal_monte_2022_analysis.data.ephys_records import EphysUnitContext, UnitSpikeData
-from dal_monte_2022_analysis.utils.io import load_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    load_pickle_path,
+    scan_processed_paths,
+)
 from dal_monte_2022_analysis.utils.paths import (
     list_processed_modalities,
-    scan_processed_data_paths,
 )
 
 
@@ -48,9 +50,6 @@ class BehavioralDataItem:
     modality: str
     path: Path
     data: object
-
-
-_load_pickle = load_pickle
 
 
 def _validate_behavioral_modality(modality: str, allowed: set[str]) -> str:
@@ -98,7 +97,7 @@ def index_behavioral_data(
 
     rows: list[dict] = []
     for mod in modalities:
-        for row in scan_processed_data_paths(
+        for row in scan_processed_paths(
             cfg,
             mod,
             dates=dates,
@@ -209,7 +208,7 @@ def load_behavioral_data_objects(
     dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
     cfg = load_config(dataset_cfg_path)
     mod = _resolve_behavioral_modalities(cfg, modality)[0]
-    rows = scan_processed_data_paths(cfg, mod, dates=dates, sessions=sessions, agents=agents)
+    rows = scan_processed_paths(cfg, mod, dates=dates, sessions=sessions, agents=agents)
     return [
         BehavioralDataItem(
             date=row["date"],
@@ -217,7 +216,7 @@ def load_behavioral_data_objects(
             agent=row["agent"],
             modality=mod,
             path=row["path"],
-            data=_load_pickle(row["path"]),
+            data=load_pickle_path(row["path"]),
         )
         for row in rows
     ]

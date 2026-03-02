@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import ttest_rel
 
-from dal_monte_2022_analysis.utils.io import load_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.utils.paths import build_fix_cross_correlation_output_filename
 
 
@@ -28,7 +28,7 @@ def load_lags_for_scope(
     )
     if not lags_path.exists():
         raise FileNotFoundError(f"Missing lag file for scope='{scope}': {lags_path}")
-    lags = np.asarray(load_pickle(lags_path), dtype=np.int64).reshape(-1)
+    lags = np.asarray(load_pickle_path(lags_path), dtype=np.int64).reshape(-1)
     if lags.size == 0:
         raise RuntimeError(f"Lag file is empty for scope='{scope}': {lags_path}")
     return lags

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from multiprocessing import Pool
-from pathlib import Path
 from typing import Optional, Sequence
 
 import numpy as np
@@ -15,9 +14,12 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import PupilSizeData, RecordingContext
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
-from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    build_processed_pickle_path,
+    load_pickle_path,
+    save_processed_pickle,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 
 
 @dataclass
@@ -36,10 +38,6 @@ class PupilSmoothingSettings:
     use_parallel: bool = True
     test_single: bool = False
     agents: Optional[Sequence[str]] = None
-
-
-_load_pickle = load_pickle
-_save_pickle = save_pickle
 
 
 def _coerce_intervals(
@@ -238,14 +236,14 @@ def smooth_pupil_for_row_agent(
 ) -> Optional[PupilSizeData]:
     """Smooth pupil for one date/session/agent using fixation-constrained interpolation."""
     cfg = load_config(settings.cfg_path)
-    pupil_path = build_processed_data_path(cfg, row, settings.input_pupil_modality, agent)
-    fix_path = build_processed_data_path(cfg, row, settings.fixations_modality, agent)
+    pupil_path = build_processed_pickle_path(cfg, row, settings.input_pupil_modality, agent)
+    fix_path = build_processed_pickle_path(cfg, row, settings.fixations_modality, agent)
 
     if not pupil_path.exists() or not fix_path.exists():
         return None
 
-    pupil_obj = _load_pickle(pupil_path)
-    fix_df = _load_pickle(fix_path)
+    pupil_obj = load_pickle_path(pupil_path)
+    fix_df = load_pickle_path(fix_path)
     raw_pupil = np.asarray(pupil_obj.d, dtype=float).reshape(-1)
     if raw_pupil.size == 0:
         return None
@@ -308,8 +306,7 @@ def process_and_save_smoothed_pupil_for_row_agent(
     if data is None:
         return 0
     cfg = load_config(settings.cfg_path)
-    out_path = build_processed_data_path(cfg, row, settings.output_modality, agent)
-    _save_pickle(data, out_path)
+    save_processed_pickle(data, cfg, row, settings.output_modality, agent)
     return 1
 
 

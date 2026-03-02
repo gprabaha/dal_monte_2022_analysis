@@ -14,9 +14,9 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
 )
+from dal_monte_2022_analysis.runtime.io.processed_data import scan_processed_paths
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
-    scan_processed_data_paths,
 )
 
 
@@ -115,7 +115,7 @@ def _load_interactive_period_durations(
     duration_column: str,
 ) -> pd.DataFrame:
     """Load shared interactive-period pickles and compute durations in seconds."""
-    rows = scan_processed_data_paths(cfg, modality, agents=[None])
+    rows = scan_processed_paths(cfg, modality, agents=[None])
     if not rows:
         raise RuntimeError(f"No processed files found for modality '{modality}'")
 

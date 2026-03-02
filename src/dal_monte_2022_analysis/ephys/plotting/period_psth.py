@@ -24,7 +24,7 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     resolve_figsize,
 )
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.utils.io import load_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
@@ -70,9 +70,6 @@ class PeriodPSTHUnitPlotSettings:
     bin_size_ms_fallback: float = 100.0
     window_pre_s: float = 14.0
     window_post_s: float = 14.0
-
-
-_load_pickle = load_pickle
 
 
 def _safe_optional_str(value) -> Optional[str]:
@@ -246,7 +243,7 @@ def _load_trials_for_date(
     bin_centers_ref: Optional[np.ndarray] = None
 
     for path in paths:
-        obj = _load_pickle(path)
+        obj = load_pickle_path(path)
         trials_df, meta = _extract_trials_df_and_meta(obj)
         if trials_df.empty or "psth_counts" not in trials_df.columns:
             continue

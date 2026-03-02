@@ -14,9 +14,9 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
 )
+from dal_monte_2022_analysis.runtime.io.processed_data import scan_processed_paths
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
-    scan_processed_data_paths,
 )
 
 
@@ -125,12 +125,12 @@ def plot_smoothed_pupil_timecourse_qc(settings: SmoothedPupilQCPlotSettings) -> 
     plot_cfg = load_config(settings.plotting_cfg_path)
     apply_plotting_config(plot_cfg)
 
-    raw_rows = scan_processed_data_paths(
+    raw_rows = scan_processed_paths(
         cfg,
         settings.raw_pupil_modality,
         agents=list(settings.agents),
     )
-    smoothed_rows = scan_processed_data_paths(
+    smoothed_rows = scan_processed_paths(
         cfg,
         settings.smoothed_pupil_modality,
         agents=list(settings.agents),

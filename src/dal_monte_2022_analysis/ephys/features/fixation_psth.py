@@ -15,13 +15,16 @@ from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.load import load_ephys_units
-from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    build_processed_pickle_path,
+    load_pickle_path,
+    save_pickle_path,
+    scan_processed_paths,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
-    build_processed_data_path,
     build_processed_out_dir,
-    scan_processed_data_paths,
 )
 from dal_monte_2022_analysis.utils.roi_groups import (
     DEFAULT_FIXATION_ROI_GROUPS as DEFAULT_SHARED_FIXATION_ROI_GROUPS,
@@ -81,9 +84,6 @@ class FixationPSTHAverageSettings:
     categories: Optional[Sequence[str]] = ("face", "object", "out_of_roi")
 
 
-_load_pickle = load_pickle
-
-
 def _as_optional_str(value: object) -> Optional[str]:
     if value is None:
         return None
@@ -94,9 +94,6 @@ def _as_optional_str(value: object) -> Optional[str]:
         pass
     text = str(value).strip()
     return text or None
-
-
-_save_pickle = save_pickle
 
 
 def _resolve_roi_groups(settings: FixationPSTHSettings, agent: str) -> Dict[str, list[str]]:
@@ -186,7 +183,7 @@ def _build_fixation_tasks(
     sessions: Optional[Sequence[str]] = None,
 ) -> list[dict]:
     cfg = load_config(settings.cfg_path)
-    rows = scan_processed_data_paths(
+    rows = scan_processed_paths(
         cfg,
         settings.fixations_modality,
         dates=dates,
@@ -216,20 +213,20 @@ def _build_session_events(
     row: dict,
 ) -> tuple[list[dict], np.ndarray]:
     cfg = load_config(settings.cfg_path)
-    timeline_path = build_processed_data_path(cfg, row, settings.timeline_modality, None)
+    timeline_path = build_processed_pickle_path(cfg, row, settings.timeline_modality, None)
     if not timeline_path.exists():
         return [], np.array([], dtype=float)
 
-    timeline_obj = _load_pickle(timeline_path)
+    timeline_obj = load_pickle_path(timeline_path)
     timeline_t = np.asarray(getattr(timeline_obj, "t", []), dtype=float)
     if timeline_t.size == 0:
         return [], timeline_t
 
     interactive_periods = []
     if settings.include_interactive_state:
-        interactive_path = build_processed_data_path(cfg, row, settings.interactive_modality, None)
+        interactive_path = build_processed_pickle_path(cfg, row, settings.interactive_modality, None)
         if interactive_path.exists():
-            interactive_df = _load_pickle(interactive_path)
+            interactive_df = load_pickle_path(interactive_path)
             if isinstance(interactive_df, pd.DataFrame):
                 interactive_periods = _iter_interactive_periods(interactive_df)
 
@@ -239,7 +236,7 @@ def _build_session_events(
 
     events: list[dict] = []
     for agent, fix_path in sorted(row["agent_paths"].items()):
-        fix_df = _load_pickle(fix_path)
+        fix_df = load_pickle_path(fix_path)
         if not isinstance(fix_df, pd.DataFrame) or fix_df.empty:
             continue
 
@@ -454,7 +451,7 @@ def process_fixation_psth_trials_for_session(
         return None
     cfg = load_config(settings.cfg_path)
     out_path = _build_trial_output_path(cfg, row, settings)
-    _save_pickle(data, out_path)
+    save_pickle_path(data, out_path)
     return data
 
 
@@ -507,7 +504,7 @@ def _flush_fixation_session_rows(
             bin_centers=bin_centers,
         )
         out_path = _build_trial_output_path(cfg, row, settings)
-        _save_pickle(data, out_path)
+        save_pickle_path(data, out_path)
 
 
 def run_fixation_psth_trial_build(
@@ -735,7 +732,7 @@ def build_fixation_psth_averages_for_date(
     bin_centers_ref = None
 
     for path in trial_paths:
-        obj = _load_pickle(path)
+        obj = load_pickle_path(path)
         trial_df, bin_edges, bin_centers = _extract_trials_df(obj)
         if not isinstance(trial_df, pd.DataFrame) or trial_df.empty:
             continue
@@ -866,7 +863,7 @@ def process_fixation_psth_averages_for_date(
         return None
     cfg = load_config(settings.cfg_path)
     out_path = _build_average_output_path(cfg, date, settings)
-    _save_pickle(data, out_path)
+    save_pickle_path(data, out_path)
     return data
 
 

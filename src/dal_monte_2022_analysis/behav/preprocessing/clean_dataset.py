@@ -1,23 +1,21 @@
 """Clean previously extracted data by pruning timelines and interpolating gaps."""
 
 from multiprocessing import Pool
-from pathlib import Path
 
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.cleaning import prune_and_interpolate_session
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_dataset
-from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    build_processed_pickle_path,
+    load_pickle_path,
+    save_pickle_path,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
-    build_processed_data_path,
     build_processed_output_path,
 )
-
-
-_load_pickle = load_pickle
-_save_pickle = save_pickle
 
 
 def _clean_row(args):
@@ -31,7 +29,7 @@ def _clean_row(args):
     """
     row, cfg, agents, output_suffix, window_size, max_nans = args
 
-    timeline_path = build_processed_data_path(cfg, row, "neural_timeline", None)
+    timeline_path = build_processed_pickle_path(cfg, row, "neural_timeline", None)
     if not timeline_path.exists():
         return 0
 
@@ -39,18 +37,18 @@ def _clean_row(args):
     pupils_by_agent = {}
 
     for agent in agents:
-        pos_path = build_processed_data_path(cfg, row, "gaze_position", agent)
-        pupil_path = build_processed_data_path(cfg, row, "pupil_size", agent)
+        pos_path = build_processed_pickle_path(cfg, row, "gaze_position", agent)
+        pupil_path = build_processed_pickle_path(cfg, row, "pupil_size", agent)
 
         if pos_path.exists():
-            positions_by_agent[agent] = _load_pickle(pos_path)
+            positions_by_agent[agent] = load_pickle_path(pos_path)
         if pupil_path.exists():
-            pupils_by_agent[agent] = _load_pickle(pupil_path)
+            pupils_by_agent[agent] = load_pickle_path(pupil_path)
 
     if not positions_by_agent or not pupils_by_agent:
         return 0
 
-    timeline = _load_pickle(timeline_path)
+    timeline = load_pickle_path(timeline_path)
 
     cleaned_timeline, cleaned_positions, cleaned_pupils = prune_and_interpolate_session(
         timeline,
@@ -70,7 +68,7 @@ def _clean_row(args):
         None,
         output_suffix=output_suffix,
     )
-    _save_pickle(cleaned_timeline, out_timeline)
+    save_pickle_path(cleaned_timeline, out_timeline)
 
     for agent, pos in cleaned_positions.items():
         out_pos = build_processed_output_path(
@@ -80,7 +78,7 @@ def _clean_row(args):
             agent,
             output_suffix=output_suffix,
         )
-        _save_pickle(pos, out_pos)
+        save_pickle_path(pos, out_pos)
 
     for agent, pupil in cleaned_pupils.items():
         out_pupil = build_processed_output_path(
@@ -90,7 +88,7 @@ def _clean_row(args):
             agent,
             output_suffix=output_suffix,
         )
-        _save_pickle(pupil, out_pupil)
+        save_pickle_path(pupil, out_pupil)
 
     return 1
 

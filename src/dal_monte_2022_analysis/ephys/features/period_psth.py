@@ -14,12 +14,15 @@ from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.load import load_ephys_units
-from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    build_processed_pickle_path,
+    load_pickle_path,
+    save_pickle_path,
+    scan_processed_paths,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
-    build_processed_data_path,
     build_processed_out_dir,
-    scan_processed_data_paths,
 )
 
 
@@ -45,10 +48,6 @@ class PeriodPSTHSettings:
     max_procs: int = 16
     test_single: bool = False
     restrict_units_to_date: bool = True
-
-
-_load_pickle = load_pickle
-_save_pickle = save_pickle
 
 
 def _as_optional_str(value: object) -> Optional[str]:
@@ -103,7 +102,7 @@ def _build_period_tasks(
     sessions: Optional[Sequence[str]] = None,
 ) -> list[dict]:
     cfg = load_config(settings.cfg_path)
-    rows = scan_processed_data_paths(
+    rows = scan_processed_paths(
         cfg,
         settings.periods_modality,
         dates=dates,
@@ -130,16 +129,16 @@ def _build_session_period_events(
     row: dict,
 ) -> tuple[list[dict], np.ndarray]:
     cfg = load_config(settings.cfg_path)
-    timeline_path = build_processed_data_path(cfg, row, settings.timeline_modality, None)
+    timeline_path = build_processed_pickle_path(cfg, row, settings.timeline_modality, None)
     if not timeline_path.exists():
         return [], np.array([], dtype=float)
 
-    timeline_obj = _load_pickle(timeline_path)
+    timeline_obj = load_pickle_path(timeline_path)
     timeline_t = _as_timeline_array(timeline_obj)
     if timeline_t.size == 0:
         return [], timeline_t
 
-    periods_obj = _load_pickle(row["path"])
+    periods_obj = load_pickle_path(row["path"])
     if not isinstance(periods_obj, pd.DataFrame) or periods_obj.empty:
         return [], timeline_t
 
@@ -385,7 +384,7 @@ def process_period_psth_trials_for_session(
         return None
     cfg = load_config(settings.cfg_path)
     out_path = _build_trial_output_path(cfg, row, settings)
-    _save_pickle(data, out_path)
+    save_pickle_path(data, out_path)
     return data
 
 
@@ -444,7 +443,7 @@ def _flush_session_rows(
             bin_centers=bin_centers,
         )
         out_path = _build_trial_output_path(cfg, row, settings)
-        _save_pickle(data, out_path)
+        save_pickle_path(data, out_path)
 
 
 def run_period_psth_trial_build(
