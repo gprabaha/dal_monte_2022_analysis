@@ -16,6 +16,9 @@ plots/
 __pycache__/
 *.pyc
 .matlab/
+*.egg-info/
+build/
+dist/
 
 # HPC files
 hpc/*
