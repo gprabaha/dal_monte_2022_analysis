@@ -5,7 +5,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 cd "${REPO_ROOT}"
 
 DATASET_CFG="${DATASET_CFG:-configs/dataset.yaml}"
-FACE_FIX_CROSSCORR_CFG="${FACE_FIX_CROSSCORR_CFG:-configs/face_fix_cross_correlation.yaml}"
+FACE_FIX_CROSS_CORRELATION_CFG="${FACE_FIX_CROSS_CORRELATION_CFG:-configs/face_fix_cross_correlation.yaml}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 export PYTHONPATH="${PYTHONPATH:-src}"
 
@@ -18,7 +18,7 @@ MODES=(observed)
 echo "Running face fixation cross-correlation for all scopes/modes"
 echo "repo=${REPO_ROOT}"
 echo "dataset_cfg=${DATASET_CFG}"
-echo "face_fix_crosscorr_cfg=${FACE_FIX_CROSSCORR_CFG}"
+echo "face_fix_cross_correlation_cfg=${FACE_FIX_CROSS_CORRELATION_CFG}"
 echo "python=${PYTHON_BIN}"
 echo "PYTHONPATH=${PYTHONPATH}"
 
@@ -28,7 +28,7 @@ for scope in "${SCOPES[@]}"; do
     echo ">>> scope=${scope} mode=${mode}"
     "${PYTHON_BIN}" scripts/behav/analysis/build_face_fix_cross_correlation.py \
       --dataset-cfg "${DATASET_CFG}" \
-      --face-fix-cross-correlation-cfg "${FACE_FIX_CROSSCORR_CFG}" \
+      --face-fix-cross-correlation-cfg "${FACE_FIX_CROSS_CORRELATION_CFG}" \
       --mode "${mode}" \
       --time-scope "${scope}"
   done

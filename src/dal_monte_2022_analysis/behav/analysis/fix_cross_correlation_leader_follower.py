@@ -1869,9 +1869,3 @@ def run_fix_cross_correlation_leader_follower_analysis(
 
     return session_df, date_summary_df, pair_summary_df
 
-
-def run_fix_crosscorr_leader_follower_analysis(
-    settings: FixCrossCorrLeaderFollowerSettings,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Compatibility alias for run_fix_cross_correlation_leader_follower_analysis."""
-    return run_fix_cross_correlation_leader_follower_analysis(settings)

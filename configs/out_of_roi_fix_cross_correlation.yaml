@@ -17,7 +17,7 @@ interactive_modality: interactive_periods
 interactive_state_label: interactive
 
 # Optional explicit filenames. If null, algorithmic names are generated from
-# fixation_label + time_scope in utils.paths.build_fix_crosscorr_output_filename.
+# fixation_label + time_scope in utils.paths.build_fix_cross_correlation_output_filename.
 within_filename: null
 # Cross output stores per-session cross-control summaries (mean/std/n_pairs),
 # not all raw n*(n-1) pair traces.

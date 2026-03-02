@@ -202,11 +202,6 @@ def normalize_fix_cross_correlation_time_scope(scope: Optional[str]) -> str:
     return normalized
 
 
-def normalize_fix_crosscorr_time_scope(scope: Optional[str]) -> str:
-    """Compatibility alias for normalize_fix_cross_correlation_time_scope."""
-    return normalize_fix_cross_correlation_time_scope(scope)
-
-
 def build_fix_cross_correlation_output_filename(
     fixation_label: str,
     output_kind: str,
@@ -243,16 +238,3 @@ def build_fix_cross_correlation_output_filename(
 
     return f"{stem}__phase={scope}.pkl"
 
-
-def build_fix_crosscorr_output_filename(
-    fixation_label: str,
-    output_kind: str,
-    *,
-    time_scope: Optional[str] = "whole",
-) -> str:
-    """Compatibility alias for build_fix_cross_correlation_output_filename."""
-    return build_fix_cross_correlation_output_filename(
-        fixation_label=fixation_label,
-        output_kind=output_kind,
-        time_scope=time_scope,
-    )

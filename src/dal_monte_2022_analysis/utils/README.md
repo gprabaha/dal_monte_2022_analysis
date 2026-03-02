@@ -9,10 +9,6 @@ Currently includes:
 - `fixation.py` as the canonical fixation/saccade API.
 - `hpc.py` as the canonical HPC job API.
 
-Backward-compatible modules remain available:
-- `fixation_utils.py`
-- `hpc_utils.py`
-
 `paths.build_processed_data_path` is the main helper for constructing
 `.../date=<date>/session=<session>/<modality>/agent=<agent>.pkl` or `shared.pkl` paths.
 `paths.scan_processed_data_paths` scans the processed data tree for available files.

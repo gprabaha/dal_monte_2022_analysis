@@ -517,9 +517,3 @@ def plot_leader_follower_cross_correlation_comparisons(
         )
     return outputs
 
-
-def plot_leader_follower_crosscorr_comparisons(
-    settings: LeaderFollowerCrossCorrComparisonPlotSettings,
-) -> list[Path]:
-    """Compatibility alias for plot_leader_follower_cross_correlation_comparisons."""
-    return plot_leader_follower_cross_correlation_comparisons(settings)
