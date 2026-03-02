@@ -12,7 +12,7 @@ from scipy.interpolate import PchipInterpolator
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.data.behavioral_data import PupilSizeData, RecordingContext
+from dal_monte_2022_analysis.data.records.behavioral import PupilSizeData, RecordingContext
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     build_processed_pickle_path,

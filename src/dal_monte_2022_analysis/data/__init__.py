@@ -29,6 +29,8 @@ from dal_monte_2022_analysis.data.loaders.behavioral import (
     load_behavioral_data_dataframe,
     load_behavioral_data_modality,
     load_behavioral_data_objects,
+)
+from dal_monte_2022_analysis.data.loaders.ephys import (
     load_ephys_unit_dataframe,
     load_ephys_units,
 )

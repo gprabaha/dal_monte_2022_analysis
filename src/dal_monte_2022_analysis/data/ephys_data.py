@@ -1,6 +1,10 @@
-"""Backward-compatible shim for ephys record dataclasses."""
+"""Compatibility shim for ephys record dataclasses.
 
-from dal_monte_2022_analysis.data.records.ephys import (
+Canonical import path:
+`dal_monte_2022_analysis.data.records.ephys`.
+"""
+
+from dal_monte_2022_analysis.data.records.ephys import (  # noqa: F401
     EphysUnitContext,
     UnitSpikeData,
     WidebandChannelContext,

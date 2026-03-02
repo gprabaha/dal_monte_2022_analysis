@@ -3,7 +3,7 @@
 import numpy as np
 from scipy.interpolate import interp1d
 
-from dal_monte_2022_analysis.data.behavioral_data import (
+from dal_monte_2022_analysis.data.records.behavioral import (
     NeuralTimelineData,
     PositionData,
     PupilSizeData,

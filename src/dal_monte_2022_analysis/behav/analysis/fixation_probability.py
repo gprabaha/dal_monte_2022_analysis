@@ -13,7 +13,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.data.behavioral_data import FixationBinaryVectorsData
+from dal_monte_2022_analysis.data.records.behavioral import FixationBinaryVectorsData
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir

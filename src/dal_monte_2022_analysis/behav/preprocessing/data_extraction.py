@@ -2,7 +2,7 @@
 
 import numpy as np
 from typing import Optional
-from dal_monte_2022_analysis.data.behavioral_data import (
+from dal_monte_2022_analysis.data.records.behavioral import (
     RecordingContext,
     PositionData,
     PupilSizeData,

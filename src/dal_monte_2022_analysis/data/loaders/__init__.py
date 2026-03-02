@@ -7,6 +7,8 @@ from .behavioral import (
     load_behavioral_data_dataframe,
     load_behavioral_data_modality,
     load_behavioral_data_objects,
+)
+from .ephys import (
     load_ephys_unit_dataframe,
     load_ephys_units,
 )
@@ -21,4 +23,3 @@ __all__ = [
     "load_ephys_unit_dataframe",
     "load_ephys_units",
 ]
-

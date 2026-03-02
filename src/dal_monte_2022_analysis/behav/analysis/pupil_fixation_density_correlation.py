@@ -11,7 +11,7 @@ import pandas as pd
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.data.behavioral_data import (
+from dal_monte_2022_analysis.data.records.behavioral import (
     FixationDensityVectorsData,
     JointFixationDensityData,
     PupilSizeData,
