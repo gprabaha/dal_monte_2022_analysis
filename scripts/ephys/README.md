@@ -2,7 +2,8 @@
 
 Ephys CLI entrypoints.
 
-Subfolders:
+## Stage Folders
+
 - `preprocessing/`
 - `features/`
 - `analysis/`
@@ -10,20 +11,25 @@ Subfolders:
 - `modeling/`
 - `bash/`
 
-These scripts call into `src/dal_monte_2022_analysis/ephys/*`.
+## Typical Execution Order
 
-Current implemented step:
-- `preprocessing/add_date_column_from_session_name.py`
-- `features/build_fixation_psth_trials.py`
-- `features/build_period_psth_trials.py`
-- `features/build_fixation_psth_averages.py`
-- `analysis/build_fixation_selective_units.py`
-- `analysis/build_within_region_fixation_neural_cross_correlation.py`
-- `analysis/build_cross_region_fixation_neural_cross_correlation.py`
-- `plotting/plot_fixation_psth_units.py`
-- `plotting/plot_period_psth_units.py`
-- `plotting/plot_fixation_selectivity_venn.py`
-- `plotting/plot_selective_fixation_psth_units.py`
-- `plotting/plot_fixation_neural_cross_correlation.py`
-- `plotting/plot_within_region_fixation_neural_cross_correlation.py`
-- `plotting/plot_cross_region_fixation_neural_cross_correlation.py`
+1. Preprocessing
+- `add_date_column_from_session_name.py`
+- optional migration: `migrate_legacy_pickle_modules.py`
+
+2. Features
+- `build_fixation_psth_trials.py`
+- `build_period_psth_trials.py`
+- `build_fixation_psth_averages.py`
+
+3. Analysis
+- `build_fixation_selective_units.py`
+- `build_within_region_fixation_neural_cross_correlation.py`
+- `build_cross_region_fixation_neural_cross_correlation.py`
+
+4. Plotting
+- PSTH unit plots
+- selectivity Venn summaries
+- neural cross-correlation summaries
+
+Detailed script-level descriptions are in each subfolder README.

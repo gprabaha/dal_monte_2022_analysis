@@ -1,28 +1,31 @@
 # dal_monte_2022_analysis package
 
-This package holds the reusable core of the project:
-- `config/` loads dataset configuration and normalizes paths.
-- `core/` contains pure domain logic and invariants (no plotting, filesystem, or HPC code), plus shared contracts under `core/contracts/`.
-  Current canonical core modules include:
-  `core/behav/fixation_detection.py`,
-  `core/behav/roi_groups.py`,
-  and `core/signal/cross_correlation.py`.
-- `data/` defines typed data containers, shared annotation helpers, and ephys loaders.
-- `behav/` contains behavioral workflows organized by stage:
-  `preprocessing/`, `features/`, `analysis/`, `plotting/`, `modeling/`.
-- `ephys/` contains ephys workflows organized by stage:
-  `preprocessing/`, `features/`, `analysis/`, `plotting/`, `modeling/`.
-- `runtime/` contains environment-specific adapters (execution/parallelism, processed-data IO, HPC job submission).
-- behavioral feature-product loading lives in `behav/features/load.py`.
-- `utils/` provides shared helpers (paths, parallelism, io) plus compatibility shims for older imports.
+Reusable implementation modules for behavioral and ephys pipelines.
 
-Architecture rules
-- Keep `behav/` and `ephys/` for domain-specific workflow code.
-- Keep `data/`, `config/`, `core/`, and `runtime/` shared at top level (do not duplicate under each domain).
-- Put pure logic in `core/`; put side-effecting adapters (HPC, CLI, cluster env) in `runtime/`.
-- Keep `scripts/` mirroring the same domain-first structure used in `src/`.
+## Package Structure
 
-Design philosophy
-- Keep data objects small and serializable (pickle-friendly).
-- Make each preprocessing step explicit and testable.
-- Prefer straightforward, readable code over clever abstractions.
+- `behav/`: behavioral workflow stages (`preprocessing`, `features`, `analysis`, `plotting`, `modeling`)
+- `ephys/`: ephys workflow stages (`preprocessing`, `features`, `analysis`, `plotting`, `modeling`)
+- `core/`: pure logic, contracts, shared stats/signal primitives
+- `runtime/`: IO/export adapters, execution helpers, HPC integration
+- `data/`: dataclasses, table loaders, transforms, migration helpers
+- `config/`: YAML loading + path normalization
+- `utils/`: minimal generic helpers (`paths`, `filenames`, low-level pickle IO)
+
+## Architectural Boundaries
+
+- Keep algorithmic/domain primitives in `core/`.
+- Keep side-effecting orchestration (path scans, save/load, submission, process orchestration) in `runtime/`.
+- Keep stage-specific orchestration in `behav/` and `ephys/`.
+- Keep script/CLI parsing in `scripts/`.
+
+## Key Shared Modules
+
+- `runtime/io/processed_data.py`: processed artifact path building/scanning/loading/saving
+- `runtime/io/analysis_index.py`: analysis output tree scanning
+- `runtime/io/plot_output.py`: shared figure export helper
+- `core/stats/hypothesis.py`: shared hypothesis tests
+- `core/signal/cross_correlation.py`: cross-correlation primitives
+
+For pipeline order and conventions, see:
+- `docs/repo_design_and_pipelines.md`

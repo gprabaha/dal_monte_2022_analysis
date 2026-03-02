@@ -1,5 +1,10 @@
 # Repo Cleanup Checkpoint (2026-03-02)
 
+Note:
+- This is a historical checkpoint snapshot.
+- It reflects intermediate migration state from March 2, 2026 and is not the current architecture source of truth.
+- Current architecture/pipeline docs are in `docs/repo_design_and_pipelines.md` and `docs/repo_target_architecture.md`.
+
 Scope of this checkpoint:
 - Step 1: structure/naming/duplication audit for `src/` and `configs/`
 - Step 2: centralize pickle IO helpers and migrate repeated local wrappers

@@ -1,15 +1,12 @@
 # utils
 
-Small, cross-domain helpers that are generic enough to be shared by behavioral,
-ephys, and runtime modules.
+Small, generic helpers shared across modules.
 
 Current scope:
-- `io.py` for plain pickle read/write helpers.
-- `paths.py` for deterministic processed-data and analysis-output path handling.
-- `filenames.py` for generic filename helpers (`ensure_filename`, override resolution).
+- `io.py`: low-level pickle load/save (legacy-aware unpickling remaps)
+- `paths.py`: deterministic processed/analysis path builders and scanners
+- `filenames.py`: generic filename normalization helpers
 
-Non-generic logic should live in domain/runtime packages, for example:
-- `core/behav/analysis_filenames.py`
-- `core/signal/cross_correlation.py`
-- `runtime/execution/parallel.py`
-- `runtime/hpc/jobs.py`
+Design rule:
+- keep `utils/` generic and minimal
+- move domain-specific helpers to `core/`, `runtime/`, `behav/`, or `ephys/`

@@ -1,21 +1,31 @@
 # scripts
 
-Thin CLI wrappers over package logic in `src/dal_monte_2022_analysis/`.
+CLI entrypoints for running preprocessing, feature extraction, analysis, plotting, and modeling pipelines.
 
-Top-level domain folders:
-- `scripts/behav/`
-- `scripts/ephys/`
+## Structure
 
-Each domain folder is split into workflow folders:
+- `scripts/behav/`: behavioral pipeline CLIs
+- `scripts/ephys/`: ephys pipeline CLIs
+
+Each domain is stage-organized:
 - `preprocessing/`
 - `features/`
 - `analysis/`
 - `plotting/`
 - `modeling/`
-- `bash/`
+- `bash/` (batch helpers)
 
-Design rule: keep orchestration and argument parsing here, keep data logic in `src/`.
+## Design Convention
 
-Structure rule
-- `scripts/` is domain-first and mirrors `src/dal_monte_2022_analysis/{behav,ephys}`.
-- Shared infra/config/data helpers stay in `src/dal_monte_2022_analysis/{config,data,utils}`.
+Scripts should remain thin wrappers:
+- parse args
+- load config
+- call package modules in `src/dal_monte_2022_analysis/...`
+
+Domain logic and reusable helpers should not be duplicated here.
+
+## Pipeline References
+
+- Behavioral flow: `scripts/behav/README.md`
+- Ephys flow: `scripts/ephys/README.md`
+- Full architecture and ordering guide: `docs/repo_design_and_pipelines.md`

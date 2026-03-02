@@ -1,7 +1,20 @@
 # config
 
-Config utilities convert YAML files into Python dictionaries with normalized paths.
-Keep this module minimal; it is intended to be dependency-light and safe to import
-from anywhere in the pipeline.
+Configuration loading and normalization utilities.
 
-This folder is shared across behavioral and ephys workflows.
+## Entry Points
+
+- `load_config(path, config_type=None)`
+  - generic loader with type inference (`project`, `dataset`, `ephys_data`, `hpc`, `generic`)
+- `load_project_config(...)`
+- `load_dataset_config(...)`
+- `resolve_dataset_cfg_path(...)`
+- `resolve_ephys_cfg_path(...)`
+
+## Path Normalization
+
+- Project config resolves referenced config paths relative to `configs/`.
+- Dataset/project roots are normalized to `Path` objects.
+- Ephys/HPC configs normalize file paths for robust script/runtime use.
+
+Keep this module dependency-light so all layers can import it safely.
