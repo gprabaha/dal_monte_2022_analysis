@@ -14,13 +14,18 @@ import pandas as pd
 from scipy.stats import ttest_ind
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.core.behav.analysis_filenames import (
+    resolve_fix_cross_correlation_filename,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     build_processed_pickle_path,
     load_pickle_path,
 )
+from dal_monte_2022_analysis.utils.filenames import (
+    resolve_filename_override,
+)
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
-    build_fix_cross_correlation_output_filename,
     normalize_fix_cross_correlation_time_scope,
 )
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
@@ -284,37 +289,6 @@ MONKEY_ROLE_FIXATION_DURATION_SUMMARY_COLUMNS = [
     "sig",
     "higher",
 ]
-def _resolve_lags_filename(settings: FixCrossCorrLeaderFollowerSettings) -> str:
-    """Return lag-axis filename."""
-    if settings.lags_filename:
-        return settings.lags_filename
-    return build_fix_cross_correlation_output_filename(
-        settings.fixation_label,
-        "lags",
-        time_scope=settings.time_scope,
-    )
-
-
-def _resolve_within_filename(settings: FixCrossCorrLeaderFollowerSettings) -> str:
-    """Return within-session cross-correlation filename."""
-    if settings.within_filename:
-        return settings.within_filename
-    return build_fix_cross_correlation_output_filename(
-        settings.fixation_label,
-        "within",
-        time_scope=settings.time_scope,
-    )
-
-
-def _resolve_pair_summary_filename(settings: FixCrossCorrLeaderFollowerSettings) -> str:
-    """Return pair-level summary filename with backward compatibility."""
-    if settings.pair_summary_filename:
-        return settings.pair_summary_filename
-    if settings.total_summary_filename:
-        return settings.total_summary_filename
-    return f"pair_summary_{settings.fixation_label}_fix_crosscorr_leader_follower.csv"
-
-
 def _load_lags(path: Path) -> np.ndarray:
     """Load lag axis from pickle."""
     with open(path, "rb") as f:
@@ -1760,8 +1734,18 @@ def run_fix_cross_correlation_leader_follower_analysis(
     input_subdir = settings.crosscorr_input_subdir or settings.output_subdir
     input_dir = build_analysis_output_dir(cfg, input_subdir)
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
-    within_path = input_dir / _resolve_within_filename(settings)
-    lags_path = input_dir / _resolve_lags_filename(settings)
+    within_path = input_dir / resolve_fix_cross_correlation_filename(
+        fixation_label=settings.fixation_label,
+        output_kind="within",
+        time_scope=settings.time_scope,
+        override=settings.within_filename,
+    )
+    lags_path = input_dir / resolve_fix_cross_correlation_filename(
+        fixation_label=settings.fixation_label,
+        output_kind="lags",
+        time_scope=settings.time_scope,
+        override=settings.lags_filename,
+    )
 
     if not within_path.exists():
         raise RuntimeError(f"Missing within-session cross-correlation file: {within_path}")
@@ -1791,7 +1775,13 @@ def run_fix_cross_correlation_leader_follower_analysis(
     out_dir.mkdir(parents=True, exist_ok=True)
     session_out = out_dir / settings.session_output_filename
     date_out = out_dir / settings.date_summary_filename
-    pair_out = out_dir / _resolve_pair_summary_filename(settings)
+    pair_out = out_dir / resolve_filename_override(
+        settings.pair_summary_filename,
+        resolve_filename_override(
+            settings.total_summary_filename,
+            f"pair_summary_{settings.fixation_label}_fix_crosscorr_leader_follower.csv",
+        ),
+    )
     session_df.to_pickle(session_out)
     date_summary_df.to_pickle(date_out)
     pair_summary_df.to_pickle(pair_out)

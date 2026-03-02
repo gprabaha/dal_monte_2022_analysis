@@ -7,6 +7,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
+from dal_monte_2022_analysis.utils.filenames import ensure_filename
+
 
 def as_optional_str(value: object) -> Optional[str]:
     """Normalize optional values to stripped strings or None."""
@@ -19,14 +21,6 @@ def as_optional_str(value: object) -> Optional[str]:
         pass
     token = str(value).strip()
     return token or None
-
-
-def ensure_filename(name: str, suffix: str) -> str:
-    """Return a non-empty filename with a required suffix."""
-    text = str(name).strip()
-    if not text:
-        raise ValueError("Output filename cannot be empty.")
-    return text if text.endswith(suffix) else f"{text}{suffix}"
 
 
 def as_bool(value: object, interactive_label: Optional[str] = None) -> bool:

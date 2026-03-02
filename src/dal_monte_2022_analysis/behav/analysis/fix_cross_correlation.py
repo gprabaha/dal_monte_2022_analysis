@@ -20,6 +20,9 @@ from dal_monte_2022_analysis.core.behav.analysis_primitives import (
     extract_fixation_vector as _extract_fixation_vector,
     extract_monkey_name as _extract_monkey_name,
 )
+from dal_monte_2022_analysis.core.behav.analysis_filenames import (
+    resolve_fix_cross_correlation_filename,
+)
 from dal_monte_2022_analysis.core.signal.cross_correlation import (
     assert_lag_axis_match as assert_lag_axis_match_shared,
     fft_cross_correlation,
@@ -34,7 +37,6 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
-    build_fix_cross_correlation_output_filename,
     normalize_fix_cross_correlation_time_scope,
 )
 
@@ -1189,11 +1191,21 @@ def collate_within_session_shuffle_results(
 
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / _resolve_shuffle_output_filename(settings)
+    out_path = out_dir / resolve_fix_cross_correlation_filename(
+        fixation_label=settings.fixation_label,
+        output_kind="shuffle",
+        time_scope=settings.time_scope,
+        override=settings.shuffle_output_filename,
+    )
     shuffle_df.to_pickle(out_path)
 
     if lag_axis is not None:
-        lags_path = out_dir / _resolve_lags_filename(settings)
+        lags_path = out_dir / resolve_fix_cross_correlation_filename(
+            fixation_label=settings.fixation_label,
+            output_kind="lags",
+            time_scope=settings.time_scope,
+            override=settings.lags_filename,
+        )
         with open(lags_path, "wb") as f:
             pickle.dump(lag_axis, f)
 
@@ -1247,50 +1259,6 @@ def collate_within_session_shuffle_results(
             f"mean={sample_mean_preview} std={sample_std_preview}"
         )
     return shuffle_df, lag_axis
-
-
-def _resolve_within_filename(settings: FixCrossCorrelationSettings) -> str:
-    """Return within-session output filename."""
-    if settings.within_filename:
-        return settings.within_filename
-    return build_fix_cross_correlation_output_filename(
-        settings.fixation_label,
-        "within",
-        time_scope=settings.time_scope,
-    )
-
-
-def _resolve_cross_filename(settings: FixCrossCorrelationSettings) -> str:
-    """Return cross-session output filename."""
-    if settings.cross_filename:
-        return settings.cross_filename
-    return build_fix_cross_correlation_output_filename(
-        settings.fixation_label,
-        "cross",
-        time_scope=settings.time_scope,
-    )
-
-
-def _resolve_shuffle_output_filename(settings: FixCrossCorrelationSettings) -> str:
-    """Return shuffled-summary output filename."""
-    if settings.shuffle_output_filename:
-        return settings.shuffle_output_filename
-    return build_fix_cross_correlation_output_filename(
-        settings.fixation_label,
-        "shuffle",
-        time_scope=settings.time_scope,
-    )
-
-
-def _resolve_lags_filename(settings: FixCrossCorrelationSettings) -> str:
-    """Return lag-axis output filename."""
-    if settings.lags_filename:
-        return settings.lags_filename
-    return build_fix_cross_correlation_output_filename(
-        settings.fixation_label,
-        "lags",
-        time_scope=settings.time_scope,
-    )
 
 
 def _print_output_sanity_summary(
@@ -1416,15 +1384,30 @@ def run_fix_cross_correlation_analysis(
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    within_path = out_dir / _resolve_within_filename(settings)
+    within_path = out_dir / resolve_fix_cross_correlation_filename(
+        fixation_label=settings.fixation_label,
+        output_kind="within",
+        time_scope=settings.time_scope,
+        override=settings.within_filename,
+    )
     within_df.to_pickle(within_path)
 
     if cross_df is not None:
-        cross_path = out_dir / _resolve_cross_filename(settings)
+        cross_path = out_dir / resolve_fix_cross_correlation_filename(
+            fixation_label=settings.fixation_label,
+            output_kind="cross",
+            time_scope=settings.time_scope,
+            override=settings.cross_filename,
+        )
         cross_df.to_pickle(cross_path)
 
     if lag_axis is not None:
-        lags_path = out_dir / _resolve_lags_filename(settings)
+        lags_path = out_dir / resolve_fix_cross_correlation_filename(
+            fixation_label=settings.fixation_label,
+            output_kind="lags",
+            time_scope=settings.time_scope,
+            override=settings.lags_filename,
+        )
         with open(lags_path, "wb") as f:
             pickle.dump(lag_axis, f)
 
