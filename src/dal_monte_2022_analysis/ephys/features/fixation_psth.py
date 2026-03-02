@@ -15,6 +15,12 @@ from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.loaders.ephys import load_ephys_units
+from dal_monte_2022_analysis.ephys.features.common import (
+    as_optional_str as _as_optional_str,
+    build_symmetric_bin_edges,
+    ensure_pkl_filename as _ensure_pkl_filename,
+    units_to_payloads as _units_to_payloads,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     build_processed_pickle_path,
     load_pickle_path,
@@ -84,18 +90,6 @@ class FixationPSTHAverageSettings:
     categories: Optional[Sequence[str]] = ("face", "object", "out_of_roi")
 
 
-def _as_optional_str(value: object) -> Optional[str]:
-    if value is None:
-        return None
-    try:
-        if pd.isna(value):
-            return None
-    except Exception:
-        pass
-    text = str(value).strip()
-    return text or None
-
-
 def _resolve_roi_groups(settings: FixationPSTHSettings, agent: str) -> Dict[str, list[str]]:
     return resolve_agent_roi_groups(
         agent=agent,
@@ -103,13 +97,6 @@ def _resolve_roi_groups(settings: FixationPSTHSettings, agent: str) -> Dict[str,
         agent_roi_groups=settings.agent_roi_groups,
         include_defaults=False,
     )
-
-
-def _ensure_pkl_filename(filename: str) -> str:
-    name = str(filename).strip()
-    if not name:
-        raise ValueError("Output filename cannot be empty.")
-    return name if name.endswith(".pkl") else f"{name}.pkl"
 
 
 def _build_trial_output_path(cfg: dict, row: dict, settings: FixationPSTHSettings) -> Path:
@@ -123,14 +110,11 @@ def _build_average_output_path(cfg: dict, date: str, settings: FixationPSTHAvera
 
 
 def _build_bin_edges(settings: FixationPSTHSettings) -> np.ndarray:
-    bin_size_s = float(settings.bin_size_ms) / 1000.0
-    if bin_size_s <= 0:
-        raise ValueError("bin_size_ms must be > 0.")
-    if settings.window_pre_s <= 0 or settings.window_post_s <= 0:
-        raise ValueError("window_pre_s and window_post_s must be > 0.")
-    pre = float(settings.window_pre_s)
-    post = float(settings.window_post_s)
-    return np.arange(-pre, post + bin_size_s * 0.5, bin_size_s, dtype=float)
+    return build_symmetric_bin_edges(
+        bin_size_ms=settings.bin_size_ms,
+        window_pre_s=settings.window_pre_s,
+        window_post_s=settings.window_post_s,
+    )
 
 
 def _iter_interactive_periods(df: Optional[pd.DataFrame]) -> list[tuple[int, int, str]]:
@@ -360,26 +344,6 @@ def _compute_unit_rows_across_fixation_sessions(
             rows_by_session[(session_date, session_name)] = session_rows
 
     return unit_date, rows_by_session
-
-
-def _units_to_payloads(units) -> list[dict]:
-    payloads: list[dict] = []
-    for unit in units:
-        ctx = unit.context
-        payloads.append(
-            {
-                "unit_uuid": str(ctx.unit_uuid),
-                "unit_date": str(ctx.date),
-                "region": _as_optional_str(ctx.region),
-                "spike_channel": _as_optional_str(ctx.spike_channel),
-                "session_name": str(ctx.session_name),
-                "recorded_agent": _as_optional_str(ctx.recorded_agent),
-                "recorded_monkey": _as_optional_str(ctx.recorded_monkey),
-                "area": _as_optional_str(ctx.area),
-                "spike_ts": np.asarray(unit.spike_ts, dtype=float),
-            }
-        )
-    return payloads
 
 
 def build_fixation_psth_trials_for_session(

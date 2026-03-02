@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass, field
-from multiprocessing import Pool
 from typing import Dict, Optional, Sequence
 
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
-from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.records.behavioral import (
@@ -24,7 +22,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     save_processed_pickle,
 )
-from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 from dal_monte_2022_analysis.core.behav.roi_groups import (
     DEFAULT_FIXATION_ROI_GROUPS,
     coerce_location_labels,
@@ -437,21 +435,15 @@ def run_fixation_density_build(
             )
         return
 
-    if not use_parallel:
-        for task in tqdm(tasks, desc="Building fixation densities (serial)", unit="task"):
-            _build_and_save_worker((*task, kernel_sigma, kernel_truncate))
-        return
-
-    n_proc = get_n_processes(max_procs=32)
     worker_args = [
         (*task, kernel_sigma, kernel_truncate)
         for task in tasks
     ]
-    with Pool(processes=n_proc) as pool:
-        for _ in tqdm(
-            pool.imap_unordered(_build_and_save_worker, worker_args),
-            total=len(worker_args),
-            desc=f"Building fixation densities ({n_proc} workers)",
-            unit="task",
-        ):
-            pass
+    run_tasks(
+        _build_and_save_worker,
+        worker_args,
+        desc="Building fixation densities",
+        unit="task",
+        use_parallel=use_parallel,
+        max_procs=32,
+    )

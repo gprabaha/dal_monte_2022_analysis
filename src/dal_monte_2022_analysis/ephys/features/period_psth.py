@@ -14,6 +14,12 @@ from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.loaders.ephys import load_ephys_units
+from dal_monte_2022_analysis.ephys.features.common import (
+    as_optional_str as _as_optional_str,
+    build_symmetric_bin_edges,
+    ensure_pkl_filename as _ensure_pkl_filename,
+    units_to_payloads as _units_to_payloads,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     build_processed_pickle_path,
     load_pickle_path,
@@ -50,39 +56,17 @@ class PeriodPSTHSettings:
     restrict_units_to_date: bool = True
 
 
-def _as_optional_str(value: object) -> Optional[str]:
-    if value is None:
-        return None
-    try:
-        if pd.isna(value):
-            return None
-    except Exception:
-        pass
-    text = str(value).strip()
-    return text or None
-
-
-def _ensure_pkl_filename(filename: str) -> str:
-    name = str(filename).strip()
-    if not name:
-        raise ValueError("Output filename cannot be empty.")
-    return name if name.endswith(".pkl") else f"{name}.pkl"
-
-
 def _build_trial_output_path(cfg: dict, row: dict, settings: PeriodPSTHSettings) -> Path:
     out_dir = build_processed_out_dir(cfg, row, settings.output_modality)
     return out_dir / _ensure_pkl_filename(settings.trial_output_filename)
 
 
 def _build_bin_edges(settings: PeriodPSTHSettings) -> np.ndarray:
-    bin_size_s = float(settings.bin_size_ms) / 1000.0
-    if bin_size_s <= 0:
-        raise ValueError("bin_size_ms must be > 0.")
-    if settings.window_pre_s <= 0 or settings.window_post_s <= 0:
-        raise ValueError("window_pre_s and window_post_s must be > 0.")
-    pre = float(settings.window_pre_s)
-    post = float(settings.window_post_s)
-    return np.arange(-pre, post + bin_size_s * 0.5, bin_size_s, dtype=float)
+    return build_symmetric_bin_edges(
+        bin_size_ms=settings.bin_size_ms,
+        window_pre_s=settings.window_pre_s,
+        window_post_s=settings.window_post_s,
+    )
 
 
 def _as_timeline_array(obj) -> np.ndarray:
@@ -287,26 +271,6 @@ def _compute_unit_rows_across_sessions(unit_payload: dict) -> tuple[str, dict[tu
         if session_rows:
             rows_by_session[(session_date, session_name)] = session_rows
     return unit_date, rows_by_session
-
-
-def _units_to_payloads(units) -> list[dict]:
-    payloads: list[dict] = []
-    for unit in units:
-        ctx = unit.context
-        payloads.append(
-            {
-                "unit_uuid": str(ctx.unit_uuid),
-                "unit_date": str(ctx.date),
-                "region": _as_optional_str(ctx.region),
-                "spike_channel": _as_optional_str(ctx.spike_channel),
-                "session_name": str(ctx.session_name),
-                "recorded_agent": _as_optional_str(ctx.recorded_agent),
-                "recorded_monkey": _as_optional_str(ctx.recorded_monkey),
-                "area": _as_optional_str(ctx.area),
-                "spike_ts": np.asarray(unit.spike_ts, dtype=float),
-            }
-        )
-    return payloads
 
 
 def build_period_psth_trials_for_session(

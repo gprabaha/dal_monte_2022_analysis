@@ -4,12 +4,10 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from multiprocessing import Pool
 from typing import Iterable, Optional
 
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.records.behavioral import JointFixationDensityData
@@ -18,7 +16,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     save_processed_pickle,
 )
-from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
+from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 
 
 @dataclass
@@ -171,17 +169,11 @@ def run_interactive_periods_build(
         print(f"Segments: {counts}")
         return
 
-    if not use_parallel:
-        for task in tqdm(tasks, desc="Building interactive periods (serial)", unit="task"):
-            _build_and_save_worker(task)
-        return
-
-    n_proc = get_n_processes()
-    with Pool(processes=n_proc) as pool:
-        for _ in tqdm(
-            pool.imap_unordered(_build_and_save_worker, tasks),
-            total=len(tasks),
-            desc=f"Building interactive periods ({n_proc} workers)",
-            unit="task",
-        ):
-            pass
+    run_tasks(
+        _build_and_save_worker,
+        tasks,
+        desc="Building interactive periods",
+        unit="task",
+        use_parallel=use_parallel,
+        max_procs=16,
+    )
