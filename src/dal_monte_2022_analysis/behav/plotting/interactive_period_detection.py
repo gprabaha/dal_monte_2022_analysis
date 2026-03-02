@@ -19,12 +19,14 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
 )
-from dal_monte_2022_analysis.utils.io import load_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    build_processed_pickle_path,
+    load_processed_pickle,
+    scan_processed_paths,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
-    build_processed_data_path,
-    scan_processed_data_paths,
 )
 
 
@@ -105,11 +107,6 @@ def _normalize_example_session_keys(raw_keys: tuple[str, ...]) -> set[str]:
         if date and session:
             out.add(_session_key(date, session))
     return out
-
-
-def _load_pickle(path: Path):
-    """Load a pickle object from disk."""
-    return load_pickle(path)
 
 
 def _extract_vectors(obj) -> dict[str, np.ndarray]:
@@ -279,7 +276,7 @@ def _build_tasks(
     settings: InteractivePeriodDetectionPlotSettings,
 ) -> list[dict]:
     """Build per-session plotting tasks with required input paths."""
-    rows = scan_processed_data_paths(
+    rows = scan_processed_paths(
         cfg,
         settings.joint_density_modality,
         agents=[None],
@@ -289,37 +286,37 @@ def _build_tasks(
     tasks: list[dict] = []
     for row in rows:
         base_row = {"date": str(row["date"]), "session": str(row["session"])}
-        m1_fix_vec = build_processed_data_path(
+        m1_fix_vec = build_processed_pickle_path(
             cfg,
             base_row,
             settings.fixation_vectors_modality,
             "m1",
         )
-        m2_fix_vec = build_processed_data_path(
+        m2_fix_vec = build_processed_pickle_path(
             cfg,
             base_row,
             settings.fixation_vectors_modality,
             "m2",
         )
-        m1_density = build_processed_data_path(
+        m1_density = build_processed_pickle_path(
             cfg,
             base_row,
             settings.fixation_density_modality,
             "m1",
         )
-        m2_density = build_processed_data_path(
+        m2_density = build_processed_pickle_path(
             cfg,
             base_row,
             settings.fixation_density_modality,
             "m2",
         )
-        joint_density = build_processed_data_path(
+        joint_density = build_processed_pickle_path(
             cfg,
             base_row,
             settings.joint_density_modality,
             None,
         )
-        periods = build_processed_data_path(
+        periods = build_processed_pickle_path(
             cfg,
             base_row,
             settings.interactive_periods_modality,
@@ -330,18 +327,7 @@ def _build_tasks(
         if any(not path.exists() for path in required):
             continue
 
-        tasks.append(
-            {
-                "date": base_row["date"],
-                "session": base_row["session"],
-                "m1_fix_vec_path": m1_fix_vec,
-                "m2_fix_vec_path": m2_fix_vec,
-                "m1_density_path": m1_density,
-                "m2_density_path": m2_density,
-                "joint_density_path": joint_density,
-                "periods_path": periods,
-            }
-        )
+        tasks.append(base_row)
 
     if settings.test_single and tasks:
         return [tasks[0]]
@@ -538,6 +524,7 @@ def _render_period_figure(
 def _plot_single_period(
     task: dict,
     *,
+    cfg: dict,
     settings: InteractivePeriodDetectionPlotSettings,
     out_dir: Path,
     plot_cfg: dict,
@@ -547,12 +534,24 @@ def _plot_single_period(
     """Render one session plot and return all written output paths."""
     apply_plotting_config(plot_cfg)
 
-    m1_fix_vecs = _extract_vectors(_load_pickle(task["m1_fix_vec_path"]))
-    m2_fix_vecs = _extract_vectors(_load_pickle(task["m2_fix_vec_path"]))
-    m1_densities = _extract_vectors(_load_pickle(task["m1_density_path"]))
-    m2_densities = _extract_vectors(_load_pickle(task["m2_density_path"]))
-    joint_density = _extract_joint_density(_load_pickle(task["joint_density_path"]))
-    periods_df = _coerce_period_table(_load_pickle(task["periods_path"]))
+    m1_fix_vecs = _extract_vectors(
+        load_processed_pickle(cfg, task, settings.fixation_vectors_modality, "m1")
+    )
+    m2_fix_vecs = _extract_vectors(
+        load_processed_pickle(cfg, task, settings.fixation_vectors_modality, "m2")
+    )
+    m1_densities = _extract_vectors(
+        load_processed_pickle(cfg, task, settings.fixation_density_modality, "m1")
+    )
+    m2_densities = _extract_vectors(
+        load_processed_pickle(cfg, task, settings.fixation_density_modality, "m2")
+    )
+    joint_density = _extract_joint_density(
+        load_processed_pickle(cfg, task, settings.joint_density_modality, None)
+    )
+    periods_df = _coerce_period_table(
+        load_processed_pickle(cfg, task, settings.interactive_periods_modality, None)
+    )
 
     if joint_density is None or joint_density.size == 0:
         return []
@@ -723,9 +722,10 @@ def _plot_single_period(
 
 def _plot_single_period_worker(args) -> list[Path]:
     """Worker wrapper for parallel session plotting."""
-    task, settings, out_dir, plot_cfg, figsize, dpi = args
+    task, cfg, settings, out_dir, plot_cfg, figsize, dpi = args
     return _plot_single_period(
         task,
+        cfg=cfg,
         settings=settings,
         out_dir=out_dir,
         plot_cfg=plot_cfg,
@@ -780,6 +780,7 @@ def plot_interactive_period_detection(
     if resolved_settings.test_single:
         out_paths = _plot_single_period(
             tasks[0],
+            cfg=cfg,
             settings=resolved_settings,
             out_dir=out_dir,
             plot_cfg=plot_cfg,
@@ -789,7 +790,7 @@ def plot_interactive_period_detection(
         return sorted(set(Path(path) for path in out_paths), key=lambda path: str(path))
 
     worker_args = [
-        (task, resolved_settings, out_dir, plot_cfg, figsize, dpi)
+        (task, cfg, resolved_settings, out_dir, plot_cfg, figsize, dpi)
         for task in tasks
     ]
 

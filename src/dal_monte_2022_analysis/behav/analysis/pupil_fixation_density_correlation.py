@@ -17,7 +17,7 @@ from dal_monte_2022_analysis.data.behavioral_data import (
     PupilSizeData,
 )
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
-from dal_monte_2022_analysis.utils.io import load_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
@@ -39,9 +39,6 @@ class PupilFixationDensityCorrelationSettings:
     use_parallel: bool = False
     parallel_max_procs: int = 32
     test_single: bool = False
-
-
-_load_pickle = load_pickle
 
 
 def _extract_monkey_name(obj) -> Optional[str]:
@@ -261,11 +258,11 @@ def _build_one_session_rows(args) -> list[dict]:
         correlation_method,
     ) = args
 
-    m1_pupil_obj = _load_pickle(m1_pupil_path)
-    m2_pupil_obj = _load_pickle(m2_pupil_path)
-    m1_density_obj = _load_pickle(m1_density_path)
-    m2_density_obj = _load_pickle(m2_density_path)
-    joint_density_obj = _load_pickle(joint_density_path)
+    m1_pupil_obj = load_pickle_path(m1_pupil_path)
+    m2_pupil_obj = load_pickle_path(m2_pupil_path)
+    m1_density_obj = load_pickle_path(m1_density_path)
+    m2_density_obj = load_pickle_path(m2_density_path)
+    joint_density_obj = load_pickle_path(joint_density_path)
 
     m1_pupil = _extract_pupil_vector(m1_pupil_obj)
     m2_pupil = _extract_pupil_vector(m2_pupil_obj)

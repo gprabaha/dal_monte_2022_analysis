@@ -14,9 +14,11 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import JointFixationDensityData
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
-from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    load_pickle_path,
+    save_processed_pickle,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 
 
 @dataclass
@@ -31,10 +33,6 @@ class InteractivePeriodsSettings:
     low_label: str = "non_interactive"
     use_parallel: bool = False
     test_single: bool = False
-
-
-_load_pickle = load_pickle
-_save_pickle = save_pickle
 
 
 def _as_density(obj) -> Optional[np.ndarray]:
@@ -72,7 +70,7 @@ def build_interactive_periods_for_row(
     density_path,
 ) -> Optional[pd.DataFrame]:
     """Build interactive periods for one date/session."""
-    obj = _load_pickle(density_path)
+    obj = load_pickle_path(density_path)
     density = _as_density(obj)
     if density is None or density.size == 0:
         return None
@@ -112,8 +110,7 @@ def process_interactive_periods_for_row(
         return None
 
     cfg = load_config(settings.cfg_path)
-    out_path = build_processed_data_path(cfg, row, settings.output_modality, None)
-    _save_pickle(df, out_path)
+    save_processed_pickle(df, cfg, row, settings.output_modality, None)
     return df
 
 

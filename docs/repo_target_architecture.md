@@ -15,12 +15,14 @@ This document defines the target structure for a stable, script-driven analysis 
 src/dal_monte_2022_analysis/
   config/                      # Typed config loading and normalization
   core/                        # Pure domain logic (no filesystem / plotting / HPC)
+    contracts/
     behav/
       fixation_detection.py
     ephys/
     combined/
   data/                        # Data containers, records, migration helpers
   runtime/                     # Environment-specific adapters
+    io/
     hpc/
       jobs.py
   behav/                       # Workflow layer (preprocess/features/analysis/plotting/modeling)
@@ -64,4 +66,3 @@ src/dal_monte_2022_analysis/
 3. Update first-party imports to canonical paths.
 4. Keep shims for at least one release cycle before removal.
 5. Add tests around moved modules before deleting shims.
-

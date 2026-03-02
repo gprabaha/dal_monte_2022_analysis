@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import pdb
 import random
 from dataclasses import dataclass, field
 from multiprocessing import Pool
-from pathlib import Path
 from typing import Dict, Optional, Sequence
 
 import numpy as np
@@ -16,9 +14,12 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import FixationBinaryVectorsData, RecordingContext
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
-from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    build_processed_pickle_path,
+    load_pickle_path,
+    save_processed_pickle,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 from dal_monte_2022_analysis.utils.roi_groups import (
     DEFAULT_FIXATION_ROI_GROUPS,
     coerce_location_labels,
@@ -44,10 +45,6 @@ class FixationBinaryVectorSettings:
     use_parallel: bool = False
     test_single: bool = False
     agents: Optional[Sequence[str]] = None
-
-
-_load_pickle = load_pickle
-_save_pickle = save_pickle
 
 
 def _resolve_roi_groups(
@@ -86,8 +83,8 @@ def build_fixation_binary_vectors_for_row(
     """Build fixation binary vectors for a single date/session/agent."""
     cfg = load_config(settings.cfg_path)
 
-    fix_path = build_processed_data_path(cfg, row, settings.fixations_modality, agent)
-    timeline_path = build_processed_data_path(cfg, row, settings.timeline_modality, None)
+    fix_path = build_processed_pickle_path(cfg, row, settings.fixations_modality, agent)
+    timeline_path = build_processed_pickle_path(cfg, row, settings.timeline_modality, None)
 
     if settings.test_single:
         print(
@@ -105,8 +102,8 @@ def build_fixation_binary_vectors_for_row(
                 print(f"[test-single] Missing timeline file: {timeline_path}")
         return None
 
-    fix_df = _load_pickle(fix_path)
-    timeline = _load_pickle(timeline_path)
+    fix_df = load_pickle_path(fix_path)
+    timeline = load_pickle_path(timeline_path)
 
     timeline_len = len(timeline.t)
     if timeline_len == 0:
@@ -183,8 +180,7 @@ def process_fixation_binary_vectors_for_row(
         return None
 
     cfg = load_config(settings.cfg_path)
-    out_path = build_processed_data_path(cfg, row, settings.output_modality, agent)
-    _save_pickle(data, out_path)
+    save_processed_pickle(data, cfg, row, settings.output_modality, agent)
     return data
 
 

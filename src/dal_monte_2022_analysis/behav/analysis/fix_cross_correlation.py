@@ -23,7 +23,7 @@ from dal_monte_2022_analysis.utils.cross_correlation import (
     normalize_cross_correlation_sqrt_bin_count,
     summarize_cross_correlation,
 )
-from dal_monte_2022_analysis.utils.io import load_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
@@ -60,9 +60,6 @@ class FixCrossCorrelationSettings:
     shuffle_parallelize_within_pair: bool = True
     shuffle_log_every: int = 100
     test_single: bool = False
-
-
-_load_pickle = load_pickle
 
 
 def _extract_fixation_vector(
@@ -109,7 +106,7 @@ def _load_fixation_vector(
     fixation_label: str,
 ) -> tuple[Optional[np.ndarray], Optional[str]]:
     """Load a fixation vector and monkey name from a pickle path."""
-    obj = _load_pickle(path)
+    obj = load_pickle_path(path)
     return _extract_fixation_vector(obj, fixation_label), _extract_monkey_name(obj)
 
 
@@ -144,7 +141,7 @@ def _index_shared_paths(cfg: dict, modality: str) -> dict:
 
 def _load_interactive_periods(path) -> Optional[pd.DataFrame]:
     """Load interactive periods from pickle (DataFrame expected)."""
-    obj = _load_pickle(path)
+    obj = load_pickle_path(path)
     if isinstance(obj, pd.DataFrame):
         return obj
     return None

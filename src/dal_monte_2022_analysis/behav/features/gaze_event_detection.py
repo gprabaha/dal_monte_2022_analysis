@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass
 from multiprocessing import Pool
-from pathlib import Path
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -11,10 +10,13 @@ from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.core.contracts import validate_gaze_event_frame
 from dal_monte_2022_analysis.core.behav.fixation_detection import detect_fixations_and_saccades
-from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    load_processed_pickle,
+    save_processed_pickle,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 
 
 @dataclass
@@ -27,10 +29,6 @@ class GazeEventDetectionSettings:
     use_parallel: bool = True
     test_single: bool = False
     agents: Optional[List[str]] = None
-
-
-_load_pickle = load_pickle
-_save_pickle = save_pickle
 
 
 def _extract_non_nan_chunks(positions: np.ndarray) -> Tuple[List[np.ndarray], List[int]]:
@@ -89,7 +87,7 @@ def _build_event_df(events: np.ndarray, date: str, session: str, agent: str, mon
     Returns:
         DataFrame with event metadata and start/stop columns.
     """
-    return pd.DataFrame({
+    event_df = pd.DataFrame({
         "date": date,
         "session": session,
         "agent": agent,
@@ -97,6 +95,7 @@ def _build_event_df(events: np.ndarray, date: str, session: str, agent: str, mon
         "start": events[:, 0],
         "stop": events[:, 1],
     })
+    return validate_gaze_event_frame(event_df)
 
 
 def _load_positions(cfg: dict, row: dict, agent: str, input_modality: str):
@@ -105,10 +104,10 @@ def _load_positions(cfg: dict, row: dict, agent: str, input_modality: str):
     Returns:
         Loaded PositionData or None if the file is missing.
     """
-    pos_path = build_processed_data_path(cfg, row, input_modality, agent)
-    if not pos_path.exists():
+    try:
+        return load_processed_pickle(cfg, row, input_modality, agent)
+    except FileNotFoundError:
         return None
-    return _load_pickle(pos_path)
 
 
 def detect_gaze_events_for_row(
@@ -258,11 +257,9 @@ def _save_detection_outputs(
         output_saccades_modality: Modality name for saccades.
     """
     if fix_df is not None:
-        fix_path = build_processed_data_path(cfg, row, output_fixations_modality, agent)
-        _save_pickle(fix_df, fix_path)
+        save_processed_pickle(fix_df, cfg, row, output_fixations_modality, agent)
     if sacc_df is not None:
-        sacc_path = build_processed_data_path(cfg, row, output_saccades_modality, agent)
-        _save_pickle(sacc_df, sacc_path)
+        save_processed_pickle(sacc_df, cfg, row, output_saccades_modality, agent)
 
 
 def _detect_and_save_worker(args):
@@ -336,12 +333,14 @@ def annotate_fixation_locations(
     """
     cfg = load_config(cfg_path)
     pos_data = _load_positions(cfg, row, agent, input_modality)
-    roi_path = build_processed_data_path(cfg, row, roi_modality, agent)
-    if pos_data is None or not roi_path.exists():
+    try:
+        roi_data = load_processed_pickle(cfg, row, roi_modality, agent)
+    except FileNotFoundError:
+        roi_data = None
+    if pos_data is None or roi_data is None:
         fix_df["location"] = None
         return fix_df
 
-    roi_data = _load_pickle(roi_path)
     x = np.array(pos_data.x)
     y = np.array(pos_data.y)
     roi_rects = _roi_rects_to_df(roi_data)
@@ -372,13 +371,15 @@ def annotate_saccade_from_to(
     """
     cfg = load_config(cfg_path)
     pos_data = _load_positions(cfg, row, agent, input_modality)
-    roi_path = build_processed_data_path(cfg, row, roi_modality, agent)
-    if pos_data is None or not roi_path.exists():
+    try:
+        roi_data = load_processed_pickle(cfg, row, roi_modality, agent)
+    except FileNotFoundError:
+        roi_data = None
+    if pos_data is None or roi_data is None:
         sacc_df["from"] = None
         sacc_df["to"] = None
         return sacc_df
 
-    roi_data = _load_pickle(roi_path)
     x = np.array(pos_data.x)
     y = np.array(pos_data.y)
     roi_rects = _roi_rects_to_df(roi_data)

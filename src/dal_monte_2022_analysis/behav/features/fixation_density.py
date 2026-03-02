@@ -19,9 +19,12 @@ from dal_monte_2022_analysis.data.behavioral_data import (
     RecordingContext,
 )
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
-from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    build_processed_pickle_path,
+    load_pickle_path,
+    save_processed_pickle,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 from dal_monte_2022_analysis.utils.roi_groups import (
     DEFAULT_FIXATION_ROI_GROUPS,
     coerce_location_labels,
@@ -57,10 +60,6 @@ class FixationDensitySettings:
     use_parallel: bool = False
     test_single: bool = False
     agents: Optional[Sequence[str]] = None
-
-
-_load_pickle = load_pickle
-_save_pickle = save_pickle
 
 
 def _resolve_roi_groups(
@@ -191,7 +190,7 @@ def _compute_global_face_kernel_parameters(
         for row in fix_rows:
             if str(row.get("agent")) != agent:
                 continue
-            fix_df = _load_pickle(row["path"])
+            fix_df = load_pickle_path(row["path"])
             if not isinstance(fix_df, pd.DataFrame) or fix_df.empty:
                 continue
             face_events = _extract_fixation_events(fix_df, face_keywords)
@@ -259,14 +258,19 @@ def build_fixation_density_for_row(
     """Build fixation density vectors for one row using a shared global kernel."""
     cfg = load_config(settings.cfg_path)
 
-    fix_path = build_processed_data_path(cfg, row, settings.fixations_modality, agent)
-    vector_path = build_processed_data_path(cfg, row, settings.fixation_vectors_modality, agent)
+    fix_path = build_processed_pickle_path(cfg, row, settings.fixations_modality, agent)
+    vector_path = build_processed_pickle_path(
+        cfg,
+        row,
+        settings.fixation_vectors_modality,
+        agent,
+    )
 
     if not fix_path.exists() or not vector_path.exists():
         return None
 
-    fix_df = _load_pickle(fix_path)
-    vectors_obj = _load_pickle(vector_path)
+    fix_df = load_pickle_path(fix_path)
+    vectors_obj = load_pickle_path(vector_path)
 
     if not isinstance(fix_df, pd.DataFrame):
         return None
@@ -336,8 +340,7 @@ def process_fixation_density_for_row(
         return None
 
     cfg = load_config(settings.cfg_path)
-    out_path = build_processed_data_path(cfg, row, settings.output_modality, agent)
-    _save_pickle(data, out_path)
+    save_processed_pickle(data, cfg, row, settings.output_modality, agent)
     return data
 
 
@@ -375,7 +378,7 @@ def build_tasks(
             continue
         if agents_filter is not None and agent not in agents_filter:
             continue
-        fix_path = build_processed_data_path(cfg, row, settings.fixations_modality, agent)
+        fix_path = build_processed_pickle_path(cfg, row, settings.fixations_modality, agent)
         if not fix_path.exists():
             continue
         tasks.append((settings, row, agent))

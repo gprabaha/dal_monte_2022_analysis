@@ -14,13 +14,15 @@ import pandas as pd
 from scipy.stats import ttest_ind
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    build_processed_pickle_path,
+    load_pickle_path,
+)
 from dal_monte_2022_analysis.utils.paths import (
     build_analysis_output_dir,
     build_fix_cross_correlation_output_filename,
-    build_processed_data_path,
     normalize_fix_cross_correlation_time_scope,
 )
-from dal_monte_2022_analysis.utils.io import load_pickle
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.roi_groups import keywords_for_fixation_label
 
@@ -346,9 +348,6 @@ def _assign_consistency_label(
     return labels
 
 
-_load_pickle = load_pickle
-
-
 def _extract_pupil_vector(obj) -> np.ndarray:
     """Extract 1D pupil-size vector from supported object layouts."""
     if hasattr(obj, "d"):
@@ -438,9 +437,9 @@ def _resolve_interactive_intervals(
     key = (str(date), str(session))
     row = {"date": str(date), "session": str(session)}
     if key not in cache:
-        path = build_processed_data_path(cfg, row, modality, agent=None)
+        path = build_processed_pickle_path(cfg, row, modality, agent=None)
         if path.exists():
-            obj = _load_pickle(path)
+            obj = load_pickle_path(path)
             cache[key] = obj if isinstance(obj, pd.DataFrame) else None
         else:
             cache[key] = None
@@ -535,16 +534,16 @@ def _extract_pupil_during_fixations(
     row = {"date": str(date), "session": str(session)}
 
     if key not in fix_cache:
-        fix_path = build_processed_data_path(cfg, row, fixations_modality, agent)
+        fix_path = build_processed_pickle_path(cfg, row, fixations_modality, agent)
         if fix_path.exists():
-            obj = _load_pickle(fix_path)
+            obj = load_pickle_path(fix_path)
             fix_cache[key] = obj if isinstance(obj, pd.DataFrame) else None
         else:
             fix_cache[key] = None
     if key not in pupil_cache:
-        pupil_path = build_processed_data_path(cfg, row, pupil_modality, agent)
+        pupil_path = build_processed_pickle_path(cfg, row, pupil_modality, agent)
         if pupil_path.exists():
-            pupil_cache[key] = _extract_pupil_vector(_load_pickle(pupil_path))
+            pupil_cache[key] = _extract_pupil_vector(load_pickle_path(pupil_path))
         else:
             pupil_cache[key] = np.asarray([], dtype=np.float64)
 
@@ -619,9 +618,9 @@ def _extract_fixation_duration_bins(
     key = (str(date), str(session), str(agent))
     row = {"date": str(date), "session": str(session)}
     if key not in fix_cache:
-        fix_path = build_processed_data_path(cfg, row, fixations_modality, agent)
+        fix_path = build_processed_pickle_path(cfg, row, fixations_modality, agent)
         if fix_path.exists():
-            obj = _load_pickle(fix_path)
+            obj = load_pickle_path(fix_path)
             fix_cache[key] = obj if isinstance(obj, pd.DataFrame) else None
         else:
             fix_cache[key] = None
@@ -666,9 +665,9 @@ def _extract_fixation_count(
     key = (str(date), str(session), str(agent))
     row = {"date": str(date), "session": str(session)}
     if key not in fix_cache:
-        fix_path = build_processed_data_path(cfg, row, fixations_modality, agent)
+        fix_path = build_processed_pickle_path(cfg, row, fixations_modality, agent)
         if fix_path.exists():
-            obj = _load_pickle(fix_path)
+            obj = load_pickle_path(fix_path)
             fix_cache[key] = obj if isinstance(obj, pd.DataFrame) else None
         else:
             fix_cache[key] = None
@@ -1868,4 +1867,3 @@ def run_fix_cross_correlation_leader_follower_analysis(
     )
 
     return session_df, date_summary_df, pair_summary_df
-

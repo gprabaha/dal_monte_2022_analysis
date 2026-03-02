@@ -17,9 +17,11 @@ from dal_monte_2022_analysis.data.behavioral_data import (
     RecordingContext,
 )
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
-from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    load_pickle_path,
+    save_processed_pickle,
+)
 from dal_monte_2022_analysis.utils.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import build_processed_data_path
 
 
 @dataclass
@@ -32,10 +34,6 @@ class JointFixationDensitySettings:
     normalize: bool = True
     use_parallel: bool = False
     test_single: bool = False
-
-
-_load_pickle = load_pickle
-_save_pickle = save_pickle
 
 
 def _minmax_normalize(values: np.ndarray) -> np.ndarray:
@@ -70,8 +68,8 @@ def build_joint_face_density_for_row(
     m2_path,
 ) -> Optional[JointFixationDensityData]:
     """Build joint face fixation density for a single date/session."""
-    m1_obj = _load_pickle(m1_path)
-    m2_obj = _load_pickle(m2_path)
+    m1_obj = load_pickle_path(m1_path)
+    m2_obj = load_pickle_path(m2_path)
 
     m1_face = _extract_face_density(m1_obj, settings.face_label)
     m2_face = _extract_face_density(m2_obj, settings.face_label)
@@ -106,8 +104,7 @@ def process_joint_face_density_for_row(
         return None
 
     cfg = load_config(settings.cfg_path)
-    out_path = build_processed_data_path(cfg, row, settings.output_modality, None)
-    _save_pickle(data, out_path)
+    save_processed_pickle(data, cfg, row, settings.output_modality, None)
     return data
 
 

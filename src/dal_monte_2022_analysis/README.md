@@ -2,7 +2,7 @@
 
 This package holds the reusable core of the project:
 - `config/` loads dataset configuration and normalizes paths.
-- `core/` contains pure domain logic and invariants (no plotting, filesystem, or HPC code).
+- `core/` contains pure domain logic and invariants (no plotting, filesystem, or HPC code), plus shared contracts under `core/contracts/`.
 - `data/` defines typed data containers, shared annotation helpers, and ephys loaders.
 - `behav/` contains behavioral workflows organized by stage:
   `preprocessing/`, `features/`, `analysis/`, `plotting/`, `modeling/`.
@@ -10,7 +10,7 @@ This package holds the reusable core of the project:
   `preprocessing/`, `features/`, `analysis/`, `plotting/`, `modeling/`.
 - `combined/` contains joint behavioral+ephys workflows organized by stage:
   `preprocessing/`, `features/`, `analysis/`, `plotting/`, `modeling/`.
-- `runtime/` contains environment-specific adapters (HPC orchestration, job submission).
+- `runtime/` contains environment-specific adapters (HPC orchestration, processed-data IO, job submission).
 - behavioral feature-product loading lives in `behav/features/load.py`.
 - `utils/` provides shared helpers (paths, parallelism, io) plus compatibility shims for older imports.
 

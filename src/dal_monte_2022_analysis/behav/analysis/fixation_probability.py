@@ -15,7 +15,7 @@ from tqdm import tqdm
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.behavioral_data import FixationBinaryVectorsData
 from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
-from dal_monte_2022_analysis.utils.io import load_pickle
+from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 
@@ -44,12 +44,9 @@ class FixationProbabilitySettings:
     test_single: bool = False
 
 
-_load_pickle = load_pickle
-
-
 def _load_interactive_periods(path) -> Optional[pd.DataFrame]:
     """Load interactive periods from a pickle path."""
-    obj = _load_pickle(path)
+    obj = load_pickle_path(path)
     if isinstance(obj, pd.DataFrame):
         return obj
     return None
@@ -149,7 +146,7 @@ def _load_fixation_vector(
     fixation_label: str,
 ) -> tuple[Optional[np.ndarray], Optional[str]]:
     """Load a fixation vector and monkey name from a pickle path."""
-    obj = _load_pickle(path)
+    obj = load_pickle_path(path)
     return _extract_fixation_vector(obj, fixation_label), _extract_monkey_name(obj)
 
 
