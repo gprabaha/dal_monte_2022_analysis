@@ -51,11 +51,13 @@ def _infer_config_type(path: Path, cfg: dict[str, Any]) -> str:
     return "generic"
 
 
-def _normalize_dataset_paths(cfg: dict[str, Any], _: Path) -> dict[str, Any]:
-    for key in ("raw_data_root", "processed_data_root", "analysis_output_root"):
-        if key in cfg:
-            cfg[key] = Path(cfg[key])
-    return cfg
+def _normalize_dataset_paths(cfg: dict[str, Any], cfg_path: Path) -> dict[str, Any]:
+    base_dir = cfg_path.resolve().parent
+    return _resolve_paths(
+        cfg,
+        keys=["raw_data_root", "processed_data_root", "analysis_output_root"],
+        base_dir=base_dir,
+    )
 
 
 def _normalize_ephys_paths(cfg: dict[str, Any], cfg_path: Path) -> dict[str, Any]:
@@ -87,10 +89,11 @@ def _normalize_project_paths(cfg: dict[str, Any], cfg_path: Path) -> dict[str, A
         keys=["dataset_cfg_path", "ephys_data_cfg_path", "plotting_cfg_path"],
         base_dir=base_dir,
     )
-    for key in ("raw_data_root", "processed_data_root", "analysis_output_root"):
-        if key in cfg:
-            cfg[key] = Path(cfg[key])
-    return cfg
+    return _resolve_paths(
+        cfg,
+        keys=["raw_data_root", "processed_data_root", "analysis_output_root"],
+        base_dir=base_dir,
+    )
 
 
 _NORMALIZERS = {
