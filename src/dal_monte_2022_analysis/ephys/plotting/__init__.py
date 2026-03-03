@@ -4,6 +4,12 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_psth import (
     FixationPSTHUnitPlotSettings,
     plot_fixation_psth_units,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_psth_example_grid import (
+    FixationPSTHExampleGridPlotSettings,
+    FixationPSTHExampleUnitSpec,
+    parse_example_grid_unit_specs,
+    plot_fixation_psth_example_grid,
+)
 from dal_monte_2022_analysis.ephys.plotting.period_psth import (
     PeriodPSTHUnitPlotSettings,
     plot_period_psth_units,
@@ -30,6 +36,10 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_neural_cross_correlation im
 __all__ = [
     "FixationPSTHUnitPlotSettings",
     "plot_fixation_psth_units",
+    "FixationPSTHExampleGridPlotSettings",
+    "FixationPSTHExampleUnitSpec",
+    "parse_example_grid_unit_specs",
+    "plot_fixation_psth_example_grid",
     "PeriodPSTHUnitPlotSettings",
     "plot_period_psth_units",
     "FixationSelectivityVennPlotSettings",

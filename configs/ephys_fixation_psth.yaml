@@ -112,6 +112,44 @@ selective_example_significance_alpha: 0.05
 selective_example_significance_test: welch_ttest
 selective_example_significance_min_trials_per_condition: 2
 
+# Selective-unit example grid plotting (3 rows x 4 columns)
+# Intended layout footprint: full letter width x 3/5 letter height.
+# Region/preference entries support either:
+#   - {unit_uuid: "<uuid>"}
+#   - {date: "YYYYMMDD", unit_uuid: "<uuid>"} (optional date when needed)
+#   - "<uuid>" (date is auto-resolved if unique)
+selective_example_grid_output_subdir: ephys/psth/fixation_psth_selective_unit_plots
+selective_example_grid_output_filename: selective_example_grid_3x4
+selective_example_grid_output_extension: pdf
+selective_example_grid_output_dpi: 220
+selective_example_grid_pdf_compression: 0
+selective_example_grid_allow_missing: false
+selective_example_grid_figure_width_in: 8.5
+selective_example_grid_figure_height_in: 6.6
+selective_example_grid_regions: [BLA, ACCg, dmPFC, OFC]
+selective_example_grid_preferences: [face_interactive, face_non_interactive, object]
+selective_example_grid_row_labels:
+  face_interactive: "Interactive Face Favoring"
+  face_non_interactive: "Non-Interactive Face Favoring"
+  object: "Object Favoring"
+selective_example_grid_units:
+  BLA:
+    face_interactive: {unit_uuid: "789"}
+    face_non_interactive: {unit_uuid: "553"}
+    object: {unit_uuid: "2614"}
+  ACCg:
+    face_interactive: {unit_uuid: "118"}
+    face_non_interactive: {unit_uuid: "148"}
+    object: {unit_uuid: "359"}
+  dmPFC:
+    face_interactive: {unit_uuid: "1516"}
+    face_non_interactive: {unit_uuid: "1751"}
+    object: {unit_uuid: "1764"}
+  OFC:
+    face_interactive: {unit_uuid: "1032"}
+    face_non_interactive: {unit_uuid: "1304"}
+    object: {unit_uuid: "1255"}
+
 # Per-unit fixation PSTH plotting (stored in analysis_output_root)
 plot_output_subdir: ephys/psth/fixation_psth_unit_plots
 plot_output_extension: pdf
@@ -132,6 +170,6 @@ plot_raster_show_condition_background: false
 plot_panel_raster_height_ratio: 1.2
 plot_panel_rate_height_ratio: 2.0
 plot_condition_colors:
-  face_interactive: "#d62728"
-  face_non_interactive: "#1f77b4"
-  object: "#2ca02c"
+  face_interactive: "#b64198"
+  face_non_interactive: "#97ca3d"
+  object: "#754c29"

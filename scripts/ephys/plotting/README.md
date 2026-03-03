@@ -148,6 +148,29 @@ Config:
   - `selective_example_significance_test`
   - `selective_example_significance_min_trials_per_condition`
 
+- `plot_selective_fixation_psth_example_grid.py`
+  Builds one selective-unit example grid figure with:
+  - rows = preferred response class (`face_interactive`, `face_non_interactive`, `object`)
+  - columns = regions (default: `BLA`, `ACCg`, `dmPFC`, `OFC`)
+  - each cell = one manually selected unit from config, rendered as:
+    - top raster (all three fixation conditions)
+    - bottom mean firing-rate traces with SEM shading
+  Default output is an editable vector PDF sized to letter width x 3/5 letter height.
+
+  Config:
+  - `selective_example_grid_output_subdir`
+  - `selective_example_grid_output_filename`
+  - `selective_example_grid_output_extension`
+  - `selective_example_grid_output_dpi`
+  - `selective_example_grid_pdf_compression`
+  - `selective_example_grid_allow_missing`
+  - `selective_example_grid_figure_width_in`
+  - `selective_example_grid_figure_height_in`
+  - `selective_example_grid_regions`
+  - `selective_example_grid_preferences`
+  - `selective_example_grid_row_labels`
+  - `selective_example_grid_units`
+
 - `plot_within_region_fixation_neural_cross_correlation.py`
   Within-region neural xcorr summary plotting:
   - date-level (PNG): one figure per date for `pairs` and one for `mean`,
