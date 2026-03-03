@@ -117,7 +117,9 @@ selective_region_comparison_pvalue_correction: fdr_bh
 selective_region_comparison_alpha: 0.05
 selective_region_comparison_require_all_conditions_observed: true
 selective_region_comparison_require_meets_min_trials: false
+selective_region_comparison_require_selective_units: true
 selective_region_comparison_pseudo_count: 1e-6
+selective_region_comparison_alignment_cosine_threshold: 0.95
 
 # Cross-region comparison heatmap plotting
 selective_region_comparison_plot_output_subdir: ephys/psth/fixation_psth_selectivity_region_comparison/plots

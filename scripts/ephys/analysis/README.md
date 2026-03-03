@@ -5,10 +5,12 @@ CLI entrypoints for ephys analysis.
 Current scripts:
 - `build_fixation_selective_units.py`
   Computes fixation-pair selectivity per unit from trial PSTH data.
-  For each unit, each pair of categories is tested across three windows:
+  For each unit, each pair of categories is tested across configured windows
+  (default now includes four):
   - `pre_fix`  (-500 ms to 0 ms)
   - `peri_fix` (-250 ms to 250 ms)
   - `post_fix` (0 ms to 500 ms)
+  - `full_fix` (-500 ms to 500 ms)
   Pair is selective if any window is significant.
   Also writes one per-unit/per-window three-condition summary table
   (`condition_window_means.csv`) with mean firing rates for:
@@ -18,7 +20,10 @@ Current scripts:
   and normalized relative components for triangular plotting.
 - `build_fixation_three_way_region_comparison.py`
   Compares three-way fixation-response compositions across regions per
-  analysis window using permutation pseudo-F tests in ILR space.
+  analysis window using permutation tests for:
+  - centroid separation in ILR space (pseudo-F)
+  - dispersion differences (distance-to-centroid spread)
+  - vertex-axis alignment concentration (line-like clustering toward centroid-to-vertex axes)
   Writes:
   - `pairwise_region_comparisons.csv`
   - `window_region_comparisons.csv`
@@ -60,7 +65,9 @@ Config:
   - `selective_region_comparison_alpha`
   - `selective_region_comparison_require_all_conditions_observed`
   - `selective_region_comparison_require_meets_min_trials`
+  - `selective_region_comparison_require_selective_units`
   - `selective_region_comparison_pseudo_count`
+  - `selective_region_comparison_alignment_cosine_threshold`
 - `configs/ephys_fixation_neural_cross_correlation.yaml`
   - `trial_input_modality`
   - `trial_input_filename`

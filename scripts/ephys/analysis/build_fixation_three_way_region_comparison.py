@@ -35,6 +35,7 @@ def main() -> None:
         cfg_path=args.dataset_cfg,
         input_subdir=cfg.get("selective_output_subdir", "ephys/psth/fixation_psth_selectivity"),
         condition_summary_filename=cfg.get("selective_condition_summary_filename", "condition_window_means.csv"),
+        unit_summary_filename=cfg.get("selective_unit_summary_filename", "unit_selectivity.csv"),
         output_subdir=cfg.get(
             "selective_region_comparison_output_subdir",
             "ephys/psth/fixation_psth_selectivity_region_comparison",
@@ -65,7 +66,15 @@ def main() -> None:
             "selective_region_comparison_require_meets_min_trials",
             False,
         ),
+        require_selective_units=cfg.get(
+            "selective_region_comparison_require_selective_units",
+            False,
+        ),
         pseudo_count=cfg.get("selective_region_comparison_pseudo_count", 1e-6),
+        alignment_cosine_threshold=cfg.get(
+            "selective_region_comparison_alignment_cosine_threshold",
+            0.95,
+        ),
     )
     if args.n_permutations is not None:
         settings.n_permutations = int(args.n_permutations)
@@ -85,9 +94,14 @@ def main() -> None:
     if win_df is not None and not win_df.empty:
         n_sig_global = int(win_df["global_significant"].sum()) if "global_significant" in win_df.columns else 0
         print(f"[analysis] globally significant windows (adjusted): {n_sig_global}/{len(win_df)}")
+        if "global_dispersion_significant" in win_df.columns:
+            n_sig_disp = int(win_df["global_dispersion_significant"].sum())
+            print(f"[analysis] global dispersion-significant windows (adjusted): {n_sig_disp}/{len(win_df)}")
+        if "global_alignment_significant" in win_df.columns:
+            n_sig_align = int(win_df["global_alignment_significant"].sum())
+            print(f"[analysis] global alignment-significant windows (adjusted): {n_sig_align}/{len(win_df)}")
     print("[analysis] wrote region comparison outputs to configured analysis subdir")
 
 
 if __name__ == "__main__":
     main()
-
