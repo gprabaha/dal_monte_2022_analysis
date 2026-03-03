@@ -58,6 +58,18 @@ class FixationThreeWayTriangularPlotSettings:
     point_alpha_non_significant: float = 0.5
     marker_edge_width: float = 0.28
     draw_centroid: bool = True
+    include_only_selective_units: bool = False
+    region_order: Optional[Sequence[str]] = None
+    default_windows: Optional[Sequence[str]] = None
+    figure_width_in: Optional[float] = None
+    figure_height_in: Optional[float] = None
+    show_suptitle: bool = True
+    left_margin: float = 0.035
+    right_margin: float = 0.995
+    top_margin: float = 0.95
+    bottom_margin: float = 0.04
+    panel_wspace: float = 0.12
+    panel_hspace: float = 0.22
 
 
 def _resolve_figsize_and_dpi(
@@ -73,7 +85,13 @@ def _resolve_figsize_and_dpi(
     else:
         figsize, cfg_dpi = (None, None)
 
-    if figsize is None:
+    if settings.figure_width_in is not None or settings.figure_height_in is not None:
+        if figsize is None:
+            figsize = [max(3.0 * float(n_cols), 7.5), max(4.2 * float(n_rows), 8.6)]
+        width_in = float(settings.figure_width_in) if settings.figure_width_in is not None else float(figsize[0])
+        height_in = float(settings.figure_height_in) if settings.figure_height_in is not None else float(figsize[1])
+        figsize = [width_in, height_in]
+    elif figsize is None:
         # Favor taller panels so equal-aspect triangles fill more of each subplot.
         figsize = [max(3.0 * float(n_cols), 7.5), max(4.2 * float(n_rows), 8.6)]
     dpi = settings.output_dpi if settings.output_dpi is not None else cfg_dpi
@@ -227,6 +245,25 @@ def _to_triangle_xy(rel_int: np.ndarray, rel_obj: np.ndarray) -> tuple[np.ndarra
     return x, y
 
 
+def _normalize_region(region: object) -> str:
+    return str(region).strip().lower()
+
+
+def _dedupe_preserve_order(values: Sequence[object]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        token = str(value).strip()
+        if not token:
+            continue
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(token)
+    return out
+
+
 def _draw_triangle_frame(ax) -> None:
     ax.plot([0.0, 1.0], [0.0, 0.0], color="#2e2e2e", linewidth=1.5)
     ax.plot([0.0, 0.5], [0.0, TRIANGLE_HEIGHT], color="#2e2e2e", linewidth=1.5)
@@ -294,18 +331,38 @@ def plot_fixation_three_way_selectivity_triangular(
         print("[plot] no rows with valid relative three-way firing components")
         return None
 
-    if regions is not None:
-        allowed_regions = {str(region) for region in regions}
-        df = df.loc[df["region"].astype(str).isin(allowed_regions)].copy()
-    if windows is not None:
-        allowed_windows = {str(window) for window in windows}
-        df = df.loc[df["window_name"].astype(str).isin(allowed_windows)].copy()
-    if df.empty:
+    df_total = df.copy()
+
+    requested_regions = regions if regions is not None else settings.region_order
+    requested_windows = windows if windows is not None else settings.default_windows
+
+    df_total["region"] = df_total["region"].astype(str).map(lambda text: text.strip())
+    df_total["region_norm"] = df_total["region"].map(_normalize_region)
+    df_total["window_name"] = df_total["window_name"].astype(str).map(lambda text: text.strip())
+
+    if requested_regions is not None:
+        region_order = _dedupe_preserve_order(requested_regions)
+        allowed_norm = {_normalize_region(region) for region in region_order}
+        df_total = df_total.loc[df_total["region_norm"].isin(allowed_norm)].copy()
+    else:
+        region_order = sorted(df_total["region"].astype(str).unique().tolist())
+
+    if requested_windows is not None:
+        window_order = _dedupe_preserve_order(requested_windows)
+        allowed_windows = {str(window) for window in window_order}
+        df_total = df_total.loc[df_total["window_name"].astype(str).isin(allowed_windows)].copy()
+    else:
+        window_order = _window_order(df_total, None)
+
+    if df_total.empty:
         print("[plot] no rows remain after region/window filtering")
         return None
 
-    region_order = sorted(df["region"].astype(str).unique().tolist())
-    window_order = _window_order(df, windows)
+    if settings.include_only_selective_units:
+        df = df_total.loc[df_total["is_selective_unit"]].copy()
+    else:
+        df = df_total.copy()
+
     if not region_order or not window_order:
         print("[plot] no region/window panels available to render")
         return None
@@ -314,17 +371,28 @@ def plot_fixation_three_way_selectivity_triangular(
     n_cols = len(region_order)
     figsize, dpi = _resolve_figsize_and_dpi(settings, n_rows=n_rows, n_cols=n_cols)
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, dpi=dpi, squeeze=False)
+    compact = float(figsize[1]) <= 2.4
 
-    win_labels = _window_label_map(df)
+    win_labels = _window_label_map(df_total)
     panel_counts: list[dict] = []
     for row_idx, window_name in enumerate(window_order):
         for col_idx, region in enumerate(region_order):
             ax = axes[row_idx][col_idx]
             _draw_triangle_frame(ax)
 
+            panel_total = df_total.loc[
+                (df_total["window_name"].astype(str) == str(window_name))
+                & (df_total["region_norm"] == _normalize_region(region))
+            ].copy()
+            n_total_units = (
+                int(panel_total["unit_key"].astype(str).nunique())
+                if "unit_key" in panel_total.columns
+                else int(len(panel_total))
+            )
+
             panel = df.loc[
                 (df["window_name"].astype(str) == str(window_name))
-                & (df["region"].astype(str) == str(region))
+                & (df["region_norm"] == _normalize_region(region))
             ].copy()
             n_units = int(panel["unit_key"].astype(str).nunique()) if "unit_key" in panel.columns else int(len(panel))
             panel_counts.append(
@@ -332,6 +400,7 @@ def plot_fixation_three_way_selectivity_triangular(
                     "region": str(region),
                     "window_name": str(window_name),
                     "n_units": int(n_units),
+                    "n_total_units": int(n_total_units),
                 }
             )
             if n_units >= int(settings.min_units_per_panel):
@@ -373,11 +442,15 @@ def plot_fixation_three_way_selectivity_triangular(
             ax.text(
                 0.02,
                 0.97,
-                f"n={n_units}",
+                (
+                    f"n_sel={n_units}/{n_total_units}"
+                    if settings.include_only_selective_units
+                    else f"n={n_units}"
+                ),
                 transform=ax.transAxes,
                 ha="left",
                 va="top",
-                fontsize=8.5,
+                fontsize=6.5 if compact else 8.5,
             )
             ax.text(
                 0.5,
@@ -386,7 +459,7 @@ def plot_fixation_three_way_selectivity_triangular(
                 transform=ax.transAxes,
                 ha="center",
                 va="bottom",
-                fontsize=7.8,
+                fontsize=6.2 if compact else 7.8,
                 color="#111111",
             )
             ax.text(
@@ -396,7 +469,7 @@ def plot_fixation_three_way_selectivity_triangular(
                 transform=ax.transAxes,
                 ha="left",
                 va="top",
-                fontsize=7.0,
+                fontsize=5.6 if compact else 7.0,
                 color="#111111",
             )
             ax.text(
@@ -406,27 +479,31 @@ def plot_fixation_three_way_selectivity_triangular(
                 transform=ax.transAxes,
                 ha="right",
                 va="top",
-                fontsize=7.6,
+                fontsize=6.0 if compact else 7.6,
                 color="#111111",
             )
 
             if row_idx == 0:
-                ax.set_title(str(region), fontsize=11.2, pad=10.0)
-            if col_idx == 0:
-                ax.set_ylabel(str(win_labels.get(str(window_name), str(window_name))), fontsize=9.0)
+                ax.set_title(str(region), fontsize=9.0 if compact else 11.2, pad=5.0 if compact else 10.0)
+            if col_idx == 0 and n_rows > 1:
+                ax.set_ylabel(
+                    str(win_labels.get(str(window_name), str(window_name))),
+                    fontsize=7.3 if compact else 9.0,
+                )
 
-    fig.suptitle(
-        "Three-way fixation-condition population activity",
-        fontsize=13.2,
-        y=0.995,
-    )
+    if settings.show_suptitle:
+        fig.suptitle(
+            "Three-way fixation-condition population activity",
+            fontsize=10.2 if compact else 13.2,
+            y=0.992 if compact else 0.995,
+        )
     fig.subplots_adjust(
-        left=0.035,
-        right=0.995,
-        top=0.95,
-        bottom=0.04,
-        wspace=0.12,
-        hspace=0.22,
+        left=float(settings.left_margin),
+        right=float(settings.right_margin),
+        top=float(settings.top_margin),
+        bottom=float(settings.bottom_margin),
+        wspace=float(settings.panel_wspace),
+        hspace=float(settings.panel_hspace),
     )
 
     cfg = load_config(settings.cfg_path)

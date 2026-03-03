@@ -59,6 +59,7 @@ selective_windows_ms:
   pre_fix: [-500.0, 0.0]
   peri_fix: [-250.0, 250.0]
   post_fix: [0.0, 500.0]
+  full_fix: [-500.0, 500.0]
 
 # Region-level Venn plots from fixation selectivity outputs
 selective_venn_output_subdir: ephys/psth/fixation_psth_selectivity_venn
@@ -84,6 +85,18 @@ selective_triangular_output_filename: population_triangular
 selective_triangular_output_extension: png
 selective_triangular_output_dpi: 220
 selective_triangular_min_units_per_panel: 1
+selective_triangular_include_only_selective_units: true
+selective_triangular_region_order: [BLA, ACCg, dmPFC, OFC]
+selective_triangular_windows: [full_fix]
+selective_triangular_figure_width_in: 8.5
+selective_triangular_figure_height_in: 2.2
+selective_triangular_show_suptitle: false
+selective_triangular_left_margin: 0.02
+selective_triangular_right_margin: 0.995
+selective_triangular_top_margin: 0.86
+selective_triangular_bottom_margin: 0.04
+selective_triangular_panel_wspace: 0.10
+selective_triangular_panel_hspace: 0.18
 selective_triangular_point_size: 26.0
 selective_triangular_point_color: "#1f1f1f"
 selective_triangular_point_alpha_significant: 1.0

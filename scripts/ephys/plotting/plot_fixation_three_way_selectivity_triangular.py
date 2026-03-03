@@ -59,6 +59,18 @@ def main() -> None:
         point_alpha_non_significant=cfg.get("selective_triangular_point_alpha_non_significant", 0.5),
         marker_edge_width=cfg.get("selective_triangular_marker_edge_width", 0.28),
         draw_centroid=cfg.get("selective_triangular_draw_centroid", True),
+        include_only_selective_units=cfg.get("selective_triangular_include_only_selective_units", False),
+        region_order=cfg.get("selective_triangular_region_order"),
+        default_windows=cfg.get("selective_triangular_windows"),
+        figure_width_in=cfg.get("selective_triangular_figure_width_in"),
+        figure_height_in=cfg.get("selective_triangular_figure_height_in"),
+        show_suptitle=cfg.get("selective_triangular_show_suptitle", True),
+        left_margin=cfg.get("selective_triangular_left_margin", 0.035),
+        right_margin=cfg.get("selective_triangular_right_margin", 0.995),
+        top_margin=cfg.get("selective_triangular_top_margin", 0.95),
+        bottom_margin=cfg.get("selective_triangular_bottom_margin", 0.04),
+        panel_wspace=cfg.get("selective_triangular_panel_wspace", 0.12),
+        panel_hspace=cfg.get("selective_triangular_panel_hspace", 0.22),
     )
 
     result = plot_fixation_three_way_selectivity_triangular(

@@ -108,6 +108,9 @@ Config:
   Points use a single fixed color (no condition-based color coding).
   Input comes from `condition_window_means.csv` produced by
   `build_fixation_selective_units.py`.
+  The script can also be configured for a compact single-row layout
+  (e.g., one chosen window across ordered regions) and can restrict
+  plotted points to selective units only.
 
   Config:
   - `selective_output_subdir`
@@ -124,6 +127,18 @@ Config:
   - `selective_triangular_point_alpha_non_significant`
   - `selective_triangular_marker_edge_width`
   - `selective_triangular_draw_centroid`
+  - `selective_triangular_include_only_selective_units`
+  - `selective_triangular_region_order`
+  - `selective_triangular_windows`
+  - `selective_triangular_figure_width_in`
+  - `selective_triangular_figure_height_in`
+  - `selective_triangular_show_suptitle`
+  - `selective_triangular_left_margin`
+  - `selective_triangular_right_margin`
+  - `selective_triangular_top_margin`
+  - `selective_triangular_bottom_margin`
+  - `selective_triangular_panel_wspace`
+  - `selective_triangular_panel_hspace`
 
 - `plot_fixation_three_way_region_comparison.py`
   Plots cross-region comparison heatmaps for each time window from
