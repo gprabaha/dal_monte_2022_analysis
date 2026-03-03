@@ -66,6 +66,17 @@ selective_venn_output_extension: pdf
 selective_venn_output_dpi: 220
 selective_venn_use_parallel: true
 selective_venn_min_units_per_region: 1
+selective_venn_combine_regions_into_single_figure: true
+selective_venn_region_order: [BLA, ACCg, dmPFC, OFC]
+selective_venn_combined_output_filename: regions_1x4
+selective_venn_combined_figure_width_in: 8.5
+selective_venn_combined_figure_height_in: 2.2
+selective_venn_combined_left_margin: 0.01
+selective_venn_combined_right_margin: 0.995
+selective_venn_combined_top_margin: 0.79
+selective_venn_combined_bottom_margin: 0.06
+selective_venn_combined_wspace: 0.15
+selective_venn_combined_show_pair_key: true
 
 # Region-by-window triangular population plotting from three-way condition means
 selective_triangular_output_subdir: ephys/psth/fixation_psth_selectivity_triangular

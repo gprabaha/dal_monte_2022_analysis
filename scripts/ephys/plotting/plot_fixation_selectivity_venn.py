@@ -76,6 +76,17 @@ def main() -> None:
         max_procs=cfg.get("max_procs", 16),
         test_single=cfg.get("test_single", False),
         min_units_per_region=cfg.get("selective_venn_min_units_per_region", 1),
+        combine_regions_into_single_figure=cfg.get("selective_venn_combine_regions_into_single_figure", True),
+        region_order=cfg.get("selective_venn_region_order", ["BLA", "ACCg", "dmPFC", "OFC"]),
+        combined_output_filename=cfg.get("selective_venn_combined_output_filename", "regions_1x4"),
+        combined_figure_width_in=cfg.get("selective_venn_combined_figure_width_in", 8.5),
+        combined_figure_height_in=cfg.get("selective_venn_combined_figure_height_in", 2.2),
+        combined_left_margin=cfg.get("selective_venn_combined_left_margin", 0.01),
+        combined_right_margin=cfg.get("selective_venn_combined_right_margin", 0.995),
+        combined_top_margin=cfg.get("selective_venn_combined_top_margin", 0.79),
+        combined_bottom_margin=cfg.get("selective_venn_combined_bottom_margin", 0.06),
+        combined_wspace=cfg.get("selective_venn_combined_wspace", 0.15),
+        combined_show_pair_key=cfg.get("selective_venn_combined_show_pair_key", True),
     )
 
     if args.no_parallel:
@@ -93,9 +104,12 @@ def main() -> None:
 
     for summary in outputs:
         _print_region_summary(summary)
-    print(f"\n[plot] wrote {len(outputs)} region Venn figure(s)")
+    unique_paths = sorted({str(row.get("output_path")) for row in outputs if row.get("output_path") is not None})
+    print(
+        f"\n[plot] wrote {len(unique_paths)} Venn figure(s) "
+        f"covering {len(outputs)} region summaries"
+    )
 
 
 if __name__ == "__main__":
     main()
-

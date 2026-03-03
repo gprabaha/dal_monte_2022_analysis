@@ -11,6 +11,7 @@ import matplotlib as mpl
 
 mpl.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -56,6 +57,17 @@ class FixationSelectivityVennPlotSettings:
     max_procs: int = 16
     test_single: bool = False
     min_units_per_region: int = 1
+    combine_regions_into_single_figure: bool = True
+    region_order: Optional[Sequence[str]] = ("BLA", "ACCg", "dmPFC", "OFC")
+    combined_output_filename: str = "regions_1x4"
+    combined_figure_width_in: float = 8.5
+    combined_figure_height_in: float = 2.2
+    combined_left_margin: float = 0.01
+    combined_right_margin: float = 0.995
+    combined_top_margin: float = 0.79
+    combined_bottom_margin: float = 0.06
+    combined_wspace: float = 0.15
+    combined_show_pair_key: bool = True
 
 
 def _as_bool(val) -> bool:
@@ -200,6 +212,16 @@ def _resolve_figsize_and_dpi(settings: FixationSelectivityVennPlotSettings) -> t
     return [float(figsize[0]), float(figsize[1])], dpi
 
 
+def _resolve_dpi_with_plotting_config(settings: FixationSelectivityVennPlotSettings) -> Optional[int]:
+    if settings.plotting_cfg_path and Path(settings.plotting_cfg_path).exists():
+        plot_cfg = load_config(settings.plotting_cfg_path)
+        apply_plotting_config(plot_cfg)
+        _, cfg_dpi = resolve_figsize(plot_cfg)
+    else:
+        cfg_dpi = None
+    return settings.output_dpi if settings.output_dpi is not None else cfg_dpi
+
+
 def _segment_label(count: int, total: int) -> str:
     return f"{count}\n{_pct(count, total):.1f}%"
 
@@ -220,36 +242,78 @@ def _format_set_label(title: str, count: int, total: int) -> str:
     return f"{title}\n{count} ({_pct(count, total):.1f}%)"
 
 
-def _render_region_venn(summary: dict, settings: FixationSelectivityVennPlotSettings) -> Path:
-    if _MATPLOTLIB_VENN_IMPORT_ERROR is not None:
-        raise RuntimeError(
-            "matplotlib-venn is required for advanced area-scaled Venn plots. "
-            f"Import error: {_MATPLOTLIB_VENN_IMPORT_ERROR}"
-        )
+def _normalize_region_token(region: object) -> str:
+    return str(region).strip().lower()
 
-    cfg = load_config(settings.cfg_path)
-    out_root = build_analysis_output_dir(cfg, settings.output_subdir)
-    out_root.mkdir(parents=True, exist_ok=True)
 
-    region = str(summary["region"])
+def _region_sort_key(region: str, region_order: Optional[Sequence[str]]) -> tuple[int, int | str]:
+    text = str(region).strip()
+    text_norm = _normalize_region_token(text)
+    if region_order is None:
+        return (1, text_norm)
+    for idx, expected in enumerate(region_order):
+        if text_norm == _normalize_region_token(expected):
+            return (0, idx)
+    return (1, text_norm)
+
+
+def _ordered_region_names(
+    summaries: Sequence[dict],
+    region_order: Optional[Sequence[str]],
+) -> list[str]:
+    summary_regions: dict[str, str] = {}
+    for summary in summaries:
+        raw = str(summary["region"]).strip()
+        norm = _normalize_region_token(raw)
+        if not norm:
+            continue
+        if norm not in summary_regions:
+            summary_regions[norm] = raw
+    ordered: list[str] = []
+    used_norm: set[str] = set()
+    if region_order is not None:
+        for region in region_order:
+            region_text = str(region).strip()
+            norm = _normalize_region_token(region_text)
+            if not norm or norm in used_norm:
+                continue
+            ordered.append(region_text)
+            used_norm.add(norm)
+    for norm in sorted(summary_regions):
+        if norm in used_norm:
+            continue
+        ordered.append(summary_regions[norm])
+        used_norm.add(norm)
+    return ordered
+
+
+def _draw_region_venn_axis(
+    ax,
+    summary: dict,
+    *,
+    compact: bool,
+    region_title: Optional[str] = None,
+) -> None:
     total_units = int(summary["total_units"])
     set_counts = summary["set_counts"]
     seg = summary["segment_counts"]
-    any_selective = int(summary["any_selective"])
-
-    figsize, dpi = _resolve_figsize_and_dpi(settings)
-    fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
     subset_sizes = _subset_sizes_from_segments(seg)
-    venn = venn3(
-        subsets=subset_sizes,
-        set_labels=(
+
+    if compact:
+        set_labels = ("", "", "")
+    else:
+        set_labels = (
             _format_set_label("Int Face vs Non-Int Face", set_counts["face_int_vs_nonint"], total_units),
             _format_set_label("Int Face vs Object", set_counts["face_int_vs_obj"], total_units),
             _format_set_label("Non-Int Face vs Object", set_counts["face_nonint_vs_obj"], total_units),
-        ),
+        )
+
+    venn = venn3(
+        subsets=subset_sizes,
+        set_labels=set_labels,
         ax=ax,
     )
-    venn3_circles(subsets=subset_sizes, ax=ax, linewidth=1.8, color="#303030")
+    venn3_circles(subsets=subset_sizes, ax=ax, linewidth=0.95 if compact else 1.8, color="#303030")
 
     patch_colors = {
         "100": "#4C78A8",
@@ -265,41 +329,160 @@ def _render_region_venn(summary: dict, settings: FixationSelectivityVennPlotSett
         if patch is None:
             continue
         patch.set_color(color)
-        patch.set_alpha(0.36)
+        patch.set_alpha(0.36 if not compact else 0.34)
         patch.set_edgecolor("#222222")
-        patch.set_linewidth(1.0)
+        patch.set_linewidth(0.9 if compact else 1.0)
 
-    missing_labels: list[str] = []
     for subset_id, count in subset_sizes.items():
         label = venn.get_label_by_id(subset_id)
-        text = _segment_label(int(count), total_units)
         if label is None:
-            missing_labels.append(f"{subset_id}: {text.replace(chr(10), ' ')}")
             continue
-        label.set_text(text)
-        label.set_fontsize(10)
-        label.set_fontweight("bold")
-        label.set_color("#111111")
-        label.set_bbox(
-            {
-                "boxstyle": "round,pad=0.2",
-                "facecolor": "white",
-                "alpha": 0.8,
-                "linewidth": 0.0,
-            }
+        if compact:
+            label.set_text("" if int(count) <= 0 else f"{int(count)}")
+            label.set_fontsize(6.0)
+            label.set_fontweight("semibold")
+            label.set_color("#111111")
+        else:
+            label.set_text(_segment_label(int(count), total_units))
+            label.set_fontsize(10)
+            label.set_fontweight("bold")
+            label.set_color("#111111")
+            label.set_bbox(
+                {
+                    "boxstyle": "round,pad=0.2",
+                    "facecolor": "white",
+                    "alpha": 0.8,
+                    "linewidth": 0.0,
+                }
+            )
+
+    if not compact:
+        for idx, set_label in enumerate(venn.set_labels or []):
+            if set_label is None:
+                continue
+            set_label.set_fontsize(9)
+            set_label.set_fontweight("semibold")
+            if idx == 0:
+                set_label.set_position((set_label.get_position()[0] - 0.03, set_label.get_position()[1] - 0.01))
+            elif idx == 1:
+                set_label.set_position((set_label.get_position()[0] + 0.03, set_label.get_position()[1] - 0.01))
+            else:
+                set_label.set_position((set_label.get_position()[0], set_label.get_position()[1] + 0.02))
+
+    region = str(region_title).strip() if region_title is not None else str(summary["region"]).strip()
+    if compact:
+        ax.set_title(f"{region} (n={total_units})", fontsize=8.4, pad=2.0)
+    else:
+        ax.set_title(f"Region {region}: Fixation Selectivity Venn (Area-Scaled)")
+    ax.axis("off")
+
+
+def _render_combined_region_venn(
+    summaries: Sequence[dict],
+    settings: FixationSelectivityVennPlotSettings,
+) -> Path:
+    if _MATPLOTLIB_VENN_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "matplotlib-venn is required for advanced area-scaled Venn plots. "
+            f"Import error: {_MATPLOTLIB_VENN_IMPORT_ERROR}"
+        )
+    if not summaries:
+        raise ValueError("No region summaries available for combined Venn rendering.")
+
+    cfg = load_config(settings.cfg_path)
+    out_root = build_analysis_output_dir(cfg, settings.output_subdir)
+    out_root.mkdir(parents=True, exist_ok=True)
+    ext = normalize_extension(settings.output_extension, fallback="pdf")
+    out_path = out_root / f"{str(settings.combined_output_filename).strip() or 'regions_1x4'}.{ext}"
+
+    summary_map: dict[str, dict] = {}
+    for summary in summaries:
+        norm = _normalize_region_token(summary.get("region"))
+        if not norm:
+            continue
+        if norm not in summary_map:
+            summary_map[norm] = summary
+    region_names = _ordered_region_names(summaries, settings.region_order)
+    n_cols = len(region_names)
+    dpi = _resolve_dpi_with_plotting_config(settings)
+
+    fig, axes = plt.subplots(
+        1,
+        n_cols,
+        figsize=[float(settings.combined_figure_width_in), float(settings.combined_figure_height_in)],
+        dpi=dpi,
+    )
+    if n_cols == 1:
+        axes = [axes]
+
+    for idx, region in enumerate(region_names):
+        ax = axes[idx]
+        region_norm = _normalize_region_token(region)
+        summary = summary_map.get(region_norm)
+        if summary is None:
+            ax.axis("off")
+            ax.set_title(f"{region}\n(no data)", fontsize=8.2, pad=2.0, color="#666666")
+            continue
+        _draw_region_venn_axis(ax, summary, compact=True, region_title=str(region))
+
+    if settings.combined_show_pair_key:
+        legend_handles = [
+            Patch(facecolor="#4C78A8", edgecolor="#222222", linewidth=0.6, alpha=0.50, label="Int Face vs Non-Int Face"),
+            Patch(facecolor="#F58518", edgecolor="#222222", linewidth=0.6, alpha=0.50, label="Int Face vs Object"),
+            Patch(facecolor="#54A24B", edgecolor="#222222", linewidth=0.6, alpha=0.50, label="Non-Int Face vs Object"),
+        ]
+        fig.legend(
+            handles=legend_handles,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.99),
+            ncol=3,
+            frameon=False,
+            fontsize=6.3,
+            handlelength=1.1,
+            columnspacing=1.0,
+            handletextpad=0.4,
         )
 
-    for idx, set_label in enumerate(venn.set_labels or []):
-        if set_label is None:
-            continue
-        set_label.set_fontsize(9)
-        set_label.set_fontweight("semibold")
-        if idx == 0:
-            set_label.set_position((set_label.get_position()[0] - 0.03, set_label.get_position()[1] - 0.01))
-        elif idx == 1:
-            set_label.set_position((set_label.get_position()[0] + 0.03, set_label.get_position()[1] - 0.01))
-        else:
-            set_label.set_position((set_label.get_position()[0], set_label.get_position()[1] + 0.02))
+    fig.subplots_adjust(
+        left=float(settings.combined_left_margin),
+        right=float(settings.combined_right_margin),
+        top=float(settings.combined_top_margin),
+        bottom=float(settings.combined_bottom_margin),
+        wspace=float(settings.combined_wspace),
+    )
+    fig.patch.set_facecolor("white")
+    save_figure(
+        fig,
+        out_path,
+        ext=ext,
+        dpi=dpi,
+        facecolor="white",
+        edgecolor="white",
+        transparent=False,
+    )
+    plt.close(fig)
+    return out_path
+
+
+def _render_region_venn(summary: dict, settings: FixationSelectivityVennPlotSettings) -> Path:
+    if _MATPLOTLIB_VENN_IMPORT_ERROR is not None:
+        raise RuntimeError(
+            "matplotlib-venn is required for advanced area-scaled Venn plots. "
+            f"Import error: {_MATPLOTLIB_VENN_IMPORT_ERROR}"
+        )
+
+    cfg = load_config(settings.cfg_path)
+    out_root = build_analysis_output_dir(cfg, settings.output_subdir)
+    out_root.mkdir(parents=True, exist_ok=True)
+
+    region = str(summary["region"])
+    total_units = int(summary["total_units"])
+    seg = summary["segment_counts"]
+    any_selective = int(summary["any_selective"])
+
+    figsize, dpi = _resolve_figsize_and_dpi(settings)
+    fig, ax = plt.subplots(1, 1, figsize=figsize, dpi=dpi)
+    _draw_region_venn_axis(ax, summary, compact=False)
 
     detail_lines = [
         f"Total units: {total_units}",
@@ -314,8 +497,6 @@ def _render_region_venn(summary: dict, settings: FixationSelectivityVennPlotSett
         f"BC only: {seg['bc_only']} ({_pct(seg['bc_only'], total_units):.1f}%)",
         f"ABC: {seg['abc']} ({_pct(seg['abc'], total_units):.1f}%)",
     ]
-    if missing_labels:
-        detail_lines.extend(["", "Missing label placements:", *missing_labels])
     ax.text(
         1.03,
         0.98,
@@ -326,8 +507,6 @@ def _render_region_venn(summary: dict, settings: FixationSelectivityVennPlotSett
         fontsize=9,
     )
 
-    ax.set_title(f"Region {region}: Fixation Selectivity Venn (Area-Scaled)")
-    ax.axis("off")
     fig.subplots_adjust(left=0.05, right=0.76, top=0.9, bottom=0.06)
 
     ext = normalize_extension(settings.output_extension, fallback="pdf")
@@ -380,6 +559,13 @@ def build_fixation_selectivity_venn_summaries(
         return []
 
     outputs: list[dict] = []
+    if settings.combine_regions_into_single_figure:
+        out_path = _render_combined_region_venn(summaries, settings)
+        for summary in summaries:
+            outputs.append({**summary, "output_path": out_path})
+        outputs.sort(key=lambda row: _region_sort_key(str(row["region"]), settings.region_order))
+        return outputs
+
     if settings.use_parallel and len(summaries) > 1:
         n_proc = get_n_processes(max_procs=settings.max_procs)
         with Pool(processes=n_proc) as pool:
@@ -394,5 +580,5 @@ def build_fixation_selectivity_venn_summaries(
         for summary in tqdm(summaries, desc="Plotting selectivity Venn", unit="region"):
             outputs.append(_render_region_worker((summary, settings)))
 
-    outputs.sort(key=lambda row: str(row["region"]))
+    outputs.sort(key=lambda row: _region_sort_key(str(row["region"]), settings.region_order))
     return outputs

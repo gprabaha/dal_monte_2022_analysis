@@ -74,6 +74,9 @@ Config:
   Also prints region-level counts and percentages to terminal for:
   - each pair set
   - all seven Venn intersections
+  By default, the script now writes one combined 1x4 region figure
+  (columns ordered as `BLA`, `ACCg`, `dmPFC`, `OFC`) sized to letter width
+  x one-fifth letter height.
 
   Config:
   - `selective_venn_output_subdir`
@@ -81,6 +84,17 @@ Config:
   - `selective_venn_output_dpi`
   - `selective_venn_use_parallel`
   - `selective_venn_min_units_per_region`
+  - `selective_venn_combine_regions_into_single_figure`
+  - `selective_venn_region_order`
+  - `selective_venn_combined_output_filename`
+  - `selective_venn_combined_figure_width_in`
+  - `selective_venn_combined_figure_height_in`
+  - `selective_venn_combined_left_margin`
+  - `selective_venn_combined_right_margin`
+  - `selective_venn_combined_top_margin`
+  - `selective_venn_combined_bottom_margin`
+  - `selective_venn_combined_wspace`
+  - `selective_venn_combined_show_pair_key`
 
 - `plot_fixation_three_way_selectivity_triangular.py`
   Generates one large triangular-population summary with:
