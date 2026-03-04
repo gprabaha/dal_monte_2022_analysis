@@ -87,7 +87,7 @@ class FixationPSTHExampleGridPlotSettings:
     output_extension: str = "pdf"
     output_dpi: Optional[int] = 220
     figure_width_in: float = 8.5
-    figure_height_in: float = 6.6
+    figure_height_in: float = 4.4
     column_regions: Sequence[str] = field(
         default_factory=lambda: list(DEFAULT_EXAMPLE_GRID_REGIONS),
     )

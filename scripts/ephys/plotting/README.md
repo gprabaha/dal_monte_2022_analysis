@@ -244,7 +244,7 @@ Config:
   - raster colors now exactly match trace colors
   - mean-rate panel can overlay dotted significance-window rectangles
     (default windows: `[-500, 0]`, `[-250, 250]`, `[0, 500]` ms)
-  Default output is an editable vector PDF sized to letter width x 3/5 letter height.
+  Default output is an editable vector PDF sized to letter width x 2/5 letter height.
 
   Config:
   - `selective_example_grid_output_subdir`

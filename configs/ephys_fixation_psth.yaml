@@ -224,7 +224,7 @@ selective_example_significance_test: welch_ttest
 selective_example_significance_min_trials_per_condition: 2
 
 # Selective-unit example grid plotting (3 rows x 4 columns)
-# Intended layout footprint: full letter width x 3/5 letter height.
+# Intended layout footprint: full letter width x 2/5 letter height.
 # Region/preference entries support either:
 #   - {unit_uuid: "<uuid>"}
 #   - {date: "YYYYMMDD", unit_uuid: "<uuid>"} (optional date when needed)
@@ -236,7 +236,7 @@ selective_example_grid_output_dpi: 220
 selective_example_grid_pdf_compression: 0
 selective_example_grid_allow_missing: false
 selective_example_grid_figure_width_in: 8.5
-selective_example_grid_figure_height_in: 6.6
+selective_example_grid_figure_height_in: 4.4
 selective_example_grid_regions: [BLA, ACCg, dmPFC, OFC]
 selective_example_grid_preferences: [face_interactive, face_non_interactive, object]
 selective_example_grid_row_labels:

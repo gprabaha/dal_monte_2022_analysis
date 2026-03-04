@@ -184,7 +184,7 @@ def main() -> None:
         output_extension=cfg.get("selective_example_grid_output_extension", "pdf"),
         output_dpi=cfg.get("selective_example_grid_output_dpi", cfg.get("plot_output_dpi", 220)),
         figure_width_in=cfg.get("selective_example_grid_figure_width_in", 8.5),
-        figure_height_in=cfg.get("selective_example_grid_figure_height_in", 6.6),
+        figure_height_in=cfg.get("selective_example_grid_figure_height_in", 4.4),
         column_regions=regions,
         row_preferences=row_preferences,
         row_labels=row_labels,
