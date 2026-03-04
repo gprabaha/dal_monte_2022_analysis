@@ -15,7 +15,11 @@ import numpy as np
 import pandas as pd
 
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.ephys.plotting.common import darken_color as _darken_color_shared
+from dal_monte_2022_analysis.ephys.plotting.common import (
+    apply_plotting_config as _apply_plotting_config_shared,
+    darken_color as _darken_color_shared,
+    resolve_figsize as _resolve_figsize_shared,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_psth import (
     DEFAULT_CONDITION_COLORS,
     FixationPSTHUnitPlotSettings,
@@ -55,6 +59,12 @@ _PREFERENCE_ALIASES = {
     "face_noninteractive": "face_non_interactive",
     "object": "object",
 }
+
+_CONDITION_LEGEND_ORDER = (
+    ("face_interactive", "Interactive Face"),
+    ("face_non_interactive", "Non-Interactive Face"),
+    ("object", "Object"),
+)
 
 
 @dataclass(frozen=True)
@@ -471,8 +481,6 @@ def _draw_resolved_cell(
     show_x_axis: bool,
 ) -> None:
     y_cursor = 1
-    y_ticks: list[float] = []
-    y_labels: list[str] = []
     for payload in resolved.payloads:
         n_trials = int(payload["n_trials"])
         if n_trials <= 0:
@@ -495,24 +503,19 @@ def _draw_resolved_cell(
                 alpha=0.07,
                 zorder=0,
             )
-        y_ticks.append(float(0.5 * (line_offsets[0] + line_offsets[-1])))
-        y_labels.append(f"{payload['label']} (n={n_trials})")
         y_cursor += n_trials
         ax_raster.axhline(float(y_cursor) - 0.5, color="#cccccc", linewidth=0.55)
 
     ax_raster.axvline(0.0, color="#333333", linestyle="--", linewidth=0.7)
     ax_raster.tick_params(axis="x", which="both", bottom=False, labelbottom=False)
     ax_raster.tick_params(axis="y", labelsize=5.4, pad=1.0, length=1.6)
-    if y_ticks:
-        if show_raster_y_axis:
-            ax_raster.set_yticks(y_ticks)
-            ax_raster.set_yticklabels(y_labels, fontsize=5.4)
-            ax_raster.set_ylabel("Trials", fontsize=7)
-        else:
-            ax_raster.set_yticks([])
-        ax_raster.set_ylim(float(y_cursor) - 0.5, 0.5)
+    ax_raster.set_yticks([])
+    if show_raster_y_axis:
+        ax_raster.set_ylabel("Trials", fontsize=7)
     else:
-        ax_raster.set_yticks([])
+        ax_raster.set_ylabel("")
+    if y_cursor > 1:
+        ax_raster.set_ylim(float(y_cursor) - 0.5, 0.5)
 
     for payload in resolved.payloads:
         if int(payload["n_trials"]) <= 0:
@@ -564,16 +567,27 @@ def _draw_resolved_cell(
 
 
 def _condition_handles(condition_colors: dict[str, str]) -> list[Line2D]:
-    order = [
-        ("face_interactive", "Interactive Face"),
-        ("face_non_interactive", "Non-Interactive Face"),
-        ("object", "Object"),
-    ]
     handles: list[Line2D] = []
-    for key, label in order:
+    for key, label in _CONDITION_LEGEND_ORDER:
         color = condition_colors.get(key, DEFAULT_CONDITION_COLORS.get(key, "#444444"))
         handles.append(Line2D([0], [0], color=color, linewidth=1.2, label=label))
     return handles
+
+
+def _resolve_dpi_and_apply_plotting_config(
+    settings: FixationPSTHExampleGridPlotSettings,
+) -> Optional[int]:
+    cfg_dpi: Optional[int] = None
+    plotting_cfg_path = str(settings.unit_plot_settings.plotting_cfg_path).strip()
+    if plotting_cfg_path and Path(plotting_cfg_path).exists():
+        plot_cfg = load_config(plotting_cfg_path)
+        _apply_plotting_config_shared(plot_cfg)
+        _, cfg_dpi = _resolve_figsize_shared(plot_cfg)
+    if settings.output_dpi is not None:
+        return settings.output_dpi
+    if settings.unit_plot_settings.output_dpi is not None:
+        return settings.unit_plot_settings.output_dpi
+    return cfg_dpi
 
 
 def plot_fixation_psth_example_grid(
@@ -645,7 +659,7 @@ def plot_fixation_psth_example_grid(
             + "\n- ".join(unresolved_specs),
         )
 
-    dpi = settings.output_dpi if settings.output_dpi is not None else unit_settings.output_dpi
+    dpi = _resolve_dpi_and_apply_plotting_config(settings)
     fig = plt.figure(
         figsize=[float(settings.figure_width_in), float(settings.figure_height_in)],
         dpi=dpi,
@@ -733,7 +747,7 @@ def plot_fixation_psth_example_grid(
         )
 
     if settings.show_global_legend:
-        fig.legend(
+        legend = fig.legend(
             handles=_condition_handles(unit_settings.condition_colors),
             loc="upper center",
             bbox_to_anchor=(0.5, 0.985),
@@ -743,6 +757,13 @@ def plot_fixation_psth_example_grid(
             handlelength=2.3,
             columnspacing=1.4,
         )
+        for text, (key, _label) in zip(legend.get_texts(), _CONDITION_LEGEND_ORDER):
+            text.set_color(
+                unit_settings.condition_colors.get(
+                    key,
+                    DEFAULT_CONDITION_COLORS.get(key, "#444444"),
+                )
+            )
 
     cfg = load_config(unit_settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
