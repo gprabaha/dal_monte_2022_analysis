@@ -49,7 +49,7 @@ def main() -> None:
             "ephys/psth/fixation_psth_preference_index/plots",
         ),
         output_filename=cfg.get("selective_index_plot_output_filename", "preference_index_heatmaps"),
-        output_extension=cfg.get("selective_index_plot_output_extension", "png"),
+        output_extension=cfg.get("selective_index_plot_output_extension", "pdf"),
         output_dpi=cfg.get("selective_index_plot_output_dpi", 220),
         include_only_pair_selective_units=cfg.get(
             "selective_index_plot_include_only_pair_selective_units",

@@ -57,7 +57,7 @@ class FixationPreferenceIndexHeatmapPlotSettings:
     timeseries_filename: str = "preference_index_timeseries.csv"
     output_subdir: str = "ephys/psth/fixation_psth_preference_index/plots"
     output_filename: str = "preference_index_heatmaps"
-    output_extension: str = "png"
+    output_extension: str = "pdf"
     output_dpi: Optional[int] = 220
     include_only_pair_selective_units: bool = True
     normalization_mode: str = _NORM_MODE_UNIT_MAX_SUM
@@ -489,7 +489,7 @@ def plot_fixation_preference_index_heatmaps(
 
     cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
-    ext = normalize_extension(settings.output_extension, fallback="png")
+    ext = normalize_extension(settings.output_extension, fallback="pdf")
     figsize, dpi = _resolve_figsize_and_dpi(settings)
 
     outputs: list[dict] = []

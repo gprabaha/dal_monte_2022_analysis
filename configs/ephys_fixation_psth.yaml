@@ -87,7 +87,7 @@ selective_index_pair_names:
 # Default footprint: letter width x <= 1/5 letter height.
 selective_index_plot_output_subdir: ephys/psth/fixation_psth_preference_index/plots
 selective_index_plot_output_filename: preference_index_heatmaps
-selective_index_plot_output_extension: png
+selective_index_plot_output_extension: pdf
 selective_index_plot_output_dpi: 220
 # If true, each pair heatmap keeps only units selective for that exact pair
 # (`is_selective_pair=true`), not units selective for any other pair.
