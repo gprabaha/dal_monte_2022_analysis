@@ -53,6 +53,7 @@ class FixationSelectivityVennPlotSettings:
     output_subdir: str = "ephys/psth/fixation_psth_selectivity_venn"
     output_extension: str = "pdf"
     output_dpi: Optional[int] = 220
+    selective_windows: Optional[Sequence[str]] = ("pre_fix", "peri_fix", "post_fix")
     use_parallel: bool = True
     max_procs: int = 16
     test_single: bool = False
@@ -115,6 +116,32 @@ def _pair_key_from_row(row: pd.Series) -> Optional[str]:
     return None
 
 
+def _split_sig_windows(raw: object) -> set[str]:
+    if raw is None:
+        return set()
+    text = str(raw).strip()
+    if not text:
+        return set()
+    return {token.strip() for token in text.split("|") if token.strip()}
+
+
+def _pair_is_selective_for_windows(
+    row: pd.Series,
+    *,
+    selective_windows: Optional[Sequence[str]],
+) -> bool:
+    fallback = _as_bool(row.get("is_selective_pair"))
+    if selective_windows is None:
+        return fallback
+    allowed = {str(name).strip() for name in selective_windows if str(name).strip()}
+    if not allowed:
+        return fallback
+    sig_windows = _split_sig_windows(row.get("significant_windows"))
+    if sig_windows:
+        return bool(sig_windows.intersection(allowed))
+    return fallback
+
+
 def _load_pair_summary_df(
     settings: FixationSelectivityVennPlotSettings,
     *,
@@ -144,6 +171,13 @@ def _load_pair_summary_df(
         raise ValueError("pair_selectivity.csv missing required column 'is_selective_pair'.")
 
     df["is_selective_pair"] = df["is_selective_pair"].map(_as_bool)
+    df["is_selective_pair_for_venn"] = df.apply(
+        lambda row: _pair_is_selective_for_windows(
+            row,
+            selective_windows=settings.selective_windows,
+        ),
+        axis=1,
+    )
     if regions is not None:
         allowed = {str(r) for r in regions}
         df = df.loc[df["region"].astype(str).isin(allowed)].copy()
@@ -158,7 +192,8 @@ def _compute_region_summary(region: str, df_region: pd.DataFrame) -> Optional[di
     if total_units <= 0:
         return None
 
-    selective_rows = df_region.loc[df_region["is_selective_pair"]].copy()
+    selective_col = "is_selective_pair_for_venn" if "is_selective_pair_for_venn" in df_region.columns else "is_selective_pair"
+    selective_rows = df_region.loc[df_region[selective_col].map(_as_bool)].copy()
     selective_rows["pair_key"] = selective_rows.apply(_pair_key_from_row, axis=1)
     selective_rows = selective_rows.loc[selective_rows["pair_key"].notna()].copy()
 
@@ -295,6 +330,7 @@ def _draw_region_venn_axis(
     region_title: Optional[str] = None,
 ) -> None:
     total_units = int(summary["total_units"])
+    any_selective = int(summary["any_selective"])
     set_counts = summary["set_counts"]
     seg = summary["segment_counts"]
     subset_sizes = _subset_sizes_from_segments(seg)
@@ -371,7 +407,7 @@ def _draw_region_venn_axis(
 
     region = str(region_title).strip() if region_title is not None else str(summary["region"]).strip()
     if compact:
-        ax.set_title(f"{region} (n={total_units})", fontsize=8.4, pad=2.0)
+        ax.set_title(f"{region} (n={any_selective}/{total_units})", fontsize=8.4, pad=2.0)
     else:
         ax.set_title(f"Region {region}: Fixation Selectivity Venn (Area-Scaled)")
     ax.axis("off")

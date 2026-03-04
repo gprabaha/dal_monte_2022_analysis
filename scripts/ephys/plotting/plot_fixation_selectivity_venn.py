@@ -72,6 +72,7 @@ def main() -> None:
         output_subdir=cfg.get("selective_venn_output_subdir", "ephys/psth/fixation_psth_selectivity_venn"),
         output_extension=cfg.get("selective_venn_output_extension", "pdf"),
         output_dpi=cfg.get("selective_venn_output_dpi", 220),
+        selective_windows=cfg.get("selective_venn_selective_windows", ["pre_fix", "peri_fix", "post_fix"]),
         use_parallel=cfg.get("selective_venn_use_parallel", True),
         max_procs=cfg.get("max_procs", 16),
         test_single=cfg.get("test_single", False),

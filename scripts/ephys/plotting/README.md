@@ -82,6 +82,7 @@ Config:
   - `selective_venn_output_subdir`
   - `selective_venn_output_extension`
   - `selective_venn_output_dpi`
+  - `selective_venn_selective_windows`
   - `selective_venn_use_parallel`
   - `selective_venn_min_units_per_region`
   - `selective_venn_combine_regions_into_single_figure`

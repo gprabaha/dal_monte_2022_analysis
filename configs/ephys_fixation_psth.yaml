@@ -65,6 +65,7 @@ selective_windows_ms:
 selective_venn_output_subdir: ephys/psth/fixation_psth_selectivity_venn
 selective_venn_output_extension: pdf
 selective_venn_output_dpi: 220
+selective_venn_selective_windows: [pre_fix, peri_fix, post_fix]
 selective_venn_use_parallel: true
 selective_venn_min_units_per_region: 1
 selective_venn_combine_regions_into_single_figure: true
@@ -165,14 +166,14 @@ selective_example_grid_units:
     object: {unit_uuid: "2614"}
   ACCg:
     face_interactive: {unit_uuid: "118"}
-    face_non_interactive: {unit_uuid: "148"}
+    face_non_interactive: {unit_uuid: "395"} # 148
     object: {unit_uuid: "359"}
   dmPFC:
     face_interactive: {unit_uuid: "1516"}
     face_non_interactive: {unit_uuid: "1751"}
-    object: {unit_uuid: "1764"}
+    object: {unit_uuid: "1714"} # 1764
   OFC:
-    face_interactive: {unit_uuid: "1032"}
+    face_interactive: {unit_uuid: "1091"} #1032, 1097
     face_non_interactive: {unit_uuid: "1304"}
     object: {unit_uuid: "1255"}
 
