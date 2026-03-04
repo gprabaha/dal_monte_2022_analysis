@@ -68,12 +68,13 @@ class FixationPreferenceIndexHeatmapPlotSettings:
     left_margin: float = 0.04
     right_margin: float = 0.992
     top_margin: float = 0.86
-    bottom_margin: float = 0.22
+    bottom_margin: float = 0.26
     panel_wspace: float = 0.18
     show_suptitle: bool = False
+    colorbar_orientation: str = "horizontal"
     colorbar_label: str = "|Preference Index|"
-    colorbar_fraction: float = 0.02
-    colorbar_pad: float = 0.02
+    colorbar_fraction: float = 0.06
+    colorbar_pad: float = 0.18
 
 
 def _coerce_bool(value: object) -> bool:
@@ -416,14 +417,21 @@ def _plot_one_pair(
             ax.set_ylabel("")
 
     if im_ref is not None:
+        orientation = str(settings.colorbar_orientation).strip().lower()
+        if orientation not in {"horizontal", "vertical"}:
+            orientation = "horizontal"
         cbar = fig.colorbar(
             im_ref,
             ax=axes_row.tolist(),
+            orientation=orientation,
             fraction=float(settings.colorbar_fraction),
             pad=float(settings.colorbar_pad),
         )
         cbar.set_label(settings.colorbar_label, fontsize=6.8)
-        cbar.ax.tick_params(labelsize=6.0, length=2.0, pad=1.0)
+        if orientation == "horizontal":
+            cbar.ax.tick_params(axis="x", labelsize=6.0, length=2.0, pad=1.0)
+        else:
+            cbar.ax.tick_params(axis="y", labelsize=6.0, length=2.0, pad=1.0)
 
     if settings.show_suptitle:
         fig.suptitle(

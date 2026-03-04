@@ -197,6 +197,7 @@ Config:
   - `selective_index_plot_bottom_margin`
   - `selective_index_plot_panel_wspace`
   - `selective_index_plot_show_suptitle`
+  - `selective_index_plot_colorbar_orientation`
   - `selective_index_plot_colorbar_label`
   - `selective_index_plot_colorbar_fraction`
   - `selective_index_plot_colorbar_pad`

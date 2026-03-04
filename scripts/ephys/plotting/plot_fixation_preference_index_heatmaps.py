@@ -63,12 +63,13 @@ def main() -> None:
         left_margin=cfg.get("selective_index_plot_left_margin", 0.04),
         right_margin=cfg.get("selective_index_plot_right_margin", 0.992),
         top_margin=cfg.get("selective_index_plot_top_margin", 0.86),
-        bottom_margin=cfg.get("selective_index_plot_bottom_margin", 0.22),
+        bottom_margin=cfg.get("selective_index_plot_bottom_margin", 0.26),
         panel_wspace=cfg.get("selective_index_plot_panel_wspace", 0.18),
         show_suptitle=cfg.get("selective_index_plot_show_suptitle", False),
+        colorbar_orientation=cfg.get("selective_index_plot_colorbar_orientation", "horizontal"),
         colorbar_label=cfg.get("selective_index_plot_colorbar_label", "|Preference Index|"),
-        colorbar_fraction=cfg.get("selective_index_plot_colorbar_fraction", 0.02),
-        colorbar_pad=cfg.get("selective_index_plot_colorbar_pad", 0.02),
+        colorbar_fraction=cfg.get("selective_index_plot_colorbar_fraction", 0.06),
+        colorbar_pad=cfg.get("selective_index_plot_colorbar_pad", 0.18),
     )
     if args.normalization_mode is not None:
         settings.normalization_mode = str(args.normalization_mode)
