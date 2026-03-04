@@ -23,6 +23,10 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_three_way_region_comparison
     FixationThreeWayRegionComparisonSettings,
     run_fixation_three_way_region_comparison,
 )
+from dal_monte_2022_analysis.ephys.analysis.fixation_population_pca import (
+    FixationPopulationPCASettings,
+    run_fixation_population_pca_analysis,
+)
 
 __all__ = [
     "FixationPSTHSelectivitySettings",
@@ -31,6 +35,8 @@ __all__ = [
     "run_fixation_preference_index_analysis",
     "FixationThreeWayRegionComparisonSettings",
     "run_fixation_three_way_region_comparison",
+    "FixationPopulationPCASettings",
+    "run_fixation_population_pca_analysis",
     "WITHIN_ANALYSIS_KIND",
     "CROSS_ANALYSIS_KIND",
     "FixationNeuralCrossCorrelationSettings",

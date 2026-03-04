@@ -62,6 +62,22 @@ Current scripts:
   Output pickle stores:
   - `cross_correlations` (per-fixation pair traces)
   - `pair_averages` (per-session pair averages by condition)
+- `build_fixation_population_pca.py`
+  Builds region-level population PCA outputs in a configurable time window
+  (default `[-500, 500] ms`):
+  - primary input: processed trial PSTHs (`processed_data_root/.../psth/fixations.pkl`)
+    smoothed per trial (configurable) and then aggregated to per-unit condition means
+  - fallback input: date-level average PSTH pickles
+  - per-condition PCA fits (`face_interactive`, `face_non_interactive`, `object`)
+  - concatenated-condition PCA fit (conditions concatenated along time)
+  - concatenated-fit PC timecourses for each fixation condition
+  - cross-condition explained-variance curves from per-condition fits
+  Writes:
+  - `pca_fit_summary.csv`
+  - `concatenated_pc_timecourses.csv`
+  - `cross_condition_explained_variance.csv`
+  - `region_unit_inventory.csv`
+  - `results.pkl`
 - `build_cross_region_fixation_neural_cross_correlation.py`
   Computes fixation-level neural PSTH cross-correlations for cross-region
   unit pairs (anchor-region units x partner-region units per fixation).
@@ -118,6 +134,26 @@ Config:
   - `selective_region_comparison_require_selective_units`
   - `selective_region_comparison_pseudo_count`
   - `selective_region_comparison_alignment_cosine_threshold`
+  - `population_pca_trial_input_modality`
+  - `population_pca_trial_input_filename`
+  - `population_pca_prefer_trial_input`
+  - `population_pca_allow_trial_fallback`
+  - `population_pca_smooth_before_average`
+  - `population_pca_smoothing_sigma_ms`
+  - `population_pca_input_subdir`
+  - `population_pca_input_filename`
+  - `population_pca_output_subdir`
+  - `population_pca_summary_filename`
+  - `population_pca_timecourse_filename`
+  - `population_pca_explained_variance_filename`
+  - `population_pca_unit_inventory_filename`
+  - `population_pca_output_pickle_filename`
+  - `population_pca_window_ms`
+  - `population_pca_max_components`
+  - `population_pca_min_units_per_region`
+  - `population_pca_require_all_conditions`
+  - `population_pca_require_face_interactive_state`
+  - `population_pca_use_parallel`
 - `configs/ephys_fixation_neural_cross_correlation.yaml`
   - `trial_input_modality`
   - `trial_input_filename`
