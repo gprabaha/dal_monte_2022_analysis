@@ -24,6 +24,7 @@ Ephys CLI entrypoints.
 
 3. Analysis
 - `build_fixation_selective_units.py`
+- `build_fixation_preference_index.py`
 - `build_fixation_three_way_region_comparison.py`
 - `build_within_region_fixation_neural_cross_correlation.py`
 - `build_cross_region_fixation_neural_cross_correlation.py`

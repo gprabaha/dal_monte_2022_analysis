@@ -61,6 +61,21 @@ selective_windows_ms:
   post_fix: [0.0, 500.0]
   full_fix: [-500.0, 500.0]
 
+# Per-bin pairwise preference-index analysis from fixation PSTH trial rows.
+# For each pair (A, B), computes index=(A-B)/(A+B) per bin and appends
+# selectivity labels from pair_selectivity.csv and unit_selectivity.csv.
+selective_index_output_subdir: ephys/psth/fixation_psth_preference_index
+selective_index_timeseries_filename: preference_index_timeseries.csv
+selective_index_output_pickle_filename: results.pkl
+selective_index_use_parallel: true
+selective_index_denominator_epsilon: 0.0
+# Optional per-pair index-name overrides keyed by pair_label.
+# pair_label format: "<condition_a>__vs__<condition_b>"
+selective_index_pair_names:
+  face_interactive__vs__face_non_interactive: interactive_face_preference_index
+  face_interactive__vs__object: interactive_face_vs_object_index
+  face_non_interactive__vs__object: non_interactive_face_vs_object_index
+
 # Region-level Venn plots from fixation selectivity outputs
 selective_venn_output_subdir: ephys/psth/fixation_psth_selectivity_venn
 selective_venn_output_extension: pdf

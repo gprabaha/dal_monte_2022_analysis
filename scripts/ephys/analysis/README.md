@@ -18,6 +18,16 @@ Current scripts:
   - non-interactive face
   - object
   and normalized relative components for triangular plotting.
+- `build_fixation_preference_index.py`
+  Computes per-bin pairwise fixation preference indices for each unit using:
+  - `(A - B) / (A + B)` where A/B are condition mean firing rates (Hz) per bin
+  - default comparisons:
+    - `face_interactive__vs__face_non_interactive`
+    - `face_interactive__vs__object`
+    - `face_non_interactive__vs__object`
+  Also merges selectivity labels from:
+  - `pair_selectivity.csv` (`is_selective_pair`)
+  - `unit_selectivity.csv` (`is_selective_unit`, `selective_pairs`)
 - `build_fixation_three_way_region_comparison.py`
   Compares three-way fixation-response compositions across regions per
   analysis window using permutation tests for:
@@ -53,6 +63,12 @@ Config:
   - `selective_min_trials_per_condition`
   - `selective_use_parallel`
   - `selective_windows_ms`
+  - `selective_index_output_subdir`
+  - `selective_index_timeseries_filename`
+  - `selective_index_output_pickle_filename`
+  - `selective_index_use_parallel`
+  - `selective_index_denominator_epsilon`
+  - `selective_index_pair_names`
   - `selective_region_comparison_output_subdir`
   - `selective_region_comparison_pairwise_filename`
   - `selective_region_comparison_window_filename`
