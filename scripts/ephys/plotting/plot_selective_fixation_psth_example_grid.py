@@ -33,6 +33,54 @@ def _normalize_row_labels(raw: object) -> dict[str, str]:
     return out
 
 
+def _resolve_example_grid_rate_windows_s(cfg: dict) -> list[tuple[float, float]]:
+    raw = cfg.get("selective_example_grid_rate_windows_ms")
+    out: list[tuple[float, float]] = []
+    if isinstance(raw, (list, tuple)):
+        for bounds in raw:
+            if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                continue
+            try:
+                start_s = float(bounds[0]) / 1000.0
+                end_s = float(bounds[1]) / 1000.0
+            except Exception:
+                continue
+            if start_s > end_s:
+                start_s, end_s = end_s, start_s
+            out.append((start_s, end_s))
+    if out:
+        return out
+
+    windows_ms = cfg.get("selective_windows_ms", {})
+    if isinstance(windows_ms, dict):
+        for key in ("pre_fix", "peri_fix", "post_fix"):
+            bounds = windows_ms.get(key)
+            if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                continue
+            try:
+                start_s = float(bounds[0]) / 1000.0
+                end_s = float(bounds[1]) / 1000.0
+            except Exception:
+                continue
+            if start_s > end_s:
+                start_s, end_s = end_s, start_s
+            out.append((start_s, end_s))
+    if out:
+        return out
+    return [(-0.5, 0.0), (-0.25, 0.25), (0.0, 0.5)]
+
+
+def _normalize_color_list(raw: object, *, default: list[str]) -> list[str]:
+    if not isinstance(raw, (list, tuple)):
+        return list(default)
+    out: list[str] = []
+    for item in raw:
+        token = str(item).strip()
+        if token:
+            out.append(token)
+    return out if out else list(default)
+
+
 def _base_plot_settings(dataset_cfg_path: str, plotting_cfg_path: str, cfg: dict) -> FixationPSTHUnitPlotSettings:
     return FixationPSTHUnitPlotSettings(
         cfg_path=dataset_cfg_path,
@@ -111,6 +159,11 @@ def main() -> None:
     )
     row_labels = dict(DEFAULT_EXAMPLE_GRID_ROW_LABELS)
     row_labels.update(_normalize_row_labels(cfg.get("selective_example_grid_row_labels", {})))
+    rate_windows_s = _resolve_example_grid_rate_windows_s(cfg)
+    rate_window_colors = _normalize_color_list(
+        cfg.get("selective_example_grid_rate_window_colors"),
+        default=["#bdbdbd", "#8f8f8f", "#636363"],
+    )
 
     unit_specs = parse_example_grid_unit_specs(
         cfg,
@@ -145,6 +198,11 @@ def main() -> None:
         show_global_legend=cfg.get("selective_example_grid_show_legend", True),
         legend_ncol=cfg.get("selective_example_grid_legend_ncol", 3),
         pdf_compression=cfg.get("selective_example_grid_pdf_compression", 0),
+        show_rate_window_rectangles=cfg.get("selective_example_grid_show_rate_windows", True),
+        rate_window_rectangles_s=rate_windows_s,
+        rate_window_rectangle_colors=rate_window_colors,
+        rate_window_rectangle_linestyle=cfg.get("selective_example_grid_rate_window_linestyle", ":"),
+        rate_window_rectangle_linewidth=cfg.get("selective_example_grid_rate_window_linewidth", 0.8),
     )
 
     if args.output_subdir:

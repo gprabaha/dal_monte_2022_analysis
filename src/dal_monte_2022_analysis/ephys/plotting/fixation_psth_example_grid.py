@@ -11,13 +11,13 @@ import matplotlib as mpl
 mpl.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
+from matplotlib.patches import Rectangle
 import numpy as np
 import pandas as pd
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.plotting.common import (
     apply_plotting_config as _apply_plotting_config_shared,
-    darken_color as _darken_color_shared,
     resolve_figsize as _resolve_figsize_shared,
 )
 from dal_monte_2022_analysis.ephys.plotting.fixation_psth import (
@@ -105,6 +105,15 @@ class FixationPSTHExampleGridPlotSettings:
     show_global_legend: bool = True
     legend_ncol: int = 3
     pdf_compression: Optional[int] = 0
+    show_rate_window_rectangles: bool = True
+    rate_window_rectangles_s: Sequence[tuple[float, float]] = field(
+        default_factory=lambda: [(-0.5, 0.0), (-0.25, 0.25), (0.0, 0.5)],
+    )
+    rate_window_rectangle_colors: Sequence[str] = field(
+        default_factory=lambda: ["#bdbdbd", "#8f8f8f", "#636363"],
+    )
+    rate_window_rectangle_linestyle: str = ":"
+    rate_window_rectangle_linewidth: float = 0.8
 
 
 @dataclass(frozen=True)
@@ -476,6 +485,7 @@ def _draw_resolved_cell(
     resolved: _ResolvedCell,
     *,
     unit_settings: FixationPSTHUnitPlotSettings,
+    grid_settings: FixationPSTHExampleGridPlotSettings,
     show_raster_y_axis: bool,
     show_rate_ylabel: bool,
     show_x_axis: bool,
@@ -491,7 +501,8 @@ def _draw_resolved_cell(
             lineoffsets=line_offsets,
             linelengths=float(unit_settings.raster_linelength),
             linewidths=float(unit_settings.raster_linewidth),
-            colors=[_darken_color_shared(payload["color"], unit_settings.raster_darkening_factor)] * n_trials,
+            # Match raster color to mean-rate trace color exactly.
+            colors=[payload["color"]] * n_trials,
             alpha=float(unit_settings.raster_alpha),
             zorder=3,
         )
@@ -537,8 +548,47 @@ def _draw_resolved_cell(
             linewidth=0.0,
         )
 
-    ax_rate.axvline(0.0, color="#333333", linestyle="--", linewidth=0.7)
-    ax_rate.set_xlim(float(resolved.bin_centers[0]), float(resolved.bin_centers[-1]))
+    x_min = float(resolved.bin_centers[0])
+    x_max = float(resolved.bin_centers[-1])
+    ax_rate.axvline(0.0, color="#333333", linestyle="--", linewidth=0.7, zorder=3.2)
+    ax_rate.set_xlim(x_min, x_max)
+
+    if grid_settings.show_rate_window_rectangles:
+        y_min, y_max = ax_rate.get_ylim()
+        if not np.isfinite(y_min) or not np.isfinite(y_max) or y_min == y_max:
+            y_min, y_max = -0.5, 0.5
+        raw_windows = list(grid_settings.rate_window_rectangles_s)
+        raw_colors = list(grid_settings.rate_window_rectangle_colors)
+        if raw_windows:
+            for idx, bounds in enumerate(raw_windows):
+                if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                    continue
+                start_s = float(bounds[0])
+                end_s = float(bounds[1])
+                if not np.isfinite(start_s) or not np.isfinite(end_s):
+                    continue
+                left = max(min(start_s, end_s), x_min)
+                right = min(max(start_s, end_s), x_max)
+                if right <= left:
+                    continue
+                if idx < len(raw_colors):
+                    color = str(raw_colors[idx]).strip() or "#808080"
+                else:
+                    color = "#808080"
+                rect = Rectangle(
+                    (left, y_min),
+                    right - left,
+                    y_max - y_min,
+                    fill=False,
+                    edgecolor=color,
+                    linestyle=str(grid_settings.rate_window_rectangle_linestyle),
+                    linewidth=float(grid_settings.rate_window_rectangle_linewidth),
+                    zorder=0.5,
+                )
+                ax_rate.add_patch(rect)
+        ax_rate.set_ylim(y_min, y_max)
+        ax_rate.set_xlim(x_min, x_max)
+
     ax_rate.grid(True, alpha=0.16, linewidth=0.45)
     ax_rate.tick_params(axis="both", labelsize=6.0, pad=1.0, length=1.8)
     if show_rate_ylabel:
@@ -720,6 +770,7 @@ def plot_fixation_psth_example_grid(
                     ax_rate,
                     resolved,
                     unit_settings=unit_settings,
+                    grid_settings=settings,
                     show_raster_y_axis=show_raster_y,
                     show_rate_ylabel=show_rate_ylabel,
                     show_x_axis=show_x,

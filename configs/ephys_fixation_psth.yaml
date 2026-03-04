@@ -211,6 +211,17 @@ selective_example_grid_row_labels:
   face_interactive: "Interactive Face Favoring"
   face_non_interactive: "Non-Interactive Face Favoring"
   object: "Object Favoring"
+# Dotted significance-window rectangles in mean-rate panel background.
+# If selective_example_grid_rate_windows_ms is unset, defaults to
+# selective_windows_ms.{pre_fix, peri_fix, post_fix}.
+selective_example_grid_show_rate_windows: true
+# selective_example_grid_rate_windows_ms:
+#   - [-500.0, 0.0]
+#   - [-250.0, 250.0]
+#   - [0.0, 500.0]
+selective_example_grid_rate_window_colors: ["#bdbdbd", "#8f8f8f", "#636363"]
+selective_example_grid_rate_window_linestyle: ":"
+selective_example_grid_rate_window_linewidth: 0.8
 selective_example_grid_units:
   BLA:
     face_interactive: {unit_uuid: "789"}

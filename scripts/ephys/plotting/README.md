@@ -225,6 +225,9 @@ Config:
   - each cell = one manually selected unit from config, rendered as:
     - top raster (all three fixation conditions)
     - bottom mean firing-rate traces with SEM shading
+  - raster colors now exactly match trace colors
+  - mean-rate panel can overlay dotted significance-window rectangles
+    (default windows: `[-500, 0]`, `[-250, 250]`, `[0, 500]` ms)
   Default output is an editable vector PDF sized to letter width x 3/5 letter height.
 
   Config:
@@ -239,6 +242,11 @@ Config:
   - `selective_example_grid_regions`
   - `selective_example_grid_preferences`
   - `selective_example_grid_row_labels`
+  - `selective_example_grid_show_rate_windows`
+  - `selective_example_grid_rate_windows_ms`
+  - `selective_example_grid_rate_window_colors`
+  - `selective_example_grid_rate_window_linestyle`
+  - `selective_example_grid_rate_window_linewidth`
   - `selective_example_grid_units`
 
 - `plot_within_region_fixation_neural_cross_correlation.py`
