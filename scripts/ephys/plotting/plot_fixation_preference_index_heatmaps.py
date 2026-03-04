@@ -28,6 +28,14 @@ def main() -> None:
     parser.add_argument("--ephys-fixation-psth-cfg", default="configs/ephys_fixation_psth.yaml")
     parser.add_argument("--pair-label", action="append", default=None)
     parser.add_argument("--region", action="append", default=None)
+    parser.add_argument(
+        "--normalization-mode",
+        default=None,
+        help=(
+            "Which stored preference-index normalization to plot: "
+            "'unit_max_sum' (default) or 'per_bin_sum'."
+        ),
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.ephys_fixation_psth_cfg)
@@ -47,6 +55,7 @@ def main() -> None:
             "selective_index_plot_include_only_pair_selective_units",
             cfg.get("selective_index_plot_include_only_selective_units", True),
         ),
+        normalization_mode=cfg.get("selective_index_plot_normalization_mode", "unit_max_sum"),
         region_order=cfg.get("selective_index_plot_region_order", ["BLA", "ACCg", "dmPFC", "OFC"]),
         default_pair_order=cfg.get("selective_index_plot_pair_order"),
         figure_width_in=cfg.get("selective_index_plot_figure_width_in", 8.5),
@@ -57,10 +66,12 @@ def main() -> None:
         bottom_margin=cfg.get("selective_index_plot_bottom_margin", 0.22),
         panel_wspace=cfg.get("selective_index_plot_panel_wspace", 0.18),
         show_suptitle=cfg.get("selective_index_plot_show_suptitle", False),
-        colorbar_label=cfg.get("selective_index_plot_colorbar_label", "Preference Index (A-B)/(A+B)"),
+        colorbar_label=cfg.get("selective_index_plot_colorbar_label", "|Preference Index|"),
         colorbar_fraction=cfg.get("selective_index_plot_colorbar_fraction", 0.02),
         colorbar_pad=cfg.get("selective_index_plot_colorbar_pad", 0.02),
     )
+    if args.normalization_mode is not None:
+        settings.normalization_mode = str(args.normalization_mode)
 
     out = plot_fixation_preference_index_heatmaps(
         settings,

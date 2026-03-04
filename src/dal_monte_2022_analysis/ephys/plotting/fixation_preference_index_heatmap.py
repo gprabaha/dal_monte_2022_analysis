@@ -10,7 +10,7 @@ import matplotlib as mpl
 
 mpl.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+from matplotlib.colors import LinearSegmentedColormap, Normalize
 import numpy as np
 import pandas as pd
 
@@ -35,9 +35,15 @@ DEFAULT_PAIR_ORDER = tuple(
     f"{cond_a}__vs__{cond_b}"
     for cond_a, cond_b in DEFAULT_INDEX_NAME_BY_PAIR.keys()
 )
-_BW_R_CMAP = LinearSegmentedColormap.from_list(
-    "index_bwr",
-    ["#2166ac", "#ffffff", "#b2182b"],
+_NORM_MODE_UNIT_MAX_SUM = "unit_max_sum"
+_NORM_MODE_PER_BIN_SUM = "per_bin_sum"
+_INDEX_COLUMN_BY_NORM_MODE = {
+    _NORM_MODE_UNIT_MAX_SUM: "preference_index_unit_max_sum",
+    _NORM_MODE_PER_BIN_SUM: "preference_index_per_bin_sum",
+}
+_W_R_CMAP = LinearSegmentedColormap.from_list(
+    "index_abs_wr",
+    ["#ffffff", "#b2182b"],
 )
 
 
@@ -54,6 +60,7 @@ class FixationPreferenceIndexHeatmapPlotSettings:
     output_extension: str = "png"
     output_dpi: Optional[int] = 220
     include_only_pair_selective_units: bool = True
+    normalization_mode: str = _NORM_MODE_UNIT_MAX_SUM
     region_order: Optional[Sequence[str]] = DEFAULT_REGION_ORDER
     default_pair_order: Optional[Sequence[str]] = DEFAULT_PAIR_ORDER
     figure_width_in: float = 8.5
@@ -64,7 +71,7 @@ class FixationPreferenceIndexHeatmapPlotSettings:
     bottom_margin: float = 0.22
     panel_wspace: float = 0.18
     show_suptitle: bool = False
-    colorbar_label: str = "Preference Index (A-B)/(A+B)"
+    colorbar_label: str = "|Preference Index|"
     colorbar_fraction: float = 0.02
     colorbar_pad: float = 0.02
 
@@ -113,6 +120,62 @@ def _resolve_figsize_and_dpi(
     return [float(settings.figure_width_in), float(settings.figure_height_in)], dpi
 
 
+def _normalize_normalization_mode(mode: object) -> str:
+    token = str(mode).strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        _NORM_MODE_UNIT_MAX_SUM: _NORM_MODE_UNIT_MAX_SUM,
+        "max_sum": _NORM_MODE_UNIT_MAX_SUM,
+        "unit_max": _NORM_MODE_UNIT_MAX_SUM,
+        _NORM_MODE_PER_BIN_SUM: _NORM_MODE_PER_BIN_SUM,
+        "per_bin": _NORM_MODE_PER_BIN_SUM,
+        "binwise": _NORM_MODE_PER_BIN_SUM,
+    }
+    resolved = aliases.get(token)
+    if resolved is None:
+        raise ValueError(
+            "Unsupported normalization_mode for fixation preference-index heatmap plotting. "
+            "Expected one of: unit_max_sum, per_bin_sum."
+        )
+    return resolved
+
+
+def _resolve_value_column(
+    df: pd.DataFrame,
+    normalization_mode: str,
+) -> str:
+    preferred_column = _INDEX_COLUMN_BY_NORM_MODE[normalization_mode]
+    if preferred_column in df.columns:
+        return preferred_column
+
+    if "preference_index" not in df.columns:
+        raise ValueError(
+            "Preference-index timeseries CSV is missing both the requested value column "
+            f"'{preferred_column}' and legacy column 'preference_index'."
+        )
+
+    if "normalization_mode" in df.columns:
+        mode_tokens: set[str] = set()
+        for value in df["normalization_mode"].dropna().tolist():
+            try:
+                mode_tokens.add(_normalize_normalization_mode(value))
+            except ValueError:
+                continue
+        if len(mode_tokens) == 1:
+            only_mode = next(iter(mode_tokens))
+            if only_mode != normalization_mode:
+                raise ValueError(
+                    "Requested plot normalization_mode "
+                    f"'{normalization_mode}', but legacy timeseries contains only "
+                    f"'{only_mode}' in 'preference_index'. Rerun analysis to store both modes."
+                )
+
+    print(
+        "[plot] warning: requested normalized index column "
+        f"'{preferred_column}' not found; falling back to legacy 'preference_index'."
+    )
+    return "preference_index"
+
+
 def _load_timeseries_df(settings: FixationPreferenceIndexHeatmapPlotSettings) -> pd.DataFrame:
     cfg = load_config(settings.cfg_path)
     in_root = build_analysis_output_dir(cfg, settings.input_subdir)
@@ -126,13 +189,20 @@ def _load_timeseries_df(settings: FixationPreferenceIndexHeatmapPlotSettings) ->
         "unit_key",
         "bin_index",
         "bin_center_s",
-        "preference_index",
     }
     missing = sorted(required - set(df.columns))
     if missing:
         raise ValueError(
             "Preference-index timeseries CSV missing required columns: "
             + ", ".join(missing)
+        )
+    if not any(
+        column in df.columns
+        for column in ("preference_index", "preference_index_unit_max_sum", "preference_index_per_bin_sum")
+    ):
+        raise ValueError(
+            "Preference-index timeseries CSV must include at least one of: "
+            "preference_index, preference_index_unit_max_sum, preference_index_per_bin_sum."
         )
     if df.empty:
         return pd.DataFrame(columns=df.columns)
@@ -142,7 +212,9 @@ def _load_timeseries_df(settings: FixationPreferenceIndexHeatmapPlotSettings) ->
     df["unit_key"] = df["unit_key"].astype(str).map(lambda token: token.strip())
     df["bin_index"] = pd.to_numeric(df["bin_index"], errors="coerce").astype("Int64")
     df["bin_center_s"] = pd.to_numeric(df["bin_center_s"], errors="coerce")
-    df["preference_index"] = pd.to_numeric(df["preference_index"], errors="coerce")
+    for column in ("preference_index", "preference_index_unit_max_sum", "preference_index_per_bin_sum"):
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
     if "is_selective_pair" in df.columns:
         df["is_selective_pair"] = df["is_selective_pair"].map(_coerce_bool)
     else:
@@ -199,6 +271,8 @@ def _safe_token(text: str) -> str:
 
 def _region_matrix(
     region_df: pd.DataFrame,
+    *,
+    value_column: str,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     if region_df.empty:
         return np.empty((0, 0), dtype=float), np.asarray([], dtype=float), []
@@ -220,7 +294,7 @@ def _region_matrix(
     piv = region_df.pivot_table(
         index="unit_key",
         columns="bin_index",
-        values="preference_index",
+        values=value_column,
         aggfunc="mean",
     )
     piv = piv.reindex(columns=bins)
@@ -235,9 +309,10 @@ def _region_matrix(
             peak_bin = np.inf
             peak_value = -np.inf
         else:
-            idx = int(np.nanargmax(values))
+            abs_values = np.abs(values)
+            idx = int(np.nanargmax(abs_values))
             peak_bin = float(bin_centers[idx])
-            peak_value = float(values[idx])
+            peak_value = float(abs_values[idx])
         sort_rows.append((peak_bin, peak_value, str(unit_key)))
 
     # Reverse sort with origin='lower' so earliest-peak units appear at the top.
@@ -279,16 +354,19 @@ def _plot_one_pair(
         wspace=float(settings.panel_wspace),
     )
 
-    abs_max = float(np.nanmax(np.abs(pair_df["preference_index"].to_numpy(dtype=float))))
+    abs_max = float(np.nanmax(pair_df["plot_preference_index"].to_numpy(dtype=float)))
     if not np.isfinite(abs_max) or abs_max <= 0:
         abs_max = 1.0
-    norm = TwoSlopeNorm(vmin=-abs_max, vcenter=0.0, vmax=abs_max)
+    norm = Normalize(vmin=0.0, vmax=abs_max)
 
     im_ref = None
     n_units_by_region: dict[str, int] = {}
     for ax, region in zip(axes_row, region_order):
         region_df = pair_df.loc[pair_df["region_norm"] == _normalize_region(region)].copy()
-        matrix, bin_centers, unit_order = _region_matrix(region_df)
+        matrix, bin_centers, unit_order = _region_matrix(
+            region_df,
+            value_column="plot_preference_index",
+        )
         n_units = int(len(unit_order))
         n_units_by_region[str(region)] = n_units
 
@@ -317,7 +395,7 @@ def _plot_one_pair(
         x1 = float(bin_centers[-1]) + half
         im_ref = ax.imshow(
             matrix,
-            cmap=_BW_R_CMAP,
+            cmap=_W_R_CMAP,
             norm=norm,
             aspect="auto",
             interpolation="nearest",
@@ -333,7 +411,7 @@ def _plot_one_pair(
     for idx, ax in enumerate(axes_row):
         ax.set_xlabel("Time (s)", fontsize=6.8)
         if idx == 0:
-            ax.set_ylabel("Units (sorted by peak bin)", fontsize=6.8)
+            ax.set_ylabel("Units (sorted by |peak| bin)", fontsize=6.8)
         else:
             ax.set_ylabel("")
 
@@ -383,10 +461,13 @@ def plot_fixation_preference_index_heatmaps(
     regions: Optional[Sequence[str]] = None,
 ) -> Optional[dict]:
     """Plot one 1xN-region heatmap figure per fixation-pair preference index."""
+    normalization_mode = _normalize_normalization_mode(settings.normalization_mode)
+    settings.normalization_mode = normalization_mode
     df = _load_timeseries_df(settings)
     if df.empty:
         print("[plot] no preference-index rows found for heatmap plotting")
         return None
+    value_column = _resolve_value_column(df, normalization_mode)
 
     pair_order = _resolve_pair_order(
         df,
@@ -418,6 +499,9 @@ def plot_fixation_preference_index_heatmaps(
             pair_df = pair_df.loc[pair_df["is_selective_pair"].map(_coerce_bool)].copy()
         if pair_df.empty:
             continue
+        pair_df["plot_preference_index"] = np.abs(
+            pd.to_numeric(pair_df[value_column], errors="coerce").to_numpy(dtype=float)
+        )
         index_name = _index_name_for_pair(pair_df, pair_label)
         out = _plot_one_pair(
             pair_df,
@@ -440,4 +524,6 @@ def plot_fixation_preference_index_heatmaps(
         "outputs": outputs,
         "pair_order": [str(row["pair_label"]) for row in outputs],
         "region_order": list(region_order),
+        "normalization_mode": normalization_mode,
+        "value_column": value_column,
     }

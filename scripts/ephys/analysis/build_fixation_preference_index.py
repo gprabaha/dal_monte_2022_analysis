@@ -50,10 +50,27 @@ def _resolve_cli_path(path_text: str) -> Path:
     return Path(str(path_text)).expanduser().resolve()
 
 
+def _resolve_index_window_s_from_cfg(cfg: dict) -> tuple[float, float]:
+    raw = cfg.get("selective_index_time_window_ms")
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        windows = cfg.get("selective_windows_ms")
+        if isinstance(windows, dict):
+            full_fix = windows.get("full_fix")
+            if isinstance(full_fix, (list, tuple)) and len(full_fix) == 2:
+                raw = full_fix
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return -0.5, 0.5
+    start_s = float(raw[0]) / 1000.0
+    end_s = float(raw[1]) / 1000.0
+    if start_s > end_s:
+        start_s, end_s = end_s, start_s
+    return start_s, end_s
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Compute per-bin fixation preference indices (A-B)/(A+B) for each "
+            "Compute per-bin fixation preference indices (A-B)/denominator for each "
             "configured fixation-pair comparison."
         ),
     )
@@ -62,6 +79,14 @@ def main() -> None:
     parser.add_argument("--date", default=None)
     parser.add_argument("--session", default=None)
     parser.add_argument("--unit-uuid", action="append", default=None)
+    parser.add_argument(
+        "--normalization-mode",
+        default=None,
+        help=(
+            "Preference-index denominator mode: "
+            "'unit_max_sum' (default) or 'per_bin_sum'."
+        ),
+    )
     parser.add_argument("--no-parallel", action="store_true")
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
@@ -69,6 +94,7 @@ def main() -> None:
     dataset_cfg_path = _resolve_cli_path(args.dataset_cfg)
     ephys_fix_psth_cfg_path = _resolve_cli_path(args.ephys_fixation_psth_cfg)
     cfg = load_config(ephys_fix_psth_cfg_path)
+    index_window_start_s, index_window_end_s = _resolve_index_window_s_from_cfg(cfg)
 
     settings = FixationPSTHPreferenceIndexSettings(
         cfg_path=str(dataset_cfg_path),
@@ -84,7 +110,10 @@ def main() -> None:
         face_label=cfg.get("face_label", "face"),
         object_label=cfg.get("object_label", "object"),
         pair_index_name_overrides=_normalize_pair_name_overrides(cfg.get("selective_index_pair_names")),
+        normalization_mode=cfg.get("selective_index_normalization_mode", "unit_max_sum"),
         denominator_epsilon=float(cfg.get("selective_index_denominator_epsilon", 0.0)),
+        index_window_start_s=index_window_start_s,
+        index_window_end_s=index_window_end_s,
         use_parallel=cfg.get("selective_index_use_parallel", True),
         max_procs=cfg.get("max_procs", 16),
         test_single=cfg.get("test_single", False),
@@ -127,6 +156,8 @@ def main() -> None:
         settings.use_parallel = False
     if args.test_single:
         settings.test_single = True
+    if args.normalization_mode is not None:
+        settings.normalization_mode = str(args.normalization_mode)
 
     result = run_fixation_preference_index_analysis(
         settings,
@@ -160,4 +191,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

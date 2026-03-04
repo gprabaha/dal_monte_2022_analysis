@@ -164,14 +164,18 @@ Config:
 - `plot_fixation_preference_index_heatmaps.py`
   Plots one figure per fixation-pair preference index using
   `preference_index_timeseries.csv` from the preference-index analysis.
+  Displayed/sorted bins come directly from the index-analysis output window
+  (default `[-500, 500] ms`).
   For each figure:
   - columns = regions (default 4-panel order: `BLA`, `ACCg`, `dmPFC`, `OFC`)
   - rows (within each panel) = units, filtered to units selective for that exact pair
-  - unit order per region = earliest peak-bin units at top, latest at bottom
-  Color scale is fixed diverging within each pair figure:
-  - negative max = blue
+  - unit order per region = earliest `argmax(|index|)` bin at top, latest at bottom
+  Heatmaps now plot `|index|` (absolute value), with:
   - zero = white
-  - positive max = red
+  - max = red
+  Plot-time mode can choose which stored normalization to use:
+  - `unit_max_sum` -> `preference_index_unit_max_sum`
+  - `per_bin_sum` -> `preference_index_per_bin_sum`
   Default size is letter-width and <= one-fifth letter height.
 
   Config:
@@ -182,6 +186,7 @@ Config:
   - `selective_index_plot_output_extension`
   - `selective_index_plot_output_dpi`
   - `selective_index_plot_include_only_pair_selective_units`
+  - `selective_index_plot_normalization_mode`
   - `selective_index_plot_pair_order`
   - `selective_index_plot_region_order`
   - `selective_index_plot_figure_width_in`

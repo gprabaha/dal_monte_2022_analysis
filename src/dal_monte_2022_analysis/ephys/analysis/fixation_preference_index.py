@@ -29,6 +29,8 @@ from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 _SUPPORTED_CONDITIONS = ("face_interactive", "face_non_interactive", "object")
 _TRUE_TOKENS = {"1", "true", "t", "yes", "y"}
+_NORM_MODE_UNIT_MAX_SUM = "unit_max_sum"
+_NORM_MODE_PER_BIN_SUM = "per_bin_sum"
 
 DEFAULT_INDEX_NAME_BY_PAIR: dict[tuple[str, str], str] = {
     ("face_interactive", "face_non_interactive"): "interactive_face_preference_index",
@@ -57,7 +59,10 @@ class FixationPSTHPreferenceIndexSettings:
         default_factory=lambda: tuple(DEFAULT_CONDITION_PAIRS),
     )
     pair_index_name_overrides: dict[str, str] = field(default_factory=dict)
+    normalization_mode: str = _NORM_MODE_UNIT_MAX_SUM
     denominator_epsilon: float = 0.0
+    index_window_start_s: float = -0.5
+    index_window_end_s: float = 0.5
     use_parallel: bool = True
     max_procs: int = 16
     test_single: bool = False
@@ -98,6 +103,37 @@ def _validate_condition_pairs(settings: FixationPSTHPreferenceIndexSettings) -> 
             )
         if cond_a == cond_b:
             raise ValueError(f"Condition pair ({cond_a}, {cond_b}) must compare two different conditions.")
+
+
+def _normalize_normalization_mode(mode: object) -> str:
+    token = str(mode).strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        _NORM_MODE_UNIT_MAX_SUM: _NORM_MODE_UNIT_MAX_SUM,
+        "max_sum": _NORM_MODE_UNIT_MAX_SUM,
+        "unit_max": _NORM_MODE_UNIT_MAX_SUM,
+        _NORM_MODE_PER_BIN_SUM: _NORM_MODE_PER_BIN_SUM,
+        "per_bin": _NORM_MODE_PER_BIN_SUM,
+        "binwise": _NORM_MODE_PER_BIN_SUM,
+    }
+    resolved = aliases.get(token)
+    if resolved is None:
+        raise ValueError(
+            "Unsupported normalization_mode for fixation preference index. "
+            "Expected one of: unit_max_sum, per_bin_sum."
+        )
+    return resolved
+
+
+def _resolve_index_window_s(
+    settings: FixationPSTHPreferenceIndexSettings,
+) -> tuple[float, float]:
+    start_s = float(settings.index_window_start_s)
+    end_s = float(settings.index_window_end_s)
+    if not np.isfinite(start_s) or not np.isfinite(end_s):
+        raise ValueError("Index window bounds must be finite values in seconds.")
+    if start_s > end_s:
+        start_s, end_s = end_s, start_s
+    return start_s, end_s
 
 
 def _pair_label(cond_a: str, cond_b: str) -> str:
@@ -302,6 +338,16 @@ def _unit_worker(args) -> pd.DataFrame:
     n_bins = int(bin_centers_s.size)
     if n_bins <= 0:
         return pd.DataFrame()
+    index_window_start_s, index_window_end_s = _resolve_index_window_s(settings)
+    bin_keep = (
+        np.isfinite(bin_centers_s)
+        & (np.asarray(bin_centers_s, dtype=float) >= float(index_window_start_s))
+        & (np.asarray(bin_centers_s, dtype=float) <= float(index_window_end_s))
+    )
+    if not np.any(bin_keep):
+        return pd.DataFrame()
+    selected_bin_indices = np.flatnonzero(bin_keep).astype(int)
+    selected_bin_centers = np.asarray(bin_centers_s[bin_keep], dtype=float)
 
     if n_bins > 1:
         bin_size_s = float(np.mean(np.diff(bin_centers_s)))
@@ -343,14 +389,45 @@ def _unit_worker(args) -> pd.DataFrame:
 
     rows_out: list[pd.DataFrame] = []
     eps = max(0.0, float(settings.denominator_epsilon))
+    normalization_mode = _normalize_normalization_mode(settings.normalization_mode)
     for cond_a, cond_b in settings.condition_pairs:
-        mean_a = condition_mean_hz.get(cond_a, np.full(n_bins, np.nan, dtype=float))
-        mean_b = condition_mean_hz.get(cond_b, np.full(n_bins, np.nan, dtype=float))
+        mean_a_full = condition_mean_hz.get(cond_a, np.full(n_bins, np.nan, dtype=float))
+        mean_b_full = condition_mean_hz.get(cond_b, np.full(n_bins, np.nan, dtype=float))
+        mean_a = np.asarray(mean_a_full, dtype=float)[bin_keep]
+        mean_b = np.asarray(mean_b_full, dtype=float)[bin_keep]
         numerator = mean_a - mean_b
-        denominator = mean_a + mean_b
-        valid = np.isfinite(denominator) & (np.abs(denominator) > eps)
-        pref = np.full(n_bins, np.nan, dtype=float)
-        pref[valid] = numerator[valid] / denominator[valid]
+        denominator_raw = mean_a + mean_b
+
+        finite_sum = denominator_raw[np.isfinite(denominator_raw)]
+        max_sum = float(np.max(finite_sum)) if finite_sum.size > 0 else np.nan
+
+        denominator_unit_max = np.full(mean_a.shape, max_sum, dtype=float)
+        denominator_per_bin = np.asarray(denominator_raw, dtype=float)
+
+        valid_unit_max = (
+            np.isfinite(numerator)
+            & np.isfinite(denominator_unit_max)
+            & (np.abs(denominator_unit_max) > eps)
+        )
+        valid_per_bin = (
+            np.isfinite(numerator)
+            & np.isfinite(denominator_per_bin)
+            & (np.abs(denominator_per_bin) > eps)
+        )
+
+        pref_unit_max = np.full(mean_a.shape, np.nan, dtype=float)
+        pref_per_bin = np.full(mean_a.shape, np.nan, dtype=float)
+        pref_unit_max[valid_unit_max] = numerator[valid_unit_max] / denominator_unit_max[valid_unit_max]
+        pref_per_bin[valid_per_bin] = numerator[valid_per_bin] / denominator_per_bin[valid_per_bin]
+
+        if normalization_mode == _NORM_MODE_UNIT_MAX_SUM:
+            denominator_active = denominator_unit_max
+            valid_active = valid_unit_max
+            pref_active = pref_unit_max
+        else:
+            denominator_active = denominator_per_bin
+            valid_active = valid_per_bin
+            pref_active = pref_per_bin
 
         rows_out.append(
             pd.DataFrame(
@@ -374,14 +451,25 @@ def _unit_worker(args) -> pd.DataFrame:
                     "condition_b": cond_b,
                     "n_trials_a": int(condition_n_trials.get(cond_a, 0)),
                     "n_trials_b": int(condition_n_trials.get(cond_b, 0)),
-                    "bin_index": np.arange(n_bins, dtype=int),
-                    "bin_center_s": np.asarray(bin_centers_s, dtype=float),
+                    "bin_index": np.asarray(selected_bin_indices, dtype=int),
+                    "bin_center_s": np.asarray(selected_bin_centers, dtype=float),
                     "mean_fr_a_hz": np.asarray(mean_a, dtype=float),
                     "mean_fr_b_hz": np.asarray(mean_b, dtype=float),
                     "difference_fr_hz": np.asarray(numerator, dtype=float),
-                    "sum_fr_hz": np.asarray(denominator, dtype=float),
-                    "preference_index": np.asarray(pref, dtype=float),
-                    "index_valid": np.asarray(valid, dtype=bool),
+                    "sum_fr_hz": np.asarray(denominator_raw, dtype=float),
+                    "normalization_mode": normalization_mode,
+                    "unit_pair_max_sum_fr_hz": float(max_sum) if np.isfinite(max_sum) else np.nan,
+                    "normalization_denominator_hz": np.asarray(denominator_active, dtype=float),
+                    "normalization_denominator_unit_max_sum_hz": np.asarray(denominator_unit_max, dtype=float),
+                    "normalization_denominator_per_bin_sum_hz": np.asarray(denominator_per_bin, dtype=float),
+                    "preference_index": np.asarray(pref_active, dtype=float),
+                    "preference_index_unit_max_sum": np.asarray(pref_unit_max, dtype=float),
+                    "preference_index_per_bin_sum": np.asarray(pref_per_bin, dtype=float),
+                    "index_valid": np.asarray(valid_active, dtype=bool),
+                    "index_valid_unit_max_sum": np.asarray(valid_unit_max, dtype=bool),
+                    "index_valid_per_bin_sum": np.asarray(valid_per_bin, dtype=bool),
+                    "index_window_start_s": float(index_window_start_s),
+                    "index_window_end_s": float(index_window_end_s),
                 }
             )
         )
@@ -400,6 +488,11 @@ def run_fixation_preference_index_analysis(
 ) -> dict:
     """Run per-bin fixation preference-index analysis for each configured pair."""
     _validate_condition_pairs(settings)
+    normalization_mode = _normalize_normalization_mode(settings.normalization_mode)
+    settings.normalization_mode = normalization_mode
+    index_window_start_s, index_window_end_s = _resolve_index_window_s(settings)
+    settings.index_window_start_s = float(index_window_start_s)
+    settings.index_window_end_s = float(index_window_end_s)
     trial_df, bin_centers_s = _load_trial_table(settings, dates=dates, sessions=sessions)
     if trial_df.empty or "unit_uuid" not in trial_df.columns:
         print("[analysis] no trial PSTH rows found for fixation preference-index analysis")
@@ -485,6 +578,15 @@ def run_fixation_preference_index_analysis(
             "selectivity_input_subdir": settings.selectivity_input_subdir,
             "pair_summary_filename": _ensure_filename(settings.pair_summary_filename, ".csv"),
             "unit_summary_filename": _ensure_filename(settings.unit_summary_filename, ".csv"),
+            "normalization_mode": normalization_mode,
+            "available_normalization_modes": [
+                _NORM_MODE_UNIT_MAX_SUM,
+                _NORM_MODE_PER_BIN_SUM,
+            ],
+            "index_window_s": [
+                float(index_window_start_s),
+                float(index_window_end_s),
+            ],
             "denominator_epsilon": float(settings.denominator_epsilon),
             "n_rows": int(len(timeseries_df)),
             "n_units": int(timeseries_df["unit_key"].nunique()) if not timeseries_df.empty else 0,

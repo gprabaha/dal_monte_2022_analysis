@@ -20,7 +20,16 @@ Current scripts:
   and normalized relative components for triangular plotting.
 - `build_fixation_preference_index.py`
   Computes per-bin pairwise fixation preference indices for each unit using:
-  - `(A - B) / (A + B)` where A/B are condition mean firing rates (Hz) per bin
+  - numerator: `A - B` where A/B are condition mean firing rates (Hz) per bin
+  - denominator mode (configurable):
+    - `unit_max_sum` (default): `max(A+B)` across bins for that unit/pair
+    - `per_bin_sum` (fallback): `A+B` at each bin (legacy behavior)
+  - bin window (configurable, default `[-500, 500] ms`): only bins in this
+    window are included in index outputs
+  Writes both index variants in every output row so plotting can choose mode later:
+  - `preference_index_unit_max_sum`
+  - `preference_index_per_bin_sum`
+  Keeps `preference_index` as the active mode selected during build.
   - default comparisons:
     - `face_interactive__vs__face_non_interactive`
     - `face_interactive__vs__object`
@@ -67,6 +76,8 @@ Config:
   - `selective_index_timeseries_filename`
   - `selective_index_output_pickle_filename`
   - `selective_index_use_parallel`
+  - `selective_index_normalization_mode`
+  - `selective_index_time_window_ms`
   - `selective_index_denominator_epsilon`
   - `selective_index_pair_names`
   - `selective_region_comparison_output_subdir`

@@ -56,7 +56,7 @@ class TestFixationPreferenceIndex(unittest.TestCase):
             )
             psth_path.parent.mkdir(parents=True, exist_ok=True)
 
-            bin_centers = np.asarray([-0.375, -0.125, 0.125, 0.375], dtype=float)
+            bin_centers = np.asarray([-0.625, -0.375, -0.125, 0.125, 0.375, 0.625], dtype=float)
             trial_rows = [
                 {
                     "date": dummy_date,
@@ -69,7 +69,7 @@ class TestFixationPreferenceIndex(unittest.TestCase):
                     "area": "acc",
                     "fixation_category": "face",
                     "interactive_state": "interactive",
-                    "psth_counts": np.asarray([1.0, 1.0, 4.0, 4.0], dtype=float),
+                    "psth_counts": np.asarray([9.0, 1.0, 1.0, 4.0, 4.0, 9.0], dtype=float),
                 },
                 {
                     "date": dummy_date,
@@ -82,7 +82,7 @@ class TestFixationPreferenceIndex(unittest.TestCase):
                     "area": "acc",
                     "fixation_category": "face",
                     "interactive_state": "interactive",
-                    "psth_counts": np.asarray([1.0, 1.0, 5.0, 5.0], dtype=float),
+                    "psth_counts": np.asarray([9.0, 1.0, 1.0, 5.0, 5.0, 9.0], dtype=float),
                 },
                 {
                     "date": dummy_date,
@@ -95,7 +95,7 @@ class TestFixationPreferenceIndex(unittest.TestCase):
                     "area": "acc",
                     "fixation_category": "face",
                     "interactive_state": "non_interactive",
-                    "psth_counts": np.asarray([2.0, 2.0, 2.0, 2.0], dtype=float),
+                    "psth_counts": np.asarray([9.0, 2.0, 2.0, 2.0, 2.0, 9.0], dtype=float),
                 },
                 {
                     "date": dummy_date,
@@ -108,7 +108,7 @@ class TestFixationPreferenceIndex(unittest.TestCase):
                     "area": "acc",
                     "fixation_category": "face",
                     "interactive_state": "non_interactive",
-                    "psth_counts": np.asarray([2.0, 2.0, 2.0, 2.0], dtype=float),
+                    "psth_counts": np.asarray([9.0, 2.0, 2.0, 2.0, 2.0, 9.0], dtype=float),
                 },
                 {
                     "date": dummy_date,
@@ -121,7 +121,7 @@ class TestFixationPreferenceIndex(unittest.TestCase):
                     "area": "acc",
                     "fixation_category": "object",
                     "interactive_state": "non_interactive",
-                    "psth_counts": np.asarray([3.0, 3.0, 1.0, 1.0], dtype=float),
+                    "psth_counts": np.asarray([9.0, 3.0, 3.0, 1.0, 1.0, 9.0], dtype=float),
                 },
                 {
                     "date": dummy_date,
@@ -134,7 +134,7 @@ class TestFixationPreferenceIndex(unittest.TestCase):
                     "area": "acc",
                     "fixation_category": "object",
                     "interactive_state": "non_interactive",
-                    "psth_counts": np.asarray([3.0, 3.0, 1.0, 1.0], dtype=float),
+                    "psth_counts": np.asarray([9.0, 3.0, 3.0, 1.0, 1.0, 9.0], dtype=float),
                 },
             ]
             psth_obj = {
@@ -200,18 +200,58 @@ class TestFixationPreferenceIndex(unittest.TestCase):
                     "face_non_interactive__vs__object",
                 },
             )
-            self.assertEqual(len(out_df), 3 * len(bin_centers))
+            self.assertEqual(len(out_df), 3 * 4)
+            self.assertTrue((out_df["bin_center_s"].astype(float) >= -0.5).all())
+            self.assertTrue((out_df["bin_center_s"].astype(float) <= 0.5).all())
 
             row = out_df.loc[
                 (out_df["unit_key"].astype(str) == f"{dummy_date}|{dummy_unit}")
                 & (out_df["pair_label"].astype(str) == "face_interactive__vs__object")
-                & (out_df["bin_index"].astype(int) == 0)
+                & np.isclose(out_df["bin_center_s"].astype(float), -0.375)
             ].iloc[0]
-            self.assertAlmostEqual(float(row["preference_index"]), -0.5, places=6)
+            self.assertAlmostEqual(float(row["preference_index"]), -8.0 / 22.0, places=6)
             self.assertEqual(str(row["index_name"]), "interactive_face_vs_object_index")
+            self.assertEqual(str(row["normalization_mode"]), "unit_max_sum")
             self.assertFalse(bool(row["is_selective_pair"]))
             self.assertTrue(bool(row["is_selective_unit"]))
             self.assertTrue(bool(row["is_selective_any_pair"]))
+            self.assertAlmostEqual(float(row["unit_pair_max_sum_fr_hz"]), 22.0, places=6)
+            self.assertAlmostEqual(float(row["normalization_denominator_hz"]), 22.0, places=6)
+            self.assertAlmostEqual(float(row["normalization_denominator_unit_max_sum_hz"]), 22.0, places=6)
+            self.assertAlmostEqual(float(row["normalization_denominator_per_bin_sum_hz"]), 16.0, places=6)
+            self.assertAlmostEqual(float(row["preference_index_unit_max_sum"]), -8.0 / 22.0, places=6)
+            self.assertAlmostEqual(float(row["preference_index_per_bin_sum"]), -0.5, places=6)
+            self.assertTrue(bool(row["index_valid_unit_max_sum"]))
+            self.assertTrue(bool(row["index_valid_per_bin_sum"]))
+            self.assertAlmostEqual(float(row["sum_fr_hz"]), 16.0, places=6)
+
+            settings_per_bin = FixationPSTHPreferenceIndexSettings(
+                cfg_path=str(cfg_path),
+                trial_input_modality="psth",
+                trial_input_filename="fixations.pkl",
+                selectivity_input_subdir="ephys/psth/fixation_psth_selectivity",
+                output_subdir="ephys/psth/fixation_psth_preference_index_per_bin",
+                normalization_mode="per_bin_sum",
+                use_parallel=False,
+            )
+            result_per_bin = run_fixation_preference_index_analysis(settings_per_bin)
+            out_df_per_bin = result_per_bin.get("timeseries")
+            self.assertIsInstance(out_df_per_bin, pd.DataFrame)
+            self.assertFalse(out_df_per_bin.empty)
+            row_per_bin = out_df_per_bin.loc[
+                (out_df_per_bin["unit_key"].astype(str) == f"{dummy_date}|{dummy_unit}")
+                & (out_df_per_bin["pair_label"].astype(str) == "face_interactive__vs__object")
+                & np.isclose(out_df_per_bin["bin_center_s"].astype(float), -0.375)
+            ].iloc[0]
+            self.assertAlmostEqual(float(row_per_bin["preference_index"]), -0.5, places=6)
+            self.assertEqual(str(row_per_bin["normalization_mode"]), "per_bin_sum")
+            self.assertAlmostEqual(float(row_per_bin["normalization_denominator_hz"]), 16.0, places=6)
+            self.assertAlmostEqual(float(row_per_bin["normalization_denominator_unit_max_sum_hz"]), 22.0, places=6)
+            self.assertAlmostEqual(float(row_per_bin["normalization_denominator_per_bin_sum_hz"]), 16.0, places=6)
+            self.assertAlmostEqual(float(row_per_bin["preference_index_unit_max_sum"]), -8.0 / 22.0, places=6)
+            self.assertAlmostEqual(float(row_per_bin["preference_index_per_bin_sum"]), -0.5, places=6)
+            self.assertTrue(bool(row_per_bin["index_valid_unit_max_sum"]))
+            self.assertTrue(bool(row_per_bin["index_valid_per_bin_sum"]))
 
             out_csv = (
                 analysis_root

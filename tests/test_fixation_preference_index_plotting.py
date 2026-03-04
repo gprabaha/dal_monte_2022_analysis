@@ -74,6 +74,8 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
                                     "bin_index": int(bin_idx),
                                     "bin_center_s": float(center),
                                     "preference_index": float((unit_idx + 1) * center),
+                                    "preference_index_unit_max_sum": float((unit_idx + 1) * center),
+                                    "preference_index_per_bin_sum": float((unit_idx + 1) * center * 0.5),
                                     "is_selective_pair": is_pair_selective,
                                 }
                             )
@@ -87,6 +89,8 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
                                 "bin_index": int(bin_idx),
                                 "bin_center_s": float(center),
                                 "preference_index": float(center),
+                                "preference_index_unit_max_sum": float(center),
+                                "preference_index_per_bin_sum": float(center * 0.5),
                                 "is_selective_pair": False,
                             }
                         )
@@ -101,6 +105,7 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
                 output_extension="png",
                 output_dpi=110,
                 include_only_pair_selective_units=True,
+                normalization_mode="per_bin_sum",
                 region_order=("BLA", "ACCg", "dmPFC", "OFC"),
                 figure_width_in=8.5,
                 figure_height_in=2.0,
@@ -109,6 +114,8 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
 
             self.assertIsNotNone(out)
             assert out is not None
+            self.assertEqual(str(out.get("normalization_mode")), "per_bin_sum")
+            self.assertEqual(str(out.get("value_column")), "preference_index_per_bin_sum")
             outputs = out["outputs"]
             self.assertEqual(len(outputs), 3)
             for row in outputs:
