@@ -173,6 +173,8 @@ Config:
     - `pair_selective`: units selective for that exact pair
     - `any_selective`: units selective for any pair
     - `all`: no selectivity filter
+  - selectivity filtering can be restricted to a configured window subset
+    (default: `pre_fix`, `peri_fix`, `post_fix`; excludes `full_fix`)
   - y-axis now shows sorted unit numbers for each region panel
     (up to 4 ticks per panel; label = `Sorted Unit Number`)
   - unit order per region = earliest `argmax(|index|)` bin at top, latest at bottom
@@ -196,6 +198,7 @@ Config:
   - `selective_index_plot_output_dpi`
   - `selective_index_plot_include_only_pair_selective_units`
   - `selective_index_plot_unit_filter_mode`
+  - `selective_index_plot_selective_windows`
   - `selective_index_plot_sort_reference_pair`
   - `selective_index_plot_combine_pairs_into_single_figure`
   - `selective_index_plot_normalization_mode`

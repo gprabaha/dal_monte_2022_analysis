@@ -115,6 +115,10 @@ selective_index_plot_include_only_pair_selective_units: true
 # - any_selective: units selective for any pair (`is_selective_unit=true`)
 # - all: no selectivity filter
 selective_index_plot_unit_filter_mode: any_selective
+# Selectivity windows used by heatmap filtering (should match Venn windows).
+# This window list controls how pair significance is interpreted for plotting
+# and excludes full_fix by default.
+selective_index_plot_selective_windows: [pre_fix, peri_fix, post_fix]
 # Optional: apply shared unit ordering (per region) from one reference pair label
 # across all pair heatmaps.
 selective_index_plot_sort_reference_pair: face_interactive__vs__face_non_interactive
@@ -129,7 +133,7 @@ selective_index_plot_pair_order:
   - face_interactive__vs__object
   - face_non_interactive__vs__object
 selective_index_plot_region_order: [BLA, ACCg, dmPFC, OFC]
-selective_index_plot_figure_width_in: 8.5
+selective_index_plot_figure_width_in: 8.3
 selective_index_plot_figure_height_in: 4.4
 selective_index_plot_left_margin: 0.03
 selective_index_plot_right_margin: 0.995

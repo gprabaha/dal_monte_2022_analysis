@@ -456,23 +456,22 @@ def _read_selectivity_significance(
     pair_df["is_selective_pair"] = pair_df["is_selective_pair"].map(_coerce_bool)
 
     pair_keep = ["unit_key", "pair_label", "is_selective_pair"]
-    for column in ("n_significant_windows", "n_tested_windows", "min_p_value"):
+    for column in ("significant_windows", "n_significant_windows", "n_tested_windows", "min_p_value"):
         if column in pair_df.columns:
             pair_keep.append(column)
     pair_sig_df = pair_df[pair_keep].copy()
+    agg_map = {"is_selective_pair": "max"}
+    for column in pair_keep:
+        if column in {"unit_key", "pair_label", "is_selective_pair"}:
+            continue
+        if column == "significant_windows":
+            agg_map[column] = "first"
+        else:
+            agg_map[column] = "max"
     pair_sig_df = (
         pair_sig_df
         .groupby(["unit_key", "pair_label"], dropna=False, as_index=False)
-        .agg(
-            {
-                "is_selective_pair": "max",
-                **{
-                    column: "max"
-                    for column in pair_keep
-                    if column not in {"unit_key", "pair_label", "is_selective_pair"}
-                },
-            }
-        )
+        .agg(agg_map)
     )
 
     unit_df["is_selective_unit"] = unit_df["is_selective_unit"].map(_coerce_bool)

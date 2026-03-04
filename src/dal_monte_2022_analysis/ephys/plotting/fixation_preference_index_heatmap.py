@@ -65,11 +65,12 @@ class FixationPreferenceIndexHeatmapPlotSettings:
     include_only_pair_selective_units: bool = True
     unit_filter_mode: Optional[str] = None
     sort_reference_pair_label: Optional[str] = None
+    selective_windows_for_significance: Optional[Sequence[str]] = None
     combine_pairs_into_single_figure: bool = True
     normalization_mode: str = _NORM_MODE_UNIT_MAX_SUM
     region_order: Optional[Sequence[str]] = DEFAULT_REGION_ORDER
     default_pair_order: Optional[Sequence[str]] = DEFAULT_PAIR_ORDER
-    figure_width_in: float = 8.5
+    figure_width_in: float = 8.3
     figure_height_in: float = 4.4
     left_margin: float = 0.04
     right_margin: float = 0.992
@@ -261,6 +262,10 @@ def _load_timeseries_df(settings: FixationPreferenceIndexHeatmapPlotSettings) ->
             df[column] = df[column].map(_coerce_bool)
         else:
             df[column] = False
+    if "significant_windows" in df.columns:
+        df["significant_windows"] = df["significant_windows"].fillna("").astype(str)
+    else:
+        df["significant_windows"] = ""
     if "index_name" in df.columns:
         df["index_name"] = df["index_name"].fillna("").astype(str)
     else:
@@ -311,6 +316,64 @@ def _safe_token(text: str) -> str:
     return token or "unknown"
 
 
+def _normalize_selective_windows(raw: Optional[Sequence[str]]) -> Optional[set[str]]:
+    if raw is None:
+        return None
+    out = {str(name).strip() for name in raw if str(name).strip()}
+    return out or None
+
+
+def _split_sig_windows(raw: object) -> set[str]:
+    if raw is None:
+        return set()
+    text = str(raw).strip()
+    if not text:
+        return set()
+    return {token.strip() for token in text.split("|") if token.strip()}
+
+
+def _pair_is_selective_for_windows(
+    *,
+    sig_windows_raw: object,
+    fallback: bool,
+    selective_windows: Optional[set[str]],
+) -> bool:
+    if selective_windows is None:
+        return bool(fallback)
+    if not selective_windows:
+        return bool(fallback)
+    sig_windows = _split_sig_windows(sig_windows_raw)
+    if sig_windows:
+        return bool(sig_windows.intersection(selective_windows))
+    return bool(fallback)
+
+
+def _build_pair_selective_mask_for_plot(
+    df: pd.DataFrame,
+    *,
+    selective_windows: Optional[set[str]],
+) -> np.ndarray:
+    if df.empty:
+        return np.asarray([], dtype=bool)
+    fallback = df["is_selective_pair"].map(_coerce_bool).to_numpy(dtype=bool)
+    if selective_windows is None:
+        return fallback
+    if "significant_windows" not in df.columns:
+        return fallback
+
+    sig_series = df["significant_windows"].fillna("").astype(str).tolist()
+    out: list[bool] = []
+    for sig_raw, fb in zip(sig_series, fallback):
+        out.append(
+            _pair_is_selective_for_windows(
+                sig_windows_raw=sig_raw,
+                fallback=bool(fb),
+                selective_windows=selective_windows,
+            )
+        )
+    return np.asarray(out, dtype=bool)
+
+
 def _sorted_unit_tick_positions_labels(
     n_units: int,
     *,
@@ -327,9 +390,19 @@ def _sorted_unit_tick_positions_labels(
     return y_pos, [str(int(v)) for v in labels.tolist()]
 
 
-def _selective_any_unit_mask(df: pd.DataFrame) -> np.ndarray:
+def _selective_any_unit_mask(
+    df: pd.DataFrame,
+    *,
+    selective_pair_col: str = "is_selective_pair_for_plot",
+) -> np.ndarray:
     if df.empty:
         return np.asarray([], dtype=bool)
+
+    if selective_pair_col in df.columns and bool(df[selective_pair_col].map(_coerce_bool).any()):
+        selective_units = set(
+            df.loc[df[selective_pair_col].map(_coerce_bool), "unit_key"].astype(str).tolist()
+        )
+        return df["unit_key"].astype(str).isin(selective_units).to_numpy(dtype=bool)
 
     if "is_selective_unit" in df.columns and bool(df["is_selective_unit"].map(_coerce_bool).any()):
         selective_units = set(
@@ -582,14 +655,27 @@ def plot_fixation_preference_index_heatmaps(
 ) -> Optional[dict]:
     """Plot one 1xN-region heatmap figure per fixation-pair preference index."""
     unit_filter_mode = _resolve_unit_filter_mode(settings)
+    selective_windows = _normalize_selective_windows(settings.selective_windows_for_significance)
     normalization_mode = _normalize_normalization_mode(settings.normalization_mode)
     settings.normalization_mode = normalization_mode
     df = _load_timeseries_df(settings)
     if df.empty:
         print("[plot] no preference-index rows found for heatmap plotting")
         return None
+    if selective_windows is not None:
+        has_sig_windows = bool(df["significant_windows"].astype(str).str.strip().ne("").any())
+        if not has_sig_windows:
+            print(
+                "[plot] warning: no non-empty significant_windows found in preference-index timeseries; "
+                "falling back to is_selective_pair labels for selectivity filtering. "
+                "Rebuild preference-index outputs to apply window-restricted filtering."
+            )
+    df["is_selective_pair_for_plot"] = _build_pair_selective_mask_for_plot(
+        df,
+        selective_windows=selective_windows,
+    )
     if unit_filter_mode == _UNIT_FILTER_ANY:
-        df = df.loc[_selective_any_unit_mask(df)].copy()
+        df = df.loc[_selective_any_unit_mask(df, selective_pair_col="is_selective_pair_for_plot")].copy()
         if df.empty:
             print("[plot] no rows remain after any-selective unit filter")
             return None
@@ -626,7 +712,7 @@ def plot_fixation_preference_index_heatmaps(
     if sort_reference_pair:
         ref_df = df.loc[df["pair_label"].astype(str) == sort_reference_pair].copy()
         if unit_filter_mode == _UNIT_FILTER_PAIR:
-            ref_df = ref_df.loc[ref_df["is_selective_pair"].map(_coerce_bool)].copy()
+            ref_df = ref_df.loc[ref_df["is_selective_pair_for_plot"].map(_coerce_bool)].copy()
         if ref_df.empty:
             print(
                 "[plot] requested sort_reference_pair_label has no rows after filters; "
@@ -655,7 +741,7 @@ def plot_fixation_preference_index_heatmaps(
     for pair_label in pair_order:
         pair_df = df.loc[df["pair_label"].astype(str) == str(pair_label)].copy()
         if unit_filter_mode == _UNIT_FILTER_PAIR:
-            pair_df = pair_df.loc[pair_df["is_selective_pair"].map(_coerce_bool)].copy()
+            pair_df = pair_df.loc[pair_df["is_selective_pair_for_plot"].map(_coerce_bool)].copy()
         if pair_df.empty:
             continue
         pair_df["plot_preference_index"] = np.abs(
@@ -857,6 +943,11 @@ def plot_fixation_preference_index_heatmaps(
         "region_order": list(region_order),
         "combine_pairs_into_single_figure": bool(settings.combine_pairs_into_single_figure),
         "unit_filter_mode": unit_filter_mode,
+        "selective_windows_for_significance": (
+            sorted(selective_windows)
+            if selective_windows is not None
+            else None
+        ),
         "sort_reference_pair_label": sort_reference_pair or None,
         "normalization_mode": normalization_mode,
         "value_column": value_column,
