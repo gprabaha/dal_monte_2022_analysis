@@ -168,8 +168,13 @@ Config:
   (default `[-500, 500] ms`).
   For each figure:
   - columns = regions (default 4-panel order: `BLA`, `ACCg`, `dmPFC`, `OFC`)
-  - rows (within each panel) = units, filtered to units selective for that exact pair
+  - rows (within each panel) = units with selectable filtering:
+    - `pair_selective`: units selective for that exact pair
+    - `any_selective`: units selective for any pair
+    - `all`: no selectivity filter
   - unit order per region = earliest `argmax(|index|)` bin at top, latest at bottom
+  - optional shared sort order: lock all pair plots to a reference pair label
+    so rows align across comparisons
   Heatmaps now plot `|index|` (absolute value), with:
   - zero = white
   - max = red
@@ -186,6 +191,8 @@ Config:
   - `selective_index_plot_output_extension`
   - `selective_index_plot_output_dpi`
   - `selective_index_plot_include_only_pair_selective_units`
+  - `selective_index_plot_unit_filter_mode`
+  - `selective_index_plot_sort_reference_pair`
   - `selective_index_plot_normalization_mode`
   - `selective_index_plot_pair_order`
   - `selective_index_plot_region_order`

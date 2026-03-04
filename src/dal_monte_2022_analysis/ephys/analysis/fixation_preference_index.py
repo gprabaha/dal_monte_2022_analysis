@@ -19,6 +19,7 @@ from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
 )
 from dal_monte_2022_analysis.ephys.analysis.fixation_selectivity import DEFAULT_CONDITION_PAIRS
 from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
+from dal_monte_2022_analysis.runtime.io.analysis_index import scan_analysis_date_paths
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     save_pickle_path,
@@ -46,6 +47,8 @@ class FixationPSTHPreferenceIndexSettings:
     cfg_path: str
     trial_input_modality: str = "psth"
     trial_input_filename: str = "fixations.pkl"
+    average_input_subdir: Optional[str] = None
+    average_input_filename: str = "fixations.pkl"
     selectivity_input_subdir: str = "ephys/psth/fixation_psth_selectivity"
     pair_summary_filename: str = "pair_selectivity.csv"
     unit_summary_filename: str = "unit_selectivity.csv"
@@ -160,7 +163,7 @@ def _load_trial_table(
     *,
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
-) -> tuple[pd.DataFrame, np.ndarray]:
+) -> tuple[pd.DataFrame, np.ndarray, float]:
     cfg = load_config(settings.cfg_path)
     rows = scan_processed_paths_for_filename(
         cfg,
@@ -171,10 +174,16 @@ def _load_trial_table(
         agents=(None,),
     )
     if not rows:
-        return pd.DataFrame(), _fallback_bin_centers(settings)
+        centers = _fallback_bin_centers(settings)
+        if centers.size > 1:
+            bin_duration_s = float(np.mean(np.diff(centers)))
+        else:
+            bin_duration_s = float(settings.bin_size_ms_fallback) / 1000.0
+        return pd.DataFrame(), centers, bin_duration_s
 
     dfs: list[pd.DataFrame] = []
     bin_centers_ref = None
+    bin_duration_ref = None
     n_empty_trials = 0
     n_missing_psth_counts = 0
     for row in rows:
@@ -188,6 +197,17 @@ def _load_trial_table(
             continue
 
         centers = _resolve_bin_centers_from_meta(meta)
+        duration_s = meta.get("bin_size_s")
+        if duration_s is not None:
+            try:
+                duration_s = float(duration_s)
+            except Exception:
+                duration_s = None
+        if duration_s is not None and np.isfinite(duration_s) and duration_s > 0:
+            if bin_duration_ref is None:
+                bin_duration_ref = float(duration_s)
+            elif not np.isclose(float(duration_s), float(bin_duration_ref)):
+                raise ValueError(f"Mismatched trial PSTH bin durations across files; path={row['path']}")
         if centers is not None:
             if bin_centers_ref is None:
                 bin_centers_ref = centers
@@ -207,12 +227,163 @@ def _load_trial_table(
             f"n_files={len(rows)}, empty_trials={n_empty_trials}, "
             f"missing_psth_counts={n_missing_psth_counts}"
         )
-        return pd.DataFrame(), _fallback_bin_centers(settings)
+        centers = _fallback_bin_centers(settings)
+        if centers.size > 1:
+            bin_duration_s = float(np.mean(np.diff(centers)))
+        else:
+            bin_duration_s = float(settings.bin_size_ms_fallback) / 1000.0
+        return pd.DataFrame(), centers, bin_duration_s
 
     out_df = pd.concat(dfs, axis=0, ignore_index=True)
     if bin_centers_ref is None:
         bin_centers_ref = _fallback_bin_centers(settings)
-    return out_df, np.asarray(bin_centers_ref, dtype=float)
+    centers = np.asarray(bin_centers_ref, dtype=float)
+    if bin_duration_ref is None:
+        if centers.size > 1:
+            bin_duration_ref = float(np.mean(np.diff(centers)))
+        else:
+            bin_duration_ref = float(settings.bin_size_ms_fallback) / 1000.0
+    return out_df, centers, float(bin_duration_ref)
+
+
+def _extract_average_df_and_meta(obj) -> tuple[pd.DataFrame, dict]:
+    if isinstance(obj, dict):
+        avg_df = obj.get("averages")
+        meta = obj.get("meta", {})
+        if isinstance(avg_df, pd.DataFrame):
+            return avg_df, meta if isinstance(meta, dict) else {}
+    if isinstance(obj, pd.DataFrame):
+        return obj, {}
+    raise ValueError(f"Unsupported PSTH average object type: {type(obj)}")
+
+
+def _load_average_table(
+    settings: FixationPSTHPreferenceIndexSettings,
+    *,
+    dates: Optional[Sequence[str]] = None,
+) -> tuple[pd.DataFrame, np.ndarray, float]:
+    cfg = load_config(settings.cfg_path)
+    subdir = str(settings.average_input_subdir).strip() if settings.average_input_subdir is not None else ""
+    if not subdir:
+        centers = _fallback_bin_centers(settings)
+        if centers.size > 1:
+            bin_duration_s = float(np.mean(np.diff(centers)))
+        else:
+            bin_duration_s = float(settings.bin_size_ms_fallback) / 1000.0
+        return pd.DataFrame(), centers, bin_duration_s
+
+    rows = scan_analysis_date_paths(
+        cfg,
+        subdir,
+        filename=_ensure_filename(settings.average_input_filename, ".pkl"),
+        dates=dates,
+    )
+    if not rows:
+        centers = _fallback_bin_centers(settings)
+        if centers.size > 1:
+            bin_duration_s = float(np.mean(np.diff(centers)))
+        else:
+            bin_duration_s = float(settings.bin_size_ms_fallback) / 1000.0
+        return pd.DataFrame(), centers, bin_duration_s
+
+    dfs: list[pd.DataFrame] = []
+    bin_centers_ref = None
+    bin_duration_ref = None
+    n_empty = 0
+    n_missing_mean = 0
+    for row in rows:
+        obj = load_pickle_path(row["path"])
+        avg_df, meta = _extract_average_df_and_meta(obj)
+        if avg_df.empty:
+            n_empty += 1
+            continue
+        if "psth_mean" not in avg_df.columns:
+            n_missing_mean += 1
+            continue
+
+        centers = _resolve_bin_centers_from_meta(meta)
+        duration_s = meta.get("target_bin_size_s")
+        if duration_s is None:
+            duration_s = meta.get("bin_size_s")
+        if duration_s is not None:
+            try:
+                duration_s = float(duration_s)
+            except Exception:
+                duration_s = None
+        if duration_s is not None and np.isfinite(duration_s) and duration_s > 0:
+            if bin_duration_ref is None:
+                bin_duration_ref = float(duration_s)
+            elif not np.isclose(float(duration_s), float(bin_duration_ref)):
+                raise ValueError(f"Mismatched average PSTH bin durations across files; path={row['path']}")
+        if centers is not None:
+            if bin_centers_ref is None:
+                bin_centers_ref = np.asarray(centers, dtype=float)
+            elif centers.shape != bin_centers_ref.shape or not np.allclose(centers, bin_centers_ref):
+                raise ValueError(f"Mismatched average PSTH bin centers across files; path={row['path']}")
+
+        df = avg_df.copy()
+        if "fixation_category" not in df.columns:
+            raise ValueError(
+                "Average PSTH input is missing 'fixation_category'. "
+                f"path={row['path']}"
+            )
+        if "interactive_state" not in df.columns:
+            face_mask = df["fixation_category"].astype(str).map(lambda v: v.strip() == settings.face_label)
+            if bool(face_mask.any()):
+                raise ValueError(
+                    "Average PSTH input is missing 'interactive_state' for face rows. "
+                    "Build index averages with split_by_interactive_state=true."
+                )
+        if "date" not in df.columns:
+            df["date"] = str(row.get("date", ""))
+        if "psth_counts" not in df.columns:
+            df["psth_counts"] = df["psth_mean"]
+        dfs.append(df)
+
+    if not dfs:
+        print(
+            "[analysis] average PSTH files were found but usable rows were not. "
+            f"n_files={len(rows)}, empty={n_empty}, missing_psth_mean={n_missing_mean}"
+        )
+        centers = _fallback_bin_centers(settings)
+        if centers.size > 1:
+            bin_duration_s = float(np.mean(np.diff(centers)))
+        else:
+            bin_duration_s = float(settings.bin_size_ms_fallback) / 1000.0
+        return pd.DataFrame(), centers, bin_duration_s
+
+    out_df = pd.concat(dfs, axis=0, ignore_index=True)
+    if bin_centers_ref is None:
+        first = out_df.iloc[0]
+        first_counts = np.asarray(first.get("psth_counts"), dtype=float).reshape(-1)
+        fallback = _fallback_bin_centers(settings)
+        if fallback.size == first_counts.size:
+            bin_centers_ref = fallback
+        else:
+            bin_centers_ref = np.arange(first_counts.size, dtype=float)
+    centers = np.asarray(bin_centers_ref, dtype=float)
+    if bin_duration_ref is None:
+        if centers.size > 1:
+            bin_duration_ref = float(np.mean(np.diff(centers)))
+        else:
+            bin_duration_ref = float(settings.bin_size_ms_fallback) / 1000.0
+    return out_df, centers, float(bin_duration_ref)
+
+
+def _load_input_table(
+    settings: FixationPSTHPreferenceIndexSettings,
+    *,
+    dates: Optional[Sequence[str]] = None,
+    sessions: Optional[Sequence[str]] = None,
+) -> tuple[pd.DataFrame, np.ndarray, float, str]:
+    use_average = settings.average_input_subdir is not None and str(settings.average_input_subdir).strip()
+    if use_average:
+        avg_df, avg_centers, avg_bin_duration_s = _load_average_table(settings, dates=dates)
+        if not avg_df.empty:
+            return avg_df, avg_centers, avg_bin_duration_s, "average"
+        print("[analysis] average input requested but no average rows found; falling back to trial PSTH rows")
+    trial_df, trial_centers, trial_bin_duration_s = _load_trial_table(settings, dates=dates, sessions=sessions)
+    return trial_df, trial_centers, trial_bin_duration_s, "trial"
 
 
 def _resolve_condition_for_row(
@@ -334,7 +505,7 @@ def _read_selectivity_significance(
 
 
 def _unit_worker(args) -> pd.DataFrame:
-    unit_key, df_unit, bin_centers_s, settings = args
+    unit_key, df_unit, bin_centers_s, bin_duration_s, settings = args
     n_bins = int(bin_centers_s.size)
     if n_bins <= 0:
         return pd.DataFrame()
@@ -349,10 +520,12 @@ def _unit_worker(args) -> pd.DataFrame:
     selected_bin_indices = np.flatnonzero(bin_keep).astype(int)
     selected_bin_centers = np.asarray(bin_centers_s[bin_keep], dtype=float)
 
-    if n_bins > 1:
-        bin_size_s = float(np.mean(np.diff(bin_centers_s)))
-    else:
-        bin_size_s = float(settings.bin_size_ms_fallback) / 1000.0
+    bin_size_s = float(bin_duration_s)
+    if (not np.isfinite(bin_size_s)) or bin_size_s <= 0:
+        if n_bins > 1:
+            bin_size_s = float(np.mean(np.diff(bin_centers_s)))
+        else:
+            bin_size_s = float(settings.bin_size_ms_fallback) / 1000.0
     if not np.isfinite(bin_size_s) or bin_size_s <= 0:
         raise ValueError("Unable to infer positive bin size for preference-index analysis.")
 
@@ -367,6 +540,7 @@ def _unit_worker(args) -> pd.DataFrame:
     n_sessions = int(df_unit["session"].nunique()) if "session" in df_unit.columns else 0
 
     condition_rows: dict[str, list[np.ndarray]] = {cond: [] for cond in _SUPPORTED_CONDITIONS}
+    condition_weights: dict[str, list[float]] = {cond: [] for cond in _SUPPORTED_CONDITIONS}
     for row in df_unit.itertuples(index=False):
         condition = _resolve_condition_for_row(row, settings)
         if condition is None:
@@ -375,14 +549,26 @@ def _unit_worker(args) -> pd.DataFrame:
         if counts.size != n_bins:
             continue
         condition_rows[condition].append(counts / float(bin_size_s))
+        weight = 1.0
+        if hasattr(row, "n_trials"):
+            try:
+                n_trials_row = float(getattr(row, "n_trials"))
+                if np.isfinite(n_trials_row) and n_trials_row > 0:
+                    weight = n_trials_row
+            except Exception:
+                pass
+        condition_weights[condition].append(float(weight))
 
     condition_mean_hz: dict[str, np.ndarray] = {}
     condition_n_trials: dict[str, int] = {}
     for condition, rows in condition_rows.items():
         if rows:
             mat = np.vstack(rows)
-            condition_mean_hz[condition] = np.mean(mat, axis=0)
-            condition_n_trials[condition] = int(mat.shape[0])
+            weights = np.asarray(condition_weights.get(condition, []), dtype=float)
+            if weights.size != mat.shape[0] or np.any(~np.isfinite(weights)) or np.all(weights <= 0):
+                weights = np.ones(mat.shape[0], dtype=float)
+            condition_mean_hz[condition] = np.average(mat, axis=0, weights=weights)
+            condition_n_trials[condition] = int(np.sum(weights))
         else:
             condition_mean_hz[condition] = np.full(n_bins, np.nan, dtype=float)
             condition_n_trials[condition] = 0
@@ -493,9 +679,13 @@ def run_fixation_preference_index_analysis(
     index_window_start_s, index_window_end_s = _resolve_index_window_s(settings)
     settings.index_window_start_s = float(index_window_start_s)
     settings.index_window_end_s = float(index_window_end_s)
-    trial_df, bin_centers_s = _load_trial_table(settings, dates=dates, sessions=sessions)
-    if trial_df.empty or "unit_uuid" not in trial_df.columns:
-        print("[analysis] no trial PSTH rows found for fixation preference-index analysis")
+    input_df, bin_centers_s, bin_duration_s, input_source = _load_input_table(
+        settings,
+        dates=dates,
+        sessions=sessions,
+    )
+    if input_df.empty or "unit_uuid" not in input_df.columns:
+        print("[analysis] no usable PSTH rows found for fixation preference-index analysis")
         return {
             "timeseries": pd.DataFrame(),
             "pair_significance": pd.DataFrame(),
@@ -504,8 +694,8 @@ def run_fixation_preference_index_analysis(
 
     if unit_uuids is not None:
         allowed_units = {str(unit).strip() for unit in unit_uuids}
-        trial_df = trial_df.loc[trial_df["unit_uuid"].astype(str).map(lambda value: value.strip()).isin(allowed_units)]
-    if trial_df.empty:
+        input_df = input_df.loc[input_df["unit_uuid"].astype(str).map(lambda value: value.strip()).isin(allowed_units)]
+    if input_df.empty:
         print("[analysis] no matching units found after unit filter")
         return {
             "timeseries": pd.DataFrame(),
@@ -513,14 +703,22 @@ def run_fixation_preference_index_analysis(
             "unit_significance": pd.DataFrame(),
         }
 
-    if "date" not in trial_df.columns:
-        trial_df["date"] = "unknown"
+    if "date" not in input_df.columns:
+        input_df["date"] = "unknown"
 
-    grouped = trial_df.groupby(["date", "unit_uuid"], sort=True, dropna=False)
+    grouped = input_df.groupby(["date", "unit_uuid"], sort=True, dropna=False)
     unit_tasks = []
     for (date, unit_uuid), df_unit in grouped:
         unit_key = f"{date}|{unit_uuid}"
-        unit_tasks.append((unit_key, df_unit.copy(), np.asarray(bin_centers_s, dtype=float), settings))
+        unit_tasks.append(
+            (
+                unit_key,
+                df_unit.copy(),
+                np.asarray(bin_centers_s, dtype=float),
+                float(bin_duration_s),
+                settings,
+            )
+        )
 
     if settings.test_single and unit_tasks:
         unit_tasks = [random.choice(unit_tasks)]
@@ -575,6 +773,15 @@ def run_fixation_preference_index_analysis(
             },
             "trial_input_modality": settings.trial_input_modality,
             "trial_input_filename": _ensure_filename(settings.trial_input_filename, ".pkl"),
+            "input_source": str(input_source),
+            "bin_duration_s": float(bin_duration_s),
+            "bin_stride_s": (
+                float(np.mean(np.diff(np.asarray(bin_centers_s, dtype=float))))
+                if np.asarray(bin_centers_s, dtype=float).size > 1
+                else None
+            ),
+            "average_input_subdir": settings.average_input_subdir,
+            "average_input_filename": _ensure_filename(settings.average_input_filename, ".pkl"),
             "selectivity_input_subdir": settings.selectivity_input_subdir,
             "pair_summary_filename": _ensure_filename(settings.pair_summary_filename, ".csv"),
             "unit_summary_filename": _ensure_filename(settings.unit_summary_filename, ".csv"),

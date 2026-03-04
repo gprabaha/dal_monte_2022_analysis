@@ -85,6 +85,8 @@ class FixationPSTHAverageSettings:
     group_by_session: bool = False
     smooth_before_average: bool = True
     smoothing_sigma_ms: float = 30.0
+    target_bin_size_ms: Optional[float] = None
+    target_bin_step_ms: Optional[float] = None
     use_parallel: bool = True
     max_procs: int = 16
     test_single: bool = False
@@ -645,12 +647,94 @@ def _resolve_smoothing_sigma_bins(
     return float(settings.smoothing_sigma_ms) / bin_size_ms
 
 
+def _resolve_average_output_centers(
+    *,
+    bin_edges_ref: Optional[np.ndarray],
+    bin_centers_ref: Optional[np.ndarray],
+) -> Optional[np.ndarray]:
+    if bin_centers_ref is not None:
+        arr = np.asarray(bin_centers_ref, dtype=float).reshape(-1)
+        if arr.size > 0:
+            return arr
+    if bin_edges_ref is not None:
+        edges = np.asarray(bin_edges_ref, dtype=float).reshape(-1)
+        if edges.size > 1:
+            return 0.5 * (edges[:-1] + edges[1:])
+    return None
+
+
+def _build_resample_counts_matrix(
+    source_centers: np.ndarray,
+    *,
+    target_bin_size_ms: Optional[float],
+    target_bin_step_ms: Optional[float],
+) -> tuple[Optional[np.ndarray], np.ndarray, Optional[float], Optional[float]]:
+    centers = np.asarray(source_centers, dtype=float).reshape(-1)
+    if centers.size == 0:
+        raise ValueError("Cannot resample PSTH averages with empty source bin centers.")
+    if centers.size == 1:
+        return None, centers, None, None
+
+    diffs = np.diff(centers)
+    if not np.all(np.isfinite(diffs)) or np.any(diffs <= 0):
+        raise ValueError("Source PSTH bin centers must be strictly increasing for resampling.")
+    source_bin_size_s = float(np.mean(diffs))
+    if not np.allclose(diffs, source_bin_size_s, atol=max(1e-9, abs(source_bin_size_s) * 1e-6)):
+        raise ValueError("Source PSTH bin centers must be approximately uniform for resampling.")
+    if not np.isfinite(source_bin_size_s) or source_bin_size_s <= 0:
+        raise ValueError("Encountered non-positive source PSTH bin size while resampling averages.")
+
+    if target_bin_size_ms is None:
+        return None, centers, None, None
+
+    target_bin_size_s = float(target_bin_size_ms) / 1000.0
+    if not np.isfinite(target_bin_size_s) or target_bin_size_s <= 0:
+        raise ValueError("target_bin_size_ms must be > 0 when resampling PSTH averages.")
+    if target_bin_step_ms is None:
+        target_bin_step_s = target_bin_size_s
+    else:
+        target_bin_step_s = float(target_bin_step_ms) / 1000.0
+    if not np.isfinite(target_bin_step_s) or target_bin_step_s <= 0:
+        raise ValueError("target_bin_step_ms must be > 0 when resampling PSTH averages.")
+
+    source_edges = np.empty(centers.size + 1, dtype=float)
+    source_edges[:-1] = centers - 0.5 * source_bin_size_s
+    source_edges[-1] = centers[-1] + 0.5 * source_bin_size_s
+
+    start_center = float(source_edges[0]) + 0.5 * target_bin_size_s
+    end_center = float(source_edges[-1]) - 0.5 * target_bin_size_s
+    if end_center < start_center:
+        raise ValueError(
+            "target_bin_size_ms is larger than the available PSTH window for average resampling."
+        )
+
+    target_centers = np.arange(
+        start_center,
+        end_center + 0.5 * target_bin_step_s,
+        target_bin_step_s,
+        dtype=float,
+    )
+    if target_centers.size == 0:
+        raise ValueError("No target bin centers were generated for average PSTH resampling.")
+
+    target_left = target_centers[:, None] - 0.5 * target_bin_size_s
+    target_right = target_centers[:, None] + 0.5 * target_bin_size_s
+    source_left = source_edges[:-1][None, :]
+    source_right = source_edges[1:][None, :]
+    overlap = np.minimum(target_right, source_right) - np.maximum(target_left, source_left)
+    overlap = np.clip(overlap, 0.0, None)
+    source_widths = (source_edges[1:] - source_edges[:-1])[None, :]
+    weights = overlap / source_widths
+    return weights, target_centers, target_bin_size_s, target_bin_step_s
+
+
 def _aggregate_group_counts(
     key: tuple,
     counts_list: Sequence[np.ndarray],
     *,
     smooth_before_average: bool,
     sigma_bins: Optional[float],
+    resample_weights: Optional[np.ndarray],
 ):
     acc = None
     n_trials = 0
@@ -660,6 +744,10 @@ def _aggregate_group_counts(
             continue
         if smooth_before_average:
             counts = gaussian_filter1d(counts, sigma=sigma_bins, mode="nearest")
+        if resample_weights is not None:
+            if resample_weights.shape[1] != counts.size:
+                raise ValueError("Encountered inconsistent PSTH bin counts while resampling averages.")
+            counts = np.matmul(resample_weights, counts)
         if acc is None:
             acc = np.zeros_like(counts, dtype=float)
         elif acc.shape != counts.shape:
@@ -741,6 +829,19 @@ def build_fixation_psth_averages_for_date(
     if not grouped_counts:
         return None
 
+    source_centers = _resolve_average_output_centers(
+        bin_edges_ref=bin_edges_ref,
+        bin_centers_ref=bin_centers_ref,
+    )
+    if source_centers is None:
+        raise ValueError(f"Unable to resolve source bin centers for fixation PSTH averages (date={date}).")
+
+    resample_weights, out_bin_centers, target_bin_size_s, target_bin_step_s = _build_resample_counts_matrix(
+        source_centers,
+        target_bin_size_ms=settings.target_bin_size_ms,
+        target_bin_step_ms=settings.target_bin_step_ms,
+    )
+
     sigma_bins = _resolve_smoothing_sigma_bins(settings, bin_edges_ref)
     grouped: dict[tuple, dict] = {}
     for key, counts_list in grouped_counts.items():
@@ -749,6 +850,7 @@ def build_fixation_psth_averages_for_date(
             counts_list,
             smooth_before_average=settings.smooth_before_average,
             sigma_bins=sigma_bins,
+            resample_weights=resample_weights,
         )
         if n_trials <= 0:
             continue
@@ -784,6 +886,11 @@ def build_fixation_psth_averages_for_date(
         records.append(record)
 
     averages_df = pd.DataFrame(records)
+    if resample_weights is None:
+        out_bin_edges = bin_edges_ref
+    else:
+        out_bin_edges = None
+
     return {
         "meta": {
             "date": date,
@@ -795,8 +902,22 @@ def build_fixation_psth_averages_for_date(
             "split_by_interactive_state": bool(settings.split_by_interactive_state),
             "restrict_interactive_state": settings.restrict_interactive_state,
             "group_by_session": bool(settings.group_by_session),
-            "bin_edges_s_rel": bin_edges_ref,
-            "bin_centers_s_rel": bin_centers_ref,
+            "bin_edges_s_rel": out_bin_edges,
+            "bin_centers_s_rel": out_bin_centers,
+            "source_bin_edges_s_rel": bin_edges_ref,
+            "source_bin_centers_s_rel": source_centers,
+            "target_bin_size_ms": (
+                float(settings.target_bin_size_ms)
+                if settings.target_bin_size_ms is not None
+                else None
+            ),
+            "target_bin_step_ms": (
+                float(settings.target_bin_step_ms)
+                if settings.target_bin_step_ms is not None
+                else None
+            ),
+            "target_bin_size_s": target_bin_size_s,
+            "target_bin_step_s": target_bin_step_s,
         },
         "averages": averages_df,
     }

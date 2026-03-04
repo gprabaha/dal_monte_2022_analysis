@@ -41,6 +41,22 @@ restrict_interactive_state: null
 group_by_session: false
 smooth_before_average: true
 smoothing_sigma_ms: 20.0
+# Optional average-output resampling controls (default: disabled).
+average_target_bin_size_ms: null
+average_target_bin_step_ms: null
+
+# Dedicated date-level average PSTH output for preference-index heatmaps.
+# Uses wider bins and overlapping stride while keeping trial PSTHs unchanged.
+selective_index_average_output_subdir: ephys/psth/fixation_psth_index_averages
+selective_index_average_output_filename: fixations.pkl
+selective_index_average_split_by_interactive_state: true
+selective_index_average_restrict_interactive_state: null
+selective_index_average_group_by_session: false
+selective_index_average_smooth_before_average: false
+selective_index_average_smoothing_sigma_ms: 20.0
+selective_index_average_target_bin_size_ms: 50.0
+selective_index_average_target_bin_step_ms: 25.0
+selective_index_average_categories: ["face", "object"]
 
 # Fixation selective-unit analysis (stored in analysis_output_root)
 selective_output_subdir: ephys/psth/fixation_psth_selectivity
@@ -71,6 +87,7 @@ selective_index_output_subdir: ephys/psth/fixation_psth_preference_index
 selective_index_timeseries_filename: preference_index_timeseries.csv
 selective_index_output_pickle_filename: results.pkl
 selective_index_use_parallel: true
+selective_index_use_average_input: true
 selective_index_normalization_mode: unit_max_sum
 # Bin window (ms) used for preference-index computation, sorting, and plotting base data.
 # Keep this aligned with the unit-level selectivity window when needed.
@@ -89,9 +106,18 @@ selective_index_plot_output_subdir: ephys/psth/fixation_psth_preference_index/pl
 selective_index_plot_output_filename: preference_index_heatmaps
 selective_index_plot_output_extension: pdf
 selective_index_plot_output_dpi: 220
+# Legacy boolean filter toggle (kept for backward compatibility):
 # If true, each pair heatmap keeps only units selective for that exact pair
 # (`is_selective_pair=true`), not units selective for any other pair.
 selective_index_plot_include_only_pair_selective_units: true
+# Preferred filter mode:
+# - pair_selective: AB-specific selective units only (`is_selective_pair=true`)
+# - any_selective: units selective for any pair (`is_selective_unit=true`)
+# - all: no selectivity filter
+selective_index_plot_unit_filter_mode: any_selective
+# Optional: apply shared unit ordering (per region) from one reference pair label
+# across all pair heatmaps.
+selective_index_plot_sort_reference_pair: face_interactive__vs__face_non_interactive #null
 # Which stored normalization to visualize in heatmaps:
 # - unit_max_sum: plots preference_index_unit_max_sum
 # - per_bin_sum: plots preference_index_per_bin_sum

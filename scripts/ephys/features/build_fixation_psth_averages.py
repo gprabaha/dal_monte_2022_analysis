@@ -89,6 +89,10 @@ def main() -> None:
     parser.add_argument("--test-single", action="store_true")
     parser.add_argument("--no-smooth", action="store_true")
     parser.add_argument("--split-by-interactive-state", action="store_true")
+    parser.add_argument("--output-subdir", default=None)
+    parser.add_argument("--output-filename", default=None)
+    parser.add_argument("--target-bin-size-ms", type=float, default=None)
+    parser.add_argument("--target-bin-step-ms", type=float, default=None)
     parser.add_argument("--no-show-example", action="store_true")
     parser.add_argument("--example-max-bins", type=int, default=12)
     args = parser.parse_args()
@@ -105,6 +109,8 @@ def main() -> None:
         group_by_session=cfg.get("group_by_session", False),
         smooth_before_average=cfg.get("smooth_before_average", True),
         smoothing_sigma_ms=cfg.get("smoothing_sigma_ms", 20.0),
+        target_bin_size_ms=cfg.get("average_target_bin_size_ms"),
+        target_bin_step_ms=cfg.get("average_target_bin_step_ms"),
         use_parallel=cfg.get("average_use_parallel", True),
         max_procs=cfg.get("max_procs", 16),
         test_single=cfg.get("test_single", False),
@@ -119,6 +125,14 @@ def main() -> None:
         settings.smooth_before_average = False
     if args.split_by_interactive_state:
         settings.split_by_interactive_state = True
+    if args.output_subdir:
+        settings.output_subdir = str(args.output_subdir)
+    if args.output_filename:
+        settings.output_filename = str(args.output_filename)
+    if args.target_bin_size_ms is not None:
+        settings.target_bin_size_ms = float(args.target_bin_size_ms)
+    if args.target_bin_step_ms is not None:
+        settings.target_bin_step_ms = float(args.target_bin_step_ms)
 
     run_fixation_psth_average_build(
         settings,

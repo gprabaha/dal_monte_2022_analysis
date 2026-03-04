@@ -41,6 +41,9 @@ _INDEX_COLUMN_BY_NORM_MODE = {
     _NORM_MODE_UNIT_MAX_SUM: "preference_index_unit_max_sum",
     _NORM_MODE_PER_BIN_SUM: "preference_index_per_bin_sum",
 }
+_UNIT_FILTER_PAIR = "pair_selective"
+_UNIT_FILTER_ANY = "any_selective"
+_UNIT_FILTER_ALL = "all"
 _W_R_CMAP = LinearSegmentedColormap.from_list(
     "index_abs_wr",
     ["#ffffff", "#b2182b"],
@@ -60,6 +63,8 @@ class FixationPreferenceIndexHeatmapPlotSettings:
     output_extension: str = "pdf"
     output_dpi: Optional[int] = 220
     include_only_pair_selective_units: bool = True
+    unit_filter_mode: Optional[str] = None
+    sort_reference_pair_label: Optional[str] = None
     normalization_mode: str = _NORM_MODE_UNIT_MAX_SUM
     region_order: Optional[Sequence[str]] = DEFAULT_REGION_ORDER
     default_pair_order: Optional[Sequence[str]] = DEFAULT_PAIR_ORDER
@@ -140,6 +145,37 @@ def _normalize_normalization_mode(mode: object) -> str:
     return resolved
 
 
+def _normalize_unit_filter_mode(mode: object) -> str:
+    token = str(mode).strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        _UNIT_FILTER_PAIR: _UNIT_FILTER_PAIR,
+        "pair": _UNIT_FILTER_PAIR,
+        "pairwise": _UNIT_FILTER_PAIR,
+        "ab": _UNIT_FILTER_PAIR,
+        _UNIT_FILTER_ANY: _UNIT_FILTER_ANY,
+        "any": _UNIT_FILTER_ANY,
+        "unit": _UNIT_FILTER_ANY,
+        "significant": _UNIT_FILTER_ANY,
+        "any_significant": _UNIT_FILTER_ANY,
+        _UNIT_FILTER_ALL: _UNIT_FILTER_ALL,
+        "all_units": _UNIT_FILTER_ALL,
+        "none": _UNIT_FILTER_ALL,
+    }
+    resolved = aliases.get(token)
+    if resolved is None:
+        raise ValueError(
+            "Unsupported unit_filter_mode for fixation preference-index heatmap plotting. "
+            "Expected one of: pair_selective, any_selective, all."
+        )
+    return resolved
+
+
+def _resolve_unit_filter_mode(settings: FixationPreferenceIndexHeatmapPlotSettings) -> str:
+    if settings.unit_filter_mode is not None and str(settings.unit_filter_mode).strip():
+        return _normalize_unit_filter_mode(settings.unit_filter_mode)
+    return _UNIT_FILTER_PAIR if bool(settings.include_only_pair_selective_units) else _UNIT_FILTER_ALL
+
+
 def _resolve_value_column(
     df: pd.DataFrame,
     normalization_mode: str,
@@ -216,10 +252,11 @@ def _load_timeseries_df(settings: FixationPreferenceIndexHeatmapPlotSettings) ->
     for column in ("preference_index", "preference_index_unit_max_sum", "preference_index_per_bin_sum"):
         if column in df.columns:
             df[column] = pd.to_numeric(df[column], errors="coerce")
-    if "is_selective_pair" in df.columns:
-        df["is_selective_pair"] = df["is_selective_pair"].map(_coerce_bool)
-    else:
-        df["is_selective_pair"] = False
+    for column in ("is_selective_pair", "is_selective_unit", "is_selective_any_pair"):
+        if column in df.columns:
+            df[column] = df[column].map(_coerce_bool)
+        else:
+            df[column] = False
     if "index_name" in df.columns:
         df["index_name"] = df["index_name"].fillna("").astype(str)
     else:
@@ -270,10 +307,59 @@ def _safe_token(text: str) -> str:
     return token or "unknown"
 
 
+def _selective_any_unit_mask(df: pd.DataFrame) -> np.ndarray:
+    if df.empty:
+        return np.asarray([], dtype=bool)
+
+    if "is_selective_unit" in df.columns and bool(df["is_selective_unit"].map(_coerce_bool).any()):
+        selective_units = set(
+            df.loc[df["is_selective_unit"].map(_coerce_bool), "unit_key"].astype(str).tolist()
+        )
+        return df["unit_key"].astype(str).isin(selective_units).to_numpy(dtype=bool)
+
+    if "is_selective_any_pair" in df.columns and bool(df["is_selective_any_pair"].map(_coerce_bool).any()):
+        selective_units = set(
+            df.loc[df["is_selective_any_pair"].map(_coerce_bool), "unit_key"].astype(str).tolist()
+        )
+        return df["unit_key"].astype(str).isin(selective_units).to_numpy(dtype=bool)
+
+    if "is_selective_pair" in df.columns:
+        selective_units = set(
+            df.loc[df["is_selective_pair"].map(_coerce_bool), "unit_key"].astype(str).tolist()
+        )
+        return df["unit_key"].astype(str).isin(selective_units).to_numpy(dtype=bool)
+
+    return np.ones(len(df), dtype=bool)
+
+
+def _order_units_by_abs_peak(
+    piv: pd.DataFrame,
+    *,
+    bin_centers: np.ndarray,
+) -> list[str]:
+    sort_rows: list[tuple[float, float, str]] = []
+    for unit_key, row in piv.iterrows():
+        values = row.to_numpy(dtype=float)
+        finite = np.isfinite(values)
+        if not np.any(finite):
+            peak_bin = np.inf
+            peak_value = -np.inf
+        else:
+            abs_values = np.abs(values)
+            idx = int(np.nanargmax(abs_values))
+            peak_bin = float(bin_centers[idx])
+            peak_value = float(abs_values[idx])
+        sort_rows.append((peak_bin, peak_value, str(unit_key)))
+    # Reverse sort with origin='lower' so earliest-peak units appear at the top.
+    sort_rows.sort(key=lambda row: (row[0], row[1], row[2]), reverse=True)
+    return [unit_key for _peak_bin, _peak_val, unit_key in sort_rows]
+
+
 def _region_matrix(
     region_df: pd.DataFrame,
     *,
     value_column: str,
+    forced_unit_order: Optional[Sequence[str]] = None,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     if region_df.empty:
         return np.empty((0, 0), dtype=float), np.asarray([], dtype=float), []
@@ -302,23 +388,16 @@ def _region_matrix(
     if piv.empty:
         return np.empty((0, bins.size), dtype=float), bin_centers, []
 
-    sort_rows: list[tuple[float, float, str]] = []
-    for unit_key, row in piv.iterrows():
-        values = row.to_numpy(dtype=float)
-        finite = np.isfinite(values)
-        if not np.any(finite):
-            peak_bin = np.inf
-            peak_value = -np.inf
-        else:
-            abs_values = np.abs(values)
-            idx = int(np.nanargmax(abs_values))
-            peak_bin = float(bin_centers[idx])
-            peak_value = float(abs_values[idx])
-        sort_rows.append((peak_bin, peak_value, str(unit_key)))
+    if forced_unit_order is not None:
+        ordered_units = _dedupe_preserve_order([str(unit) for unit in forced_unit_order])
+        if ordered_units:
+            mat = piv.reindex(index=ordered_units).to_numpy(dtype=float)
+            return mat, bin_centers, ordered_units
 
-    # Reverse sort with origin='lower' so earliest-peak units appear at the top.
-    sort_rows.sort(key=lambda row: (row[0], row[1], row[2]), reverse=True)
-    ordered_units = [unit_key for _peak_bin, _peak_val, unit_key in sort_rows]
+    ordered_units = _order_units_by_abs_peak(
+        piv,
+        bin_centers=bin_centers,
+    )
     mat = piv.loc[ordered_units].to_numpy(dtype=float)
     return mat, bin_centers, ordered_units
 
@@ -343,6 +422,7 @@ def _plot_one_pair(
     ext: str,
     figsize: list[float],
     dpi: Optional[int],
+    unit_order_by_region: Optional[dict[str, list[str]]] = None,
 ) -> dict:
     fig, axes = plt.subplots(1, len(region_order), figsize=figsize, dpi=dpi, squeeze=False)
     axes_row = axes[0]
@@ -364,9 +444,13 @@ def _plot_one_pair(
     n_units_by_region: dict[str, int] = {}
     for ax, region in zip(axes_row, region_order):
         region_df = pair_df.loc[pair_df["region_norm"] == _normalize_region(region)].copy()
+        forced_unit_order = None
+        if unit_order_by_region is not None:
+            forced_unit_order = unit_order_by_region.get(_normalize_region(region))
         matrix, bin_centers, unit_order = _region_matrix(
             region_df,
             value_column="plot_preference_index",
+            forced_unit_order=forced_unit_order,
         )
         n_units = int(len(unit_order))
         n_units_by_region[str(region)] = n_units
@@ -469,12 +553,18 @@ def plot_fixation_preference_index_heatmaps(
     regions: Optional[Sequence[str]] = None,
 ) -> Optional[dict]:
     """Plot one 1xN-region heatmap figure per fixation-pair preference index."""
+    unit_filter_mode = _resolve_unit_filter_mode(settings)
     normalization_mode = _normalize_normalization_mode(settings.normalization_mode)
     settings.normalization_mode = normalization_mode
     df = _load_timeseries_df(settings)
     if df.empty:
         print("[plot] no preference-index rows found for heatmap plotting")
         return None
+    if unit_filter_mode == _UNIT_FILTER_ANY:
+        df = df.loc[_selective_any_unit_mask(df)].copy()
+        if df.empty:
+            print("[plot] no rows remain after any-selective unit filter")
+            return None
     value_column = _resolve_value_column(df, normalization_mode)
 
     pair_order = _resolve_pair_order(
@@ -499,11 +589,42 @@ def plot_fixation_preference_index_heatmaps(
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
     ext = normalize_extension(settings.output_extension, fallback="pdf")
     figsize, dpi = _resolve_figsize_and_dpi(settings)
+    reference_unit_order_by_region = None
+    sort_reference_pair = (
+        str(settings.sort_reference_pair_label).strip()
+        if settings.sort_reference_pair_label is not None
+        else ""
+    )
+    if sort_reference_pair:
+        ref_df = df.loc[df["pair_label"].astype(str) == sort_reference_pair].copy()
+        if unit_filter_mode == _UNIT_FILTER_PAIR:
+            ref_df = ref_df.loc[ref_df["is_selective_pair"].map(_coerce_bool)].copy()
+        if ref_df.empty:
+            print(
+                "[plot] requested sort_reference_pair_label has no rows after filters; "
+                f"pair={sort_reference_pair}"
+            )
+        else:
+            ref_df["plot_preference_index"] = np.abs(
+                pd.to_numeric(ref_df[value_column], errors="coerce").to_numpy(dtype=float)
+            )
+            reference_unit_order_by_region = {}
+            for region in region_order:
+                region_norm = _normalize_region(region)
+                region_ref_df = ref_df.loc[ref_df["region_norm"] == region_norm].copy()
+                _matrix, _centers, unit_order = _region_matrix(
+                    region_ref_df,
+                    value_column="plot_preference_index",
+                )
+                if unit_order:
+                    reference_unit_order_by_region[region_norm] = unit_order
+            if not reference_unit_order_by_region:
+                reference_unit_order_by_region = None
 
     outputs: list[dict] = []
     for pair_label in pair_order:
         pair_df = df.loc[df["pair_label"].astype(str) == str(pair_label)].copy()
-        if settings.include_only_pair_selective_units:
+        if unit_filter_mode == _UNIT_FILTER_PAIR:
             pair_df = pair_df.loc[pair_df["is_selective_pair"].map(_coerce_bool)].copy()
         if pair_df.empty:
             continue
@@ -521,6 +642,7 @@ def plot_fixation_preference_index_heatmaps(
             ext=ext,
             figsize=figsize,
             dpi=dpi,
+            unit_order_by_region=reference_unit_order_by_region,
         )
         outputs.append(out)
 
@@ -532,6 +654,8 @@ def plot_fixation_preference_index_heatmaps(
         "outputs": outputs,
         "pair_order": [str(row["pair_label"]) for row in outputs],
         "region_order": list(region_order),
+        "unit_filter_mode": unit_filter_mode,
+        "sort_reference_pair_label": sort_reference_pair or None,
         "normalization_mode": normalization_mode,
         "value_column": value_column,
     }

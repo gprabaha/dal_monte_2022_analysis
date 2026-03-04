@@ -260,6 +260,160 @@ class TestFixationPreferenceIndex(unittest.TestCase):
             )
             self.assertTrue(out_csv.exists())
 
+    def test_average_input_uses_explicit_bin_duration_for_hz_conversion(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dummy_date = "20990102"
+            dummy_unit = "unit_002"
+            dummy_monkey = "dummy_monkey_002"
+            root = Path(tmp_dir)
+            processed_root = root / "processed"
+            analysis_root = root / "analysis"
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, processed_root=processed_root, analysis_root=analysis_root)
+
+            avg_path = (
+                analysis_root
+                / "ephys/psth/fixation_psth_index_averages"
+                / f"date={dummy_date}"
+                / "fixations.pkl"
+            )
+            avg_path.parent.mkdir(parents=True, exist_ok=True)
+
+            bin_centers = np.asarray([-0.025, 0.0, 0.025], dtype=float)  # 25 ms stride
+            avg_rows = [
+                {
+                    "date": dummy_date,
+                    "unit_uuid": dummy_unit,
+                    "region": "BLA",
+                    "spike_channel": "ch2",
+                    "recorded_agent": "m1",
+                    "recorded_monkey": dummy_monkey,
+                    "area": "bla",
+                    "fixation_category": "face",
+                    "interactive_state": "interactive",
+                    "n_trials": 3,
+                    "psth_mean": np.asarray([10.0, 10.0, 10.0], dtype=float),
+                },
+                {
+                    "date": dummy_date,
+                    "unit_uuid": dummy_unit,
+                    "region": "BLA",
+                    "spike_channel": "ch2",
+                    "recorded_agent": "m1",
+                    "recorded_monkey": dummy_monkey,
+                    "area": "bla",
+                    "fixation_category": "face",
+                    "interactive_state": "interactive",
+                    "n_trials": 1,
+                    "psth_mean": np.asarray([20.0, 20.0, 20.0], dtype=float),
+                },
+                {
+                    "date": dummy_date,
+                    "unit_uuid": dummy_unit,
+                    "region": "BLA",
+                    "spike_channel": "ch2",
+                    "recorded_agent": "m1",
+                    "recorded_monkey": dummy_monkey,
+                    "area": "bla",
+                    "fixation_category": "face",
+                    "interactive_state": "non_interactive",
+                    "n_trials": 4,
+                    "psth_mean": np.asarray([8.0, 8.0, 8.0], dtype=float),
+                },
+                {
+                    "date": dummy_date,
+                    "unit_uuid": dummy_unit,
+                    "region": "BLA",
+                    "spike_channel": "ch2",
+                    "recorded_agent": "m1",
+                    "recorded_monkey": dummy_monkey,
+                    "area": "bla",
+                    "fixation_category": "object",
+                    "interactive_state": "non_interactive",
+                    "n_trials": 4,
+                    "psth_mean": np.asarray([6.0, 6.0, 6.0], dtype=float),
+                },
+            ]
+            avg_obj = {
+                "meta": {
+                    "bin_centers_s_rel": bin_centers,
+                    "target_bin_size_s": 0.05,  # 50 ms bin width
+                    "target_bin_step_s": 0.025,
+                },
+                "averages": pd.DataFrame(avg_rows),
+            }
+            save_pickle_path(avg_obj, avg_path)
+
+            sel_root = analysis_root / "ephys/psth/fixation_psth_selectivity"
+            sel_root.mkdir(parents=True, exist_ok=True)
+            pair_df = pd.DataFrame(
+                [
+                    {
+                        "unit_key": f"{dummy_date}|{dummy_unit}",
+                        "pair_label": "face_interactive__vs__face_non_interactive",
+                        "is_selective_pair": True,
+                    },
+                    {
+                        "unit_key": f"{dummy_date}|{dummy_unit}",
+                        "pair_label": "face_interactive__vs__object",
+                        "is_selective_pair": True,
+                    },
+                    {
+                        "unit_key": f"{dummy_date}|{dummy_unit}",
+                        "pair_label": "face_non_interactive__vs__object",
+                        "is_selective_pair": False,
+                    },
+                ]
+            )
+            pair_df.to_csv(sel_root / "pair_selectivity.csv", index=False)
+            unit_df = pd.DataFrame(
+                [
+                    {
+                        "unit_key": f"{dummy_date}|{dummy_unit}",
+                        "is_selective_unit": True,
+                        "selective_pairs": (
+                            "face_interactive__vs__face_non_interactive|"
+                            "face_interactive__vs__object"
+                        ),
+                    }
+                ]
+            )
+            unit_df.to_csv(sel_root / "unit_selectivity.csv", index=False)
+
+            settings = FixationPSTHPreferenceIndexSettings(
+                cfg_path=str(cfg_path),
+                average_input_subdir="ephys/psth/fixation_psth_index_averages",
+                average_input_filename="fixations.pkl",
+                trial_input_modality="psth",
+                trial_input_filename="fixations.pkl",
+                selectivity_input_subdir="ephys/psth/fixation_psth_selectivity",
+                output_subdir="ephys/psth/fixation_psth_preference_index_avg",
+                use_parallel=False,
+            )
+            result = run_fixation_preference_index_analysis(settings, dates=[dummy_date])
+            out_df = result.get("timeseries")
+
+            self.assertIsInstance(out_df, pd.DataFrame)
+            self.assertFalse(out_df.empty)
+            self.assertEqual(int(len(out_df)), 3 * 3)
+            self.assertEqual(str(result["meta"]["input_source"]), "average")
+            self.assertAlmostEqual(float(result["meta"]["bin_duration_s"]), 0.05, places=9)
+            self.assertAlmostEqual(float(result["meta"]["bin_stride_s"]), 0.025, places=9)
+
+            row = out_df.loc[
+                (out_df["unit_key"].astype(str) == f"{dummy_date}|{dummy_unit}")
+                & (out_df["pair_label"].astype(str) == "face_interactive__vs__object")
+                & np.isclose(out_df["bin_center_s"].astype(float), 0.0)
+            ].iloc[0]
+            self.assertEqual(int(row["n_trials_a"]), 4)
+            self.assertEqual(int(row["n_trials_b"]), 4)
+            self.assertAlmostEqual(float(row["mean_fr_a_hz"]), 250.0, places=6)
+            self.assertAlmostEqual(float(row["mean_fr_b_hz"]), 120.0, places=6)
+            self.assertAlmostEqual(float(row["difference_fr_hz"]), 130.0, places=6)
+            self.assertAlmostEqual(float(row["sum_fr_hz"]), 370.0, places=6)
+            self.assertAlmostEqual(float(row["unit_pair_max_sum_fr_hz"]), 370.0, places=6)
+            self.assertAlmostEqual(float(row["normalization_denominator_hz"]), 370.0, places=6)
+
 
 if __name__ == "__main__":
     unittest.main()

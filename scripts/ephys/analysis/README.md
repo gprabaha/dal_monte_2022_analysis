@@ -37,6 +37,16 @@ Current scripts:
   Also merges selectivity labels from:
   - `pair_selectivity.csv` (`is_selective_pair`)
   - `unit_selectivity.csv` (`is_selective_unit`, `selective_pairs`)
+  Input source can be either:
+  - trial PSTH rows (`psth_counts`) from processed data, or
+  - date-level average PSTH rows (`psth_mean`) from analysis outputs.
+- `build_fixation_index_psth_averages.py`
+  Builds a separate date-level average PSTH set for preference-index heatmaps.
+  Intended defaults:
+  - split by interactive state (`face_interactive` vs `face_non_interactive`)
+  - target bins of 50 ms with 25 ms stride
+  - output saved separately from standard averages for index workflows
+  This keeps existing 10 ms trial PSTHs unchanged.
 - `build_fixation_three_way_region_comparison.py`
   Compares three-way fixation-response compositions across regions per
   analysis window using permutation tests for:
@@ -72,10 +82,23 @@ Config:
   - `selective_min_trials_per_condition`
   - `selective_use_parallel`
   - `selective_windows_ms`
+  - `average_target_bin_size_ms`
+  - `average_target_bin_step_ms`
+  - `selective_index_average_output_subdir`
+  - `selective_index_average_output_filename`
+  - `selective_index_average_split_by_interactive_state`
+  - `selective_index_average_restrict_interactive_state`
+  - `selective_index_average_group_by_session`
+  - `selective_index_average_smooth_before_average`
+  - `selective_index_average_smoothing_sigma_ms`
+  - `selective_index_average_target_bin_size_ms`
+  - `selective_index_average_target_bin_step_ms`
+  - `selective_index_average_categories`
   - `selective_index_output_subdir`
   - `selective_index_timeseries_filename`
   - `selective_index_output_pickle_filename`
   - `selective_index_use_parallel`
+  - `selective_index_use_average_input`
   - `selective_index_normalization_mode`
   - `selective_index_time_window_ms`
   - `selective_index_denominator_epsilon`

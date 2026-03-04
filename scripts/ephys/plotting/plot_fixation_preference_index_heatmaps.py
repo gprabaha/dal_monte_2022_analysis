@@ -36,6 +36,24 @@ def main() -> None:
             "'unit_max_sum' (default) or 'per_bin_sum'."
         ),
     )
+    parser.add_argument(
+        "--unit-filter-mode",
+        default=None,
+        help=(
+            "Unit filtering mode: "
+            "'pair_selective' (only AB-selective units), "
+            "'any_selective' (units selective for any pair), or "
+            "'all' (no selectivity filter)."
+        ),
+    )
+    parser.add_argument(
+        "--sort-reference-pair",
+        default=None,
+        help=(
+            "Optional pair_label to define shared unit sort order across all pair plots. "
+            "Example: face_interactive__vs__face_non_interactive"
+        ),
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.ephys_fixation_psth_cfg)
@@ -55,6 +73,8 @@ def main() -> None:
             "selective_index_plot_include_only_pair_selective_units",
             cfg.get("selective_index_plot_include_only_selective_units", True),
         ),
+        unit_filter_mode=cfg.get("selective_index_plot_unit_filter_mode"),
+        sort_reference_pair_label=cfg.get("selective_index_plot_sort_reference_pair"),
         normalization_mode=cfg.get("selective_index_plot_normalization_mode", "unit_max_sum"),
         region_order=cfg.get("selective_index_plot_region_order", ["BLA", "ACCg", "dmPFC", "OFC"]),
         default_pair_order=cfg.get("selective_index_plot_pair_order"),
@@ -73,6 +93,10 @@ def main() -> None:
     )
     if args.normalization_mode is not None:
         settings.normalization_mode = str(args.normalization_mode)
+    if args.unit_filter_mode is not None:
+        settings.unit_filter_mode = str(args.unit_filter_mode)
+    if args.sort_reference_pair is not None:
+        settings.sort_reference_pair_label = str(args.sort_reference_pair)
 
     out = plot_fixation_preference_index_heatmaps(
         settings,
