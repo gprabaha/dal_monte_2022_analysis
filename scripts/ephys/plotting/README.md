@@ -162,19 +162,23 @@ Config:
   - `selective_region_comparison_plot_annotation_max_regions`
 
 - `plot_fixation_preference_index_heatmaps.py`
-  Plots one figure per fixation-pair preference index using
+  Plots fixation-pair preference index heatmaps using
   `preference_index_timeseries.csv` from the preference-index analysis.
   Displayed/sorted bins come directly from the index-analysis output window
   (default `[-500, 500] ms`).
-  For each figure:
-  - columns = regions (default 4-panel order: `BLA`, `ACCg`, `dmPFC`, `OFC`)
+  Default output is one combined 3x4 figure:
+  - rows = fixation-pair comparisons
+  - columns = regions (default order: `BLA`, `ACCg`, `dmPFC`, `OFC`)
   - rows (within each panel) = units with selectable filtering:
     - `pair_selective`: units selective for that exact pair
     - `any_selective`: units selective for any pair
     - `all`: no selectivity filter
+  - y-axis now shows sorted unit numbers for each region panel
+    (up to 4 ticks per panel; label = `Sorted Unit Number`)
   - unit order per region = earliest `argmax(|index|)` bin at top, latest at bottom
   - optional shared sort order: lock all pair plots to a reference pair label
     so rows align across comparisons
+  Legacy mode is still available to write one figure per pair.
   Heatmaps now plot `|index|` (absolute value), with:
   - zero = white
   - max = red
@@ -193,6 +197,7 @@ Config:
   - `selective_index_plot_include_only_pair_selective_units`
   - `selective_index_plot_unit_filter_mode`
   - `selective_index_plot_sort_reference_pair`
+  - `selective_index_plot_combine_pairs_into_single_figure`
   - `selective_index_plot_normalization_mode`
   - `selective_index_plot_pair_order`
   - `selective_index_plot_region_order`
@@ -203,11 +208,14 @@ Config:
   - `selective_index_plot_top_margin`
   - `selective_index_plot_bottom_margin`
   - `selective_index_plot_panel_wspace`
+  - `selective_index_plot_panel_hspace`
   - `selective_index_plot_show_suptitle`
   - `selective_index_plot_colorbar_orientation`
   - `selective_index_plot_colorbar_label`
   - `selective_index_plot_colorbar_fraction`
   - `selective_index_plot_colorbar_pad`
+  - `selective_index_plot_colorbar_shrink`
+  - `selective_index_plot_colorbar_aspect`
 
 - `plot_selective_fixation_psth_units.py`
   Selective-unit PSTH plotting with two modes:

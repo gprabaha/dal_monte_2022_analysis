@@ -100,8 +100,8 @@ selective_index_pair_names:
   face_interactive__vs__object: interactive_face_vs_object_index
   face_non_interactive__vs__object: non_interactive_face_vs_object_index
 
-# Preference-index heatmap plotting (one output file per pair label).
-# Default footprint: letter width x <= 1/5 letter height.
+# Preference-index heatmap plotting.
+# Default footprint for combined 3x4 output: letter width x <= 2/5 letter height.
 selective_index_plot_output_subdir: ephys/psth/fixation_psth_preference_index/plots
 selective_index_plot_output_filename: preference_index_heatmaps
 selective_index_plot_output_extension: pdf
@@ -117,7 +117,9 @@ selective_index_plot_include_only_pair_selective_units: true
 selective_index_plot_unit_filter_mode: any_selective
 # Optional: apply shared unit ordering (per region) from one reference pair label
 # across all pair heatmaps.
-selective_index_plot_sort_reference_pair: face_interactive__vs__face_non_interactive #null
+selective_index_plot_sort_reference_pair: face_interactive__vs__face_non_interactive
+# If true, render all selected pairs in one combined grid (rows=pairs, cols=regions).
+selective_index_plot_combine_pairs_into_single_figure: true
 # Which stored normalization to visualize in heatmaps:
 # - unit_max_sum: plots preference_index_unit_max_sum
 # - per_bin_sum: plots preference_index_per_bin_sum
@@ -128,17 +130,20 @@ selective_index_plot_pair_order:
   - face_non_interactive__vs__object
 selective_index_plot_region_order: [BLA, ACCg, dmPFC, OFC]
 selective_index_plot_figure_width_in: 8.5
-selective_index_plot_figure_height_in: 2.0
-selective_index_plot_left_margin: 0.04
-selective_index_plot_right_margin: 0.992
+selective_index_plot_figure_height_in: 4.4
+selective_index_plot_left_margin: 0.03
+selective_index_plot_right_margin: 0.995
 selective_index_plot_top_margin: 0.86
 selective_index_plot_bottom_margin: 0.26
-selective_index_plot_panel_wspace: 0.18
+selective_index_plot_panel_wspace: 0.10
+selective_index_plot_panel_hspace: 0.24
 selective_index_plot_show_suptitle: false
 selective_index_plot_colorbar_orientation: horizontal
 selective_index_plot_colorbar_label: "|Preference Index|"
-selective_index_plot_colorbar_fraction: 0.06
-selective_index_plot_colorbar_pad: 0.18
+selective_index_plot_colorbar_fraction: 0.025
+selective_index_plot_colorbar_pad: 0.08
+selective_index_plot_colorbar_shrink: 0.72
+selective_index_plot_colorbar_aspect: 48.0
 
 # Region-level Venn plots from fixation selectivity outputs
 selective_venn_output_subdir: ephys/psth/fixation_psth_selectivity_venn

@@ -40,7 +40,7 @@ def _write_dataset_cfg(path: Path, processed_root: Path, analysis_root: Path) ->
 class TestFixationPreferenceIndexPlotting(unittest.TestCase):
     """Regression checks for per-pair preference-index heatmap rendering."""
 
-    def test_plot_preference_index_heatmaps_outputs_three_pair_files(self) -> None:
+    def test_plot_preference_index_heatmaps_outputs_combined_pair_grid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             dummy_date = "20990101"
             root = Path(tmp_dir)
@@ -108,7 +108,7 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
                 normalization_mode="per_bin_sum",
                 region_order=("BLA", "ACCg", "dmPFC", "OFC"),
                 figure_width_in=8.5,
-                figure_height_in=2.0,
+                figure_height_in=4.4,
             )
             out = plot_fixation_preference_index_heatmaps(settings)
 
@@ -116,15 +116,25 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
             assert out is not None
             self.assertEqual(str(out.get("normalization_mode")), "per_bin_sum")
             self.assertEqual(str(out.get("value_column")), "preference_index_per_bin_sum")
+            self.assertTrue(bool(out.get("combine_pairs_into_single_figure")))
             outputs = out["outputs"]
-            self.assertEqual(len(outputs), 3)
-            for row in outputs:
-                self.assertTrue(Path(row["output_path"]).exists())
-                self.assertEqual(set(row["n_units_by_region"].keys()), {"BLA", "ACCg", "dmPFC", "OFC"})
-                self.assertEqual(int(row["n_units_by_region"]["BLA"]), 1)
-                self.assertEqual(int(row["n_units_by_region"]["ACCg"]), 1)
-                self.assertEqual(int(row["n_units_by_region"]["dmPFC"]), 0)
-                self.assertEqual(int(row["n_units_by_region"]["OFC"]), 0)
+            self.assertEqual(len(outputs), 1)
+            row = outputs[0]
+            self.assertTrue(bool(row.get("combined_pairs")))
+            self.assertTrue(Path(row["output_path"]).exists())
+            self.assertEqual(
+                set(row["n_units_by_pair_region"].keys()),
+                {
+                    "face_interactive__vs__face_non_interactive",
+                    "face_interactive__vs__object",
+                    "face_non_interactive__vs__object",
+                },
+            )
+            for pair_label in row["n_units_by_pair_region"]:
+                self.assertEqual(int(row["n_units_by_pair_region"][pair_label]["BLA"]), 1)
+                self.assertEqual(int(row["n_units_by_pair_region"][pair_label]["ACCg"]), 1)
+                self.assertEqual(int(row["n_units_by_pair_region"][pair_label]["dmPFC"]), 0)
+                self.assertEqual(int(row["n_units_by_pair_region"][pair_label]["OFC"]), 0)
 
     def test_plot_preference_index_heatmaps_any_selective_filter(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -196,7 +206,7 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
                 normalization_mode="unit_max_sum",
                 region_order=("BLA", "ACCg", "dmPFC", "OFC"),
                 figure_width_in=8.5,
-                figure_height_in=2.0,
+                figure_height_in=4.4,
             )
             out = plot_fixation_preference_index_heatmaps(settings)
 
@@ -208,13 +218,15 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
                 "face_interactive__vs__face_non_interactive",
             )
             outputs = out["outputs"]
-            self.assertEqual(len(outputs), 3)
-            for row in outputs:
-                self.assertTrue(Path(row["output_path"]).exists())
-                self.assertEqual(int(row["n_units_by_region"]["BLA"]), 2)
-                self.assertEqual(int(row["n_units_by_region"]["ACCg"]), 2)
-                self.assertEqual(int(row["n_units_by_region"]["dmPFC"]), 0)
-                self.assertEqual(int(row["n_units_by_region"]["OFC"]), 0)
+            self.assertEqual(len(outputs), 1)
+            row = outputs[0]
+            self.assertTrue(bool(row.get("combined_pairs")))
+            self.assertTrue(Path(row["output_path"]).exists())
+            for pair_label in row["n_units_by_pair_region"]:
+                self.assertEqual(int(row["n_units_by_pair_region"][pair_label]["BLA"]), 2)
+                self.assertEqual(int(row["n_units_by_pair_region"][pair_label]["ACCg"]), 2)
+                self.assertEqual(int(row["n_units_by_pair_region"][pair_label]["dmPFC"]), 0)
+                self.assertEqual(int(row["n_units_by_pair_region"][pair_label]["OFC"]), 0)
 
 
 if __name__ == "__main__":

@@ -19,8 +19,8 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_preference_index_heatmap im
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Plot one heatmap figure per fixation-pair preference index with "
-            "one region subplot per panel."
+            "Plot fixation-pair preference index heatmaps as a combined "
+            "rows-by-pairs x columns-by-regions figure."
         ),
     )
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
@@ -54,6 +54,11 @@ def main() -> None:
             "Example: face_interactive__vs__face_non_interactive"
         ),
     )
+    parser.add_argument(
+        "--separate-pair-figures",
+        action="store_true",
+        help="Disable combined 3x4 output and write one figure per pair (legacy mode).",
+    )
     args = parser.parse_args()
 
     cfg = load_config(args.ephys_fixation_psth_cfg)
@@ -75,21 +80,25 @@ def main() -> None:
         ),
         unit_filter_mode=cfg.get("selective_index_plot_unit_filter_mode"),
         sort_reference_pair_label=cfg.get("selective_index_plot_sort_reference_pair"),
+        combine_pairs_into_single_figure=cfg.get("selective_index_plot_combine_pairs_into_single_figure", True),
         normalization_mode=cfg.get("selective_index_plot_normalization_mode", "unit_max_sum"),
         region_order=cfg.get("selective_index_plot_region_order", ["BLA", "ACCg", "dmPFC", "OFC"]),
         default_pair_order=cfg.get("selective_index_plot_pair_order"),
         figure_width_in=cfg.get("selective_index_plot_figure_width_in", 8.5),
-        figure_height_in=cfg.get("selective_index_plot_figure_height_in", 2.0),
-        left_margin=cfg.get("selective_index_plot_left_margin", 0.04),
-        right_margin=cfg.get("selective_index_plot_right_margin", 0.992),
+        figure_height_in=cfg.get("selective_index_plot_figure_height_in", 4.4),
+        left_margin=cfg.get("selective_index_plot_left_margin", 0.03),
+        right_margin=cfg.get("selective_index_plot_right_margin", 0.995),
         top_margin=cfg.get("selective_index_plot_top_margin", 0.86),
         bottom_margin=cfg.get("selective_index_plot_bottom_margin", 0.26),
-        panel_wspace=cfg.get("selective_index_plot_panel_wspace", 0.18),
+        panel_wspace=cfg.get("selective_index_plot_panel_wspace", 0.10),
+        panel_hspace=cfg.get("selective_index_plot_panel_hspace", 0.24),
         show_suptitle=cfg.get("selective_index_plot_show_suptitle", False),
         colorbar_orientation=cfg.get("selective_index_plot_colorbar_orientation", "horizontal"),
         colorbar_label=cfg.get("selective_index_plot_colorbar_label", "|Preference Index|"),
-        colorbar_fraction=cfg.get("selective_index_plot_colorbar_fraction", 0.06),
-        colorbar_pad=cfg.get("selective_index_plot_colorbar_pad", 0.18),
+        colorbar_fraction=cfg.get("selective_index_plot_colorbar_fraction", 0.025),
+        colorbar_pad=cfg.get("selective_index_plot_colorbar_pad", 0.08),
+        colorbar_shrink=cfg.get("selective_index_plot_colorbar_shrink", 0.72),
+        colorbar_aspect=cfg.get("selective_index_plot_colorbar_aspect", 48.0),
     )
     if args.normalization_mode is not None:
         settings.normalization_mode = str(args.normalization_mode)
@@ -97,6 +106,8 @@ def main() -> None:
         settings.unit_filter_mode = str(args.unit_filter_mode)
     if args.sort_reference_pair is not None:
         settings.sort_reference_pair_label = str(args.sort_reference_pair)
+    if args.separate_pair_figures:
+        settings.combine_pairs_into_single_figure = False
 
     out = plot_fixation_preference_index_heatmaps(
         settings,
@@ -110,7 +121,13 @@ def main() -> None:
     outputs = out.get("outputs", [])
     print(f"[plot] generated {len(outputs)} preference-index heatmap figure(s)")
     for row in outputs:
-        print(f"[plot] {row.get('pair_label')}: {row.get('output_path')}")
+        if row.get("combined_pairs"):
+            print(
+                "[plot] combined pairs: "
+                f"{', '.join(row.get('pair_labels', []))} -> {row.get('output_path')}"
+            )
+        else:
+            print(f"[plot] {row.get('pair_label')}: {row.get('output_path')}")
 
 
 if __name__ == "__main__":
