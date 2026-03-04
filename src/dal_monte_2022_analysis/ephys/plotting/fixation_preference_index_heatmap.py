@@ -1,0 +1,443 @@
+"""Plot region-wise fixation preference-index heatmaps by condition pair."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Sequence
+
+import matplotlib as mpl
+
+mpl.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+import numpy as np
+import pandas as pd
+
+from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.ephys.analysis.fixation_preference_index import (
+    DEFAULT_INDEX_NAME_BY_PAIR,
+)
+from dal_monte_2022_analysis.ephys.plotting.common import (
+    apply_plotting_config,
+    resolve_figsize,
+)
+from dal_monte_2022_analysis.runtime.io.plot_output import (
+    normalize_extension,
+    save_figure,
+)
+from dal_monte_2022_analysis.utils.filenames import ensure_filename
+from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+
+
+DEFAULT_REGION_ORDER = ("BLA", "ACCg", "dmPFC", "OFC")
+DEFAULT_PAIR_ORDER = tuple(
+    f"{cond_a}__vs__{cond_b}"
+    for cond_a, cond_b in DEFAULT_INDEX_NAME_BY_PAIR.keys()
+)
+_BW_R_CMAP = LinearSegmentedColormap.from_list(
+    "index_bwr",
+    ["#2166ac", "#ffffff", "#b2182b"],
+)
+
+
+@dataclass
+class FixationPreferenceIndexHeatmapPlotSettings:
+    """Configuration for per-pair region heatmap plotting of preference indices."""
+
+    cfg_path: str
+    plotting_cfg_path: str = "configs/plotting.yaml"
+    input_subdir: str = "ephys/psth/fixation_psth_preference_index"
+    timeseries_filename: str = "preference_index_timeseries.csv"
+    output_subdir: str = "ephys/psth/fixation_psth_preference_index/plots"
+    output_filename: str = "preference_index_heatmaps"
+    output_extension: str = "png"
+    output_dpi: Optional[int] = 220
+    include_only_pair_selective_units: bool = True
+    region_order: Optional[Sequence[str]] = DEFAULT_REGION_ORDER
+    default_pair_order: Optional[Sequence[str]] = DEFAULT_PAIR_ORDER
+    figure_width_in: float = 8.5
+    figure_height_in: float = 2.0
+    left_margin: float = 0.04
+    right_margin: float = 0.992
+    top_margin: float = 0.86
+    bottom_margin: float = 0.22
+    panel_wspace: float = 0.18
+    show_suptitle: bool = False
+    colorbar_label: str = "Preference Index (A-B)/(A+B)"
+    colorbar_fraction: float = 0.02
+    colorbar_pad: float = 0.02
+
+
+def _coerce_bool(value: object) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value) != 0
+    if isinstance(value, (float, np.floating)):
+        if not np.isfinite(value):
+            return False
+        return float(value) != 0.0
+    token = str(value).strip().lower()
+    return token in {"1", "true", "t", "yes", "y"}
+
+
+def _normalize_region(region: object) -> str:
+    return str(region).strip().lower()
+
+
+def _dedupe_preserve_order(items: Sequence[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        token = str(item).strip()
+        if not token:
+            continue
+        key = token.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(token)
+    return out
+
+
+def _resolve_figsize_and_dpi(
+    settings: FixationPreferenceIndexHeatmapPlotSettings,
+) -> tuple[list[float], Optional[int]]:
+    cfg_dpi = None
+    if settings.plotting_cfg_path and Path(settings.plotting_cfg_path).exists():
+        plot_cfg = load_config(settings.plotting_cfg_path)
+        apply_plotting_config(plot_cfg)
+        _, cfg_dpi = resolve_figsize(plot_cfg)
+    dpi = settings.output_dpi if settings.output_dpi is not None else cfg_dpi
+    return [float(settings.figure_width_in), float(settings.figure_height_in)], dpi
+
+
+def _load_timeseries_df(settings: FixationPreferenceIndexHeatmapPlotSettings) -> pd.DataFrame:
+    cfg = load_config(settings.cfg_path)
+    in_root = build_analysis_output_dir(cfg, settings.input_subdir)
+    in_path = in_root / ensure_filename(settings.timeseries_filename, ".csv")
+    if not in_path.exists():
+        raise FileNotFoundError(f"Preference-index timeseries CSV not found: {in_path}")
+    df = pd.read_csv(in_path)
+    required = {
+        "pair_label",
+        "region",
+        "unit_key",
+        "bin_index",
+        "bin_center_s",
+        "preference_index",
+    }
+    missing = sorted(required - set(df.columns))
+    if missing:
+        raise ValueError(
+            "Preference-index timeseries CSV missing required columns: "
+            + ", ".join(missing)
+        )
+    if df.empty:
+        return pd.DataFrame(columns=df.columns)
+    df["pair_label"] = df["pair_label"].astype(str).map(lambda token: token.strip())
+    df["region"] = df["region"].astype(str).map(lambda token: token.strip())
+    df["region_norm"] = df["region"].map(_normalize_region)
+    df["unit_key"] = df["unit_key"].astype(str).map(lambda token: token.strip())
+    df["bin_index"] = pd.to_numeric(df["bin_index"], errors="coerce").astype("Int64")
+    df["bin_center_s"] = pd.to_numeric(df["bin_center_s"], errors="coerce")
+    df["preference_index"] = pd.to_numeric(df["preference_index"], errors="coerce")
+    if "is_selective_pair" in df.columns:
+        df["is_selective_pair"] = df["is_selective_pair"].map(_coerce_bool)
+    else:
+        df["is_selective_pair"] = False
+    if "index_name" in df.columns:
+        df["index_name"] = df["index_name"].fillna("").astype(str)
+    else:
+        df["index_name"] = ""
+    return df
+
+
+def _resolve_pair_order(
+    df: pd.DataFrame,
+    *,
+    requested_pairs: Optional[Sequence[str]],
+    default_pair_order: Optional[Sequence[str]],
+) -> list[str]:
+    present_pairs = [str(token) for token in df["pair_label"].dropna().astype(str).unique().tolist()]
+    if requested_pairs:
+        requested = _dedupe_preserve_order([str(token) for token in requested_pairs])
+        present_set = set(present_pairs)
+        return [pair for pair in requested if pair in present_set]
+
+    order: list[str] = []
+    present_set = set(present_pairs)
+    if default_pair_order is not None:
+        for pair in _dedupe_preserve_order([str(token) for token in default_pair_order]):
+            if pair in present_set:
+                order.append(pair)
+    for pair in sorted(present_pairs):
+        if pair not in order:
+            order.append(pair)
+    return order
+
+
+def _resolve_region_order(
+    df: pd.DataFrame,
+    *,
+    requested_regions: Optional[Sequence[str]],
+    default_region_order: Optional[Sequence[str]],
+) -> list[str]:
+    if requested_regions:
+        return _dedupe_preserve_order([str(region) for region in requested_regions])
+    if default_region_order:
+        return _dedupe_preserve_order([str(region) for region in default_region_order])
+    return sorted(df["region"].dropna().astype(str).unique().tolist())
+
+
+def _safe_token(text: str) -> str:
+    token = "".join(ch if ch.isalnum() or ch in {"_", "-", "."} else "_" for ch in str(text).strip())
+    token = token.strip("_")
+    return token or "unknown"
+
+
+def _region_matrix(
+    region_df: pd.DataFrame,
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    if region_df.empty:
+        return np.empty((0, 0), dtype=float), np.asarray([], dtype=float), []
+
+    meta = (
+        region_df.loc[:, ["bin_index", "bin_center_s"]]
+        .dropna(subset=["bin_index", "bin_center_s"])
+        .copy()
+    )
+    if meta.empty:
+        return np.empty((0, 0), dtype=float), np.asarray([], dtype=float), []
+    meta["bin_index"] = meta["bin_index"].astype(int)
+    meta = meta.drop_duplicates(subset=["bin_index"]).sort_values("bin_index")
+    bins = meta["bin_index"].astype(int).to_numpy()
+    bin_centers = meta["bin_center_s"].astype(float).to_numpy()
+    if bins.size == 0:
+        return np.empty((0, 0), dtype=float), np.asarray([], dtype=float), []
+
+    piv = region_df.pivot_table(
+        index="unit_key",
+        columns="bin_index",
+        values="preference_index",
+        aggfunc="mean",
+    )
+    piv = piv.reindex(columns=bins)
+    if piv.empty:
+        return np.empty((0, bins.size), dtype=float), bin_centers, []
+
+    sort_rows: list[tuple[float, float, str]] = []
+    for unit_key, row in piv.iterrows():
+        values = row.to_numpy(dtype=float)
+        finite = np.isfinite(values)
+        if not np.any(finite):
+            peak_bin = np.inf
+            peak_value = -np.inf
+        else:
+            idx = int(np.nanargmax(values))
+            peak_bin = float(bin_centers[idx])
+            peak_value = float(values[idx])
+        sort_rows.append((peak_bin, peak_value, str(unit_key)))
+
+    # Reverse sort with origin='lower' so earliest-peak units appear at the top.
+    sort_rows.sort(key=lambda row: (row[0], row[1], row[2]), reverse=True)
+    ordered_units = [unit_key for _peak_bin, _peak_val, unit_key in sort_rows]
+    mat = piv.loc[ordered_units].to_numpy(dtype=float)
+    return mat, bin_centers, ordered_units
+
+
+def _index_name_for_pair(pair_df: pd.DataFrame, pair_label: str) -> str:
+    if "index_name" in pair_df.columns:
+        values = pair_df["index_name"].fillna("").astype(str).map(lambda token: token.strip())
+        for token in values:
+            if token:
+                return token
+    return pair_label
+
+
+def _plot_one_pair(
+    pair_df: pd.DataFrame,
+    *,
+    pair_label: str,
+    index_name: str,
+    region_order: Sequence[str],
+    settings: FixationPreferenceIndexHeatmapPlotSettings,
+    out_root: Path,
+    ext: str,
+    figsize: list[float],
+    dpi: Optional[int],
+) -> dict:
+    fig, axes = plt.subplots(1, len(region_order), figsize=figsize, dpi=dpi, squeeze=False)
+    axes_row = axes[0]
+    fig.patch.set_facecolor("white")
+    fig.subplots_adjust(
+        left=float(settings.left_margin),
+        right=float(settings.right_margin),
+        top=float(settings.top_margin),
+        bottom=float(settings.bottom_margin),
+        wspace=float(settings.panel_wspace),
+    )
+
+    abs_max = float(np.nanmax(np.abs(pair_df["preference_index"].to_numpy(dtype=float))))
+    if not np.isfinite(abs_max) or abs_max <= 0:
+        abs_max = 1.0
+    norm = TwoSlopeNorm(vmin=-abs_max, vcenter=0.0, vmax=abs_max)
+
+    im_ref = None
+    n_units_by_region: dict[str, int] = {}
+    for ax, region in zip(axes_row, region_order):
+        region_df = pair_df.loc[pair_df["region_norm"] == _normalize_region(region)].copy()
+        matrix, bin_centers, unit_order = _region_matrix(region_df)
+        n_units = int(len(unit_order))
+        n_units_by_region[str(region)] = n_units
+
+        if n_units <= 0 or matrix.size == 0 or bin_centers.size == 0:
+            ax.set_facecolor("white")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.text(
+                0.5,
+                0.5,
+                "No selective units",
+                transform=ax.transAxes,
+                ha="center",
+                va="center",
+                fontsize=6.4,
+                color="#666666",
+            )
+            ax.set_title(f"{region}\n(n=0)", fontsize=7.5, pad=2.0)
+            continue
+
+        if bin_centers.size > 1:
+            half = 0.5 * float(np.mean(np.diff(bin_centers)))
+        else:
+            half = 0.005
+        x0 = float(bin_centers[0]) - half
+        x1 = float(bin_centers[-1]) + half
+        im_ref = ax.imshow(
+            matrix,
+            cmap=_BW_R_CMAP,
+            norm=norm,
+            aspect="auto",
+            interpolation="nearest",
+            origin="lower",
+            extent=[x0, x1, 0.0, float(matrix.shape[0])],
+        )
+        ax.axvline(0.0, color="#303030", linestyle="--", linewidth=0.55, alpha=0.95)
+        ax.set_title(f"{region}\n(n={n_units})", fontsize=7.5, pad=2.0)
+        ax.tick_params(axis="x", labelsize=6.0, length=2.0, pad=1.0)
+        ax.set_yticks([])
+        ax.grid(False)
+
+    for idx, ax in enumerate(axes_row):
+        ax.set_xlabel("Time (s)", fontsize=6.8)
+        if idx == 0:
+            ax.set_ylabel("Units (sorted by peak bin)", fontsize=6.8)
+        else:
+            ax.set_ylabel("")
+
+    if im_ref is not None:
+        cbar = fig.colorbar(
+            im_ref,
+            ax=axes_row.tolist(),
+            fraction=float(settings.colorbar_fraction),
+            pad=float(settings.colorbar_pad),
+        )
+        cbar.set_label(settings.colorbar_label, fontsize=6.8)
+        cbar.ax.tick_params(labelsize=6.0, length=2.0, pad=1.0)
+
+    if settings.show_suptitle:
+        fig.suptitle(
+            f"{index_name} ({pair_label})",
+            fontsize=7.6,
+            y=min(0.995, float(settings.top_margin) + 0.07),
+        )
+
+    stem = Path(str(settings.output_filename).strip()).stem or "preference_index_heatmaps"
+    pair_token = _safe_token(index_name if index_name else pair_label)
+    out_path = out_root / f"{stem}__{pair_token}.{ext}"
+    save_figure(
+        fig,
+        out_path,
+        ext=ext,
+        dpi=dpi,
+        facecolor="white",
+        edgecolor="white",
+        transparent=False,
+    )
+    plt.close(fig)
+    return {
+        "pair_label": pair_label,
+        "index_name": index_name,
+        "output_path": out_path,
+        "n_units_total": int(pair_df["unit_key"].nunique()),
+        "n_units_by_region": n_units_by_region,
+    }
+
+
+def plot_fixation_preference_index_heatmaps(
+    settings: FixationPreferenceIndexHeatmapPlotSettings,
+    *,
+    pair_labels: Optional[Sequence[str]] = None,
+    regions: Optional[Sequence[str]] = None,
+) -> Optional[dict]:
+    """Plot one 1xN-region heatmap figure per fixation-pair preference index."""
+    df = _load_timeseries_df(settings)
+    if df.empty:
+        print("[plot] no preference-index rows found for heatmap plotting")
+        return None
+
+    pair_order = _resolve_pair_order(
+        df,
+        requested_pairs=pair_labels,
+        default_pair_order=settings.default_pair_order,
+    )
+    if not pair_order:
+        print("[plot] no pair labels available after filters")
+        return None
+
+    region_order = _resolve_region_order(
+        df,
+        requested_regions=regions,
+        default_region_order=settings.region_order,
+    )
+    if not region_order:
+        print("[plot] no regions configured for heatmap plotting")
+        return None
+
+    cfg = load_config(settings.cfg_path)
+    out_root = build_analysis_output_dir(cfg, settings.output_subdir)
+    ext = normalize_extension(settings.output_extension, fallback="png")
+    figsize, dpi = _resolve_figsize_and_dpi(settings)
+
+    outputs: list[dict] = []
+    for pair_label in pair_order:
+        pair_df = df.loc[df["pair_label"].astype(str) == str(pair_label)].copy()
+        if settings.include_only_pair_selective_units:
+            pair_df = pair_df.loc[pair_df["is_selective_pair"].map(_coerce_bool)].copy()
+        if pair_df.empty:
+            continue
+        index_name = _index_name_for_pair(pair_df, pair_label)
+        out = _plot_one_pair(
+            pair_df,
+            pair_label=str(pair_label),
+            index_name=str(index_name),
+            region_order=region_order,
+            settings=settings,
+            out_root=out_root,
+            ext=ext,
+            figsize=figsize,
+            dpi=dpi,
+        )
+        outputs.append(out)
+
+    if not outputs:
+        print("[plot] no pair-specific heatmap figures were generated")
+        return None
+
+    return {
+        "outputs": outputs,
+        "pair_order": [str(row["pair_label"]) for row in outputs],
+        "region_order": list(region_order),
+    }

@@ -26,6 +26,10 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_three_way_region_comparison
     FixationThreeWayRegionComparisonPlotSettings,
     plot_fixation_three_way_region_comparison_heatmaps,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_preference_index_heatmap import (
+    FixationPreferenceIndexHeatmapPlotSettings,
+    plot_fixation_preference_index_heatmaps,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_neural_cross_correlation import (
     FixationNeuralCrossCorrelationPlotSettings,
     plot_cross_region_fixation_neural_cross_correlation_summaries,
@@ -48,6 +52,8 @@ __all__ = [
     "plot_fixation_three_way_selectivity_triangular",
     "FixationThreeWayRegionComparisonPlotSettings",
     "plot_fixation_three_way_region_comparison_heatmaps",
+    "FixationPreferenceIndexHeatmapPlotSettings",
+    "plot_fixation_preference_index_heatmaps",
     "FixationNeuralCrossCorrelationPlotSettings",
     "plot_fixation_neural_cross_correlation_summaries",
     "plot_within_region_fixation_neural_cross_correlation_summaries",

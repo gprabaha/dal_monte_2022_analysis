@@ -161,6 +161,41 @@ Config:
   - `selective_region_comparison_plot_pvalue_floor`
   - `selective_region_comparison_plot_annotation_max_regions`
 
+- `plot_fixation_preference_index_heatmaps.py`
+  Plots one figure per fixation-pair preference index using
+  `preference_index_timeseries.csv` from the preference-index analysis.
+  For each figure:
+  - columns = regions (default 4-panel order: `BLA`, `ACCg`, `dmPFC`, `OFC`)
+  - rows (within each panel) = units, filtered to units selective for that exact pair
+  - unit order per region = earliest peak-bin units at top, latest at bottom
+  Color scale is fixed diverging within each pair figure:
+  - negative max = blue
+  - zero = white
+  - positive max = red
+  Default size is letter-width and <= one-fifth letter height.
+
+  Config:
+  - `selective_index_output_subdir`
+  - `selective_index_timeseries_filename`
+  - `selective_index_plot_output_subdir`
+  - `selective_index_plot_output_filename`
+  - `selective_index_plot_output_extension`
+  - `selective_index_plot_output_dpi`
+  - `selective_index_plot_include_only_pair_selective_units`
+  - `selective_index_plot_pair_order`
+  - `selective_index_plot_region_order`
+  - `selective_index_plot_figure_width_in`
+  - `selective_index_plot_figure_height_in`
+  - `selective_index_plot_left_margin`
+  - `selective_index_plot_right_margin`
+  - `selective_index_plot_top_margin`
+  - `selective_index_plot_bottom_margin`
+  - `selective_index_plot_panel_wspace`
+  - `selective_index_plot_show_suptitle`
+  - `selective_index_plot_colorbar_label`
+  - `selective_index_plot_colorbar_fraction`
+  - `selective_index_plot_colorbar_pad`
+
 - `plot_selective_fixation_psth_units.py`
   Selective-unit PSTH plotting with two modes:
   - batch mode (default): generate PNG plots for all selective units
