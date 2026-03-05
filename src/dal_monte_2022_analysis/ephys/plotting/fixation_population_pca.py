@@ -493,3 +493,156 @@ def plot_fixation_population_pca_explained_variance_bars(
         "eval_conditions": list(eval_order),
         "max_components": int(max_comp),
     }
+
+
+def plot_fixation_population_pca_explained_variance_cumulative(
+    settings: FixationPopulationPCAPlotSettings,
+    *,
+    regions: Optional[Sequence[str]] = None,
+    output_filename: str = "population_pca_explained_variance_cumulative",
+) -> Optional[dict]:
+    """Plot cumulative explained-variance curves across PCs."""
+    _apply_plotting_style(settings.plotting_cfg_path)
+    result_obj, input_path = _load_population_pca_result(settings)
+    explained_df = _extract_cross_condition_explained_variance_df(result_obj)
+    if explained_df.empty:
+        print("[plot] no cross-condition explained variance rows found")
+        return None
+
+    cond_order = [cond for cond in settings.conditions if cond in set(explained_df["fit_condition"].unique())]
+    if not cond_order:
+        print("[plot] no matching fit conditions for cumulative explained variance plotting")
+        return None
+
+    if regions is None:
+        region_order = sorted(explained_df["region"].astype(str).unique().tolist(), key=lambda token: token.lower())
+    else:
+        wanted = [str(region) for region in regions]
+        region_available = set(explained_df["region"].astype(str).unique().tolist())
+        region_order = [region for region in wanted if region in region_available]
+    if not region_order:
+        print("[plot] no matching regions for cumulative explained variance plotting")
+        return None
+
+    max_comp = max(1, int(settings.max_components_display))
+    n_rows = len(cond_order)
+    n_cols = max(4, len(region_order))
+    fig = plt.figure(
+        figsize=(8.5, 8.5 * float(settings.variance_letter_height_frac)),
+        dpi=settings.output_dpi,
+    )
+    axes = fig.subplots(n_rows, n_cols, squeeze=False)
+    color_map = _resolve_condition_colors(settings)
+    eval_order = [cond for cond in settings.conditions if cond in set(explained_df["eval_condition"].unique())]
+    x = np.arange(1, max_comp + 1, dtype=float)
+
+    for row_idx, fit_condition in enumerate(cond_order):
+        for col_idx in range(n_cols):
+            ax = axes[row_idx, col_idx]
+            if col_idx >= len(region_order):
+                ax.set_axis_off()
+                continue
+            region = region_order[col_idx]
+            sub = explained_df.loc[
+                (explained_df["region"] == str(region))
+                & (explained_df["fit_condition"] == str(fit_condition))
+                & (explained_df["n_components"] >= 1)
+                & (explained_df["n_components"] <= max_comp)
+            ].copy()
+            if sub.empty:
+                ax.set_axis_off()
+                continue
+
+            for eval_condition in eval_order:
+                eval_sub = sub.loc[sub["eval_condition"] == str(eval_condition)].copy()
+                if eval_sub.empty:
+                    continue
+                eval_sub = eval_sub.sort_values("n_components")
+                per_pc = np.full((max_comp,), np.nan, dtype=float)
+                comp_idx = np.asarray(eval_sub["n_components"], dtype=int) - 1
+                valid = (comp_idx >= 0) & (comp_idx < max_comp)
+                if np.any(valid):
+                    per_pc[comp_idx[valid]] = np.asarray(
+                        eval_sub.loc[valid, "explained_variance_fraction"],
+                        dtype=float,
+                    )
+                cumulative = np.full((max_comp,), np.nan, dtype=float)
+                running = 0.0
+                for i, value in enumerate(per_pc):
+                    if np.isfinite(value):
+                        running += float(value)
+                        cumulative[i] = running
+                finite = np.isfinite(cumulative)
+                if np.any(finite):
+                    ax.plot(
+                        x[finite],
+                        cumulative[finite],
+                        color=str(color_map.get(eval_condition, DEFAULT_CONDITION_COLORS.get(eval_condition, "#444444"))),
+                        linewidth=1.0,
+                        marker="o",
+                        markersize=1.6,
+                        markeredgewidth=0.0,
+                        alpha=0.95,
+                    )
+
+            ax.axhline(0.0, color="#222222", linewidth=0.35, alpha=0.7)
+            ax.set_xlim(0.8, max_comp + 0.2)
+            ax.set_xticks([1, 5, 10, 15, 20] if max_comp >= 20 else list(range(1, max_comp + 1)))
+            ax.tick_params(axis="both", which="major", labelsize=5, pad=1.0)
+            ax.grid(axis="y", linewidth=0.25, alpha=0.3)
+            if row_idx == 0:
+                ax.set_title(str(region), fontsize=6, pad=1.5)
+            if row_idx == n_rows - 1:
+                ax.set_xlabel("PC", fontsize=6, labelpad=0.8)
+            if col_idx == 0:
+                fit_label = settings.condition_labels.get(fit_condition, fit_condition)
+                ax.set_ylabel(f"{fit_label}\nCumulative", fontsize=6, labelpad=1.0)
+
+    handles = [
+        Line2D(
+            [0],
+            [0],
+            color=str(color_map.get(cond, DEFAULT_CONDITION_COLORS.get(cond, "#444444"))),
+            lw=1.8,
+            marker="o",
+            markersize=2.4,
+            markeredgewidth=0.0,
+            label=settings.condition_labels.get(cond, cond),
+        )
+        for cond in eval_order
+    ]
+    fig.legend(
+        handles=handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.02),
+        ncol=max(1, len(handles)),
+        fontsize=6,
+        frameon=False,
+    )
+    fig.subplots_adjust(left=0.045, right=0.995, top=0.80, bottom=0.12, wspace=0.18, hspace=0.34)
+
+    cfg = load_config(settings.cfg_path)
+    out_root = build_analysis_output_dir(cfg, settings.output_subdir)
+    out_root.mkdir(parents=True, exist_ok=True)
+    ext = _resolve_output_ext(settings)
+    out_name = ensure_filename(output_filename, f".{ext}")
+    out_path = out_root / out_name
+    save_figure(
+        fig,
+        out_path,
+        ext=ext,
+        dpi=settings.output_dpi,
+        facecolor="white",
+        edgecolor="white",
+        transparent=False,
+    )
+    plt.close(fig)
+
+    return {
+        "output_path": str(out_path),
+        "input_path": str(input_path),
+        "regions": list(region_order),
+        "fit_conditions": list(cond_order),
+        "eval_conditions": list(eval_order),
+        "max_components": int(max_comp),
+    }
