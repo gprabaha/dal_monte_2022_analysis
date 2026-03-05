@@ -65,9 +65,10 @@ Current scripts:
 - `build_fixation_population_pca.py`
   Builds region-level population PCA outputs in a configurable time window
   (default `[-500, 500] ms`):
-  - primary input: processed trial PSTHs (`processed_data_root/.../psth/fixations.pkl`)
-    smoothed per trial (configurable) and then aggregated to per-unit condition means
-  - fallback input: date-level average PSTH pickles
+  - primary input: date-level average PSTH pickles
+    (split face file + optional unsplit-object file)
+  - optional fallback input: processed trial PSTHs
+    (`processed_data_root/.../psth/fixations.pkl`) aggregated to per-unit condition means
   - per-condition PCA fits (`face_interactive`, `face_non_interactive`, `object`)
   - concatenated-condition PCA fit (conditions concatenated along time)
   - concatenated-fit PC timecourses for each fixation condition
@@ -142,6 +143,9 @@ Config:
   - `population_pca_smoothing_sigma_ms`
   - `population_pca_input_subdir`
   - `population_pca_input_filename`
+  - `population_pca_input_filename_split`
+  - `population_pca_object_input_subdir`
+  - `population_pca_object_input_filename`
   - `population_pca_output_subdir`
   - `population_pca_summary_filename`
   - `population_pca_timecourse_filename`

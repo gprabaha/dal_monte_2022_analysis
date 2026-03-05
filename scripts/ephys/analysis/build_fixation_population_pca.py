@@ -41,7 +41,7 @@ def main() -> None:
         description=(
             "Fit region-level fixation population PCA for "
             "face_interactive, face_non_interactive, and object conditions. "
-            "Per-unit mean PSTHs are built from processed trial PSTHs by default."
+            "Per-unit mean PSTHs are loaded from precomputed average PSTH files by default."
         ),
     )
     parser.add_argument("--dataset-cfg", default=str(_DEFAULT_DATASET_CFG))
@@ -71,7 +71,7 @@ def main() -> None:
         cfg_path=str(dataset_cfg_path),
         trial_input_modality=cfg.get("population_pca_trial_input_modality", cfg.get("trial_output_modality", "psth")),
         trial_input_filename=cfg.get("population_pca_trial_input_filename", cfg.get("trial_output_filename", "fixations.pkl")),
-        prefer_trial_input=cfg.get("population_pca_prefer_trial_input", True),
+        prefer_trial_input=cfg.get("population_pca_prefer_trial_input", False),
         allow_trial_fallback=cfg.get("population_pca_allow_trial_fallback", True),
         input_subdir=cfg.get(
             "population_pca_input_subdir",
@@ -80,7 +80,21 @@ def main() -> None:
                 cfg.get("average_output_subdir", "ephys/psth/fixation_psth_averages"),
             ),
         ),
-        input_filename=cfg.get("population_pca_input_filename", cfg.get("average_output_filename", "fixations.pkl")),
+        input_filename=cfg.get(
+            "population_pca_input_filename_split",
+            cfg.get(
+                "population_pca_input_filename",
+                cfg.get(
+                    "selective_index_average_output_filename_split",
+                    cfg.get("average_output_filename_split", cfg.get("average_output_filename", "fixations.pkl")),
+                ),
+            ),
+        ),
+        object_input_subdir=cfg.get("population_pca_object_input_subdir"),
+        object_input_filename=cfg.get(
+            "population_pca_object_input_filename",
+            cfg.get("selective_index_average_output_filename_unsplit"),
+        ),
         output_subdir=cfg.get("population_pca_output_subdir", "ephys/psth/fixation_population_pca"),
         summary_filename=cfg.get("population_pca_summary_filename", "pca_fit_summary.csv"),
         timecourse_filename=cfg.get("population_pca_timecourse_filename", "concatenated_pc_timecourses.csv"),
@@ -144,6 +158,9 @@ def main() -> None:
         f"trial={settings.trial_input_modality}/{settings.trial_input_filename}, "
         f"prefer_trial_input={settings.prefer_trial_input}, "
         f"average_subdir={settings.input_subdir}, "
+        f"average_filename={settings.input_filename}, "
+        f"object_average_subdir={settings.object_input_subdir}, "
+        f"object_average_filename={settings.object_input_filename}, "
         f"smooth_before_average={settings.smooth_before_average}, "
         f"smoothing_sigma_ms={settings.smoothing_sigma_ms}"
     )

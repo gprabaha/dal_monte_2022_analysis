@@ -115,9 +115,9 @@ selective_index_pair_names:
 
 # Region-level population PCA for fixation mean PSTHs.
 # Input resolution:
-# - primary (default): processed trial PSTHs in processed_data_root/psth/fixations.pkl
-#   aggregated to per-unit condition means
-# - fallback: date-level average PSTH pickle subdir below
+# - primary (default): date-level average PSTHs from split + unsplit files below
+#   (face interactive/non-interactive from split; object from unsplit)
+# - fallback: processed trial PSTHs in processed_data_root/psth/fixations.pkl
 # Fits PCA on unit x time matrices in the configured time window for:
 # - each condition independently (face_interactive / face_non_interactive / object)
 # - all three conditions concatenated along time
@@ -127,12 +127,17 @@ selective_index_pair_names:
 # - cross-condition explained-variance curves from per-condition fits
 population_pca_trial_input_modality: psth
 population_pca_trial_input_filename: fixations.pkl
-population_pca_prefer_trial_input: true
+# Prefer precomputed average PSTHs so smoothing/averaging settings are consistent
+# with the dedicated average builders.
+population_pca_prefer_trial_input: false
 population_pca_allow_trial_fallback: true
 population_pca_smooth_before_average: true
 population_pca_smoothing_sigma_ms: 20.0
 population_pca_input_subdir: ephys/psth/fixation_psth_index_averages
-population_pca_input_filename: fixations.pkl
+population_pca_input_filename: fixations_split_by_interactive_state.pkl
+population_pca_input_filename_split: fixations_split_by_interactive_state.pkl
+population_pca_object_input_subdir: ephys/psth/fixation_psth_index_averages
+population_pca_object_input_filename: fixations_unsplit_by_interactive_state.pkl
 population_pca_output_subdir: ephys/psth/fixation_population_pca
 population_pca_summary_filename: pca_fit_summary.csv
 population_pca_timecourse_filename: concatenated_pc_timecourses.csv

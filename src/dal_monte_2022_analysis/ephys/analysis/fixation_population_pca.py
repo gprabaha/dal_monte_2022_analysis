@@ -45,6 +45,8 @@ class FixationPopulationPCASettings:
     allow_trial_fallback: bool = True
     input_subdir: str = "ephys/psth/fixation_psth_averages"
     input_filename: str = "fixations.pkl"
+    object_input_subdir: Optional[str] = None
+    object_input_filename: Optional[str] = None
     output_subdir: str = "ephys/psth/fixation_population_pca"
     summary_filename: str = "pca_fit_summary.csv"
     timecourse_filename: str = "concatenated_pc_timecourses.csv"
@@ -283,15 +285,20 @@ def _load_average_psth_table(
     *,
     dates: Optional[Sequence[str]] = None,
     input_subdir: Optional[str] = None,
+    input_filename: Optional[str] = None,
+    require_face_interactive_state: bool = True,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     cfg = load_config(settings.cfg_path)
     subdir = str(settings.input_subdir if input_subdir is None else input_subdir).strip()
     if not subdir:
         return pd.DataFrame(), np.asarray([], dtype=float)
+    filename = str(settings.input_filename if input_filename is None else input_filename).strip()
+    if not filename:
+        return pd.DataFrame(), np.asarray([], dtype=float)
     rows = scan_analysis_date_paths(
         cfg,
         subdir,
-        filename=_ensure_filename(settings.input_filename, ".pkl"),
+        filename=_ensure_filename(filename, ".pkl"),
         dates=dates,
     )
     if not rows:
@@ -318,7 +325,18 @@ def _load_average_psth_table(
                     f"path={row['path']}"
                 )
 
+        has_face_interactive_state = (
+            ("interactive_state" in avg_df.columns)
+            or ("is_interactive" in avg_df.columns)
+        )
         for _, avg_row in avg_df.iterrows():
+            if bool(require_face_interactive_state) and not has_face_interactive_state:
+                category_token = _norm_token(avg_row.get("fixation_category"))
+                if category_token == _norm_token(settings.face_label):
+                    raise ValueError(
+                        "Face rows are missing interactive-state labels. "
+                        "Build averages with split_by_interactive_state=true."
+                    )
             condition = _resolve_condition_for_average_row(avg_row, settings)
             if condition is None:
                 continue
@@ -372,6 +390,71 @@ def _load_average_psth_table(
         n_bins_ref=n_bins_ref,
         bin_centers_ref=bin_centers_ref,
     )
+
+
+def _load_combined_average_psth_table(
+    settings: FixationPopulationPCASettings,
+    *,
+    dates: Optional[Sequence[str]] = None,
+) -> tuple[pd.DataFrame, np.ndarray]:
+    split_df, split_centers = _load_average_psth_table(
+        settings,
+        dates=dates,
+        input_subdir=settings.input_subdir,
+        input_filename=settings.input_filename,
+        require_face_interactive_state=True,
+    )
+
+    has_object_override = (
+        settings.object_input_subdir is not None
+        or settings.object_input_filename is not None
+    )
+    if not has_object_override:
+        return split_df, split_centers
+
+    object_subdir = (
+        str(settings.object_input_subdir).strip()
+        if settings.object_input_subdir is not None
+        else str(settings.input_subdir).strip()
+    )
+    object_filename = (
+        str(settings.object_input_filename).strip()
+        if settings.object_input_filename is not None
+        else str(settings.input_filename).strip()
+    )
+    object_df, object_centers = _load_average_psth_table(
+        settings,
+        dates=dates,
+        input_subdir=object_subdir,
+        input_filename=object_filename,
+        require_face_interactive_state=False,
+    )
+    if object_df.empty:
+        return split_df, split_centers
+
+    if split_df.empty:
+        split_centers = np.asarray(object_centers, dtype=float)
+    elif object_centers.size > 0:
+        if split_centers.size != object_centers.size or not np.allclose(split_centers, object_centers):
+            raise ValueError("Split and object-average PSTH inputs have mismatched bin centers.")
+
+    object_df = object_df.loc[object_df["condition"].astype(str) == "object"].copy()
+    if object_df.empty:
+        return split_df, split_centers
+
+    if split_df.empty:
+        return object_df, split_centers
+
+    object_dates = {
+        str(token).strip()
+        for token in object_df["date"].astype(str).tolist()
+    }
+    split_object_mask = split_df["condition"].astype(str).map(lambda token: token == "object")
+    split_date_mask = split_df["date"].astype(str).map(lambda token: token.strip() in object_dates)
+    kept = split_df.loc[~(split_object_mask & split_date_mask)].copy()
+    out_df = pd.concat([kept, object_df], axis=0, ignore_index=True)
+    out_df = out_df.sort_values(["region", "unit_key", "condition"]).reset_index(drop=True)
+    return out_df, split_centers
 
 
 def _load_trial_averaged_psth_table(
@@ -485,14 +568,8 @@ def _load_input_psth_table(
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
 ) -> tuple[pd.DataFrame, np.ndarray, str]:
-    """Load PCA input rows with trial-first fallback for robust accumulation."""
-    average_candidates: list[str] = []
-    primary_avg_subdir = str(settings.input_subdir).strip()
-    if primary_avg_subdir:
-        average_candidates.append(primary_avg_subdir)
-    index_avg_subdir = "ephys/psth/fixation_psth_index_averages"
-    if index_avg_subdir not in average_candidates:
-        average_candidates.append(index_avg_subdir)
+    """Load PCA input rows from average PSTHs with optional trial fallback."""
+    average_source = f"average:{str(settings.input_subdir).strip()}"
 
     if settings.prefer_trial_input:
         trial_df, trial_centers = _load_trial_averaged_psth_table(
@@ -503,33 +580,14 @@ def _load_input_psth_table(
         if not trial_df.empty:
             return trial_df, trial_centers, "trial"
         print("[analysis] no usable trial PSTH rows found for population PCA; trying average inputs")
-
-        for subdir in average_candidates:
-            try:
-                avg_df, avg_centers = _load_average_psth_table(
-                    settings,
-                    dates=dates,
-                    input_subdir=subdir,
-                )
-            except ValueError as exc:
-                print(f"[analysis] skipping average input subdir '{subdir}': {exc}")
-                continue
-            if not avg_df.empty:
-                return avg_df, avg_centers, f"average:{subdir}"
+        avg_df, avg_centers = _load_combined_average_psth_table(settings, dates=dates)
+        if not avg_df.empty:
+            return avg_df, avg_centers, average_source
         return pd.DataFrame(), np.asarray([], dtype=float), "none"
 
-    for subdir in average_candidates:
-        try:
-            avg_df, avg_centers = _load_average_psth_table(
-                settings,
-                dates=dates,
-                input_subdir=subdir,
-            )
-        except ValueError as exc:
-            print(f"[analysis] skipping average input subdir '{subdir}': {exc}")
-            continue
-        if not avg_df.empty:
-            return avg_df, avg_centers, f"average:{subdir}"
+    avg_df, avg_centers = _load_combined_average_psth_table(settings, dates=dates)
+    if not avg_df.empty:
+        return avg_df, avg_centers, average_source
 
     if settings.allow_trial_fallback:
         trial_df, trial_centers = _load_trial_averaged_psth_table(
@@ -1074,6 +1132,12 @@ def run_fixation_population_pca_analysis(
             "input_source": str(input_source),
             "input_subdir": settings.input_subdir,
             "input_filename": _ensure_filename(settings.input_filename, ".pkl"),
+            "object_input_subdir": settings.object_input_subdir,
+            "object_input_filename": (
+                _ensure_filename(settings.object_input_filename, ".pkl")
+                if settings.object_input_filename is not None
+                else None
+            ),
             "trial_input_modality": settings.trial_input_modality,
             "trial_input_filename": _ensure_filename(settings.trial_input_filename, ".pkl"),
             "prefer_trial_input": bool(settings.prefer_trial_input),

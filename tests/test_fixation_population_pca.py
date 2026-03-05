@@ -67,11 +67,14 @@ class TestFixationPopulationPCA(unittest.TestCase):
             _write_dataset_cfg(cfg_path, processed_root=processed_root, analysis_root=analysis_root)
 
             date = "20990101"
-            avg_path = analysis_root / "ephys/psth/fixation_psth_averages" / f"date={date}" / "fixations.pkl"
-            avg_path.parent.mkdir(parents=True, exist_ok=True)
+            avg_root = analysis_root / "ephys/psth/fixation_psth_averages" / f"date={date}"
+            avg_root.mkdir(parents=True, exist_ok=True)
+            split_avg_path = avg_root / "fixations_split.pkl"
+            unsplit_avg_path = avg_root / "fixations_unsplit.pkl"
 
             bin_centers = np.arange(-0.55, 0.56, 0.1, dtype=float)
-            rows: list[dict] = []
+            split_rows: list[dict] = []
+            unsplit_rows: list[dict] = []
             for region, unit_ids in (("ACC", ("u_acc_1", "u_acc_2", "u_acc_3")), ("BLA", ("u_bla_1", "u_bla_2"))):
                 for unit_idx, unit_id in enumerate(unit_ids):
                     condition_order = ("face_interactive", "face_non_interactive", "object")
@@ -79,7 +82,7 @@ class TestFixationPopulationPCA(unittest.TestCase):
                         condition_order = ("face_interactive", "face_non_interactive")
                     for condition in condition_order:
                         category, interactive_state = _condition_labels(condition)
-                        rows.append(
+                        split_rows.append(
                             {
                                 "date": date,
                                 "unit_uuid": unit_id,
@@ -98,16 +101,46 @@ class TestFixationPopulationPCA(unittest.TestCase):
                                 ),
                             }
                         )
+                        if condition == "object":
+                            if region == "ACC" or unit_id == "u_bla_1":
+                                unsplit_rows.append(
+                                    {
+                                        "date": date,
+                                        "unit_uuid": unit_id,
+                                        "region": region,
+                                        "spike_channel": f"ch_{unit_idx + 1}",
+                                        "recorded_agent": "m1",
+                                        "recorded_monkey": "test_monkey",
+                                        "area": region.lower(),
+                                        "fixation_category": "object",
+                                        "n_trials": float(10 + unit_idx),
+                                        "psth_mean": (
+                                            _build_pattern(
+                                                bin_centers,
+                                                unit_scale=float(unit_idx + 1),
+                                                condition=condition,
+                                            )
+                                            + 20.0
+                                        ),
+                                    }
+                                )
 
             save_pickle_path(
-                {"meta": {"bin_centers_s_rel": bin_centers}, "averages": pd.DataFrame(rows)},
-                avg_path,
+                {"meta": {"bin_centers_s_rel": bin_centers}, "averages": pd.DataFrame(split_rows)},
+                split_avg_path,
+            )
+            save_pickle_path(
+                {"meta": {"bin_centers_s_rel": bin_centers}, "averages": pd.DataFrame(unsplit_rows)},
+                unsplit_avg_path,
             )
 
             settings = FixationPopulationPCASettings(
                 cfg_path=str(cfg_path),
                 input_subdir="ephys/psth/fixation_psth_averages",
-                input_filename="fixations.pkl",
+                input_filename="fixations_split.pkl",
+                object_input_subdir="ephys/psth/fixation_psth_averages",
+                object_input_filename="fixations_unsplit.pkl",
+                prefer_trial_input=False,
                 output_subdir="ephys/psth/fixation_population_pca",
                 window_start_ms=-500.0,
                 window_stop_ms=500.0,
@@ -119,15 +152,30 @@ class TestFixationPopulationPCA(unittest.TestCase):
 
             self.assertIn("ACC", result["regions"])
             self.assertNotIn("BLA", result["regions"])
+            self.assertEqual(str(result["meta"].get("input_source")), "average:ephys/psth/fixation_psth_averages")
 
             acc_payload = result["regions"]["ACC"]
             int_matrix = np.asarray(
                 acc_payload["condition_matrices_units_by_time"]["face_interactive"],
                 dtype=float,
             )
+            object_matrix = np.asarray(
+                acc_payload["condition_matrices_units_by_time"]["object"],
+                dtype=float,
+            )
+            unit_keys = [str(token) for token in np.asarray(acc_payload["unit_keys"], dtype=object).tolist()]
+            u1_idx = unit_keys.index(f"{date}|u_acc_1")
+            expected_u1_object = _build_pattern(
+                bin_centers[np.logical_and(bin_centers >= -0.5, bin_centers <= 0.5)],
+                unit_scale=1.0,
+                condition="object",
+            ) + 20.0
+
             self.assertEqual(int_matrix.shape, (3, 10))
+            self.assertEqual(object_matrix.shape, (3, 10))
             self.assertEqual(int(acc_payload["concatenated_fit"]["n_samples"]), 30)
             self.assertEqual(int(acc_payload["concatenated_fit"]["n_components"]), 3)
+            self.assertTrue(np.allclose(object_matrix[u1_idx], expected_u1_object))
 
             time_df = result["concatenated_timecourses"]
             self.assertIsInstance(time_df, pd.DataFrame)
