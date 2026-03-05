@@ -1,4 +1,4 @@
-"""Build split and unsplit date-level fixation PSTH averages from trial PSTH outputs."""
+"""Build date-level fixation PSTH averages from trial PSTH outputs."""
 
 import argparse
 import pickle
@@ -57,6 +57,46 @@ def _print_average_example(path: Path, *, max_bins: int = 12) -> None:
     with open(path, "rb") as f:
         obj = pickle.load(f)
 
+    if isinstance(obj, dict) and "averages_split_by_interactive_state" in obj:
+        top_meta = obj.get("meta", {})
+        split_df = obj.get("averages_split_by_interactive_state")
+        unsplit_df = obj.get("averages_unsplit_by_interactive_state")
+        print("\nExample fixation PSTH average output (combined split+unsplit file):")
+        print(f"  file: {path}")
+        print(
+            "  meta: "
+            f"smooth_before_average={top_meta.get('smooth_before_average')}, "
+            f"smoothing_sigma_ms={top_meta.get('smoothing_sigma_ms')}, "
+            f"convert_to_firing_rate_before_average={top_meta.get('convert_to_firing_rate_before_average')}, "
+            f"psth_value_kind={top_meta.get('psth_value_kind')}"
+        )
+        if isinstance(split_df, pd.DataFrame):
+            print(f"  split_rows: {len(split_df)}")
+        if isinstance(unsplit_df, pd.DataFrame):
+            print(f"  unsplit_rows: {len(unsplit_df)}")
+
+        def _preview_partition(df: pd.DataFrame, label: str) -> None:
+            if not isinstance(df, pd.DataFrame) or df.empty:
+                print(f"  [{label}] empty")
+                return
+            row = df.iloc[0]
+            psth_mean = np.asarray(row.get("psth_mean"), dtype=float).reshape(-1)
+            psth_sem = np.asarray(row.get("psth_sem"), dtype=float).reshape(-1)
+            preview = psth_mean[: max(1, int(max_bins))]
+            sem_preview = psth_sem[: max(1, int(max_bins))]
+            print(
+                f"  [{label}] sample_row: "
+                f"date={row.get('date')}, unit_uuid={row.get('unit_uuid')}, "
+                f"category={row.get('fixation_category')}, n_trials={row.get('n_trials')}, "
+                f"interactive_state={row.get('interactive_state') if 'interactive_state' in df.columns else None}"
+            )
+            print(f"  [{label}] sample_psth_mean_first_{len(preview)}bins: {preview.tolist()}")
+            print(f"  [{label}] sample_psth_sem_first_{len(sem_preview)}bins: {sem_preview.tolist()}")
+
+        _preview_partition(split_df, "split")
+        _preview_partition(unsplit_df, "unsplit")
+        return
+
     if isinstance(obj, dict) and "averages" in obj:
         meta = obj.get("meta", {})
         df = obj["averages"]
@@ -88,7 +128,9 @@ def _print_average_example(path: Path, *, max_bins: int = 12) -> None:
             "  meta: "
             f"smooth_before_average={meta.get('smooth_before_average')}, "
             f"smoothing_sigma_ms={meta.get('smoothing_sigma_ms')}, "
-            f"split_by_interactive_state={meta.get('split_by_interactive_state')}"
+            f"split_by_interactive_state={meta.get('split_by_interactive_state')}, "
+            f"convert_to_firing_rate_before_average={meta.get('convert_to_firing_rate_before_average')}, "
+            f"psth_value_kind={meta.get('psth_value_kind')}"
         )
     if "fixation_category" in df.columns:
         cat_counts = df["fixation_category"].value_counts().to_dict()
@@ -105,7 +147,9 @@ def _print_average_example(path: Path, *, max_bins: int = 12) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build date-level averaged fixation PSTH features.")
+    parser = argparse.ArgumentParser(
+        description="Build date-level averaged fixation PSTH features."
+    )
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
     parser.add_argument("--ephys-fixation-psth-cfg", default="configs/ephys_fixation_psth.yaml")
     parser.add_argument("--date", default=None)
@@ -117,6 +161,14 @@ def main() -> None:
         "--split-by-interactive-state",
         action="store_true",
         help="Legacy alias for --split-only.",
+    )
+    parser.add_argument(
+        "--store-separate-files",
+        action="store_true",
+        help=(
+            "Legacy mode: write split and unsplit averages as separate files "
+            "instead of one combined output file."
+        ),
     )
     parser.add_argument("--split-only", action="store_true")
     parser.add_argument("--unsplit-only", action="store_true")
@@ -131,6 +183,24 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_config(args.ephys_fixation_psth_cfg)
+    combined_output_subdir = cfg.get(
+        "average_output_subdir_combined",
+        cfg.get("average_output_subdir", "ephys/psth/fixation_psth_averages"),
+    )
+    combined_output_filename_raw = cfg.get("average_output_filename_combined")
+    if combined_output_filename_raw is None:
+        legacy_output_filename = _ensure_pkl_filename(
+            cfg.get("average_output_filename", "fixations.pkl")
+        )
+        if (
+            legacy_output_filename.endswith("_split_by_interactive_state.pkl")
+            or legacy_output_filename.endswith("_unsplit_by_interactive_state.pkl")
+        ):
+            combined_output_filename_raw = "fixations.pkl"
+        else:
+            combined_output_filename_raw = legacy_output_filename
+    combined_output_filename = _ensure_pkl_filename(combined_output_filename_raw)
+
     split_output_subdir = cfg.get(
         "average_output_subdir_split",
         cfg.get("average_output_subdir", "ephys/psth/fixation_psth_averages"),
@@ -154,12 +224,20 @@ def main() -> None:
         trial_input_modality=cfg.get("trial_output_modality", "psth"),
         trial_input_filename=cfg.get("trial_output_filename", "fixations.pkl"),
         output_subdir=split_output_subdir,
-        output_filename=split_output_filename,
+        output_filename=combined_output_filename,
         split_by_interactive_state=True,
+        store_split_and_unsplit_together=cfg.get(
+            "average_store_split_and_unsplit_together",
+            True,
+        ),
         restrict_interactive_state=cfg.get("restrict_interactive_state"),
         group_by_session=cfg.get("group_by_session", False),
         smooth_before_average=cfg.get("smooth_before_average", True),
         smoothing_sigma_ms=cfg.get("smoothing_sigma_ms", 20.0),
+        convert_to_firing_rate_before_average=cfg.get(
+            "average_convert_to_firing_rate_before_average",
+            True,
+        ),
         target_bin_size_ms=cfg.get("average_target_bin_size_ms"),
         target_bin_step_ms=cfg.get("average_target_bin_step_ms"),
         use_parallel=cfg.get("average_use_parallel", True),
@@ -184,44 +262,67 @@ def main() -> None:
 
     run_split_output = not bool(args.unsplit_only)
     run_unsplit_output = not bool(args.split_only or args.split_by_interactive_state)
+    legacy_separate_mode = bool(
+        args.store_separate_files
+        or args.split_only
+        or args.unsplit_only
+        or args.split_by_interactive_state
+    )
 
     if args.output_subdir:
+        combined_output_subdir = str(args.output_subdir)
         split_output_subdir = str(args.output_subdir)
         unsplit_output_subdir = str(args.output_subdir)
     if args.output_subdir_unsplit:
         unsplit_output_subdir = str(args.output_subdir_unsplit)
     if args.output_filename:
+        combined_output_filename = _ensure_pkl_filename(args.output_filename)
         split_output_filename = _ensure_pkl_filename(args.output_filename)
     if args.output_filename_unsplit:
         unsplit_output_filename = _ensure_pkl_filename(args.output_filename_unsplit)
 
     settings_by_label: list[tuple[str, FixationPSTHAverageSettings]] = []
-    if run_split_output:
-        settings_by_label.append(
+    if legacy_separate_mode:
+        if run_split_output:
+            settings_by_label.append(
+                (
+                    "split",
+                    replace(
+                        settings_common,
+                        output_subdir=split_output_subdir,
+                        output_filename=split_output_filename,
+                        split_by_interactive_state=True,
+                        store_split_and_unsplit_together=False,
+                    ),
+                ),
+            )
+        if run_unsplit_output:
+            settings_by_label.append(
+                (
+                    "unsplit",
+                    replace(
+                        settings_common,
+                        output_subdir=unsplit_output_subdir,
+                        output_filename=unsplit_output_filename,
+                        split_by_interactive_state=False,
+                        store_split_and_unsplit_together=False,
+                    ),
+                ),
+            )
+        if not settings_by_label:
+            raise ValueError("No average output mode selected.")
+    else:
+        settings_by_label = [
             (
-                "split",
+                "combined",
                 replace(
                     settings_common,
-                    output_subdir=split_output_subdir,
-                    output_filename=split_output_filename,
-                    split_by_interactive_state=True,
+                    output_subdir=combined_output_subdir,
+                    output_filename=combined_output_filename,
+                    store_split_and_unsplit_together=True,
                 ),
-            ),
-        )
-    if run_unsplit_output:
-        settings_by_label.append(
-            (
-                "unsplit",
-                replace(
-                    settings_common,
-                    output_subdir=unsplit_output_subdir,
-                    output_filename=unsplit_output_filename,
-                    split_by_interactive_state=False,
-                ),
-            ),
-        )
-    if not settings_by_label:
-        raise ValueError("No average output mode selected.")
+            )
+        ]
 
     for _, mode_settings in settings_by_label:
         run_fixation_psth_average_build(

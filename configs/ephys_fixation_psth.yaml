@@ -35,10 +35,15 @@ agents: null
 
 # Date-level average PSTH output (stored in analysis_output_root)
 average_output_subdir: ephys/psth/fixation_psth_averages
-# Primary (split) average output includes interactive-state-specific face rows.
-average_output_filename: fixations_split_by_interactive_state.pkl
+# Combined average output stores both split and unsplit tables in one file.
+average_output_filename: fixations.pkl
+average_output_filename_combined: fixations.pkl
+average_store_split_and_unsplit_together: true
+# Convert trial PSTH counts to firing rate (Hz) after smoothing (and optional resampling)
+# before averaging across trials.
+average_convert_to_firing_rate_before_average: true
+# Legacy separate-file names retained for backward compatibility.
 average_output_filename_split: fixations_split_by_interactive_state.pkl
-# Secondary (unsplit) average output keeps face/object rows without interactive splitting.
 average_output_subdir_unsplit: ephys/psth/fixation_psth_averages
 average_output_filename_unsplit: fixations_unsplit_by_interactive_state.pkl
 # Legacy toggle retained for compatibility with older scripts/notes.
@@ -67,6 +72,7 @@ selective_index_average_restrict_interactive_state: null
 selective_index_average_group_by_session: false
 selective_index_average_smooth_before_average: false
 selective_index_average_smoothing_sigma_ms: 20.0
+selective_index_average_convert_to_firing_rate_before_average: true
 selective_index_average_target_bin_size_ms: 50.0
 selective_index_average_target_bin_step_ms: 25.0
 selective_index_average_categories: ["face", "object"]

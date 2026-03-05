@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from multiprocessing import Pool
 from pathlib import Path
 from typing import Dict, Optional, Sequence
@@ -81,10 +81,12 @@ class FixationPSTHAverageSettings:
     output_subdir: str = "ephys/psth/fixation_psth_averages"
     output_filename: str = "fixations.pkl"
     split_by_interactive_state: bool = False
+    store_split_and_unsplit_together: bool = True
     restrict_interactive_state: Optional[str] = None
     group_by_session: bool = False
     smooth_before_average: bool = True
     smoothing_sigma_ms: float = 30.0
+    convert_to_firing_rate_before_average: bool = True
     target_bin_size_ms: Optional[float] = None
     target_bin_step_ms: Optional[float] = None
     use_parallel: bool = True
@@ -237,11 +239,16 @@ def _build_session_events(
 
             if start_idx < 0 or start_idx >= timeline_t.shape[0]:
                 continue
+            if stop_idx < 0 or stop_idx >= timeline_t.shape[0]:
+                continue
             if stop_idx < start_idx:
                 continue
 
             start_time_s = float(timeline_t[start_idx])
+            stop_time_s = float(timeline_t[stop_idx])
             if not np.isfinite(start_time_s):
+                continue
+            if not np.isfinite(stop_time_s):
                 continue
 
             location_raw = coerce_location_labels(getattr(fix_row, "location", None))
@@ -261,6 +268,8 @@ def _build_session_events(
                     "fixation_start_idx": start_idx,
                     "fixation_stop_idx": stop_idx,
                     "fixation_start_time_s": start_time_s,
+                    "fixation_stop_time_s": stop_time_s,
+                    "fixation_duration_s": max(0.0, stop_time_s - start_time_s),
                     "interactive_state": interactive_state,
                     "is_interactive": bool(
                         interactive_state is not None
@@ -728,6 +737,25 @@ def _build_resample_counts_matrix(
     return weights, target_centers, target_bin_size_s, target_bin_step_s
 
 
+def _resolve_uniform_bin_size_s(
+    source_centers: np.ndarray,
+    *,
+    label: str,
+) -> float:
+    centers = np.asarray(source_centers, dtype=float).reshape(-1)
+    if centers.size < 2:
+        raise ValueError(f"Cannot resolve {label} bin size from fewer than 2 centers.")
+    diffs = np.diff(centers)
+    if not np.all(np.isfinite(diffs)) or np.any(diffs <= 0):
+        raise ValueError(f"{label} bin centers must be strictly increasing.")
+    bin_size_s = float(np.mean(diffs))
+    if not np.allclose(diffs, bin_size_s, atol=max(1e-9, abs(bin_size_s) * 1e-6)):
+        raise ValueError(f"{label} bin centers must be approximately uniform.")
+    if not np.isfinite(bin_size_s) or bin_size_s <= 0:
+        raise ValueError(f"Encountered non-positive {label} bin size.")
+    return bin_size_s
+
+
 def _aggregate_group_counts(
     key: tuple,
     counts_list: Sequence[np.ndarray],
@@ -735,7 +763,15 @@ def _aggregate_group_counts(
     smooth_before_average: bool,
     sigma_bins: Optional[float],
     resample_weights: Optional[np.ndarray],
+    convert_to_firing_rate: bool,
+    firing_rate_bin_size_s: Optional[float],
 ):
+    if convert_to_firing_rate:
+        if firing_rate_bin_size_s is None:
+            raise ValueError("Missing firing-rate bin size for average conversion.")
+        if not np.isfinite(float(firing_rate_bin_size_s)) or float(firing_rate_bin_size_s) <= 0:
+            raise ValueError("firing_rate_bin_size_s must be > 0 for average conversion.")
+
     sum_acc = None
     sumsq_acc = None
     n_trials = 0
@@ -749,6 +785,8 @@ def _aggregate_group_counts(
             if resample_weights.shape[1] != counts.size:
                 raise ValueError("Encountered inconsistent PSTH bin counts while resampling averages.")
             counts = np.matmul(resample_weights, counts)
+        if convert_to_firing_rate:
+            counts = counts / float(firing_rate_bin_size_s)
         if sum_acc is None:
             sum_acc = np.zeros_like(counts, dtype=float)
             sumsq_acc = np.zeros_like(counts, dtype=float)
@@ -769,6 +807,7 @@ def build_fixation_psth_averages_for_date(
     category_allow = _category_filter(settings)
 
     grouped_counts: dict[tuple, list[np.ndarray]] = {}
+    grouped_labels: dict[tuple, dict[str, set[str]]] = {}
     bin_edges_ref = None
     bin_centers_ref = None
 
@@ -828,6 +867,30 @@ def build_fixation_psth_averages_for_date(
 
             key = tuple(key_values)
             grouped_counts.setdefault(key, []).append(counts)
+            label_state = grouped_labels.setdefault(
+                key,
+                {
+                    "fixation_location_labels": set(),
+                    "source_fixation_agents": set(),
+                    "source_fixation_monkeys": set(),
+                    "source_sessions": set(),
+                    "source_interactive_states": set(),
+                },
+            )
+            for loc in coerce_location_labels(getattr(row, "fixation_location", None)):
+                if str(loc).strip():
+                    label_state["fixation_location_labels"].add(str(loc))
+            fixation_agent = _as_optional_str(getattr(row, "fixation_agent", None))
+            fixation_monkey = _as_optional_str(getattr(row, "fixation_monkey_name", None))
+            session_name = _as_optional_str(getattr(row, "session", None))
+            if fixation_agent is not None:
+                label_state["source_fixation_agents"].add(fixation_agent)
+            if fixation_monkey is not None:
+                label_state["source_fixation_monkeys"].add(fixation_monkey)
+            if session_name is not None:
+                label_state["source_sessions"].add(session_name)
+            if interactive_state is not None:
+                label_state["source_interactive_states"].add(interactive_state)
 
     if not grouped_counts:
         return None
@@ -838,12 +901,14 @@ def build_fixation_psth_averages_for_date(
     )
     if source_centers is None:
         raise ValueError(f"Unable to resolve source bin centers for fixation PSTH averages (date={date}).")
+    source_bin_size_s = _resolve_uniform_bin_size_s(source_centers, label="source PSTH")
 
     resample_weights, out_bin_centers, target_bin_size_s, target_bin_step_s = _build_resample_counts_matrix(
         source_centers,
         target_bin_size_ms=settings.target_bin_size_ms,
         target_bin_step_ms=settings.target_bin_step_ms,
     )
+    output_bin_size_s = target_bin_size_s if target_bin_size_s is not None else source_bin_size_s
 
     sigma_bins = _resolve_smoothing_sigma_bins(settings, bin_edges_ref)
     grouped: dict[tuple, dict] = {}
@@ -854,6 +919,8 @@ def build_fixation_psth_averages_for_date(
             smooth_before_average=settings.smooth_before_average,
             sigma_bins=sigma_bins,
             resample_weights=resample_weights,
+            convert_to_firing_rate=bool(settings.convert_to_firing_rate_before_average),
+            firing_rate_bin_size_s=output_bin_size_s,
         )
         if n_trials <= 0:
             continue
@@ -912,6 +979,22 @@ def build_fixation_psth_averages_for_date(
 
         record["psth_mean"] = mean_vec
         record["psth_sem"] = sem_vec
+        label_state = grouped_labels.get(key, {})
+        record["fixation_location_labels"] = tuple(
+            sorted(label_state.get("fixation_location_labels", set()))
+        )
+        record["source_fixation_agents"] = tuple(
+            sorted(label_state.get("source_fixation_agents", set()))
+        )
+        record["source_fixation_monkeys"] = tuple(
+            sorted(label_state.get("source_fixation_monkeys", set()))
+        )
+        record["source_sessions"] = tuple(
+            sorted(label_state.get("source_sessions", set()))
+        )
+        record["source_interactive_states"] = tuple(
+            sorted(label_state.get("source_interactive_states", set()))
+        )
         records.append(record)
 
     averages_df = pd.DataFrame(records)
@@ -928,6 +1011,14 @@ def build_fixation_psth_averages_for_date(
             "smooth_before_average": bool(settings.smooth_before_average),
             "smoothing_sigma_ms": float(settings.smoothing_sigma_ms),
             "smoothing_sigma_bins": sigma_bins,
+            "convert_to_firing_rate_before_average": bool(
+                settings.convert_to_firing_rate_before_average
+            ),
+            "psth_value_kind": (
+                "firing_rate_hz" if settings.convert_to_firing_rate_before_average else "counts"
+            ),
+            "output_bin_size_s": output_bin_size_s,
+            "output_bin_size_ms": output_bin_size_s * 1000.0,
             "split_by_interactive_state": bool(settings.split_by_interactive_state),
             "restrict_interactive_state": settings.restrict_interactive_state,
             "group_by_session": bool(settings.group_by_session),
@@ -952,13 +1043,77 @@ def build_fixation_psth_averages_for_date(
     }
 
 
+def build_fixation_psth_averages_bundle_for_date(
+    settings: FixationPSTHAverageSettings,
+    date: str,
+    trial_paths: Sequence[Path],
+) -> Optional[dict]:
+    split_settings = replace(
+        settings,
+        split_by_interactive_state=True,
+        store_split_and_unsplit_together=False,
+    )
+    unsplit_settings = replace(
+        settings,
+        split_by_interactive_state=False,
+        store_split_and_unsplit_together=False,
+    )
+
+    split_data = build_fixation_psth_averages_for_date(split_settings, date, trial_paths)
+    unsplit_data = build_fixation_psth_averages_for_date(unsplit_settings, date, trial_paths)
+    if split_data is None and unsplit_data is None:
+        return None
+
+    split_meta = split_data.get("meta", {}) if isinstance(split_data, dict) else {}
+    unsplit_meta = unsplit_data.get("meta", {}) if isinstance(unsplit_data, dict) else {}
+    split_df = (
+        split_data.get("averages")
+        if isinstance(split_data, dict)
+        else pd.DataFrame()
+    )
+    unsplit_df = (
+        unsplit_data.get("averages")
+        if isinstance(unsplit_data, dict)
+        else pd.DataFrame()
+    )
+
+    return {
+        "meta": {
+            "date": date,
+            "source_modality": settings.trial_input_modality,
+            "source_filename": _ensure_pkl_filename(settings.trial_input_filename),
+            "store_split_and_unsplit_together": True,
+            "split_by_interactive_state_default": bool(settings.split_by_interactive_state),
+            "restrict_interactive_state": settings.restrict_interactive_state,
+            "group_by_session": bool(settings.group_by_session),
+            "smooth_before_average": bool(settings.smooth_before_average),
+            "smoothing_sigma_ms": float(settings.smoothing_sigma_ms),
+            "convert_to_firing_rate_before_average": bool(
+                settings.convert_to_firing_rate_before_average
+            ),
+            "psth_value_kind": (
+                "firing_rate_hz" if settings.convert_to_firing_rate_before_average else "counts"
+            ),
+            "split_filename_key": "averages_split_by_interactive_state",
+            "unsplit_filename_key": "averages_unsplit_by_interactive_state",
+            "split_meta": split_meta,
+            "unsplit_meta": unsplit_meta,
+        },
+        "averages_split_by_interactive_state": split_df,
+        "averages_unsplit_by_interactive_state": unsplit_df,
+    }
+
+
 def process_fixation_psth_averages_for_date(
     settings: FixationPSTHAverageSettings,
     date: str,
     trial_paths: Sequence[Path],
 ) -> Optional[dict]:
     """Build and persist one date-level PSTH average object."""
-    data = build_fixation_psth_averages_for_date(settings, date, trial_paths)
+    if settings.store_split_and_unsplit_together:
+        data = build_fixation_psth_averages_bundle_for_date(settings, date, trial_paths)
+    else:
+        data = build_fixation_psth_averages_for_date(settings, date, trial_paths)
     if data is None:
         return None
     cfg = load_config(settings.cfg_path)

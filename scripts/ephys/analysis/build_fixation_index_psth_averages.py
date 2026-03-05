@@ -98,6 +98,7 @@ def main() -> None:
         output_subdir=split_output_subdir,
         output_filename=split_output_filename,
         split_by_interactive_state=True,
+        store_split_and_unsplit_together=False,
         restrict_interactive_state=cfg.get("selective_index_average_restrict_interactive_state"),
         group_by_session=cfg.get("selective_index_average_group_by_session", False),
         smooth_before_average=cfg.get(
@@ -107,6 +108,10 @@ def main() -> None:
         smoothing_sigma_ms=cfg.get(
             "selective_index_average_smoothing_sigma_ms",
             cfg.get("smoothing_sigma_ms", 20.0),
+        ),
+        convert_to_firing_rate_before_average=cfg.get(
+            "selective_index_average_convert_to_firing_rate_before_average",
+            cfg.get("average_convert_to_firing_rate_before_average", True),
         ),
         target_bin_size_ms=cfg.get("selective_index_average_target_bin_size_ms", 50.0),
         target_bin_step_ms=cfg.get("selective_index_average_target_bin_step_ms", 25.0),

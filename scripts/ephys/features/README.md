@@ -16,10 +16,16 @@ Current scripts:
 - `build_fixation_psth_averages.py`
   Builds date-level average PSTH summaries from trial PSTHs.
   Each averaged row stores `psth_mean`, `psth_sem`, and `n_trials`.
+  By default, trial PSTH counts are smoothed, converted to firing rate (Hz)
+  using the output bin size, and then averaged across trials.
   Outputs are stored in `analysis_output_root/ephys/psth/fixation_psth_averages/date=<date>/`
-  as two files by default:
-  - `fixations_split_by_interactive_state.pkl` (interactive split)
-  - `fixations_unsplit_by_interactive_state.pkl` (interactive unsplit)
+  as one file by default:
+  - `fixations.pkl` containing:
+    - `averages_split_by_interactive_state`
+    - `averages_unsplit_by_interactive_state`
+  Legacy separate-file mode is still available:
+  - `fixations_split_by_interactive_state.pkl`
+  - `fixations_unsplit_by_interactive_state.pkl`
 
 Config:
 - `configs/ephys_fixation_psth.yaml`

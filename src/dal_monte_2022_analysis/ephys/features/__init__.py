@@ -8,6 +8,7 @@ from dal_monte_2022_analysis.ephys.features.fixation_psth import (
     process_fixation_psth_trials_for_session,
     run_fixation_psth_trial_build,
     build_fixation_psth_averages_for_date,
+    build_fixation_psth_averages_bundle_for_date,
     process_fixation_psth_averages_for_date,
     run_fixation_psth_average_build,
 )
@@ -26,6 +27,7 @@ __all__ = [
     "process_fixation_psth_trials_for_session",
     "run_fixation_psth_trial_build",
     "build_fixation_psth_averages_for_date",
+    "build_fixation_psth_averages_bundle_for_date",
     "process_fixation_psth_averages_for_date",
     "run_fixation_psth_average_build",
     "PeriodPSTHSettings",
