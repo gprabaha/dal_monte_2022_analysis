@@ -87,6 +87,21 @@ def _base_plot_settings(dataset_cfg_path: str, plotting_cfg_path: str, cfg: dict
         plotting_cfg_path=plotting_cfg_path,
         trial_input_modality=cfg.get("trial_output_modality", "psth"),
         trial_input_filename=cfg.get("trial_output_filename", "fixations.pkl"),
+        use_precomputed_average_traces=cfg.get("plot_use_precomputed_average_traces", True),
+        average_trace_input_subdir=cfg.get("plot_average_input_subdir", "ephys/psth/fixation_psth_averages"),
+        average_trace_input_filename=cfg.get(
+            "plot_average_input_filename_split",
+            cfg.get("plot_average_input_filename", "fixations.pkl"),
+        ),
+        average_trace_object_input_subdir=cfg.get(
+            "plot_average_object_input_subdir",
+            cfg.get("plot_average_input_subdir", "ephys/psth/fixation_psth_averages"),
+        ),
+        average_trace_object_input_filename=cfg.get(
+            "plot_average_object_input_filename",
+            cfg.get("plot_average_input_filename_unsplit"),
+        ),
+        allow_trial_trace_fallback=cfg.get("plot_allow_trial_trace_fallback", True),
         output_subdir=cfg.get("plot_output_subdir", "ephys/psth/fixation_psth_unit_plots"),
         output_extension=cfg.get("plot_output_extension", "pdf"),
         output_dpi=cfg.get("plot_output_dpi", 220),

@@ -531,16 +531,22 @@ def _draw_resolved_cell(
     for payload in resolved.payloads:
         if int(payload["n_trials"]) <= 0:
             continue
+        trace_bin_centers = np.asarray(
+            payload.get("trace_bin_centers", resolved.bin_centers),
+            dtype=float,
+        ).reshape(-1)
         mean_hz = np.asarray(payload["mean_hz"], dtype=float)
         sem_hz = np.asarray(payload["sem_hz"], dtype=float)
+        if trace_bin_centers.size != mean_hz.size or sem_hz.size != mean_hz.size:
+            continue
         ax_rate.plot(
-            resolved.bin_centers,
+            trace_bin_centers,
             mean_hz,
             color=payload["color"],
             linewidth=0.95,
         )
         ax_rate.fill_between(
-            resolved.bin_centers,
+            trace_bin_centers,
             mean_hz - sem_hz,
             mean_hz + sem_hz,
             color=payload["color"],
@@ -548,8 +554,20 @@ def _draw_resolved_cell(
             linewidth=0.0,
         )
 
-    x_min = float(resolved.bin_centers[0])
-    x_max = float(resolved.bin_centers[-1])
+    trace_min = float(resolved.bin_centers[0])
+    trace_max = float(resolved.bin_centers[-1])
+    for payload in resolved.payloads:
+        centers = np.asarray(payload.get("trace_bin_centers", resolved.bin_centers), dtype=float).reshape(-1)
+        if centers.size == 0:
+            continue
+        finite = centers[np.isfinite(centers)]
+        if finite.size == 0:
+            continue
+        trace_min = min(trace_min, float(np.min(finite)))
+        trace_max = max(trace_max, float(np.max(finite)))
+
+    x_min = trace_min
+    x_max = trace_max
     ax_rate.axvline(0.0, color="#333333", linestyle="--", linewidth=0.7, zorder=3.2)
     ax_rate.set_xlim(x_min, x_max)
 

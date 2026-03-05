@@ -736,7 +736,8 @@ def _aggregate_group_counts(
     sigma_bins: Optional[float],
     resample_weights: Optional[np.ndarray],
 ):
-    acc = None
+    sum_acc = None
+    sumsq_acc = None
     n_trials = 0
     for raw in counts_list:
         counts = np.asarray(raw, dtype=float).reshape(-1)
@@ -748,13 +749,15 @@ def _aggregate_group_counts(
             if resample_weights.shape[1] != counts.size:
                 raise ValueError("Encountered inconsistent PSTH bin counts while resampling averages.")
             counts = np.matmul(resample_weights, counts)
-        if acc is None:
-            acc = np.zeros_like(counts, dtype=float)
-        elif acc.shape != counts.shape:
+        if sum_acc is None:
+            sum_acc = np.zeros_like(counts, dtype=float)
+            sumsq_acc = np.zeros_like(counts, dtype=float)
+        elif sum_acc.shape != counts.shape:
             raise ValueError("Encountered inconsistent PSTH bin counts while aggregating averages.")
-        acc += counts
+        sum_acc += counts
+        sumsq_acc += np.square(counts)
         n_trials += 1
-    return key, acc, n_trials
+    return key, sum_acc, sumsq_acc, n_trials
 
 
 def build_fixation_psth_averages_for_date(
@@ -845,7 +848,7 @@ def build_fixation_psth_averages_for_date(
     sigma_bins = _resolve_smoothing_sigma_bins(settings, bin_edges_ref)
     grouped: dict[tuple, dict] = {}
     for key, counts_list in grouped_counts.items():
-        _, acc, n_trials = _aggregate_group_counts(
+        _, sum_acc, sumsq_acc, n_trials = _aggregate_group_counts(
             key,
             counts_list,
             smooth_before_average=settings.smooth_before_average,
@@ -854,7 +857,7 @@ def build_fixation_psth_averages_for_date(
         )
         if n_trials <= 0:
             continue
-        grouped[key] = {"sum": acc, "n": int(n_trials)}
+        grouped[key] = {"sum": sum_acc, "sumsq": sumsq_acc, "n": int(n_trials)}
 
     if not grouped:
         return None
@@ -881,8 +884,23 @@ def build_fixation_psth_averages_for_date(
             idx += 1
 
         n_trials = int(val["n"])
+        sum_vec = np.asarray(val["sum"], dtype=float).reshape(-1)
+        sumsq_vec = np.asarray(val["sumsq"], dtype=float).reshape(-1)
+        if sum_vec.shape != sumsq_vec.shape:
+            raise ValueError("Encountered inconsistent PSTH vector lengths while finalizing averages.")
+
         record["n_trials"] = n_trials
-        record["psth_mean"] = val["sum"] / max(1, n_trials)
+        mean_vec = sum_vec / max(1, n_trials)
+        if n_trials > 1:
+            numer = sumsq_vec - (np.square(sum_vec) / float(n_trials))
+            numer = np.maximum(numer, 0.0)
+            sample_var = numer / float(n_trials - 1)
+            sem_vec = np.sqrt(sample_var / float(n_trials))
+        else:
+            sem_vec = np.zeros_like(mean_vec, dtype=float)
+
+        record["psth_mean"] = mean_vec
+        record["psth_sem"] = sem_vec
         records.append(record)
 
     averages_df = pd.DataFrame(records)

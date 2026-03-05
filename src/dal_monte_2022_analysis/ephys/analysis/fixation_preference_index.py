@@ -49,6 +49,8 @@ class FixationPSTHPreferenceIndexSettings:
     trial_input_filename: str = "fixations.pkl"
     average_input_subdir: Optional[str] = None
     average_input_filename: str = "fixations.pkl"
+    average_object_input_subdir: Optional[str] = None
+    average_object_input_filename: Optional[str] = None
     selectivity_input_subdir: str = "ephys/psth/fixation_psth_selectivity"
     pair_summary_filename: str = "pair_selectivity.csv"
     unit_summary_filename: str = "unit_selectivity.csv"
@@ -260,11 +262,14 @@ def _extract_average_df_and_meta(obj) -> tuple[pd.DataFrame, dict]:
 def _load_average_table(
     settings: FixationPSTHPreferenceIndexSettings,
     *,
+    subdir: Optional[str],
+    filename: Optional[str],
     dates: Optional[Sequence[str]] = None,
+    require_face_interactive_state: bool = True,
 ) -> tuple[pd.DataFrame, np.ndarray, float]:
     cfg = load_config(settings.cfg_path)
-    subdir = str(settings.average_input_subdir).strip() if settings.average_input_subdir is not None else ""
-    if not subdir:
+    subdir_token = str(subdir).strip() if subdir is not None else ""
+    if not subdir_token:
         centers = _fallback_bin_centers(settings)
         if centers.size > 1:
             bin_duration_s = float(np.mean(np.diff(centers)))
@@ -272,10 +277,11 @@ def _load_average_table(
             bin_duration_s = float(settings.bin_size_ms_fallback) / 1000.0
         return pd.DataFrame(), centers, bin_duration_s
 
+    filename_token = str(filename).strip() if filename is not None else str(settings.average_input_filename).strip()
     rows = scan_analysis_date_paths(
         cfg,
-        subdir,
-        filename=_ensure_filename(settings.average_input_filename, ".pkl"),
+        subdir_token,
+        filename=_ensure_filename(filename_token, ".pkl"),
         dates=dates,
     )
     if not rows:
@@ -329,7 +335,7 @@ def _load_average_table(
             )
         if "interactive_state" not in df.columns:
             face_mask = df["fixation_category"].astype(str).map(lambda v: v.strip() == settings.face_label)
-            if bool(face_mask.any()):
+            if bool(face_mask.any()) and bool(require_face_interactive_state):
                 raise ValueError(
                     "Average PSTH input is missing 'interactive_state' for face rows. "
                     "Build index averages with split_by_interactive_state=true."
@@ -378,10 +384,80 @@ def _load_input_table(
 ) -> tuple[pd.DataFrame, np.ndarray, float, str]:
     use_average = settings.average_input_subdir is not None and str(settings.average_input_subdir).strip()
     if use_average:
-        avg_df, avg_centers, avg_bin_duration_s = _load_average_table(settings, dates=dates)
+        avg_df, avg_centers, avg_bin_duration_s = _load_average_table(
+            settings,
+            subdir=settings.average_input_subdir,
+            filename=settings.average_input_filename,
+            dates=dates,
+            require_face_interactive_state=True,
+        )
+
+        use_object_average = (
+            settings.average_object_input_subdir is not None
+            or settings.average_object_input_filename is not None
+        )
+        if use_object_average:
+            object_subdir = (
+                settings.average_object_input_subdir
+                if settings.average_object_input_subdir is not None
+                else settings.average_input_subdir
+            )
+            object_filename = (
+                settings.average_object_input_filename
+                if settings.average_object_input_filename is not None
+                else settings.average_input_filename
+            )
+            object_df, object_centers, object_bin_duration_s = _load_average_table(
+                settings,
+                subdir=object_subdir,
+                filename=object_filename,
+                dates=dates,
+                require_face_interactive_state=False,
+            )
+            if not object_df.empty:
+                if not avg_df.empty:
+                    if (
+                        avg_centers.shape != object_centers.shape
+                        or not np.allclose(avg_centers, object_centers)
+                    ):
+                        raise ValueError(
+                            "Split and unsplit average PSTH inputs have mismatched bin centers."
+                        )
+                    if not np.isclose(float(avg_bin_duration_s), float(object_bin_duration_s)):
+                        raise ValueError(
+                            "Split and unsplit average PSTH inputs have mismatched bin durations."
+                        )
+
+                object_mask = object_df["fixation_category"].astype(str).map(
+                    lambda token: token.strip() == str(settings.object_label)
+                )
+                object_df = object_df.loc[object_mask].copy()
+                if not object_df.empty:
+                    if not avg_df.empty:
+                        object_dates = {
+                            str(token).strip()
+                            for token in object_df["date"].astype(str).tolist()
+                        }
+                        split_object_mask = avg_df["fixation_category"].astype(str).map(
+                            lambda token: token.strip() == str(settings.object_label)
+                        )
+                        split_date_mask = avg_df["date"].astype(str).map(
+                            lambda token: token.strip() in object_dates
+                        )
+                        avg_df = avg_df.loc[~(split_object_mask & split_date_mask)].copy()
+                        avg_df = pd.concat([avg_df, object_df], axis=0, ignore_index=True)
+                    else:
+                        avg_df = object_df.copy()
+
         if not avg_df.empty:
-            return avg_df, avg_centers, avg_bin_duration_s, "average"
-        print("[analysis] average input requested but no average rows found; falling back to trial PSTH rows")
+            has_face_rows = avg_df["fixation_category"].astype(str).map(
+                lambda token: token.strip() == str(settings.face_label)
+            ).any()
+            if has_face_rows:
+                return avg_df, avg_centers, avg_bin_duration_s, "average"
+            print("[analysis] average input rows found but no face rows were available; falling back to trial PSTH rows")
+        else:
+            print("[analysis] average input requested but no average rows found; falling back to trial PSTH rows")
     trial_df, trial_centers, trial_bin_duration_s = _load_trial_table(settings, dates=dates, sessions=sessions)
     return trial_df, trial_centers, trial_bin_duration_s, "trial"
 
@@ -781,6 +857,12 @@ def run_fixation_preference_index_analysis(
             ),
             "average_input_subdir": settings.average_input_subdir,
             "average_input_filename": _ensure_filename(settings.average_input_filename, ".pkl"),
+            "average_object_input_subdir": settings.average_object_input_subdir,
+            "average_object_input_filename": (
+                _ensure_filename(settings.average_object_input_filename, ".pkl")
+                if settings.average_object_input_filename is not None
+                else None
+            ),
             "selectivity_input_subdir": settings.selectivity_input_subdir,
             "pair_summary_filename": _ensure_filename(settings.pair_summary_filename, ".csv"),
             "unit_summary_filename": _ensure_filename(settings.unit_summary_filename, ".csv"),

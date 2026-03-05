@@ -271,16 +271,22 @@ class TestFixationPreferenceIndex(unittest.TestCase):
             cfg_path = root / "dataset.yaml"
             _write_dataset_cfg(cfg_path, processed_root=processed_root, analysis_root=analysis_root)
 
-            avg_path = (
+            split_avg_path = (
                 analysis_root
                 / "ephys/psth/fixation_psth_index_averages"
                 / f"date={dummy_date}"
-                / "fixations.pkl"
+                / "fixations_split.pkl"
             )
-            avg_path.parent.mkdir(parents=True, exist_ok=True)
+            unsplit_avg_path = (
+                analysis_root
+                / "ephys/psth/fixation_psth_index_averages"
+                / f"date={dummy_date}"
+                / "fixations_unsplit.pkl"
+            )
+            split_avg_path.parent.mkdir(parents=True, exist_ok=True)
 
             bin_centers = np.asarray([-0.025, 0.0, 0.025], dtype=float)  # 25 ms stride
-            avg_rows = [
+            split_avg_rows = [
                 {
                     "date": dummy_date,
                     "unit_uuid": dummy_unit,
@@ -331,18 +337,53 @@ class TestFixationPreferenceIndex(unittest.TestCase):
                     "fixation_category": "object",
                     "interactive_state": "non_interactive",
                     "n_trials": 4,
+                    "psth_mean": np.asarray([30.0, 30.0, 30.0], dtype=float),
+                },
+            ]
+            unsplit_avg_rows = [
+                {
+                    "date": dummy_date,
+                    "unit_uuid": dummy_unit,
+                    "region": "BLA",
+                    "spike_channel": "ch2",
+                    "recorded_agent": "m1",
+                    "recorded_monkey": dummy_monkey,
+                    "area": "bla",
+                    "fixation_category": "face",
+                    "n_trials": 8,
+                    "psth_mean": np.asarray([100.0, 100.0, 100.0], dtype=float),
+                },
+                {
+                    "date": dummy_date,
+                    "unit_uuid": dummy_unit,
+                    "region": "BLA",
+                    "spike_channel": "ch2",
+                    "recorded_agent": "m1",
+                    "recorded_monkey": dummy_monkey,
+                    "area": "bla",
+                    "fixation_category": "object",
+                    "n_trials": 4,
                     "psth_mean": np.asarray([6.0, 6.0, 6.0], dtype=float),
                 },
             ]
-            avg_obj = {
+            split_avg_obj = {
                 "meta": {
                     "bin_centers_s_rel": bin_centers,
                     "target_bin_size_s": 0.05,  # 50 ms bin width
                     "target_bin_step_s": 0.025,
                 },
-                "averages": pd.DataFrame(avg_rows),
+                "averages": pd.DataFrame(split_avg_rows),
             }
-            save_pickle_path(avg_obj, avg_path)
+            unsplit_avg_obj = {
+                "meta": {
+                    "bin_centers_s_rel": bin_centers,
+                    "target_bin_size_s": 0.05,
+                    "target_bin_step_s": 0.025,
+                },
+                "averages": pd.DataFrame(unsplit_avg_rows),
+            }
+            save_pickle_path(split_avg_obj, split_avg_path)
+            save_pickle_path(unsplit_avg_obj, unsplit_avg_path)
 
             sel_root = analysis_root / "ephys/psth/fixation_psth_selectivity"
             sel_root.mkdir(parents=True, exist_ok=True)
@@ -383,7 +424,9 @@ class TestFixationPreferenceIndex(unittest.TestCase):
             settings = FixationPSTHPreferenceIndexSettings(
                 cfg_path=str(cfg_path),
                 average_input_subdir="ephys/psth/fixation_psth_index_averages",
-                average_input_filename="fixations.pkl",
+                average_input_filename="fixations_split.pkl",
+                average_object_input_subdir="ephys/psth/fixation_psth_index_averages",
+                average_object_input_filename="fixations_unsplit.pkl",
                 trial_input_modality="psth",
                 trial_input_filename="fixations.pkl",
                 selectivity_input_subdir="ephys/psth/fixation_psth_selectivity",
@@ -399,6 +442,10 @@ class TestFixationPreferenceIndex(unittest.TestCase):
             self.assertEqual(str(result["meta"]["input_source"]), "average")
             self.assertAlmostEqual(float(result["meta"]["bin_duration_s"]), 0.05, places=9)
             self.assertAlmostEqual(float(result["meta"]["bin_stride_s"]), 0.025, places=9)
+            self.assertEqual(
+                str(result["meta"]["average_object_input_filename"]),
+                "fixations_unsplit.pkl",
+            )
 
             row = out_df.loc[
                 (out_df["unit_key"].astype(str) == f"{dummy_date}|{dummy_unit}")

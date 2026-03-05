@@ -113,17 +113,40 @@ def main() -> None:
     cfg = load_config(ephys_fix_psth_cfg_path)
     index_window_start_s, index_window_end_s = _resolve_index_window_s_from_cfg(cfg)
     use_average_input = bool(cfg.get("selective_index_use_average_input", False) or args.use_average_input)
+    average_split_subdir = cfg.get(
+        "selective_index_average_output_subdir",
+        cfg.get("average_output_subdir", "ephys/psth/fixation_psth_averages"),
+    )
+    average_split_filename = cfg.get(
+        "selective_index_average_output_filename_split",
+        cfg.get(
+            "selective_index_average_output_filename",
+            cfg.get("average_output_filename", "fixations.pkl"),
+        ),
+    )
+    average_object_filename = cfg.get("selective_index_average_output_filename_unsplit")
+    average_object_subdir_raw = cfg.get("selective_index_average_object_output_subdir")
+    if average_object_subdir_raw is None and average_object_filename is None:
+        average_object_subdir = None
+    else:
+        average_object_subdir = (
+            average_object_subdir_raw
+            if average_object_subdir_raw is not None
+            else average_split_subdir
+        )
 
     settings = FixationPSTHPreferenceIndexSettings(
         cfg_path=str(dataset_cfg_path),
         trial_input_modality=cfg.get("trial_output_modality", "psth"),
         trial_input_filename=cfg.get("trial_output_filename", "fixations.pkl"),
         average_input_subdir=(
-            cfg.get("selective_index_average_output_subdir", cfg.get("average_output_subdir", "ephys/psth/fixation_psth_averages"))
+            average_split_subdir
             if use_average_input
             else None
         ),
-        average_input_filename=cfg.get("selective_index_average_output_filename", cfg.get("average_output_filename", "fixations.pkl")),
+        average_input_filename=average_split_filename,
+        average_object_input_subdir=(average_object_subdir if use_average_input else None),
+        average_object_input_filename=(average_object_filename if use_average_input else None),
         selectivity_input_subdir=cfg.get("selective_output_subdir", "ephys/psth/fixation_psth_selectivity"),
         pair_summary_filename=cfg.get("selective_pair_summary_filename", "pair_selectivity.csv"),
         unit_summary_filename=cfg.get("selective_unit_summary_filename", "unit_selectivity.csv"),
@@ -153,10 +176,26 @@ def main() -> None:
             settings.average_input_filename,
         )
         print(
-            "[analysis] average file scan: "
+            "[analysis] split-average file scan: "
             f"root={avg_root}, subdir={settings.average_input_subdir}, "
             f"filename={settings.average_input_filename}, matched={n_avg}"
         )
+        if settings.average_object_input_subdir is not None:
+            object_filename = (
+                settings.average_object_input_filename
+                if settings.average_object_input_filename is not None
+                else settings.average_input_filename
+            )
+            obj_root, n_obj = _scan_average_files(
+                str(dataset_cfg_path),
+                settings.average_object_input_subdir,
+                object_filename,
+            )
+            print(
+                "[analysis] unsplit-object average file scan: "
+                f"root={obj_root}, subdir={settings.average_object_input_subdir}, "
+                f"filename={object_filename}, matched={n_obj}"
+            )
     else:
         root, n_all, n_match, n_shared = _scan_trial_files(
             str(dataset_cfg_path),
