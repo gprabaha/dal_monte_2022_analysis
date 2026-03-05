@@ -15,6 +15,7 @@ Current scripts:
   `date=<date>/session=<session>/psth/interactive_periods.pkl`.
 - `build_fixation_psth_averages.py`
   Builds date-level average PSTH summaries from trial PSTHs.
+  Each averaged row stores `psth_mean`, `psth_sem`, and `n_trials`.
   Outputs are stored in `analysis_output_root/ephys/psth/fixation_psth_averages/date=<date>/fixations.pkl`.
 
 Config:

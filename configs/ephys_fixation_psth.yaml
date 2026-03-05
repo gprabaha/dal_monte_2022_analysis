@@ -36,7 +36,7 @@ agents: null
 # Date-level average PSTH output (stored in analysis_output_root)
 average_output_subdir: ephys/psth/fixation_psth_averages
 average_output_filename: fixations.pkl
-split_by_interactive_state: false
+split_by_interactive_state: true
 restrict_interactive_state: null
 group_by_session: false
 smooth_before_average: true
@@ -283,6 +283,15 @@ plot_output_dpi: 220
 plot_use_parallel: true
 plot_parallelize_units: true
 plot_unit_parallel_min_units: 2
+# Use precomputed date-level averages for mean/SEM traces in unit PSTH plots.
+# Rasters still come from trial-level PSTHs.
+# For face interactive/non-interactive traces, build averages with
+# split_by_interactive_state: true.
+plot_use_precomputed_average_traces: true
+plot_average_input_subdir: ephys/psth/fixation_psth_averages
+plot_average_input_filename: fixations.pkl
+# If true, conditions missing from average rows fall back to trial-derived traces.
+plot_allow_trial_trace_fallback: false
 plot_max_trials_per_condition: 300
 plot_random_seed: 42
 plot_smooth_before_average: true

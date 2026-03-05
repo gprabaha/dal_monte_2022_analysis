@@ -39,6 +39,7 @@ from dal_monte_2022_analysis.ephys.plotting.common import (
     row_counts as _row_counts_shared,
 )
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
+from dal_monte_2022_analysis.runtime.io.analysis_index import scan_analysis_date_paths
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
@@ -49,6 +50,12 @@ DEFAULT_CONDITION_COLORS = {
     "face_non_interactive": "#1f77b4",
     "object": "#2ca02c",
 }
+_PLOT_CONDITION_ORDER = (
+    ("face_interactive", "Interactive Face"),
+    ("face_non_interactive", "Non-Interactive Face"),
+    ("object", "Object"),
+)
+_AVERAGE_TRACE_CACHE: dict[tuple[str, str, str, str], Optional[tuple[pd.DataFrame, np.ndarray, float]]] = {}
 
 
 @dataclass
@@ -59,6 +66,10 @@ class FixationPSTHUnitPlotSettings:
     plotting_cfg_path: str = "configs/plotting.yaml"
     trial_input_modality: str = "psth"
     trial_input_filename: str = "fixations.pkl"
+    use_precomputed_average_traces: bool = True
+    average_trace_input_subdir: str = "ephys/psth/fixation_psth_averages"
+    average_trace_input_filename: str = "fixations.pkl"
+    allow_trial_trace_fallback: bool = True
     output_subdir: str = "ephys/psth/fixation_psth_unit_plots"
     output_extension: str = "pdf"
     example_units_subfolder: Optional[str] = None
@@ -203,6 +214,272 @@ def _condition_masks(df: pd.DataFrame, interactive_label: str, face_label: str, 
     }
 
 
+def _ensure_pkl_filename(filename: str) -> str:
+    token = str(filename).strip()
+    if not token:
+        token = "fixations.pkl"
+    if not token.endswith(".pkl"):
+        token = f"{token}.pkl"
+    return token
+
+
+def _extract_average_df_and_meta(obj) -> tuple[pd.DataFrame, dict]:
+    if isinstance(obj, dict):
+        avg_df = obj.get("averages")
+        meta = obj.get("meta", {})
+        if isinstance(avg_df, pd.DataFrame):
+            return avg_df, meta if isinstance(meta, dict) else {}
+    if isinstance(obj, pd.DataFrame):
+        return obj, {}
+    raise ValueError(f"Unsupported average PSTH object type for plotting: {type(obj)}")
+
+
+def _resolve_average_bin_duration_s(
+    meta: dict,
+    *,
+    bin_centers: np.ndarray,
+    settings: FixationPSTHUnitPlotSettings,
+) -> float:
+    duration_s = meta.get("target_bin_size_s")
+    if duration_s is None:
+        duration_s = meta.get("bin_size_s")
+    try:
+        if duration_s is not None:
+            duration_s = float(duration_s)
+    except Exception:
+        duration_s = None
+    if duration_s is not None and np.isfinite(duration_s) and duration_s > 0:
+        return float(duration_s)
+    if bin_centers.size > 1:
+        inferred = float(np.mean(np.diff(bin_centers)))
+        if np.isfinite(inferred) and inferred > 0:
+            return inferred
+    return float(settings.bin_size_ms_fallback) / 1000.0
+
+
+def _load_average_trace_bundle_for_date(
+    settings: FixationPSTHUnitPlotSettings,
+    *,
+    date: str,
+) -> Optional[tuple[pd.DataFrame, np.ndarray, float]]:
+    if not bool(settings.use_precomputed_average_traces):
+        return None
+
+    subdir = str(settings.average_trace_input_subdir).strip()
+    if not subdir:
+        return None
+
+    filename = _ensure_pkl_filename(settings.average_trace_input_filename)
+    cache_key = (str(settings.cfg_path), subdir, filename, str(date))
+    if cache_key in _AVERAGE_TRACE_CACHE:
+        return _AVERAGE_TRACE_CACHE[cache_key]
+
+    cfg = load_config(settings.cfg_path)
+    rows = scan_analysis_date_paths(
+        cfg,
+        subdir,
+        filename=filename,
+        dates=[date],
+    )
+    if not rows:
+        _AVERAGE_TRACE_CACHE[cache_key] = None
+        return None
+
+    dfs: list[pd.DataFrame] = []
+    bin_centers_ref: Optional[np.ndarray] = None
+    bin_duration_ref: Optional[float] = None
+    for row in rows:
+        obj = load_pickle_path(row["path"])
+        avg_df, meta = _extract_average_df_and_meta(obj)
+        if avg_df.empty or "psth_mean" not in avg_df.columns:
+            continue
+
+        centers = _resolve_bin_centers_from_meta_shared(meta)
+        if centers is not None:
+            if bin_centers_ref is None:
+                bin_centers_ref = np.asarray(centers, dtype=float)
+            elif centers.shape != bin_centers_ref.shape or not np.allclose(centers, bin_centers_ref):
+                raise ValueError(
+                    f"Mismatched average PSTH bin centers across files for plotting; path={row['path']}"
+                )
+            duration_s = _resolve_average_bin_duration_s(meta, bin_centers=bin_centers_ref, settings=settings)
+            if bin_duration_ref is None:
+                bin_duration_ref = float(duration_s)
+            elif not np.isclose(float(duration_s), float(bin_duration_ref)):
+                raise ValueError(
+                    f"Mismatched average PSTH bin durations across files for plotting; path={row['path']}"
+                )
+
+        df = avg_df.copy()
+        if "date" not in df.columns:
+            df["date"] = str(row.get("date", date))
+        dfs.append(df)
+
+    if not dfs:
+        _AVERAGE_TRACE_CACHE[cache_key] = None
+        return None
+
+    out_df = pd.concat(dfs, axis=0, ignore_index=True)
+    if bin_centers_ref is None:
+        first = out_df.iloc[0]
+        first_mean = np.asarray(first.get("psth_mean"), dtype=float).reshape(-1)
+        fallback = _fallback_bin_centers(settings)
+        if fallback.size == first_mean.size:
+            bin_centers_ref = fallback
+        else:
+            bin_centers_ref = np.arange(first_mean.size, dtype=float)
+    if bin_duration_ref is None:
+        bin_duration_ref = _resolve_average_bin_duration_s(
+            {},
+            bin_centers=np.asarray(bin_centers_ref, dtype=float),
+            settings=settings,
+        )
+    bundle = (out_df, np.asarray(bin_centers_ref, dtype=float), float(bin_duration_ref))
+    _AVERAGE_TRACE_CACHE[cache_key] = bundle
+    return bundle
+
+
+def _resolve_condition_for_average_row(
+    row,
+    settings: FixationPSTHUnitPlotSettings,
+) -> Optional[str]:
+    category = str(getattr(row, "fixation_category", "")).strip()
+    if category == str(settings.object_label):
+        return "object"
+    if category != str(settings.face_label):
+        return None
+
+    if hasattr(row, "is_interactive"):
+        interactive = _as_bool(getattr(row, "is_interactive"), settings.interactive_label)
+        return "face_interactive" if interactive else "face_non_interactive"
+    if hasattr(row, "interactive_state"):
+        raw_value = getattr(row, "interactive_state")
+        token = str(raw_value).strip()
+        if not token or token.lower() in {"nan", "none", "null"}:
+            return None
+        interactive = _as_bool(raw_value, settings.interactive_label)
+        return "face_interactive" if interactive else "face_non_interactive"
+    return None
+
+
+def _resolve_n_trials_for_average_row(row) -> int:
+    if not hasattr(row, "n_trials"):
+        return 1
+    try:
+        n_trials = int(float(getattr(row, "n_trials")))
+    except Exception:
+        return 1
+    return n_trials if n_trials > 0 else 1
+
+
+def _combine_average_records(
+    records: list[dict[str, np.ndarray | int]],
+) -> Optional[tuple[np.ndarray, np.ndarray, int]]:
+    if not records:
+        return None
+
+    sum_vec: Optional[np.ndarray] = None
+    sumsq_vec: Optional[np.ndarray] = None
+    n_total = 0
+    for record in records:
+        n_trials = int(record["n_trials"])
+        if n_trials <= 0:
+            continue
+        mean_vec = np.asarray(record["mean_counts"], dtype=float).reshape(-1)
+        sem_vec = np.asarray(record["sem_counts"], dtype=float).reshape(-1)
+        if mean_vec.size == 0 or sem_vec.size == 0 or mean_vec.shape != sem_vec.shape:
+            return None
+        if np.any(~np.isfinite(mean_vec)) or np.any(~np.isfinite(sem_vec)):
+            return None
+
+        if sum_vec is None:
+            sum_vec = np.zeros_like(mean_vec, dtype=float)
+            sumsq_vec = np.zeros_like(mean_vec, dtype=float)
+        elif sum_vec.shape != mean_vec.shape:
+            return None
+
+        sample_var = np.square(sem_vec) * float(n_trials)
+        sum_vec += mean_vec * float(n_trials)
+        sumsq_vec += sample_var * float(max(0, n_trials - 1)) + float(n_trials) * np.square(mean_vec)
+        n_total += n_trials
+
+    if sum_vec is None or sumsq_vec is None or n_total <= 0:
+        return None
+
+    mean_vec = sum_vec / float(n_total)
+    if n_total > 1:
+        numer = sumsq_vec - (np.square(sum_vec) / float(n_total))
+        numer = np.maximum(numer, 0.0)
+        sample_var = numer / float(n_total - 1)
+        sem_vec = np.sqrt(sample_var / float(n_total))
+    else:
+        sem_vec = np.zeros_like(mean_vec, dtype=float)
+    return mean_vec, sem_vec, int(n_total)
+
+
+def _build_precomputed_trace_overrides(
+    average_df: pd.DataFrame,
+    *,
+    unit_uuid: str,
+    bin_centers: np.ndarray,
+    bin_size_s: float,
+    settings: FixationPSTHUnitPlotSettings,
+) -> dict[str, dict]:
+    if average_df.empty or "unit_uuid" not in average_df.columns:
+        return {}
+
+    unit_token = str(unit_uuid).strip()
+    subset = average_df.loc[
+        average_df["unit_uuid"].astype(str).map(lambda value: value.strip()) == unit_token
+    ].copy()
+    if subset.empty:
+        return {}
+
+    grouped: dict[str, list[dict[str, np.ndarray | int]]] = {
+        cond_key: []
+        for cond_key, _ in _PLOT_CONDITION_ORDER
+    }
+
+    n_bins = int(bin_centers.size)
+    for row in subset.itertuples(index=False):
+        cond = _resolve_condition_for_average_row(row, settings)
+        if cond is None:
+            continue
+        mean_counts = np.asarray(getattr(row, "psth_mean"), dtype=float).reshape(-1)
+        if mean_counts.size != n_bins:
+            continue
+        if np.any(~np.isfinite(mean_counts)):
+            continue
+        if not hasattr(row, "psth_sem"):
+            continue
+        sem_counts = np.asarray(getattr(row, "psth_sem"), dtype=float).reshape(-1)
+        if sem_counts.size != n_bins:
+            continue
+        if np.any(~np.isfinite(sem_counts)):
+            continue
+        grouped[cond].append(
+            {
+                "mean_counts": mean_counts,
+                "sem_counts": sem_counts,
+                "n_trials": _resolve_n_trials_for_average_row(row),
+            }
+        )
+
+    out: dict[str, dict] = {}
+    for cond, records in grouped.items():
+        combined = _combine_average_records(records)
+        if combined is None:
+            continue
+        mean_counts, sem_counts, n_trials = combined
+        out[cond] = {
+            "mean_hz": mean_counts / float(bin_size_s),
+            "sem_hz": sem_counts / float(bin_size_s),
+            "trace_bin_centers": np.asarray(bin_centers, dtype=float),
+            "trace_n_trials": int(n_trials),
+        }
+    return out
+
+
 def _build_unit_condition_payloads(
     df_unit: pd.DataFrame,
     *,
@@ -219,16 +496,10 @@ def _build_unit_condition_payloads(
     )
     n_bins = int(bin_centers.size)
 
-    payload_order = [
-        ("face_interactive", "Interactive Face"),
-        ("face_non_interactive", "Non-Interactive Face"),
-        ("object", "Object"),
-    ]
-
     payloads: list[dict] = []
     sigma_bins = _resolve_plot_sigma_bins(settings, bin_size_s)
 
-    for cond_key, cond_label in payload_order:
+    for cond_key, cond_label in _PLOT_CONDITION_ORDER:
         cond_df = df_unit.loc[masks[cond_key]].copy()
         seed = _stable_seed_shared(settings.random_seed, unit_key, cond_key)
         cond_df = _sample_rows_shared(cond_df, settings.max_trials_per_condition, seed)
@@ -263,6 +534,8 @@ def _build_unit_condition_payloads(
                     "spike_rows": [],
                     "mean_hz": np.zeros(n_bins, dtype=float),
                     "sem_hz": np.zeros(n_bins, dtype=float),
+                    "trace_bin_centers": np.asarray(bin_centers, dtype=float),
+                    "trace_n_trials": 0,
                 },
             )
             continue
@@ -286,8 +559,48 @@ def _build_unit_condition_payloads(
                 "spike_rows": spike_rows,
                 "mean_hz": mean_hz,
                 "sem_hz": sem_hz,
+                "trace_bin_centers": np.asarray(bin_centers, dtype=float),
+                "trace_n_trials": int(rates_hz.shape[0]),
             },
         )
+
+    if bool(settings.use_precomputed_average_traces):
+        if "|" in str(unit_key):
+            date_token, unit_token = str(unit_key).split("|", 1)
+        else:
+            date_token, unit_token = "", str(unit_key)
+        date_token = str(date_token).strip()
+        unit_token = str(unit_token).strip()
+        if date_token and unit_token:
+            bundle = _load_average_trace_bundle_for_date(settings, date=date_token)
+            if bundle is not None:
+                avg_df, avg_centers, avg_bin_size_s = bundle
+                overrides = _build_precomputed_trace_overrides(
+                    avg_df,
+                    unit_uuid=unit_token,
+                    bin_centers=avg_centers,
+                    bin_size_s=avg_bin_size_s,
+                    settings=settings,
+                )
+                if overrides:
+                    for payload in payloads:
+                        override = overrides.get(str(payload["key"]))
+                        if override is None:
+                            continue
+                        payload["mean_hz"] = np.asarray(override["mean_hz"], dtype=float)
+                        payload["sem_hz"] = np.asarray(override["sem_hz"], dtype=float)
+                        payload["trace_bin_centers"] = np.asarray(
+                            override["trace_bin_centers"],
+                            dtype=float,
+                        )
+                        payload["trace_n_trials"] = int(override["trace_n_trials"])
+                if not bool(settings.allow_trial_trace_fallback):
+                    for payload in payloads:
+                        if str(payload["key"]) in overrides:
+                            continue
+                        mean_hz = np.asarray(payload["mean_hz"], dtype=float).reshape(-1)
+                        payload["mean_hz"] = np.full(mean_hz.shape, np.nan, dtype=float)
+                        payload["sem_hz"] = np.full(mean_hz.shape, np.nan, dtype=float)
 
     return payloads
 
@@ -486,11 +799,17 @@ def _plot_single_unit(
     for payload in payloads:
         if int(payload["n_trials"]) <= 0:
             continue
+        trace_bin_centers = np.asarray(
+            payload.get("trace_bin_centers", bin_centers),
+            dtype=float,
+        ).reshape(-1)
         mean_hz = np.asarray(payload["mean_hz"], dtype=float)
         sem_hz = np.asarray(payload["sem_hz"], dtype=float)
-        ax_rate.plot(bin_centers, mean_hz, color=payload["color"], label=payload["label"])
+        if trace_bin_centers.size != mean_hz.size or sem_hz.size != mean_hz.size:
+            continue
+        ax_rate.plot(trace_bin_centers, mean_hz, color=payload["color"], label=payload["label"])
         ax_rate.fill_between(
-            bin_centers,
+            trace_bin_centers,
             mean_hz - sem_hz,
             mean_hz + sem_hz,
             color=payload["color"],

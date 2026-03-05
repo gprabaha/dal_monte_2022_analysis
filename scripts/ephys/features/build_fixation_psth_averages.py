@@ -55,7 +55,12 @@ def _print_average_example(path: Path, *, max_bins: int = 12) -> None:
 
     row = df.iloc[0]
     psth_mean = np.asarray(row.get("psth_mean"), dtype=float).reshape(-1)
+    if "psth_sem" in df.columns:
+        psth_sem = np.asarray(row.get("psth_sem"), dtype=float).reshape(-1)
+    else:
+        psth_sem = np.asarray([], dtype=float)
     preview = psth_mean[: max(1, int(max_bins))]
+    sem_preview = psth_sem[: max(1, int(max_bins))]
 
     print("\nExample fixation PSTH average output:")
     print(f"  file: {path}")
@@ -77,6 +82,8 @@ def _print_average_example(path: Path, *, max_bins: int = 12) -> None:
         f"interactive_state={row.get('interactive_state') if 'interactive_state' in df.columns else None}"
     )
     print(f"  sample_psth_mean_first_{len(preview)}bins: {preview.tolist()}")
+    if psth_sem.size > 0:
+        print(f"  sample_psth_sem_first_{len(sem_preview)}bins: {sem_preview.tolist()}")
 
 
 def main() -> None:
