@@ -109,7 +109,7 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
 
             avg_root = analysis_root / "ephys/psth/fixation_psth_averages/date=20990101"
             avg_root.mkdir(parents=True, exist_ok=True)
-            avg_df = pd.DataFrame(
+            split_avg_df = pd.DataFrame(
                 [
                     {
                         "date": "20990101",
@@ -133,13 +133,34 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
                         "date": "20990101",
                         "unit_uuid": "u1",
                         "fixation_category": "object",
+                        "interactive_state": "non_interactive",
+                        "n_trials": 6,
+                        "psth_mean": np.asarray([90.0, 91.0, 92.0], dtype=float),
+                        "psth_sem": np.asarray([9.0, 9.1, 9.2], dtype=float),
+                    },
+                ]
+            )
+            unsplit_avg_df = pd.DataFrame(
+                [
+                    {
+                        "date": "20990101",
+                        "unit_uuid": "u1",
+                        "fixation_category": "face",
+                        "n_trials": 9,
+                        "psth_mean": np.asarray([99.0, 99.0, 99.0], dtype=float),
+                        "psth_sem": np.asarray([9.9, 9.9, 9.9], dtype=float),
+                    },
+                    {
+                        "date": "20990101",
+                        "unit_uuid": "u1",
+                        "fixation_category": "object",
                         "n_trials": 6,
                         "psth_mean": np.asarray([12.0, 22.0, 32.0], dtype=float),
                         "psth_sem": np.asarray([1.2, 2.2, 3.2], dtype=float),
                     },
                 ]
             )
-            with (avg_root / "fixations.pkl").open("wb") as f:
+            with (avg_root / "fixations_split.pkl").open("wb") as f:
                 pickle.dump(
                     {
                         "meta": {
@@ -147,7 +168,19 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
                             "bin_centers_s_rel": np.asarray([-0.5, 0.0, 0.5], dtype=float),
                             "target_bin_size_s": 0.5,
                         },
-                        "averages": avg_df,
+                        "averages": split_avg_df,
+                    },
+                    f,
+                )
+            with (avg_root / "fixations_unsplit.pkl").open("wb") as f:
+                pickle.dump(
+                    {
+                        "meta": {
+                            "date": "20990101",
+                            "bin_centers_s_rel": np.asarray([-0.5, 0.0, 0.5], dtype=float),
+                            "target_bin_size_s": 0.5,
+                        },
+                        "averages": unsplit_avg_df,
                     },
                     f,
                 )
@@ -180,7 +213,9 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
                 smooth_before_average=False,
                 use_precomputed_average_traces=True,
                 average_trace_input_subdir="ephys/psth/fixation_psth_averages",
-                average_trace_input_filename="fixations.pkl",
+                average_trace_input_filename="fixations_split.pkl",
+                average_trace_object_input_subdir="ephys/psth/fixation_psth_averages",
+                average_trace_object_input_filename="fixations_unsplit.pkl",
                 allow_trial_trace_fallback=True,
             )
             payloads = _build_unit_condition_payloads(

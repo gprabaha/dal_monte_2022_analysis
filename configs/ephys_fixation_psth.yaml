@@ -35,7 +35,13 @@ agents: null
 
 # Date-level average PSTH output (stored in analysis_output_root)
 average_output_subdir: ephys/psth/fixation_psth_averages
-average_output_filename: fixations.pkl
+# Primary (split) average output includes interactive-state-specific face rows.
+average_output_filename: fixations_split_by_interactive_state.pkl
+average_output_filename_split: fixations_split_by_interactive_state.pkl
+# Secondary (unsplit) average output keeps face/object rows without interactive splitting.
+average_output_subdir_unsplit: ephys/psth/fixation_psth_averages
+average_output_filename_unsplit: fixations_unsplit_by_interactive_state.pkl
+# Legacy toggle retained for compatibility with older scripts/notes.
 split_by_interactive_state: true
 restrict_interactive_state: null
 group_by_session: false
@@ -48,7 +54,14 @@ average_target_bin_step_ms: null
 # Dedicated date-level average PSTH output for preference-index heatmaps.
 # Uses wider bins and overlapping stride while keeping trial PSTHs unchanged.
 selective_index_average_output_subdir: ephys/psth/fixation_psth_index_averages
-selective_index_average_output_filename: fixations.pkl
+# Primary split averages used for interactive/non-interactive face conditions.
+selective_index_average_output_filename: fixations_split_by_interactive_state.pkl
+selective_index_average_output_filename_split: fixations_split_by_interactive_state.pkl
+# Secondary unsplit averages used for object condition traces.
+selective_index_average_output_subdir_unsplit: ephys/psth/fixation_psth_index_averages
+selective_index_average_output_filename_unsplit: fixations_unsplit_by_interactive_state.pkl
+# Optional override for unsplit-object average subdir when different from split.
+selective_index_average_object_output_subdir: null
 selective_index_average_split_by_interactive_state: true
 selective_index_average_restrict_interactive_state: null
 selective_index_average_group_by_session: false
@@ -289,7 +302,13 @@ plot_unit_parallel_min_units: 2
 # split_by_interactive_state: true.
 plot_use_precomputed_average_traces: true
 plot_average_input_subdir: ephys/psth/fixation_psth_averages
-plot_average_input_filename: fixations.pkl
+plot_average_input_filename: fixations_split_by_interactive_state.pkl
+plot_average_input_filename_split: fixations_split_by_interactive_state.pkl
+# Object traces can be sourced from an unsplit average file so object is not
+# split by interactive state in downstream plotting/index workflows.
+plot_average_object_input_subdir: ephys/psth/fixation_psth_averages
+plot_average_object_input_filename: fixations_unsplit_by_interactive_state.pkl
+plot_average_input_filename_unsplit: fixations_unsplit_by_interactive_state.pkl
 # If true, conditions missing from average rows fall back to trial-derived traces.
 plot_allow_trial_trace_fallback: false
 plot_max_trials_per_condition: 300

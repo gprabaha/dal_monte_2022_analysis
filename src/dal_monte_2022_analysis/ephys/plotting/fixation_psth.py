@@ -69,6 +69,8 @@ class FixationPSTHUnitPlotSettings:
     use_precomputed_average_traces: bool = True
     average_trace_input_subdir: str = "ephys/psth/fixation_psth_averages"
     average_trace_input_filename: str = "fixations.pkl"
+    average_trace_object_input_subdir: Optional[str] = None
+    average_trace_object_input_filename: Optional[str] = None
     allow_trial_trace_fallback: bool = True
     output_subdir: str = "ephys/psth/fixation_psth_unit_plots"
     output_extension: str = "pdf"
@@ -257,19 +259,34 @@ def _resolve_average_bin_duration_s(
     return float(settings.bin_size_ms_fallback) / 1000.0
 
 
+def _resolve_average_trace_input_location(
+    settings: FixationPSTHUnitPlotSettings,
+    *,
+    for_object: bool,
+) -> tuple[str, str]:
+    subdir = str(settings.average_trace_input_subdir).strip()
+    filename = str(settings.average_trace_input_filename).strip()
+    if for_object:
+        if settings.average_trace_object_input_subdir is not None:
+            subdir = str(settings.average_trace_object_input_subdir).strip()
+        if settings.average_trace_object_input_filename is not None:
+            filename = str(settings.average_trace_object_input_filename).strip()
+    return subdir, _ensure_pkl_filename(filename)
+
+
 def _load_average_trace_bundle_for_date(
     settings: FixationPSTHUnitPlotSettings,
     *,
     date: str,
+    for_object: bool,
 ) -> Optional[tuple[pd.DataFrame, np.ndarray, float]]:
     if not bool(settings.use_precomputed_average_traces):
         return None
 
-    subdir = str(settings.average_trace_input_subdir).strip()
+    subdir, filename = _resolve_average_trace_input_location(settings, for_object=for_object)
     if not subdir:
         return None
 
-    filename = _ensure_pkl_filename(settings.average_trace_input_filename)
     cache_key = (str(settings.cfg_path), subdir, filename, str(date))
     if cache_key in _AVERAGE_TRACE_CACHE:
         return _AVERAGE_TRACE_CACHE[cache_key]
@@ -571,36 +588,65 @@ def _build_unit_condition_payloads(
             date_token, unit_token = "", str(unit_key)
         date_token = str(date_token).strip()
         unit_token = str(unit_token).strip()
+        resolved_overrides: dict[str, dict] = {}
         if date_token and unit_token:
-            bundle = _load_average_trace_bundle_for_date(settings, date=date_token)
-            if bundle is not None:
-                avg_df, avg_centers, avg_bin_size_s = bundle
-                overrides = _build_precomputed_trace_overrides(
-                    avg_df,
+            split_bundle = _load_average_trace_bundle_for_date(
+                settings,
+                date=date_token,
+                for_object=False,
+            )
+            object_bundle = _load_average_trace_bundle_for_date(
+                settings,
+                date=date_token,
+                for_object=True,
+            )
+
+            split_overrides: dict[str, dict] = {}
+            if split_bundle is not None:
+                split_df, split_centers, split_bin_size_s = split_bundle
+                split_overrides = _build_precomputed_trace_overrides(
+                    split_df,
                     unit_uuid=unit_token,
-                    bin_centers=avg_centers,
-                    bin_size_s=avg_bin_size_s,
+                    bin_centers=split_centers,
+                    bin_size_s=split_bin_size_s,
                     settings=settings,
                 )
-                if overrides:
-                    for payload in payloads:
-                        override = overrides.get(str(payload["key"]))
-                        if override is None:
-                            continue
-                        payload["mean_hz"] = np.asarray(override["mean_hz"], dtype=float)
-                        payload["sem_hz"] = np.asarray(override["sem_hz"], dtype=float)
-                        payload["trace_bin_centers"] = np.asarray(
-                            override["trace_bin_centers"],
-                            dtype=float,
-                        )
-                        payload["trace_n_trials"] = int(override["trace_n_trials"])
-                if not bool(settings.allow_trial_trace_fallback):
-                    for payload in payloads:
-                        if str(payload["key"]) in overrides:
-                            continue
-                        mean_hz = np.asarray(payload["mean_hz"], dtype=float).reshape(-1)
-                        payload["mean_hz"] = np.full(mean_hz.shape, np.nan, dtype=float)
-                        payload["sem_hz"] = np.full(mean_hz.shape, np.nan, dtype=float)
+
+            object_overrides: dict[str, dict] = {}
+            if object_bundle is not None:
+                object_df, object_centers, object_bin_size_s = object_bundle
+                object_overrides = _build_precomputed_trace_overrides(
+                    object_df,
+                    unit_uuid=unit_token,
+                    bin_centers=object_centers,
+                    bin_size_s=object_bin_size_s,
+                    settings=settings,
+                )
+
+            for payload in payloads:
+                cond_key = str(payload["key"])
+                if cond_key == "object":
+                    override = object_overrides.get(cond_key) or split_overrides.get(cond_key)
+                else:
+                    override = split_overrides.get(cond_key)
+                if override is None:
+                    continue
+                resolved_overrides[cond_key] = override
+                payload["mean_hz"] = np.asarray(override["mean_hz"], dtype=float)
+                payload["sem_hz"] = np.asarray(override["sem_hz"], dtype=float)
+                payload["trace_bin_centers"] = np.asarray(
+                    override["trace_bin_centers"],
+                    dtype=float,
+                )
+                payload["trace_n_trials"] = int(override["trace_n_trials"])
+
+        if not bool(settings.allow_trial_trace_fallback):
+            for payload in payloads:
+                if str(payload["key"]) in resolved_overrides:
+                    continue
+                mean_hz = np.asarray(payload["mean_hz"], dtype=float).reshape(-1)
+                payload["mean_hz"] = np.full(mean_hz.shape, np.nan, dtype=float)
+                payload["sem_hz"] = np.full(mean_hz.shape, np.nan, dtype=float)
 
     return payloads
 

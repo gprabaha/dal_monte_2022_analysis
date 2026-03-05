@@ -1,6 +1,7 @@
-"""Build date-level fixation PSTH averages for preference-index heatmap analysis."""
+"""Build split and unsplit date-level fixation PSTH averages for preference-index analysis."""
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
 import sys
 
@@ -28,6 +29,23 @@ def _as_str_seq(values):
     return out or None
 
 
+def _ensure_pkl_filename(filename: str) -> str:
+    token = str(filename).strip()
+    if not token:
+        token = "fixations.pkl"
+    if not token.endswith(".pkl"):
+        token = f"{token}.pkl"
+    return token
+
+
+def _derive_unsplit_filename(split_filename: str) -> str:
+    token = _ensure_pkl_filename(split_filename)
+    stem = token[:-4]
+    if stem.endswith("_split_by_interactive_state"):
+        return f"{stem[: -len('_split_by_interactive_state')]}_unsplit_by_interactive_state.pkl"
+    return f"{stem}_unsplit_by_interactive_state.pkl"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
@@ -43,6 +61,10 @@ def main() -> None:
     parser.add_argument("--target-bin-step-ms", type=float, default=None)
     parser.add_argument("--output-subdir", default=None)
     parser.add_argument("--output-filename", default=None)
+    parser.add_argument("--output-subdir-unsplit", default=None)
+    parser.add_argument("--output-filename-unsplit", default=None)
+    parser.add_argument("--split-only", action="store_true")
+    parser.add_argument("--unsplit-only", action="store_true")
     parser.add_argument("--no-parallel", action="store_true")
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
@@ -51,13 +73,31 @@ def main() -> None:
     ephys_fix_cfg_path = _resolve_cli_path(args.ephys_fixation_psth_cfg)
     cfg = load_config(ephys_fix_cfg_path)
 
-    settings = FixationPSTHAverageSettings(
+    split_output_subdir = cfg.get(
+        "selective_index_average_output_subdir_split",
+        cfg.get("selective_index_average_output_subdir", "ephys/psth/fixation_psth_index_averages"),
+    )
+    split_output_filename = _ensure_pkl_filename(
+        cfg.get(
+            "selective_index_average_output_filename_split",
+            cfg.get("selective_index_average_output_filename", "fixations.pkl"),
+        ),
+    )
+    unsplit_output_subdir = cfg.get("selective_index_average_output_subdir_unsplit", split_output_subdir)
+    unsplit_output_filename = _ensure_pkl_filename(
+        cfg.get(
+            "selective_index_average_output_filename_unsplit",
+            _derive_unsplit_filename(split_output_filename),
+        ),
+    )
+
+    settings_common = FixationPSTHAverageSettings(
         cfg_path=str(dataset_cfg_path),
         trial_input_modality=cfg.get("trial_output_modality", "psth"),
         trial_input_filename=cfg.get("trial_output_filename", "fixations.pkl"),
-        output_subdir=cfg.get("selective_index_average_output_subdir", "ephys/psth/fixation_psth_index_averages"),
-        output_filename=cfg.get("selective_index_average_output_filename", "fixations.pkl"),
-        split_by_interactive_state=cfg.get("selective_index_average_split_by_interactive_state", True),
+        output_subdir=split_output_subdir,
+        output_filename=split_output_filename,
+        split_by_interactive_state=True,
         restrict_interactive_state=cfg.get("selective_index_average_restrict_interactive_state"),
         group_by_session=cfg.get("selective_index_average_group_by_session", False),
         smooth_before_average=cfg.get(
@@ -76,39 +116,82 @@ def main() -> None:
         categories=cfg.get("selective_index_average_categories", ("face", "object")),
     )
 
+    if args.split_only and args.unsplit_only:
+        raise ValueError("Cannot use --split-only and --unsplit-only together.")
+
     if args.target_bin_size_ms is not None:
-        settings.target_bin_size_ms = float(args.target_bin_size_ms)
+        settings_common.target_bin_size_ms = float(args.target_bin_size_ms)
     if args.target_bin_step_ms is not None:
-        settings.target_bin_step_ms = float(args.target_bin_step_ms)
-    if args.output_subdir:
-        settings.output_subdir = str(args.output_subdir)
-    if args.output_filename:
-        settings.output_filename = str(args.output_filename)
+        settings_common.target_bin_step_ms = float(args.target_bin_step_ms)
     if args.no_parallel:
-        settings.use_parallel = False
+        settings_common.use_parallel = False
     if args.test_single:
-        settings.test_single = True
+        settings_common.test_single = True
+
+    run_split_output = not bool(args.unsplit_only)
+    run_unsplit_output = not bool(args.split_only)
+
+    if args.output_subdir:
+        split_output_subdir = str(args.output_subdir)
+        unsplit_output_subdir = str(args.output_subdir)
+    if args.output_subdir_unsplit:
+        unsplit_output_subdir = str(args.output_subdir_unsplit)
+    if args.output_filename:
+        split_output_filename = _ensure_pkl_filename(args.output_filename)
+    if args.output_filename_unsplit:
+        unsplit_output_filename = _ensure_pkl_filename(args.output_filename_unsplit)
 
     dates = _as_str_seq(args.date)
     sessions = _as_str_seq(args.session)
 
-    run_fixation_psth_average_build(
-        settings,
-        dates=dates,
-        sessions=sessions,
-    )
+    settings_by_label: list[tuple[str, FixationPSTHAverageSettings]] = []
+    if run_split_output:
+        settings_by_label.append(
+            (
+                "split",
+                replace(
+                    settings_common,
+                    output_subdir=split_output_subdir,
+                    output_filename=split_output_filename,
+                    split_by_interactive_state=True,
+                ),
+            ),
+        )
+    if run_unsplit_output:
+        settings_by_label.append(
+            (
+                "unsplit",
+                replace(
+                    settings_common,
+                    output_subdir=unsplit_output_subdir,
+                    output_filename=unsplit_output_filename,
+                    split_by_interactive_state=False,
+                ),
+            ),
+        )
+    if not settings_by_label:
+        raise ValueError("No index-average output mode selected.")
+
+    for _, mode_settings in settings_by_label:
+        run_fixation_psth_average_build(
+            mode_settings,
+            dates=dates,
+            sessions=sessions,
+        )
 
     cfg_dataset = load_config(str(dataset_cfg_path))
-    out_rows = scan_analysis_date_paths(
-        cfg_dataset,
-        settings.output_subdir,
-        filename=str(settings.output_filename),
-        dates=dates,
-    )
-    print(
-        "[analysis] built fixation index-input averages: "
-        f"subdir={settings.output_subdir}, filename={settings.output_filename}, files={len(out_rows)}"
-    )
+    for label, mode_settings in settings_by_label:
+        out_rows = scan_analysis_date_paths(
+            cfg_dataset,
+            mode_settings.output_subdir,
+            filename=str(mode_settings.output_filename),
+            dates=dates,
+        )
+        print(
+            f"[analysis] built fixation index-input {label} averages: "
+            f"subdir={mode_settings.output_subdir}, "
+            f"filename={mode_settings.output_filename}, files={len(out_rows)}"
+        )
 
 
 if __name__ == "__main__":
