@@ -177,6 +177,39 @@ def _apply_plotting_style(plotting_cfg_path: str) -> None:
         apply_plotting_config(cfg)
 
 
+def _extract_cross_condition_explained_variance_df(result_obj: dict) -> pd.DataFrame:
+    raw = result_obj.get("cross_condition_explained_variance")
+    if isinstance(raw, pd.DataFrame):
+        out = raw.copy()
+    elif isinstance(raw, dict):
+        out = pd.DataFrame(raw)
+    else:
+        out = pd.DataFrame()
+    if out.empty:
+        return pd.DataFrame()
+    required = {
+        "region",
+        "fit_condition",
+        "eval_condition",
+        "n_components",
+        "explained_variance_fraction",
+    }
+    if not required.issubset(out.columns):
+        return pd.DataFrame()
+    out = out.copy()
+    out["region"] = out["region"].astype(str)
+    out["fit_condition"] = out["fit_condition"].astype(str)
+    out["eval_condition"] = out["eval_condition"].astype(str)
+    out["n_components"] = pd.to_numeric(out["n_components"], errors="coerce")
+    out["explained_variance_fraction"] = pd.to_numeric(
+        out["explained_variance_fraction"],
+        errors="coerce",
+    )
+    out = out.loc[out["n_components"].notna()].copy()
+    out["n_components"] = out["n_components"].astype(int)
+    return out
+
+
 def plot_fixation_population_pca_trajectories(
     settings: FixationPopulationPCAPlotSettings,
     *,
@@ -316,3 +349,147 @@ def plot_fixation_population_pca_trajectories(
         "marker_indices": marker_indices_cache,
     }
 
+
+def plot_fixation_population_pca_explained_variance_bars(
+    settings: FixationPopulationPCAPlotSettings,
+    *,
+    regions: Optional[Sequence[str]] = None,
+    output_filename: str = "population_pca_explained_variance_bars",
+) -> Optional[dict]:
+    """Plot per-PC explained variance bars across eval fixation types."""
+    _apply_plotting_style(settings.plotting_cfg_path)
+    result_obj, input_path = _load_population_pca_result(settings)
+    explained_df = _extract_cross_condition_explained_variance_df(result_obj)
+    if explained_df.empty:
+        print("[plot] no cross-condition explained variance rows found")
+        return None
+
+    cond_order = [cond for cond in settings.conditions if cond in set(explained_df["fit_condition"].unique())]
+    if not cond_order:
+        print("[plot] no matching fit conditions for explained variance plotting")
+        return None
+
+    if regions is None:
+        region_order = sorted(explained_df["region"].astype(str).unique().tolist(), key=lambda token: token.lower())
+    else:
+        wanted = [str(region) for region in regions]
+        region_available = set(explained_df["region"].astype(str).unique().tolist())
+        region_order = [region for region in wanted if region in region_available]
+    if not region_order:
+        print("[plot] no matching regions for explained variance plotting")
+        return None
+
+    max_comp = max(1, int(settings.max_components_display))
+    n_rows = len(cond_order)
+    n_cols = max(4, len(region_order))
+    fig = plt.figure(
+        figsize=(8.5, 8.5 * float(settings.variance_letter_height_frac)),
+        dpi=settings.output_dpi,
+    )
+    axes = fig.subplots(n_rows, n_cols, squeeze=False)
+    color_map = _resolve_condition_colors(settings)
+    eval_order = [cond for cond in settings.conditions if cond in set(explained_df["eval_condition"].unique())]
+    bar_width = 0.84 / max(1, len(eval_order))
+    x = np.arange(1, max_comp + 1, dtype=float)
+
+    for row_idx, fit_condition in enumerate(cond_order):
+        for col_idx in range(n_cols):
+            ax = axes[row_idx, col_idx]
+            if col_idx >= len(region_order):
+                ax.set_axis_off()
+                continue
+            region = region_order[col_idx]
+            sub = explained_df.loc[
+                (explained_df["region"] == str(region))
+                & (explained_df["fit_condition"] == str(fit_condition))
+                & (explained_df["n_components"] >= 1)
+                & (explained_df["n_components"] <= max_comp)
+            ].copy()
+            if sub.empty:
+                ax.set_axis_off()
+                continue
+
+            for eval_idx, eval_condition in enumerate(eval_order):
+                eval_sub = sub.loc[sub["eval_condition"] == str(eval_condition)].copy()
+                if eval_sub.empty:
+                    continue
+                eval_sub = eval_sub.sort_values("n_components")
+                y = np.full((max_comp,), np.nan, dtype=float)
+                comp_idx = np.asarray(eval_sub["n_components"], dtype=int) - 1
+                valid = (comp_idx >= 0) & (comp_idx < max_comp)
+                if np.any(valid):
+                    y[comp_idx[valid]] = np.asarray(
+                        eval_sub.loc[valid, "explained_variance_fraction"],
+                        dtype=float,
+                    )
+                offset = (float(eval_idx) - (len(eval_order) - 1.0) / 2.0) * bar_width
+                finite = np.isfinite(y)
+                if np.any(finite):
+                    ax.bar(
+                        x[finite] + offset,
+                        y[finite],
+                        width=bar_width * 0.95,
+                        color=str(color_map.get(eval_condition, DEFAULT_CONDITION_COLORS.get(eval_condition, "#444444"))),
+                        edgecolor="black",
+                        linewidth=0.15,
+                        alpha=0.95,
+                    )
+
+            ax.axhline(0.0, color="#222222", linewidth=0.35, alpha=0.7)
+            ax.set_xlim(0.3, max_comp + 0.7)
+            ax.set_xticks([1, 5, 10, 15, 20] if max_comp >= 20 else list(range(1, max_comp + 1)))
+            ax.tick_params(axis="both", which="major", labelsize=5, pad=1.0)
+            ax.grid(axis="y", linewidth=0.25, alpha=0.3)
+            if row_idx == 0:
+                ax.set_title(str(region), fontsize=6, pad=1.5)
+            if row_idx == n_rows - 1:
+                ax.set_xlabel("PC", fontsize=6, labelpad=0.8)
+            if col_idx == 0:
+                fit_label = settings.condition_labels.get(fit_condition, fit_condition)
+                ax.set_ylabel(f"{fit_label}\nExplained", fontsize=6, labelpad=1.0)
+
+    handles = [
+        Line2D(
+            [0],
+            [0],
+            color=str(color_map.get(cond, DEFAULT_CONDITION_COLORS.get(cond, "#444444"))),
+            lw=2.0,
+            label=settings.condition_labels.get(cond, cond),
+        )
+        for cond in eval_order
+    ]
+    fig.legend(
+        handles=handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.02),
+        ncol=max(1, len(handles)),
+        fontsize=6,
+        frameon=False,
+    )
+    fig.subplots_adjust(left=0.045, right=0.995, top=0.80, bottom=0.12, wspace=0.18, hspace=0.34)
+
+    cfg = load_config(settings.cfg_path)
+    out_root = build_analysis_output_dir(cfg, settings.output_subdir)
+    out_root.mkdir(parents=True, exist_ok=True)
+    ext = _resolve_output_ext(settings)
+    out_name = ensure_filename(output_filename, f".{ext}")
+    out_path = out_root / out_name
+    save_figure(
+        fig,
+        out_path,
+        ext=ext,
+        dpi=settings.output_dpi,
+        facecolor="white",
+        edgecolor="white",
+        transparent=False,
+    )
+    plt.close(fig)
+
+    return {
+        "output_path": str(out_path),
+        "input_path": str(input_path),
+        "regions": list(region_order),
+        "fit_conditions": list(cond_order),
+        "eval_conditions": list(eval_order),
+        "max_components": int(max_comp),
+    }

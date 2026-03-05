@@ -38,6 +38,7 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_neural_cross_correlation im
 )
 from dal_monte_2022_analysis.ephys.plotting.fixation_population_pca import (
     FixationPopulationPCAPlotSettings,
+    plot_fixation_population_pca_explained_variance_bars,
     plot_fixation_population_pca_trajectories,
 )
 
@@ -64,4 +65,5 @@ __all__ = [
     "plot_cross_region_fixation_neural_cross_correlation_summaries",
     "FixationPopulationPCAPlotSettings",
     "plot_fixation_population_pca_trajectories",
+    "plot_fixation_population_pca_explained_variance_bars",
 ]
