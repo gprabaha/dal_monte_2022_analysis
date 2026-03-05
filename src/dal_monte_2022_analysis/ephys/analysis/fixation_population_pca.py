@@ -41,7 +41,7 @@ class FixationPopulationPCASettings:
     cfg_path: str
     trial_input_modality: str = "psth"
     trial_input_filename: str = "fixations.pkl"
-    prefer_trial_input: bool = True
+    prefer_trial_input: bool = False
     allow_trial_fallback: bool = True
     input_subdir: str = "ephys/psth/fixation_psth_averages"
     input_filename: str = "fixations.pkl"

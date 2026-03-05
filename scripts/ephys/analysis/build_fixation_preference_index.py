@@ -112,7 +112,7 @@ def main() -> None:
     ephys_fix_psth_cfg_path = _resolve_cli_path(args.ephys_fixation_psth_cfg)
     cfg = load_config(ephys_fix_psth_cfg_path)
     index_window_start_s, index_window_end_s = _resolve_index_window_s_from_cfg(cfg)
-    use_average_input = bool(cfg.get("selective_index_use_average_input", False) or args.use_average_input)
+    use_average_input = bool(cfg.get("selective_index_use_average_input", True) or args.use_average_input)
     average_split_subdir = cfg.get(
         "selective_index_average_output_subdir",
         cfg.get("average_output_subdir", "ephys/psth/fixation_psth_averages"),
