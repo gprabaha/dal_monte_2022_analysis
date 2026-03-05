@@ -882,6 +882,17 @@ def build_fixation_psth_averages_for_date(
         if settings.split_by_interactive_state:
             record["interactive_state"] = key[idx]
             idx += 1
+        else:
+            # Keep schema stable across split and unsplit average outputs.
+            record["interactive_state"] = None
+
+        interactive_state_value = _as_optional_str(record.get("interactive_state"))
+        if interactive_state_value is None:
+            record["is_interactive"] = None
+        else:
+            record["is_interactive"] = bool(
+                interactive_state_value.lower() == "interactive"
+            )
 
         n_trials = int(val["n"])
         sum_vec = np.asarray(val["sum"], dtype=float).reshape(-1)

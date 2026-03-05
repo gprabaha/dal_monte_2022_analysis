@@ -17,6 +17,7 @@ from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
     extract_trials_df_and_meta as _extract_trials_df_and_meta,
     resolve_bin_centers_from_meta as _resolve_bin_centers_from_meta,
 )
+from dal_monte_2022_analysis.data.transforms.annotate import load_pair_context_table
 from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 from dal_monte_2022_analysis.runtime.io.analysis_index import scan_analysis_date_paths
 from dal_monte_2022_analysis.runtime.io.processed_data import (
@@ -61,12 +62,13 @@ class FixationPopulationPCASettings:
     )
     window_start_ms: float = -500.0
     window_stop_ms: float = 500.0
-    max_components: Optional[int] = None
+    max_components: Optional[int] = 50
     min_units_per_region: int = 3
     require_all_conditions: bool = True
     require_face_interactive_state: bool = True
     smooth_before_average: bool = True
     smoothing_sigma_ms: float = 20.0
+    verbose_logging: bool = True
     use_parallel: bool = True
     max_procs: int = 16
     bin_size_ms_fallback: float = 10.0
@@ -99,12 +101,73 @@ def _norm_token(value: object) -> str:
     return token
 
 
+def _normalize_date_token(value: object) -> Optional[str]:
+    token = _as_optional_str(value)
+    if token is None:
+        return None
+    if len(token) == 7 and token.isdigit():
+        return token.zfill(8)
+    return token
+
+
+def _build_recorded_monkey_lookup(
+    settings: FixationPopulationPCASettings,
+) -> dict[str, dict[str, Optional[str]]]:
+    try:
+        pair_df = load_pair_context_table(cfg_path=settings.cfg_path)
+    except Exception:
+        return {}
+    if pair_df.empty or "date" not in pair_df.columns:
+        return {}
+
+    out: dict[str, dict[str, Optional[str]]] = {}
+    for row in pair_df.itertuples(index=False):
+        date_token = _normalize_date_token(getattr(row, "date", None))
+        if date_token is None:
+            continue
+        out[date_token] = {
+            "m1": _as_optional_str(getattr(row, "m1_name", None)),
+            "m2": _as_optional_str(getattr(row, "m2_name", None)),
+        }
+    return out
+
+
+def _resolve_recorded_monkey_name(
+    *,
+    date: object,
+    recorded_agent: object,
+    recorded_monkey: object,
+    monkey_lookup: dict[str, dict[str, Optional[str]]],
+) -> Optional[str]:
+    direct = _as_optional_str(recorded_monkey)
+    if direct is not None:
+        return direct
+    if not monkey_lookup:
+        return None
+
+    date_token = _normalize_date_token(date)
+    if date_token is None:
+        return None
+    day_names = monkey_lookup.get(date_token)
+    if not day_names:
+        return None
+
+    agent = _norm_token(recorded_agent if recorded_agent is not None else "m1")
+    if agent not in {"m1", "m2"}:
+        agent = "m1"
+    resolved = _as_optional_str(day_names.get(agent))
+    if resolved is not None:
+        return resolved
+    return _as_optional_str(day_names.get("m1"))
+
+
 def _resolve_condition_from_row_fields(
     *,
     fixation_category: object,
     interactive_state: object,
     is_interactive: object,
     settings: FixationPopulationPCASettings,
+    require_face_interactive_state: Optional[bool] = None,
 ) -> Optional[str]:
     category_token = _norm_token(fixation_category)
     if not category_token or category_token == "nan":
@@ -140,8 +203,13 @@ def _resolve_condition_from_row_fields(
 
     has_interactive_state = interactive_state is not None and not pd.isna(interactive_state)
     has_is_interactive = is_interactive is not None and not pd.isna(is_interactive)
+    require_face_state = (
+        bool(settings.require_face_interactive_state)
+        if require_face_interactive_state is None
+        else bool(require_face_interactive_state)
+    )
     if not has_interactive_state and not has_is_interactive:
-        if settings.require_face_interactive_state:
+        if require_face_state:
             raise ValueError(
                 "Face rows are missing interactive-state labels. "
                 "Build averages with split_by_interactive_state=true "
@@ -159,24 +227,30 @@ def _resolve_condition_from_row_fields(
 def _resolve_condition_for_average_row(
     row: pd.Series,
     settings: FixationPopulationPCASettings,
+    *,
+    require_face_interactive_state: Optional[bool] = None,
 ) -> Optional[str]:
     return _resolve_condition_from_row_fields(
         fixation_category=row.get("fixation_category"),
         interactive_state=row.get("interactive_state"),
         is_interactive=row.get("is_interactive"),
         settings=settings,
+        require_face_interactive_state=require_face_interactive_state,
     )
 
 
 def _resolve_condition_for_trial_row(
     row,
     settings: FixationPopulationPCASettings,
+    *,
+    require_face_interactive_state: Optional[bool] = None,
 ) -> Optional[str]:
     return _resolve_condition_from_row_fields(
         fixation_category=getattr(row, "fixation_category", None),
         interactive_state=getattr(row, "interactive_state", None),
         is_interactive=getattr(row, "is_interactive", None),
         settings=settings,
+        require_face_interactive_state=require_face_interactive_state,
     )
 
 
@@ -249,6 +323,9 @@ def _aggregate_psth_records(
             continue
 
         bucket = grouped[key]
+        for meta_key in ("spike_channel", "recorded_agent", "recorded_monkey", "area"):
+            if bucket.get(meta_key) is None and record.get(meta_key) is not None:
+                bucket[meta_key] = record.get(meta_key)
         if weighted.shape != np.asarray(bucket["weighted_sum"]).shape:
             raise ValueError("Encountered inconsistent PSTH lengths during average aggregation.")
         bucket["weighted_sum"] = np.asarray(bucket["weighted_sum"], dtype=float) + weighted
@@ -291,18 +368,32 @@ def _load_average_psth_table(
     cfg = load_config(settings.cfg_path)
     subdir = str(settings.input_subdir if input_subdir is None else input_subdir).strip()
     if not subdir:
+        if settings.verbose_logging:
+            print("[analysis] population PCA average-input scan skipped: empty subdir")
         return pd.DataFrame(), np.asarray([], dtype=float)
     filename = str(settings.input_filename if input_filename is None else input_filename).strip()
     if not filename:
+        if settings.verbose_logging:
+            print("[analysis] population PCA average-input scan skipped: empty filename")
         return pd.DataFrame(), np.asarray([], dtype=float)
+    filename_norm = _ensure_filename(filename, ".pkl")
     rows = scan_analysis_date_paths(
         cfg,
         subdir,
-        filename=_ensure_filename(filename, ".pkl"),
+        filename=filename_norm,
         dates=dates,
     )
+    if settings.verbose_logging:
+        print(
+            "[analysis] population PCA average-input scan: "
+            f"subdir={subdir}, "
+            f"require_face_interactive_state={bool(require_face_interactive_state)}, "
+            f"date_filter={list(dates) if dates is not None else 'all'}, "
+            f"matched_files={len(rows)}"
+        )
     if not rows:
         return pd.DataFrame(), np.asarray([], dtype=float)
+    monkey_lookup = _build_recorded_monkey_lookup(settings)
 
     records: list[dict] = []
     bin_centers_ref = None
@@ -337,7 +428,11 @@ def _load_average_psth_table(
                         "Face rows are missing interactive-state labels. "
                         "Build averages with split_by_interactive_state=true."
                     )
-            condition = _resolve_condition_for_average_row(avg_row, settings)
+            condition = _resolve_condition_for_average_row(
+                avg_row,
+                settings,
+                require_face_interactive_state=require_face_interactive_state,
+            )
             if condition is None:
                 continue
 
@@ -361,12 +456,23 @@ def _load_average_psth_table(
                     f"path={row['path']}"
                 )
 
-            date = _as_optional_str(avg_row.get("date")) or str(row["date"])
+            date = (
+                _normalize_date_token(_as_optional_str(avg_row.get("date")))
+                or _normalize_date_token(str(row["date"]))
+                or str(row["date"])
+            )
             unit_uuid = _as_optional_str(avg_row.get("unit_uuid"))
             if unit_uuid is None:
                 continue
             unit_key = f"{date}|{unit_uuid}"
             region = _as_optional_str(avg_row.get("region")) or "unknown"
+            recorded_agent = _as_optional_str(avg_row.get("recorded_agent")) or "m1"
+            recorded_monkey = _resolve_recorded_monkey_name(
+                date=date,
+                recorded_agent=recorded_agent,
+                recorded_monkey=_as_optional_str(avg_row.get("recorded_monkey")),
+                monkey_lookup=monkey_lookup,
+            )
 
             records.append(
                 {
@@ -375,8 +481,8 @@ def _load_average_psth_table(
                     "unit_key": unit_key,
                     "region": region,
                     "spike_channel": _as_optional_str(avg_row.get("spike_channel")),
-                    "recorded_agent": _as_optional_str(avg_row.get("recorded_agent")),
-                    "recorded_monkey": _as_optional_str(avg_row.get("recorded_monkey")),
+                    "recorded_agent": recorded_agent,
+                    "recorded_monkey": recorded_monkey,
                     "area": _as_optional_str(avg_row.get("area")),
                     "condition": condition,
                     "n_trials": _normalize_n_trials(avg_row.get("n_trials", 1.0)),
@@ -384,12 +490,30 @@ def _load_average_psth_table(
                 }
             )
 
-    return _aggregate_psth_records(
+    out_df, out_centers = _aggregate_psth_records(
         records,
         settings=settings,
         n_bins_ref=n_bins_ref,
         bin_centers_ref=bin_centers_ref,
     )
+    if settings.verbose_logging:
+        condition_counts = (
+            out_df["condition"].astype(str).value_counts().to_dict()
+            if not out_df.empty and "condition" in out_df.columns
+            else {}
+        )
+        n_regions = (
+            int(out_df["region"].astype(str).nunique())
+            if not out_df.empty and "region" in out_df.columns
+            else 0
+        )
+        print(
+            "[analysis] population PCA average-input rows prepared: "
+            f"rows={len(out_df)}, regions={n_regions}, "
+            f"n_bins={int(np.asarray(out_centers).size)}, "
+            f"condition_counts={condition_counts}"
+        )
+    return out_df, out_centers
 
 
 def _load_combined_average_psth_table(
@@ -397,6 +521,12 @@ def _load_combined_average_psth_table(
     *,
     dates: Optional[Sequence[str]] = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
+    if settings.verbose_logging:
+        print(
+            "[analysis] population PCA average-input combine: "
+            f"split_subdir={settings.input_subdir}, "
+            f"object_subdir={settings.object_input_subdir}"
+        )
     split_df, split_centers = _load_average_psth_table(
         settings,
         dates=dates,
@@ -410,6 +540,11 @@ def _load_combined_average_psth_table(
         or settings.object_input_filename is not None
     )
     if not has_object_override:
+        if settings.verbose_logging:
+            print(
+                "[analysis] population PCA average-input combine: "
+                "no unsplit object override configured; using split input only"
+            )
         return split_df, split_centers
 
     object_subdir = (
@@ -429,6 +564,12 @@ def _load_combined_average_psth_table(
         input_filename=object_filename,
         require_face_interactive_state=False,
     )
+    if settings.verbose_logging:
+        print(
+            "[analysis] population PCA average-input combine: "
+            f"split_rows={len(split_df)}, object_rows={len(object_df)}, "
+            f"split_bins={int(np.asarray(split_centers).size)}, object_bins={int(np.asarray(object_centers).size)}"
+        )
     if object_df.empty:
         return split_df, split_centers
 
@@ -454,6 +595,17 @@ def _load_combined_average_psth_table(
     kept = split_df.loc[~(split_object_mask & split_date_mask)].copy()
     out_df = pd.concat([kept, object_df], axis=0, ignore_index=True)
     out_df = out_df.sort_values(["region", "unit_key", "condition"]).reset_index(drop=True)
+    if settings.verbose_logging:
+        condition_counts = (
+            out_df["condition"].astype(str).value_counts().to_dict()
+            if not out_df.empty
+            else {}
+        )
+        print(
+            "[analysis] population PCA average-input combine complete: "
+            f"rows={len(out_df)}, condition_counts={condition_counts}, "
+            f"kept_split_rows={len(kept)}, object_override_rows={len(object_df)}"
+        )
     return out_df, split_centers
 
 
@@ -464,16 +616,26 @@ def _load_trial_averaged_psth_table(
     sessions: Optional[Sequence[str]] = None,
 ) -> tuple[pd.DataFrame, np.ndarray]:
     cfg = load_config(settings.cfg_path)
+    trial_filename = _ensure_filename(settings.trial_input_filename, ".pkl")
     rows = scan_processed_paths_for_filename(
         cfg,
         settings.trial_input_modality,
-        filename=_ensure_filename(settings.trial_input_filename, ".pkl"),
+        filename=trial_filename,
         dates=dates,
         sessions=sessions,
         agents=(None,),
     )
+    if settings.verbose_logging:
+        print(
+            "[analysis] population PCA trial-input scan: "
+            f"modality={settings.trial_input_modality}, "
+            f"date_filter={list(dates) if dates is not None else 'all'}, "
+            f"session_filter={list(sessions) if sessions is not None else 'all'}, "
+            f"matched_files={len(rows)}"
+        )
     if not rows:
         return pd.DataFrame(), np.asarray([], dtype=float)
+    monkey_lookup = _build_recorded_monkey_lookup(settings)
 
     records: list[dict] = []
     bin_centers_ref = None
@@ -531,12 +693,23 @@ def _load_trial_averaged_psth_table(
                     f"path={row['path']}"
                 )
 
-            date = _as_optional_str(getattr(trial_row, "date", None)) or str(row["date"])
+            date = (
+                _normalize_date_token(_as_optional_str(getattr(trial_row, "date", None)))
+                or _normalize_date_token(str(row["date"]))
+                or str(row["date"])
+            )
             unit_uuid = _as_optional_str(getattr(trial_row, "unit_uuid", None))
             if unit_uuid is None:
                 continue
             unit_key = f"{date}|{unit_uuid}"
             region = _as_optional_str(getattr(trial_row, "region", None)) or "unknown"
+            recorded_agent = _as_optional_str(getattr(trial_row, "recorded_agent", None)) or "m1"
+            recorded_monkey = _resolve_recorded_monkey_name(
+                date=date,
+                recorded_agent=recorded_agent,
+                recorded_monkey=_as_optional_str(getattr(trial_row, "recorded_monkey", None)),
+                monkey_lookup=monkey_lookup,
+            )
 
             records.append(
                 {
@@ -545,8 +718,8 @@ def _load_trial_averaged_psth_table(
                     "unit_key": unit_key,
                     "region": region,
                     "spike_channel": _as_optional_str(getattr(trial_row, "spike_channel", None)),
-                    "recorded_agent": _as_optional_str(getattr(trial_row, "recorded_agent", None)),
-                    "recorded_monkey": _as_optional_str(getattr(trial_row, "recorded_monkey", None)),
+                    "recorded_agent": recorded_agent,
+                    "recorded_monkey": recorded_monkey,
                     "area": _as_optional_str(getattr(trial_row, "area", None)),
                     "condition": condition,
                     "n_trials": 1.0,
@@ -554,12 +727,30 @@ def _load_trial_averaged_psth_table(
                 }
             )
 
-    return _aggregate_psth_records(
+    out_df, out_centers = _aggregate_psth_records(
         records,
         settings=settings,
         n_bins_ref=n_bins_ref,
         bin_centers_ref=bin_centers_ref,
     )
+    if settings.verbose_logging:
+        condition_counts = (
+            out_df["condition"].astype(str).value_counts().to_dict()
+            if not out_df.empty and "condition" in out_df.columns
+            else {}
+        )
+        n_regions = (
+            int(out_df["region"].astype(str).nunique())
+            if not out_df.empty and "region" in out_df.columns
+            else 0
+        )
+        print(
+            "[analysis] population PCA trial-input rows prepared: "
+            f"rows={len(out_df)}, regions={n_regions}, "
+            f"n_bins={int(np.asarray(out_centers).size)}, "
+            f"condition_counts={condition_counts}"
+        )
+    return out_df, out_centers
 
 
 def _load_input_psth_table(
@@ -570,6 +761,14 @@ def _load_input_psth_table(
 ) -> tuple[pd.DataFrame, np.ndarray, str]:
     """Load PCA input rows from average PSTHs with optional trial fallback."""
     average_source = f"average:{str(settings.input_subdir).strip()}"
+    if settings.verbose_logging:
+        print(
+            "[analysis] population PCA input selection: "
+            f"prefer_trial_input={bool(settings.prefer_trial_input)}, "
+            f"allow_trial_fallback={bool(settings.allow_trial_fallback)}, "
+            f"average_source={average_source}, "
+            f"trial_source={settings.trial_input_modality}"
+        )
 
     if settings.prefer_trial_input:
         trial_df, trial_centers = _load_trial_averaged_psth_table(
@@ -578,15 +777,30 @@ def _load_input_psth_table(
             sessions=sessions,
         )
         if not trial_df.empty:
+            if settings.verbose_logging:
+                print(
+                    "[analysis] population PCA input selected: "
+                    f"source=trial, rows={len(trial_df)}, bins={int(np.asarray(trial_centers).size)}"
+                )
             return trial_df, trial_centers, "trial"
         print("[analysis] no usable trial PSTH rows found for population PCA; trying average inputs")
         avg_df, avg_centers = _load_combined_average_psth_table(settings, dates=dates)
         if not avg_df.empty:
+            if settings.verbose_logging:
+                print(
+                    "[analysis] population PCA input selected: "
+                    f"source={average_source}, rows={len(avg_df)}, bins={int(np.asarray(avg_centers).size)}"
+                )
             return avg_df, avg_centers, average_source
         return pd.DataFrame(), np.asarray([], dtype=float), "none"
 
     avg_df, avg_centers = _load_combined_average_psth_table(settings, dates=dates)
     if not avg_df.empty:
+        if settings.verbose_logging:
+            print(
+                "[analysis] population PCA input selected: "
+                f"source={average_source}, rows={len(avg_df)}, bins={int(np.asarray(avg_centers).size)}"
+            )
         return avg_df, avg_centers, average_source
 
     if settings.allow_trial_fallback:
@@ -596,6 +810,11 @@ def _load_input_psth_table(
             sessions=sessions,
         )
         if not trial_df.empty:
+            if settings.verbose_logging:
+                print(
+                    "[analysis] population PCA input selected: "
+                    f"source=trial (fallback), rows={len(trial_df)}, bins={int(np.asarray(trial_centers).size)}"
+                )
             return trial_df, trial_centers, "trial"
 
     return pd.DataFrame(), np.asarray([], dtype=float), "none"
@@ -640,7 +859,8 @@ def _fit_pca_units_by_time(
     X_centered = X - mean
     U, singular_values_all, Vt = np.linalg.svd(X_centered, full_matrices=False)
     components = Vt[:n_components, :]
-    scores_fit = X_centered @ components.T
+    scores_fit_time_by_pc = X_centered @ components.T
+    scores_fit_pc_by_time = scores_fit_time_by_pc.T
     singular_values = singular_values_all[:n_components]
 
     if n_samples > 1:
@@ -662,7 +882,12 @@ def _fit_pca_units_by_time(
         "n_components": int(n_components),
         "mean": mean.reshape(-1),
         "components": components,
-        "scores_fit": scores_fit,
+        # Primary orientation keeps consistency with input matrices:
+        # input = units x time, projected = PCs x time.
+        "scores_fit": scores_fit_pc_by_time,
+        "scores_fit_pc_by_time": scores_fit_pc_by_time,
+        # Legacy orientation retained for compatibility with older outputs.
+        "scores_fit_time_by_pc": scores_fit_time_by_pc,
         "singular_values": singular_values,
         "explained_variance": explained_variance,
         "explained_variance_ratio": explained_variance_ratio,
@@ -683,7 +908,8 @@ def _project_units_by_time_with_model(
             "Projection feature dimension mismatch; "
             f"input_features={X.shape[1]}, model_features={components.shape[1]}."
         )
-    return (X - mean) @ components.T
+    # Return projected trajectories as PCs x time to mirror units x time input shape.
+    return ((X - mean) @ components.T).T
 
 
 def _reconstruct_samples_with_model(
@@ -757,6 +983,13 @@ def _build_fit_summary_row(
 
 def _build_region_analysis(args) -> dict:
     region, region_df, bin_centers_s_window, settings = args
+    if settings.verbose_logging:
+        print(
+            "\n[analysis] ===== region PCA start =====\n"
+            "[analysis] region PCA start: "
+            f"region={region}, input_rows={len(region_df)}, "
+            f"fixation_types={list(settings.conditions)}"
+        )
 
     condition_maps: dict[str, dict[str, np.ndarray]] = {
         condition: {} for condition in settings.conditions
@@ -788,7 +1021,17 @@ def _build_region_analysis(args) -> dict:
     condition_unit_counts = {
         condition: int(len(unit_map)) for condition, unit_map in condition_maps.items()
     }
+    if settings.verbose_logging:
+        print(
+            "[analysis] region condition inventory: "
+            f"region={region}, unit_counts={condition_unit_counts}"
+        )
     if not condition_maps:
+        if settings.verbose_logging:
+            print(
+                "[analysis] region PCA skipped: "
+                f"region={region}, reason=no_condition_maps"
+            )
         return {
             "region": str(region),
             "skipped_reason": "no_condition_maps",
@@ -804,8 +1047,20 @@ def _build_region_analysis(args) -> dict:
     # conditions, so all downstream fits are computed on the intersection.
     unit_sets = [set(unit_map.keys()) for unit_map in condition_maps.values()]
     common_unit_keys = sorted(set.intersection(*unit_sets)) if unit_sets else []
+    if settings.verbose_logging:
+        print(
+            "[analysis] region common-unit intersection: "
+            f"region={region}, n_common_units={len(common_unit_keys)}, "
+            f"min_units_required={int(settings.min_units_per_region)}"
+        )
 
     if int(len(common_unit_keys)) < int(settings.min_units_per_region):
+        if settings.verbose_logging:
+            print(
+                "[analysis] region PCA skipped: "
+                f"region={region}, reason=insufficient_units, "
+                f"n_common_units={len(common_unit_keys)}"
+            )
         return {
             "region": str(region),
             "skipped_reason": "insufficient_units",
@@ -828,6 +1083,12 @@ def _build_region_analysis(args) -> dict:
                 f"expected={n_bins_window}, got={mat.shape[1]}"
             )
         condition_matrices[condition] = mat
+        if settings.verbose_logging:
+            print(
+                "[analysis] region PCA matrix (individual fixation type): "
+                f"region={region}, fixation_type={condition}, "
+                f"shape_units_by_time={mat.shape}"
+            )
 
     per_condition_fits: dict[str, dict] = {}
     fit_summary_rows: list[dict] = []
@@ -839,6 +1100,15 @@ def _build_region_analysis(args) -> dict:
         fit["unit_keys"] = np.asarray(common_unit_keys, dtype=object)
         fit["fit_condition"] = str(condition)
         per_condition_fits[condition] = fit
+        if settings.verbose_logging:
+            print(
+                "[analysis] region PCA fit complete (individual fixation type): "
+                f"region={region}, fixation_type={condition}, "
+                f"fit_input_shape_units_by_time={condition_matrices[condition].shape}, "
+                f"components_shape_pc_by_unit={np.asarray(fit['components']).shape}, "
+                f"fit_scores_shape_pc_by_time={np.asarray(fit['scores_fit']).shape}, "
+                "reduced_dimension=units_to_pcs"
+            )
         fit_summary_rows.append(
             _build_fit_summary_row(
                 region=str(region),
@@ -859,6 +1129,15 @@ def _build_region_analysis(args) -> dict:
         concat_units_by_time,
         max_components=settings.max_components,
     )
+    if settings.verbose_logging:
+        print(
+            "[analysis] region PCA fit complete (concatenated fixation matrix): "
+            f"region={region}, concatenated_order={list(settings.conditions)}, "
+            f"fit_input_shape_units_by_time={concat_units_by_time.shape}, "
+            f"components_shape_pc_by_unit={np.asarray(concat_fit['components']).shape}, "
+            f"fit_scores_shape_pc_by_time={np.asarray(concat_fit['scores_fit']).shape}, "
+            "reduced_dimension=units_to_pcs"
+        )
     concat_fit["unit_keys"] = np.asarray(common_unit_keys, dtype=object)
     concat_fit["fit_condition"] = "concatenated"
     concat_fit["sample_conditions"] = np.concatenate(
@@ -872,6 +1151,14 @@ def _build_region_analysis(args) -> dict:
         np.asarray(bin_centers_s_window, dtype=float).reshape(-1),
         len(settings.conditions),
     )
+    sample_condition_slices: dict[str, tuple[int, int]] = {}
+    cursor = 0
+    for condition in settings.conditions:
+        start_idx = int(cursor)
+        stop_idx = int(cursor + n_bins_window)
+        sample_condition_slices[str(condition)] = (start_idx, stop_idx)
+        cursor = stop_idx
+    concat_fit["sample_condition_slices"] = sample_condition_slices
     fit_summary_rows.append(
         _build_fit_summary_row(
             region=str(region),
@@ -885,11 +1172,25 @@ def _build_region_analysis(args) -> dict:
     )
 
     timecourse_rows: list[dict] = []
-    concatenated_condition_scores: dict[str, np.ndarray] = {}
+    concatenated_condition_scores_pc_by_time: dict[str, np.ndarray] = {}
     for condition in settings.conditions:
         scores = _project_units_by_time_with_model(condition_matrices[condition], concat_fit)
-        concatenated_condition_scores[condition] = scores
-        n_components = int(scores.shape[1])
+        concatenated_condition_scores_pc_by_time[condition] = scores
+        if settings.verbose_logging:
+            print(
+                "[analysis] region PCA projection complete: "
+                f"region={region}, fixation_type={condition}, "
+                f"projection_input_shape_units_by_time={condition_matrices[condition].shape}, "
+                f"projection_output_shape_pc_by_time={scores.shape}"
+            )
+        n_components = int(scores.shape[0])
+        n_time_bins_proj = int(scores.shape[1])
+        if n_time_bins_proj != n_bins_window:
+            raise ValueError(
+                "Projected PCA score matrix has unexpected time dimension; "
+                f"region={region}, fixation_type={condition}, "
+                f"expected={n_bins_window}, got={n_time_bins_proj}"
+            )
         for pc_idx in range(n_components):
             for bin_idx, bin_center_s in enumerate(np.asarray(bin_centers_s_window, dtype=float)):
                 timecourse_rows.append(
@@ -901,7 +1202,7 @@ def _build_region_analysis(args) -> dict:
                         "pc_index": int(pc_idx + 1),
                         "bin_index": int(bin_idx),
                         "bin_center_s": float(bin_center_s),
-                        "pc_score": float(scores[bin_idx, pc_idx]),
+                        "pc_score": float(scores[pc_idx, bin_idx]),
                         "n_units_common": int(len(common_unit_keys)),
                     }
                 )
@@ -953,8 +1254,42 @@ def _build_region_analysis(args) -> dict:
         "condition_matrices_units_by_time": condition_matrices,
         "per_condition_fits": per_condition_fits,
         "concatenated_fit": concat_fit,
-        "concatenated_condition_scores": concatenated_condition_scores,
+        # Primary projected output orientation is PCs x time.
+        "concatenated_condition_scores": concatenated_condition_scores_pc_by_time,
+        "concatenated_condition_scores_pc_by_time": concatenated_condition_scores_pc_by_time,
+        # Legacy alias retained for compatibility.
+        "concatenated_condition_scores_time_by_pc": {
+            condition: np.asarray(scores, dtype=float).T
+            for condition, scores in concatenated_condition_scores_pc_by_time.items()
+        },
+        # Concatenated projection directly from the concatenated fit:
+        # cols are ordered by concat_fit["sample_conditions"].
+        "concatenated_projection_pc_by_time": np.asarray(
+            concat_fit.get("scores_fit", np.asarray([], dtype=float)),
+            dtype=float,
+        ),
+        "concatenated_projection_time_by_pc": np.asarray(
+            concat_fit.get("scores_fit", np.asarray([], dtype=float)),
+            dtype=float,
+        ).T,
+        "concatenated_projection_sample_conditions": np.asarray(
+            concat_fit.get("sample_conditions", np.asarray([], dtype=object)),
+            dtype=object,
+        ),
+        "concatenated_projection_sample_bin_centers_s": np.asarray(
+            concat_fit.get("sample_bin_centers_s", np.asarray([], dtype=float)),
+            dtype=float,
+        ),
+        "concatenated_projection_condition_slices": dict(sample_condition_slices),
     }
+    if settings.verbose_logging:
+        print(
+            "[analysis] region PCA payload ready: "
+            f"region={region}, n_units_common={int(len(common_unit_keys))}, "
+            f"n_window_time_bins={n_bins_window}, "
+            f"timecourse_rows={len(timecourse_rows)}, explained_variance_rows={len(explained_rows)}"
+        )
+        print("[analysis] ===== region PCA end =====")
     return {
         "region": str(region),
         "skipped_reason": None,
@@ -974,7 +1309,20 @@ def run_fixation_population_pca_analysis(
     regions: Optional[Sequence[str]] = None,
 ) -> dict:
     """Run fixation population PCA and save analysis artifacts."""
+    if settings.verbose_logging:
+        print(
+            "[analysis] fixation population PCA request: "
+            f"fixation_types={list(settings.conditions)}, "
+            f"date_filter={list(dates) if dates is not None else 'all'}, "
+            f"region_filter={list(regions) if regions is not None else 'all'}"
+        )
     input_df, bin_centers_s, input_source = _load_input_psth_table(settings, dates=dates)
+    if settings.verbose_logging:
+        print(
+            "[analysis] fixation population PCA input loaded: "
+            f"source={input_source}, rows={len(input_df)}, "
+            f"n_bins_full={int(np.asarray(bin_centers_s).size)}"
+        )
     if input_df.empty:
         print("[analysis] no usable fixation PSTH rows found for population PCA")
         return {
@@ -998,6 +1346,13 @@ def run_fixation_population_pca_analysis(
         window_stop_ms=settings.window_stop_ms,
     )
     bin_centers_s_window = np.asarray(bin_centers_s, dtype=float).reshape(-1)[bin_mask]
+    if settings.verbose_logging:
+        print(
+            "[analysis] fixation population PCA window: "
+            f"window_ms=[{float(min(settings.window_start_ms, settings.window_stop_ms))}, "
+            f"{float(max(settings.window_start_ms, settings.window_stop_ms))}], "
+            f"n_bins_window={int(np.asarray(bin_centers_s_window).size)}"
+        )
 
     records_windowed: list[dict] = []
     for row in input_df.to_dict(orient="records"):
@@ -1013,6 +1368,14 @@ def run_fixation_population_pca_analysis(
         records_windowed.append(rec)
 
     windowed_df = pd.DataFrame(records_windowed)
+    if settings.verbose_logging and not windowed_df.empty:
+        condition_counts = windowed_df["condition"].astype(str).value_counts().to_dict()
+        region_counts = windowed_df["region"].astype(str).value_counts().to_dict()
+        print(
+            "[analysis] fixation population PCA windowed rows: "
+            f"rows={len(windowed_df)}, condition_counts={condition_counts}, "
+            f"region_row_counts={region_counts}"
+        )
     if windowed_df.empty:
         print("[analysis] no rows remain after applying population PCA time window")
         return {
@@ -1049,6 +1412,11 @@ def run_fixation_population_pca_analysis(
         }
 
     region_names = sorted(windowed_df["region"].astype(str).unique().tolist())
+    if settings.verbose_logging:
+        print(
+            "[analysis] fixation population PCA regions selected: "
+            f"{region_names}"
+        )
     tasks = [
         (
             region,
@@ -1126,6 +1494,61 @@ def run_fixation_population_pca_analysis(
     timecourse_df.to_csv(timecourse_csv, index=False)
     explained_df.to_csv(explained_csv, index=False)
     unit_df.to_csv(unit_csv, index=False)
+    if settings.verbose_logging:
+        print(
+            "[analysis] fixation population PCA projected output table: "
+            f"path={timecourse_csv}, rows={len(timecourse_df)}, "
+            f"columns={list(timecourse_df.columns)}"
+        )
+        for region_name, payload in region_payloads.items():
+            print(f"\n[analysis] --- projected outputs: region={region_name} ---")
+            condition_scores = payload.get("concatenated_condition_scores", {})
+            for condition_name in settings.conditions:
+                shape = np.asarray(
+                    condition_scores.get(condition_name, np.asarray([], dtype=float))
+                ).shape
+                print(
+                    "[analysis] fixation population PCA projected matrix: "
+                    f"region={region_name}, fixation_type={condition_name}, "
+                    f"shape_pc_by_time={shape}"
+                )
+            concat_projection = np.asarray(
+                payload.get("concatenated_projection_pc_by_time", np.asarray([], dtype=float)),
+                dtype=float,
+            )
+            concat_conditions = np.asarray(
+                payload.get("concatenated_projection_sample_conditions", np.asarray([], dtype=object)),
+                dtype=object,
+            )
+            concat_condition_counts = {
+                str(condition): int(np.sum(concat_conditions.astype(str) == str(condition)))
+                for condition in settings.conditions
+            }
+            concat_condition_slices = payload.get("concatenated_projection_condition_slices", {})
+            print(
+                "[analysis] fixation population PCA concatenated projected matrix: "
+                f"region={region_name}, shape_pc_by_time={concat_projection.shape}, "
+                f"condition_counts={concat_condition_counts}, "
+                f"condition_slices={concat_condition_slices}"
+            )
+            per_cond = payload.get("per_condition_fits", {})
+            for condition_name in settings.conditions:
+                model = per_cond.get(condition_name, {})
+                components_shape = np.asarray(model.get("components", np.asarray([], dtype=float))).shape
+                print(
+                    "[analysis] fixation population PCA fit PCs saved: "
+                    f"region={region_name}, fit_condition={condition_name}, "
+                    f"components_shape_pc_by_unit={components_shape}"
+                )
+            concat_model = payload.get("concatenated_fit", {})
+            concat_components_shape = np.asarray(
+                concat_model.get("components", np.asarray([], dtype=float))
+            ).shape
+            print(
+                "[analysis] fixation population PCA fit PCs saved: "
+                f"region={region_name}, fit_condition=concatenated, "
+                f"components_shape_pc_by_unit={concat_components_shape}"
+            )
 
     result_obj = {
         "meta": {

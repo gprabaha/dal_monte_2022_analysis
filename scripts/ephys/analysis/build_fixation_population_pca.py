@@ -76,8 +76,11 @@ def main() -> None:
         input_subdir=cfg.get(
             "population_pca_input_subdir",
             cfg.get(
-                "selective_index_average_output_subdir",
-                cfg.get("average_output_subdir", "ephys/psth/fixation_psth_averages"),
+                "average_output_subdir",
+                cfg.get(
+                    "selective_index_average_output_subdir",
+                    "ephys/psth/fixation_psth_averages",
+                ),
             ),
         ),
         input_filename=cfg.get(
@@ -85,15 +88,27 @@ def main() -> None:
             cfg.get(
                 "population_pca_input_filename",
                 cfg.get(
-                    "selective_index_average_output_filename_split",
-                    cfg.get("average_output_filename_split", cfg.get("average_output_filename", "fixations.pkl")),
+                    "average_output_filename_split",
+                    cfg.get(
+                        "average_output_filename",
+                        cfg.get(
+                            "selective_index_average_output_filename_split",
+                            "fixations.pkl",
+                        ),
+                    ),
                 ),
             ),
         ),
-        object_input_subdir=cfg.get("population_pca_object_input_subdir"),
+        object_input_subdir=cfg.get(
+            "population_pca_object_input_subdir",
+            cfg.get("average_output_subdir_unsplit"),
+        ),
         object_input_filename=cfg.get(
             "population_pca_object_input_filename",
-            cfg.get("selective_index_average_output_filename_unsplit"),
+            cfg.get(
+                "average_output_filename_unsplit",
+                cfg.get("selective_index_average_output_filename_unsplit"),
+            ),
         ),
         output_subdir=cfg.get("population_pca_output_subdir", "ephys/psth/fixation_population_pca"),
         summary_filename=cfg.get("population_pca_summary_filename", "pca_fit_summary.csv"),
@@ -106,12 +121,13 @@ def main() -> None:
         object_label=cfg.get("object_label", "object"),
         window_start_ms=window_start_ms,
         window_stop_ms=window_stop_ms,
-        max_components=cfg.get("population_pca_max_components"),
+        max_components=cfg.get("population_pca_max_components", 50),
         min_units_per_region=cfg.get("population_pca_min_units_per_region", 3),
         require_all_conditions=cfg.get("population_pca_require_all_conditions", True),
         require_face_interactive_state=cfg.get("population_pca_require_face_interactive_state", True),
         smooth_before_average=cfg.get("population_pca_smooth_before_average", cfg.get("smooth_before_average", True)),
         smoothing_sigma_ms=cfg.get("population_pca_smoothing_sigma_ms", cfg.get("smoothing_sigma_ms", 20.0)),
+        verbose_logging=cfg.get("population_pca_verbose_logging", True),
         use_parallel=cfg.get("population_pca_use_parallel", True),
         max_procs=cfg.get("max_procs", 16),
         bin_size_ms_fallback=cfg.get("bin_size_ms", 10.0),
@@ -151,16 +167,18 @@ def main() -> None:
         "[analysis] population PCA settings: "
         f"window_ms=[{settings.window_start_ms}, {settings.window_stop_ms}], "
         f"min_units_per_region={settings.min_units_per_region}, "
-        f"max_components={settings.max_components}"
+        f"max_components={settings.max_components}, "
+        f"fixation_types={list(settings.conditions)}, "
+        f"region_filter={args.region if args.region else 'all'}, "
+        f"verbose_logging={settings.verbose_logging}"
     )
     print(
         "[analysis] population PCA input: "
-        f"trial={settings.trial_input_modality}/{settings.trial_input_filename}, "
+        f"trial_modality={settings.trial_input_modality}, "
         f"prefer_trial_input={settings.prefer_trial_input}, "
         f"average_subdir={settings.input_subdir}, "
-        f"average_filename={settings.input_filename}, "
         f"object_average_subdir={settings.object_input_subdir}, "
-        f"object_average_filename={settings.object_input_filename}, "
+        "dimension_reduction=units_to_pcs, "
         f"smooth_before_average={settings.smooth_before_average}, "
         f"smoothing_sigma_ms={settings.smoothing_sigma_ms}"
     )

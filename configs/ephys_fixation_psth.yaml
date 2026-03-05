@@ -133,10 +133,10 @@ population_pca_prefer_trial_input: false
 population_pca_allow_trial_fallback: true
 population_pca_smooth_before_average: true
 population_pca_smoothing_sigma_ms: 20.0
-population_pca_input_subdir: ephys/psth/fixation_psth_index_averages
+population_pca_input_subdir: ephys/psth/fixation_psth_averages
 population_pca_input_filename: fixations_split_by_interactive_state.pkl
 population_pca_input_filename_split: fixations_split_by_interactive_state.pkl
-population_pca_object_input_subdir: ephys/psth/fixation_psth_index_averages
+population_pca_object_input_subdir: ephys/psth/fixation_psth_averages
 population_pca_object_input_filename: fixations_unsplit_by_interactive_state.pkl
 population_pca_output_subdir: ephys/psth/fixation_population_pca
 population_pca_summary_filename: pca_fit_summary.csv
@@ -145,10 +145,11 @@ population_pca_explained_variance_filename: cross_condition_explained_variance.c
 population_pca_unit_inventory_filename: region_unit_inventory.csv
 population_pca_output_pickle_filename: results.pkl
 population_pca_window_ms: [-500.0, 500.0]
-population_pca_max_components: null
+population_pca_max_components: 50
 population_pca_min_units_per_region: 3
 population_pca_require_all_conditions: true
 population_pca_require_face_interactive_state: true
+population_pca_verbose_logging: true
 population_pca_use_parallel: true
 
 # Preference-index heatmap plotting.
