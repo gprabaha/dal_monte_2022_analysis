@@ -42,6 +42,13 @@ DEFAULT_CONDITION_COLORS: dict[str, str] = {
     "face_non_interactive": "#1f77b4",
     "object": "#2ca02c",
 }
+DEFAULT_REGION_ORDER: tuple[str, ...] = ("bla", "accg", "dmpfc", "ofc")
+DEFAULT_REGION_LABELS: dict[str, str] = {
+    "bla": "BLA",
+    "accg": "ACCg",
+    "dmpfc": "dmPFC",
+    "ofc": "OFC",
+}
 
 
 @dataclass
@@ -98,11 +105,39 @@ def _resolve_region_order(
     region_payloads = result_obj.get("regions", {}) if isinstance(result_obj, dict) else {}
     if not isinstance(region_payloads, dict):
         region_payloads = {}
-    available = sorted((str(key) for key in region_payloads.keys()), key=lambda token: token.lower())
-    if regions is None:
-        return available
-    wanted = [str(region) for region in regions]
-    return [region for region in wanted if region in set(available)]
+    available = [str(key) for key in region_payloads.keys()]
+    return _ordered_region_tokens(available=available, requested=regions)
+
+
+def _normalize_region_token(region: object) -> str:
+    token = str(region).strip()
+    return token.lower()
+
+
+def _ordered_region_tokens(
+    *,
+    available: Sequence[str],
+    requested: Optional[Sequence[str]],
+) -> list[str]:
+    available_map = {str(region).lower(): str(region) for region in available}
+    if requested is not None:
+        requested_tokens = [str(region).strip().lower() for region in requested]
+        ordered = [available_map[token] for token in requested_tokens if token in available_map]
+        return ordered
+
+    ordered: list[str] = []
+    for token in DEFAULT_REGION_ORDER:
+        if token in available_map:
+            ordered.append(available_map[token])
+    for token in sorted(available_map.keys()):
+        if token not in set(DEFAULT_REGION_ORDER):
+            ordered.append(available_map[token])
+    return ordered
+
+
+def _region_display_label(region: object) -> str:
+    token = _normalize_region_token(region)
+    return DEFAULT_REGION_LABELS.get(token, str(region))
 
 
 def _resolve_condition_colors(settings: FixationPopulationPCAPlotSettings) -> dict[str, str]:
@@ -205,8 +240,66 @@ def _extract_cross_condition_explained_variance_df(result_obj: dict) -> pd.DataF
         out["explained_variance_fraction"],
         errors="coerce",
     )
+    if "explained_variance_per_pc_fraction" in out.columns:
+        out["explained_variance_per_pc_fraction"] = pd.to_numeric(
+            out["explained_variance_per_pc_fraction"],
+            errors="coerce",
+        )
+    if "explained_variance_cumulative_fraction" in out.columns:
+        out["explained_variance_cumulative_fraction"] = pd.to_numeric(
+            out["explained_variance_cumulative_fraction"],
+            errors="coerce",
+        )
     out = out.loc[out["n_components"].notna()].copy()
     out["n_components"] = out["n_components"].astype(int)
+
+    group_cols = ["region", "fit_condition", "eval_condition"]
+    out = out.sort_values(group_cols + ["n_components"]).reset_index(drop=True)
+
+    if "explained_variance_per_pc_fraction" in out.columns:
+        per_pc = np.asarray(out["explained_variance_per_pc_fraction"], dtype=float)
+    else:
+        raw = np.asarray(out["explained_variance_fraction"], dtype=float)
+        # Backward-compat: older files stored cumulative values in explained_variance_fraction.
+        # Detect monotonic curves and convert cumulative -> per-PC via finite differences.
+        is_likely_cumulative = True
+        grouped = out.groupby(group_cols, dropna=False, sort=False)
+        for _, grp in grouped:
+            values = np.asarray(grp["explained_variance_fraction"], dtype=float)
+            finite = values[np.isfinite(values)]
+            if finite.size <= 1:
+                continue
+            diffs = np.diff(finite)
+            if np.any(diffs < -1e-8):
+                is_likely_cumulative = False
+                break
+        if is_likely_cumulative:
+            per_pc = np.full(raw.shape, np.nan, dtype=float)
+            for _, idx in grouped.indices.items():
+                values = np.asarray(out.loc[idx, "explained_variance_fraction"], dtype=float)
+                diffs = np.full(values.shape, np.nan, dtype=float)
+                prev = 0.0
+                for i, value in enumerate(values):
+                    if np.isfinite(value):
+                        diffs[i] = max(0.0, float(value) - float(prev))
+                        prev = float(value)
+                per_pc[np.asarray(idx, dtype=int)] = diffs
+        else:
+            per_pc = raw
+    out["explained_variance_per_pc_fraction"] = per_pc
+    out["explained_variance_fraction"] = per_pc
+
+    if "explained_variance_cumulative_fraction" not in out.columns:
+        out["explained_variance_cumulative_fraction"] = np.nan
+    for _, idx in out.groupby(group_cols, dropna=False, sort=False).indices.items():
+        values = np.asarray(out.loc[idx, "explained_variance_per_pc_fraction"], dtype=float)
+        cumulative = np.full(values.shape, np.nan, dtype=float)
+        running = 0.0
+        for i, value in enumerate(values):
+            if np.isfinite(value):
+                running += float(value)
+                cumulative[i] = running
+        out.loc[idx, "explained_variance_cumulative_fraction"] = cumulative
     return out
 
 
@@ -298,7 +391,7 @@ def plot_fixation_population_pca_trajectories(
         _apply_axis_limits_3d(ax, all_xyz)
         ax.view_init(elev=22, azim=-58)
         ax.grid(True, linewidth=0.35, alpha=0.28)
-        ax.set_title(str(region), fontsize=8, pad=2.0)
+        ax.set_title(_region_display_label(region), fontsize=8, pad=2.0)
         ax.set_xlabel("PC1", labelpad=-4, fontsize=7)
         ax.set_ylabel("PC2", labelpad=-4, fontsize=7)
         ax.set_zlabel("PC3", labelpad=-3, fontsize=7)
@@ -369,12 +462,10 @@ def plot_fixation_population_pca_explained_variance_bars(
         print("[plot] no matching fit conditions for explained variance plotting")
         return None
 
-    if regions is None:
-        region_order = sorted(explained_df["region"].astype(str).unique().tolist(), key=lambda token: token.lower())
-    else:
-        wanted = [str(region) for region in regions]
-        region_available = set(explained_df["region"].astype(str).unique().tolist())
-        region_order = [region for region in wanted if region in region_available]
+    region_order = _ordered_region_tokens(
+        available=explained_df["region"].astype(str).unique().tolist(),
+        requested=regions,
+    )
     if not region_order:
         print("[plot] no matching regions for explained variance plotting")
         return None
@@ -441,7 +532,7 @@ def plot_fixation_population_pca_explained_variance_bars(
             ax.tick_params(axis="both", which="major", labelsize=5, pad=1.0)
             ax.grid(axis="y", linewidth=0.25, alpha=0.3)
             if row_idx == 0:
-                ax.set_title(str(region), fontsize=6, pad=1.5)
+                ax.set_title(_region_display_label(region), fontsize=6, pad=1.5)
             if row_idx == n_rows - 1:
                 ax.set_xlabel("PC", fontsize=6, labelpad=0.8)
             if col_idx == 0:
@@ -514,12 +605,10 @@ def plot_fixation_population_pca_explained_variance_cumulative(
         print("[plot] no matching fit conditions for cumulative explained variance plotting")
         return None
 
-    if regions is None:
-        region_order = sorted(explained_df["region"].astype(str).unique().tolist(), key=lambda token: token.lower())
-    else:
-        wanted = [str(region) for region in regions]
-        region_available = set(explained_df["region"].astype(str).unique().tolist())
-        region_order = [region for region in wanted if region in region_available]
+    region_order = _ordered_region_tokens(
+        available=explained_df["region"].astype(str).unique().tolist(),
+        requested=regions,
+    )
     if not region_order:
         print("[plot] no matching regions for cumulative explained variance plotting")
         return None
@@ -591,7 +680,7 @@ def plot_fixation_population_pca_explained_variance_cumulative(
             ax.tick_params(axis="both", which="major", labelsize=5, pad=1.0)
             ax.grid(axis="y", linewidth=0.25, alpha=0.3)
             if row_idx == 0:
-                ax.set_title(str(region), fontsize=6, pad=1.5)
+                ax.set_title(_region_display_label(region), fontsize=6, pad=1.5)
             if row_idx == n_rows - 1:
                 ax.set_xlabel("PC", fontsize=6, labelpad=0.8)
             if col_idx == 0:

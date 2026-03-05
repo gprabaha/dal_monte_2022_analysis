@@ -927,28 +927,67 @@ def _reconstruct_samples_with_model(
     return (scores @ basis) + mean
 
 
-def _explained_variance_curve_for_eval(
+def _explained_variance_profile_for_eval(
     matrix_units_by_time_eval: np.ndarray,
     model: dict,
-) -> np.ndarray:
+) -> dict[str, np.ndarray]:
     matrix = np.asarray(matrix_units_by_time_eval, dtype=float)
     X = matrix.T  # samples=time bins, features=units
     n_components = int(model["n_components"])
     if n_components <= 0:
-        return np.asarray([], dtype=float)
+        empty = np.asarray([], dtype=float)
+        return {
+            "per_pc_fraction": empty,
+            "cumulative_fraction": empty,
+        }
 
-    X_centered_eval = X - np.mean(X, axis=0, keepdims=True)
-    total_var = float(np.sum(X_centered_eval**2))
-    values = np.full((n_components,), np.nan, dtype=float)
-    if total_var <= 0.0:
-        return values
+    mean = np.asarray(model["mean"], dtype=float).reshape(1, -1)
+    components = np.asarray(model["components"], dtype=float)
+    if X.shape[1] != mean.shape[1] or X.shape[1] != components.shape[1]:
+        raise ValueError(
+            "Explained-variance evaluation feature mismatch; "
+            f"eval_features={X.shape[1]}, model_features={components.shape[1]}."
+        )
 
-    for k in range(1, n_components + 1):
-        X_hat = _reconstruct_samples_with_model(X, model, n_components=k)
-        residual = X - X_hat
-        sse = float(np.sum(residual**2))
-        values[k - 1] = 1.0 - (sse / total_var)
-    return values
+    X_centered = X - mean
+    scores = X_centered @ components.T  # time bins x PCs
+    if X.shape[0] > 1:
+        per_pc_var = np.var(scores, axis=0, ddof=1)
+    else:
+        per_pc_var = np.zeros((n_components,), dtype=float)
+
+    per_pc_var = np.asarray(per_pc_var, dtype=float).reshape(-1)
+    finite = np.isfinite(per_pc_var)
+    if not np.any(finite):
+        values = np.full((n_components,), np.nan, dtype=float)
+        return {
+            "per_pc_fraction": values,
+            "cumulative_fraction": values.copy(),
+        }
+
+    total_projected_var = float(np.sum(np.maximum(per_pc_var[finite], 0.0)))
+    if total_projected_var <= 0.0:
+        values = np.full((n_components,), np.nan, dtype=float)
+        return {
+            "per_pc_fraction": values,
+            "cumulative_fraction": values.copy(),
+        }
+
+    per_pc_fraction = np.full((n_components,), np.nan, dtype=float)
+    per_pc_fraction[finite] = np.maximum(per_pc_var[finite], 0.0) / total_projected_var
+    per_pc_fraction = np.clip(per_pc_fraction, 0.0, 1.0)
+
+    cumulative_fraction = np.full((n_components,), np.nan, dtype=float)
+    running = 0.0
+    for idx, frac in enumerate(per_pc_fraction):
+        if np.isfinite(frac):
+            running += float(frac)
+            cumulative_fraction[idx] = running
+
+    return {
+        "per_pc_fraction": per_pc_fraction,
+        "cumulative_fraction": cumulative_fraction,
+    }
 
 
 def _build_fit_summary_row(
@@ -1211,18 +1250,36 @@ def _build_region_analysis(args) -> dict:
     for fit_condition in settings.conditions:
         fit_model = per_condition_fits[fit_condition]
         for eval_condition in settings.conditions:
-            curve = _explained_variance_curve_for_eval(
+            profile = _explained_variance_profile_for_eval(
                 condition_matrices[eval_condition],
                 fit_model,
             )
-            for comp_idx, frac in enumerate(curve, start=1):
+            per_pc = np.asarray(profile.get("per_pc_fraction", np.asarray([], dtype=float)), dtype=float)
+            cumulative = np.asarray(profile.get("cumulative_fraction", np.asarray([], dtype=float)), dtype=float)
+            n_rows_profile = min(int(per_pc.size), int(cumulative.size))
+            for comp_idx in range(1, n_rows_profile + 1):
+                frac = float(per_pc[comp_idx - 1]) if np.isfinite(per_pc[comp_idx - 1]) else np.nan
+                frac_cum = (
+                    float(cumulative[comp_idx - 1])
+                    if np.isfinite(cumulative[comp_idx - 1])
+                    else np.nan
+                )
                 explained_rows.append(
                     {
                         "region": str(region),
                         "fit_condition": str(fit_condition),
                         "eval_condition": str(eval_condition),
                         "n_components": int(comp_idx),
-                        "explained_variance_fraction": float(frac) if np.isfinite(frac) else np.nan,
+                        # Legacy column name now stores per-PC explained-variance fraction.
+                        "explained_variance_fraction": frac,
+                        "explained_variance_per_pc_fraction": frac,
+                        "explained_variance_cumulative_fraction": frac_cum,
+                        "explained_variance_measure": (
+                            "projection_variance_fraction_within_retained_pcs"
+                        ),
+                        "explained_variance_total_reference": (
+                            "sum_projection_variance_retained_pcs"
+                        ),
                         "n_units_common": int(len(common_unit_keys)),
                         "n_time_bins_window": int(n_bins_window),
                     }
