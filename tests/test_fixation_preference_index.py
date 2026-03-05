@@ -273,13 +273,13 @@ class TestFixationPreferenceIndex(unittest.TestCase):
 
             split_avg_path = (
                 analysis_root
-                / "ephys/psth/fixation_psth_index_averages"
+                / "ephys/psth/fixation_preference_index_input_averages"
                 / f"date={dummy_date}"
                 / "fixations_split.pkl"
             )
             unsplit_avg_path = (
                 analysis_root
-                / "ephys/psth/fixation_psth_index_averages"
+                / "ephys/psth/fixation_preference_index_input_averages"
                 / f"date={dummy_date}"
                 / "fixations_unsplit.pkl"
             )
@@ -423,9 +423,9 @@ class TestFixationPreferenceIndex(unittest.TestCase):
 
             settings = FixationPSTHPreferenceIndexSettings(
                 cfg_path=str(cfg_path),
-                average_input_subdir="ephys/psth/fixation_psth_index_averages",
+                average_input_subdir="ephys/psth/fixation_preference_index_input_averages",
                 average_input_filename="fixations_split.pkl",
-                average_object_input_subdir="ephys/psth/fixation_psth_index_averages",
+                average_object_input_subdir="ephys/psth/fixation_preference_index_input_averages",
                 average_object_input_filename="fixations_unsplit.pkl",
                 trial_input_modality="psth",
                 trial_input_filename="fixations.pkl",

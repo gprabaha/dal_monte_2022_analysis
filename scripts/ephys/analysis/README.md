@@ -45,7 +45,9 @@ Current scripts:
   Intended defaults:
   - split by interactive state (`face_interactive` vs `face_non_interactive`)
   - target bins of 50 ms with 25 ms stride
-  - output saved separately from standard averages for index workflows
+  - resample to wide bins (if configured), smooth, convert to firing rate (Hz), then average
+  - default output is one combined `fixations.pkl` containing split + unsplit tables
+    (legacy separate-file mode is still available)
   This keeps existing 10 ms trial PSTHs unchanged.
 - `build_fixation_three_way_region_comparison.py`
   Compares three-way fixation-response compositions across regions per

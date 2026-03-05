@@ -641,16 +641,16 @@ def _category_filter(settings: FixationPSTHAverageSettings) -> Optional[set[str]
 
 def _resolve_smoothing_sigma_bins(
     settings: FixationPSTHAverageSettings,
-    bin_edges_ref: Optional[np.ndarray],
+    *,
+    output_bin_size_s: float,
 ) -> Optional[float]:
     if not settings.smooth_before_average:
         return None
     if float(settings.smoothing_sigma_ms) <= 0:
         raise ValueError("smoothing_sigma_ms must be > 0 when smooth_before_average is enabled.")
-    if bin_edges_ref is not None and np.asarray(bin_edges_ref).size > 1:
-        bin_size_ms = float(np.mean(np.diff(np.asarray(bin_edges_ref, dtype=float)))) * 1000.0
-    else:
-        bin_size_ms = 10.0
+    if not np.isfinite(float(output_bin_size_s)) or float(output_bin_size_s) <= 0:
+        raise ValueError("Encountered non-positive output PSTH bin size while averaging.")
+    bin_size_ms = float(output_bin_size_s) * 1000.0
     if bin_size_ms <= 0:
         raise ValueError("Encountered non-positive PSTH bin size while averaging.")
     return float(settings.smoothing_sigma_ms) / bin_size_ms
@@ -779,12 +779,12 @@ def _aggregate_group_counts(
         counts = np.asarray(raw, dtype=float).reshape(-1)
         if counts.size == 0:
             continue
-        if smooth_before_average:
-            counts = gaussian_filter1d(counts, sigma=sigma_bins, mode="nearest")
         if resample_weights is not None:
             if resample_weights.shape[1] != counts.size:
                 raise ValueError("Encountered inconsistent PSTH bin counts while resampling averages.")
             counts = np.matmul(resample_weights, counts)
+        if smooth_before_average:
+            counts = gaussian_filter1d(counts, sigma=sigma_bins, mode="nearest")
         if convert_to_firing_rate:
             counts = counts / float(firing_rate_bin_size_s)
         if sum_acc is None:
@@ -910,7 +910,10 @@ def build_fixation_psth_averages_for_date(
     )
     output_bin_size_s = target_bin_size_s if target_bin_size_s is not None else source_bin_size_s
 
-    sigma_bins = _resolve_smoothing_sigma_bins(settings, bin_edges_ref)
+    sigma_bins = _resolve_smoothing_sigma_bins(
+        settings,
+        output_bin_size_s=output_bin_size_s,
+    )
     grouped: dict[tuple, dict] = {}
     for key, counts_list in grouped_counts.items():
         _, sum_acc, sumsq_acc, n_trials = _aggregate_group_counts(

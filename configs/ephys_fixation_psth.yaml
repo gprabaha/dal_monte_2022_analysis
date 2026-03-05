@@ -39,8 +39,8 @@ average_output_subdir: ephys/psth/fixation_psth_averages
 average_output_filename: fixations.pkl
 average_output_filename_combined: fixations.pkl
 average_store_split_and_unsplit_together: true
-# Convert trial PSTH counts to firing rate (Hz) after smoothing (and optional resampling)
-# before averaging across trials.
+# Resample trial PSTH counts first (if requested), smooth on the output bins,
+# convert to firing rate (Hz), then average across trials.
 average_convert_to_firing_rate_before_average: true
 # Legacy separate-file names retained for backward compatibility.
 average_output_filename_split: fixations_split_by_interactive_state.pkl
@@ -58,20 +58,24 @@ average_target_bin_step_ms: null
 
 # Dedicated date-level average PSTH output for preference-index heatmaps.
 # Uses wider bins and overlapping stride while keeping trial PSTHs unchanged.
-selective_index_average_output_subdir: ephys/psth/fixation_psth_index_averages
-# Primary split averages used for interactive/non-interactive face conditions.
-selective_index_average_output_filename: fixations_split_by_interactive_state.pkl
+selective_index_average_output_subdir: ephys/psth/fixation_preference_index_input_averages
+# Combined index-input file stores both split and unsplit tables.
+selective_index_average_output_filename: fixations.pkl
+selective_index_average_output_filename_combined: fixations.pkl
+selective_index_average_store_split_and_unsplit_together: true
+# Legacy separate-file names retained for compatibility.
 selective_index_average_output_filename_split: fixations_split_by_interactive_state.pkl
-# Secondary unsplit averages used for object condition traces.
-selective_index_average_output_subdir_unsplit: ephys/psth/fixation_psth_index_averages
+selective_index_average_output_subdir_unsplit: ephys/psth/fixation_preference_index_input_averages
 selective_index_average_output_filename_unsplit: fixations_unsplit_by_interactive_state.pkl
 # Optional override for unsplit-object average subdir when different from split.
 selective_index_average_object_output_subdir: null
 selective_index_average_split_by_interactive_state: true
 selective_index_average_restrict_interactive_state: null
 selective_index_average_group_by_session: false
-selective_index_average_smooth_before_average: false
-selective_index_average_smoothing_sigma_ms: 20.0
+# Wide-binned index-input means: resample to wide bins first, then smooth,
+# convert to FR (Hz), then average.
+selective_index_average_smooth_before_average: true
+selective_index_average_smoothing_sigma_ms: 50.0
 selective_index_average_convert_to_firing_rate_before_average: true
 selective_index_average_target_bin_size_ms: 50.0
 selective_index_average_target_bin_step_ms: 25.0

@@ -113,18 +113,32 @@ def main() -> None:
     cfg = load_config(ephys_fix_psth_cfg_path)
     index_window_start_s, index_window_end_s = _resolve_index_window_s_from_cfg(cfg)
     use_average_input = bool(cfg.get("selective_index_use_average_input", True) or args.use_average_input)
+    use_combined_index_average = bool(
+        cfg.get("selective_index_average_store_split_and_unsplit_together", False)
+    )
     average_split_subdir = cfg.get(
         "selective_index_average_output_subdir",
-        cfg.get("average_output_subdir", "ephys/psth/fixation_psth_averages"),
+        "ephys/psth/fixation_preference_index_input_averages",
     )
-    average_split_filename = cfg.get(
-        "selective_index_average_output_filename_split",
+    combined_average_filename = cfg.get(
+        "selective_index_average_output_filename_combined",
         cfg.get(
             "selective_index_average_output_filename",
             cfg.get("average_output_filename", "fixations.pkl"),
         ),
     )
-    average_object_filename = cfg.get("selective_index_average_output_filename_unsplit")
+    if use_combined_index_average:
+        average_split_filename = combined_average_filename
+        average_object_filename = combined_average_filename
+    else:
+        average_split_filename = cfg.get(
+            "selective_index_average_output_filename_split",
+            combined_average_filename,
+        )
+        average_object_filename = cfg.get(
+            "selective_index_average_output_filename_unsplit",
+            cfg.get("selective_index_average_output_filename", average_split_filename),
+        )
     average_object_subdir_raw = cfg.get("selective_index_average_object_output_subdir")
     if average_object_subdir_raw is None and average_object_filename is None:
         average_object_subdir = None

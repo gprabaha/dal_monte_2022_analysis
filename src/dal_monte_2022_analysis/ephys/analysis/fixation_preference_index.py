@@ -221,6 +221,8 @@ def _load_trial_table(
             df["date"] = str(row["date"])
         if "session" not in df.columns:
             df["session"] = str(row["session"])
+        # Trial PSTH rows store counts and must be converted to Hz downstream.
+        df["psth_is_rate"] = False
         dfs.append(df)
 
     if not dfs:
@@ -248,12 +250,60 @@ def _load_trial_table(
     return out_df, centers, float(bin_duration_ref)
 
 
-def _extract_average_df_and_meta(obj) -> tuple[pd.DataFrame, dict]:
+def _extract_average_df_and_meta(
+    obj,
+    *,
+    partition: Optional[str] = None,
+) -> tuple[pd.DataFrame, dict]:
+    partition_token: Optional[str]
+    if partition is None:
+        partition_token = None
+    else:
+        token = str(partition).strip().lower()
+        if not token or token == "auto":
+            partition_token = None
+        elif token in {"split", "unsplit"}:
+            partition_token = token
+        else:
+            raise ValueError(
+                f"Unsupported average partition '{partition}'. Expected one of: split, unsplit."
+            )
+
     if isinstance(obj, dict):
-        avg_df = obj.get("averages")
         meta = obj.get("meta", {})
+        meta_dict = meta if isinstance(meta, dict) else {}
+
+        if partition_token is not None:
+            partition_key = (
+                "averages_split_by_interactive_state"
+                if partition_token == "split"
+                else "averages_unsplit_by_interactive_state"
+            )
+            partition_meta_key = "split_meta" if partition_token == "split" else "unsplit_meta"
+            partition_df = obj.get(partition_key)
+            if isinstance(partition_df, pd.DataFrame):
+                merged_meta = dict(meta_dict)
+                partition_meta = meta_dict.get(partition_meta_key, {})
+                if isinstance(partition_meta, dict):
+                    merged_meta.update(partition_meta)
+                merged_meta["selected_partition"] = partition_token
+                return partition_df, merged_meta
+
+        avg_df = obj.get("averages")
         if isinstance(avg_df, pd.DataFrame):
-            return avg_df, meta if isinstance(meta, dict) else {}
+            split_flag = meta_dict.get("split_by_interactive_state")
+            if partition_token == "split" and split_flag is False:
+                raise ValueError(
+                    "Requested split average partition but file contains unsplit averages."
+                )
+            if partition_token == "unsplit" and split_flag is True:
+                raise ValueError(
+                    "Requested unsplit average partition but file contains split averages."
+                )
+            if partition_token is not None:
+                meta_dict = dict(meta_dict)
+                meta_dict["selected_partition"] = partition_token
+            return avg_df, meta_dict
     if isinstance(obj, pd.DataFrame):
         return obj, {}
     raise ValueError(f"Unsupported PSTH average object type: {type(obj)}")
@@ -265,6 +315,7 @@ def _load_average_table(
     subdir: Optional[str],
     filename: Optional[str],
     dates: Optional[Sequence[str]] = None,
+    partition: Optional[str] = None,
     require_face_interactive_state: bool = True,
 ) -> tuple[pd.DataFrame, np.ndarray, float]:
     cfg = load_config(settings.cfg_path)
@@ -299,7 +350,7 @@ def _load_average_table(
     n_missing_mean = 0
     for row in rows:
         obj = load_pickle_path(row["path"])
-        avg_df, meta = _extract_average_df_and_meta(obj)
+        avg_df, meta = _extract_average_df_and_meta(obj, partition=partition)
         if avg_df.empty:
             n_empty += 1
             continue
@@ -344,6 +395,14 @@ def _load_average_table(
             df["date"] = str(row.get("date", ""))
         if "psth_counts" not in df.columns:
             df["psth_counts"] = df["psth_mean"]
+        value_kind = str(meta.get("psth_value_kind", "")).strip().lower()
+        df["psth_is_rate"] = bool(
+            value_kind == "firing_rate_hz"
+            or (
+                meta.get("convert_to_firing_rate_before_average") is True
+                and value_kind != "counts"
+            )
+        )
         dfs.append(df)
 
     if not dfs:
@@ -389,6 +448,7 @@ def _load_input_table(
             subdir=settings.average_input_subdir,
             filename=settings.average_input_filename,
             dates=dates,
+            partition="split",
             require_face_interactive_state=True,
         )
 
@@ -412,6 +472,7 @@ def _load_input_table(
                 subdir=object_subdir,
                 filename=object_filename,
                 dates=dates,
+                partition="unsplit",
                 require_face_interactive_state=False,
             )
             if not object_df.empty:
@@ -623,7 +684,12 @@ def _unit_worker(args) -> pd.DataFrame:
         counts = np.asarray(getattr(row, "psth_counts"), dtype=float).reshape(-1)
         if counts.size != n_bins:
             continue
-        condition_rows[condition].append(counts / float(bin_size_s))
+        row_is_rate = False
+        if hasattr(row, "psth_is_rate"):
+            row_is_rate = _coerce_bool(getattr(row, "psth_is_rate"))
+        condition_rows[condition].append(
+            counts if row_is_rate else (counts / float(bin_size_s))
+        )
         weight = 1.0
         if hasattr(row, "n_trials"):
             try:

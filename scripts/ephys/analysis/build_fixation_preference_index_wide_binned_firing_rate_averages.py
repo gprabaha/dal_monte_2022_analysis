@@ -63,6 +63,14 @@ def main() -> None:
     parser.add_argument("--output-filename", default=None)
     parser.add_argument("--output-subdir-unsplit", default=None)
     parser.add_argument("--output-filename-unsplit", default=None)
+    parser.add_argument(
+        "--store-separate-files",
+        action="store_true",
+        help=(
+            "Legacy mode: write split and unsplit averages as separate files "
+            "instead of one combined output file."
+        ),
+    )
     parser.add_argument("--split-only", action="store_true")
     parser.add_argument("--unsplit-only", action="store_true")
     parser.add_argument("--no-parallel", action="store_true")
@@ -73,9 +81,33 @@ def main() -> None:
     ephys_fix_cfg_path = _resolve_cli_path(args.ephys_fixation_psth_cfg)
     cfg = load_config(ephys_fix_cfg_path)
 
+    combined_output_subdir = cfg.get(
+        "selective_index_average_output_subdir_combined",
+        cfg.get(
+            "selective_index_average_output_subdir",
+            "ephys/psth/fixation_preference_index_input_averages",
+        ),
+    )
+    combined_output_filename_raw = cfg.get("selective_index_average_output_filename_combined")
+    if combined_output_filename_raw is None:
+        legacy_output_filename = _ensure_pkl_filename(
+            cfg.get("selective_index_average_output_filename", "fixations.pkl")
+        )
+        if (
+            legacy_output_filename.endswith("_split_by_interactive_state.pkl")
+            or legacy_output_filename.endswith("_unsplit_by_interactive_state.pkl")
+        ):
+            combined_output_filename_raw = "fixations.pkl"
+        else:
+            combined_output_filename_raw = legacy_output_filename
+    combined_output_filename = _ensure_pkl_filename(combined_output_filename_raw)
+
     split_output_subdir = cfg.get(
         "selective_index_average_output_subdir_split",
-        cfg.get("selective_index_average_output_subdir", "ephys/psth/fixation_psth_index_averages"),
+        cfg.get(
+            "selective_index_average_output_subdir",
+            "ephys/psth/fixation_preference_index_input_averages",
+        ),
     )
     split_output_filename = _ensure_pkl_filename(
         cfg.get(
@@ -95,19 +127,22 @@ def main() -> None:
         cfg_path=str(dataset_cfg_path),
         trial_input_modality=cfg.get("trial_output_modality", "psth"),
         trial_input_filename=cfg.get("trial_output_filename", "fixations.pkl"),
-        output_subdir=split_output_subdir,
-        output_filename=split_output_filename,
+        output_subdir=combined_output_subdir,
+        output_filename=combined_output_filename,
         split_by_interactive_state=True,
-        store_split_and_unsplit_together=False,
+        store_split_and_unsplit_together=cfg.get(
+            "selective_index_average_store_split_and_unsplit_together",
+            True,
+        ),
         restrict_interactive_state=cfg.get("selective_index_average_restrict_interactive_state"),
         group_by_session=cfg.get("selective_index_average_group_by_session", False),
         smooth_before_average=cfg.get(
             "selective_index_average_smooth_before_average",
-            False,
+            True,
         ),
         smoothing_sigma_ms=cfg.get(
             "selective_index_average_smoothing_sigma_ms",
-            cfg.get("smoothing_sigma_ms", 20.0),
+            cfg.get("smoothing_sigma_ms", 50.0),
         ),
         convert_to_firing_rate_before_average=cfg.get(
             "selective_index_average_convert_to_firing_rate_before_average",
@@ -135,13 +170,16 @@ def main() -> None:
 
     run_split_output = not bool(args.unsplit_only)
     run_unsplit_output = not bool(args.split_only)
+    legacy_separate_mode = bool(args.store_separate_files or args.split_only or args.unsplit_only)
 
     if args.output_subdir:
+        combined_output_subdir = str(args.output_subdir)
         split_output_subdir = str(args.output_subdir)
         unsplit_output_subdir = str(args.output_subdir)
     if args.output_subdir_unsplit:
         unsplit_output_subdir = str(args.output_subdir_unsplit)
     if args.output_filename:
+        combined_output_filename = _ensure_pkl_filename(args.output_filename)
         split_output_filename = _ensure_pkl_filename(args.output_filename)
     if args.output_filename_unsplit:
         unsplit_output_filename = _ensure_pkl_filename(args.output_filename_unsplit)
@@ -150,32 +188,48 @@ def main() -> None:
     sessions = _as_str_seq(args.session)
 
     settings_by_label: list[tuple[str, FixationPSTHAverageSettings]] = []
-    if run_split_output:
-        settings_by_label.append(
+    if legacy_separate_mode:
+        if run_split_output:
+            settings_by_label.append(
+                (
+                    "split",
+                    replace(
+                        settings_common,
+                        output_subdir=split_output_subdir,
+                        output_filename=split_output_filename,
+                        split_by_interactive_state=True,
+                        store_split_and_unsplit_together=False,
+                    ),
+                ),
+            )
+        if run_unsplit_output:
+            settings_by_label.append(
+                (
+                    "unsplit",
+                    replace(
+                        settings_common,
+                        output_subdir=unsplit_output_subdir,
+                        output_filename=unsplit_output_filename,
+                        split_by_interactive_state=False,
+                        store_split_and_unsplit_together=False,
+                    ),
+                ),
+            )
+        if not settings_by_label:
+            raise ValueError("No index-average output mode selected.")
+    else:
+        settings_by_label = [
             (
-                "split",
+                "combined",
                 replace(
                     settings_common,
-                    output_subdir=split_output_subdir,
-                    output_filename=split_output_filename,
+                    output_subdir=combined_output_subdir,
+                    output_filename=combined_output_filename,
                     split_by_interactive_state=True,
+                    store_split_and_unsplit_together=True,
                 ),
-            ),
-        )
-    if run_unsplit_output:
-        settings_by_label.append(
-            (
-                "unsplit",
-                replace(
-                    settings_common,
-                    output_subdir=unsplit_output_subdir,
-                    output_filename=unsplit_output_filename,
-                    split_by_interactive_state=False,
-                ),
-            ),
-        )
-    if not settings_by_label:
-        raise ValueError("No index-average output mode selected.")
+            )
+        ]
 
     for _, mode_settings in settings_by_label:
         run_fixation_psth_average_build(
