@@ -88,17 +88,37 @@ selective_pair_summary_filename: pair_selectivity.csv
 selective_unit_summary_filename: unit_selectivity.csv
 selective_condition_summary_filename: condition_window_means.csv
 selective_output_pickle_filename: results.pkl
+# Smoothing for per-trial PSTH before window-mean extraction (matches mean-PSTH settings by default).
+selective_smooth_before_window_average: true
+selective_smoothing_sigma_ms: 20.0
 selective_alpha: 0.05
 selective_test: welch_ttest
 selective_min_trials_per_condition: 2
 selective_use_parallel: true
 face_label: face
 object_label: object
+# Named comparison families evaluated every run.
+selective_primary_comparison_group: three_condition_core
+selective_comparison_groups:
+  three_condition_core:
+    - [face_interactive, face_non_interactive]
+    - [face_interactive, object]
+    - [face_non_interactive, object]
+  interactive_state_matched:
+    - [face_interactive, object_interactive]
+    - [face_non_interactive, object_non_interactive]
+    - [face_interactive, face_non_interactive]
+    - [object_interactive, object_non_interactive]
+  face_vs_object_unsplit:
+    - [face, object]
 selective_windows_ms:
   pre_fix: [-500.0, 0.0]
   peri_fix: [-250.0, 250.0]
   post_fix: [0.0, 500.0]
   full_fix: [-500.0, 500.0]
+# Window names used to call pair/unit selectivity significance.
+# Keep full_fix in selective_windows_ms for reporting, but exclude it from calls.
+selective_significance_windows: [pre_fix, peri_fix, post_fix]
 
 # Per-bin pairwise preference-index analysis from fixation PSTH trial rows.
 # For each pair (A, B), computes index=(A-B)/denominator and appends

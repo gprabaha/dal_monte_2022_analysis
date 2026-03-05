@@ -13,6 +13,7 @@ _DEFAULT_EPHYS_FIX_PSTH_CFG = _REPO_ROOT / "configs" / "ephys_fixation_psth.yaml
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.analysis.fixation_selectivity import (
+    DEFAULT_PRIMARY_COMPARISON_GROUP,
     DEFAULT_SELECTIVITY_WINDOWS_MS,
     FixationPSTHSelectivitySettings,
     run_fixation_selectivity_analysis,
@@ -86,6 +87,22 @@ def main() -> None:
         face_label=cfg.get("face_label", "face"),
         object_label=cfg.get("object_label", "object"),
         windows_ms=_normalize_windows_cfg(cfg.get("selective_windows_ms")),
+        significance_windows=tuple(
+            cfg.get("selective_significance_windows", ("pre_fix", "peri_fix", "post_fix"))
+        ),
+        comparison_groups=cfg.get("selective_comparison_groups"),
+        primary_comparison_group=cfg.get(
+            "selective_primary_comparison_group",
+            DEFAULT_PRIMARY_COMPARISON_GROUP,
+        ),
+        smooth_before_window_average=cfg.get(
+            "selective_smooth_before_window_average",
+            cfg.get("smooth_before_average", True),
+        ),
+        smoothing_sigma_ms=cfg.get(
+            "selective_smoothing_sigma_ms",
+            cfg.get("smoothing_sigma_ms", 20.0),
+        ),
         alpha=cfg.get("selective_alpha", 0.05),
         test_name=cfg.get("selective_test", "welch_ttest"),
         min_trials_per_condition=cfg.get("selective_min_trials_per_condition", 2),
@@ -151,6 +168,11 @@ def main() -> None:
     n_selective = int(unit_df["is_selective_unit"].sum())
     condition_df = result.get("condition_summary")
     n_condition_rows = 0 if condition_df is None else int(len(condition_df))
+    comparison_results = result.get("comparison_results", {})
+    print(
+        "[analysis] comparison groups evaluated: "
+        f"{sorted(str(key) for key in comparison_results.keys())}"
+    )
     print(f"[analysis] selective units: {n_selective}/{n_units}")
     print(f"[analysis] three-way condition summary rows: {n_condition_rows}")
     print("[analysis] wrote fixation selectivity outputs to configured analysis subdir")

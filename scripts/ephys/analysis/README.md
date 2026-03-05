@@ -5,18 +5,29 @@ CLI entrypoints for ephys analysis.
 Current scripts:
 - `build_fixation_selective_units.py`
   Computes fixation-pair selectivity per unit from trial PSTH data.
-  For each unit, each pair of categories is tested across configured windows
-  (default now includes four):
+  For each unit/day, trial PSTHs are smoothed (configurable, default matches
+  mean-PSTH smoothing), converted to Hz, reduced to window means per trial,
+  then tested with unpaired tests across configured windows (default includes four):
   - `pre_fix`  (-500 ms to 0 ms)
   - `peri_fix` (-250 ms to 250 ms)
   - `post_fix` (0 ms to 500 ms)
   - `full_fix` (-500 ms to 500 ms)
-  Pair is selective if any window is significant.
-  Also writes one per-unit/per-window three-condition summary table
+  Multiple named comparison families run in every analysis pass
+  (configurable, defaults include `three_condition_core`,
+  `interactive_state_matched`, `face_vs_object_unsplit`).
+  Pair is selective if any configured significance window is significant
+  (default significance windows: `pre_fix`, `peri_fix`, `post_fix`).
+  `full_fix` can remain in outputs without affecting significance calls.
+  Writes per-comparison CSVs suffixed with `__<comparison_label>.csv`
+  and keeps unsuffixed CSVs for the configured primary comparison.
+  Also writes one per-unit/per-window condition summary table
   (`condition_window_means.csv`) with mean firing rates for:
   - interactive face
   - non-interactive face
-  - object
+  - face (unsplit)
+  - object interactive
+  - object non-interactive
+  - object (unsplit)
   and normalized relative components for triangular plotting.
 - `build_fixation_preference_index.py`
   Computes per-bin pairwise fixation preference indices for each unit using:
@@ -96,11 +107,16 @@ Config:
   - `selective_unit_summary_filename`
   - `selective_condition_summary_filename`
   - `selective_output_pickle_filename`
+  - `selective_smooth_before_window_average`
+  - `selective_smoothing_sigma_ms`
+  - `selective_primary_comparison_group`
+  - `selective_comparison_groups`
   - `selective_alpha`
   - `selective_test`
   - `selective_min_trials_per_condition`
   - `selective_use_parallel`
   - `selective_windows_ms`
+  - `selective_significance_windows`
   - `average_target_bin_size_ms`
   - `average_target_bin_step_ms`
   - `selective_index_average_output_subdir`
