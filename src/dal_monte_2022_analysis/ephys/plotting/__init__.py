@@ -36,6 +36,10 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_neural_cross_correlation im
     plot_fixation_neural_cross_correlation_summaries,
     plot_within_region_fixation_neural_cross_correlation_summaries,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_population_pca import (
+    FixationPopulationPCAPlotSettings,
+    plot_fixation_population_pca_trajectories,
+)
 
 __all__ = [
     "FixationPSTHUnitPlotSettings",
@@ -58,4 +62,6 @@ __all__ = [
     "plot_fixation_neural_cross_correlation_summaries",
     "plot_within_region_fixation_neural_cross_correlation_summaries",
     "plot_cross_region_fixation_neural_cross_correlation_summaries",
+    "FixationPopulationPCAPlotSettings",
+    "plot_fixation_population_pca_trajectories",
 ]

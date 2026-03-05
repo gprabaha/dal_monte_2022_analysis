@@ -152,6 +152,23 @@ population_pca_require_face_interactive_state: true
 population_pca_verbose_logging: true
 population_pca_use_parallel: true
 
+# Population PCA plotting (stored in analysis_output_root)
+population_pca_plot_input_subdir: ephys/psth/fixation_population_pca
+population_pca_plot_input_filename: results.pkl
+population_pca_plot_output_subdir: ephys/psth/fixation_population_pca/plots
+population_pca_plot_output_extension: pdf
+population_pca_plot_output_dpi: 300
+population_pca_plot_trajectory_output_filename: population_pca_pc_trajectories
+population_pca_plot_explained_variance_output_filename: population_pca_explained_variance_bars
+population_pca_plot_cumulative_variance_output_filename: population_pca_explained_variance_cumulative
+population_pca_plot_trajectory_n_pcs: 3
+population_pca_plot_trajectory_n_columns: 4
+population_pca_plot_max_components: 20
+population_pca_plot_condition_colors:
+  face_interactive: "#b64198"
+  face_non_interactive: "#97ca3d"
+  object: "#754c29"
+
 # Preference-index heatmap plotting.
 # Default footprint for combined 3x4 output: letter width x <= 2/5 letter height.
 selective_index_plot_output_subdir: ephys/psth/fixation_psth_preference_index/plots
