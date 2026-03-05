@@ -40,8 +40,8 @@ Current scripts:
   Input source can be either:
   - trial PSTH rows (`psth_counts`) from processed data, or
   - date-level average PSTH rows (`psth_mean`) from analysis outputs.
-- `build_fixation_index_psth_averages.py`
-  Builds a separate date-level average PSTH set for preference-index heatmaps.
+- `build_fixation_preference_index_wide_binned_firing_rate_averages.py`
+  Builds wide-binned mean firing-rate averages used as fixation preference-index input.
   Intended defaults:
   - split by interactive state (`face_interactive` vs `face_non_interactive`)
   - target bins of 50 ms with 25 ms stride
