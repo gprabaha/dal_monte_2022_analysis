@@ -92,6 +92,10 @@ def main() -> None:
             "roi_vs_period_plot_axis_space_regions_output_filename",
             "roi_vs_period_axis_space_regions",
         ),
+        output_filename_contours=cfg.get(
+            "roi_vs_period_plot_axis_space_contour_output_filename",
+            "roi_vs_period_axis_space_contours",
+        ),
     )
     if not outputs:
         print("[plot] no ROI-vs-period axis-space figures generated")

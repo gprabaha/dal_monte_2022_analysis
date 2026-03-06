@@ -296,19 +296,22 @@ Config:
   - shows condition geometry and labeled formulas for axis definitions.
 
 - `plot_fixation_roi_vs_period_axis_space.py`
-  Plots ROI-vs-period 3D density sheets in region columns (1x4 by default):
+  Plots ROI-vs-period axis-space outputs as two complementary figures:
+  - 3D density-sheet panels in region columns (1x4 by default)
+  - separate 2D contour panels in region columns (same x/y scale)
   - each unit contributes one 2D point per window from the
     face-object / interactive-state plane, with radial scaling from
     mean magnitude across all three axes
   - a weighted 2D KDE defines the sheet height (`z = relative density`)
-  - only the 95% support region is rendered for the sheet
+  - only the 95% support region is rendered
+  - 3D sheet uses neutral gray light-source shading for improved depth cues
+  - 2D contours use a separate `magma` palette for contrast
   - mean axis lines for `face_object`, `interactive_state`,
-    and `cross_interaction` are drawn on a slightly lower base plane
-    (no endpoint markers)
+    and `cross_interaction` are drawn without endpoint markers
   - uses shared x/y limits across region panels for comparison
   Uses ROI-vs-period analysis outputs (`results.pkl`) and respects analysis mode:
-  - `split_by_window`: writes one 3D region-column figure per window
-  - `averaged_across_windows`: writes one 3D region-column figure
+  - `split_by_window`: writes one pair of figures per window
+  - `averaged_across_windows`: writes one pair of figures
 
   Config:
   - `roi_vs_period_plot_input_subdir`
@@ -320,6 +323,7 @@ Config:
   - `roi_vs_period_plot_cross_region_graph_output_filename`
   - `roi_vs_period_plot_axis_geometry_output_filename`
   - `roi_vs_period_plot_axis_space_regions_output_filename`
+  - `roi_vs_period_plot_axis_space_contour_output_filename`
   - `roi_vs_period_plot_axis_magnitude_source`
   - `roi_vs_period_plot_region_order`
   - `roi_vs_period_plot_axis_order`

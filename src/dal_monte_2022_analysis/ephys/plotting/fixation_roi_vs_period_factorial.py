@@ -1022,6 +1022,7 @@ def plot_fixation_roi_vs_period_axis_space(
     regions: Optional[Sequence[str]] = None,
     window: Optional[str] = None,
     output_filename_regions: str = "roi_vs_period_axis_space_regions",
+    output_filename_contours: str = "roi_vs_period_axis_space_contours",
 ) -> list[dict]:
     """Plot 3D region-column density sheets on the face-object / interactive-state plane."""
     _apply_plotting_style(settings)
@@ -1138,7 +1139,47 @@ def plot_fixation_roi_vs_period_axis_space(
         rr = np.sqrt(xx * xx + yy * yy)
         cell_area = float((x[1] - x[0]) * (y[1] - y[0])) if n_grid > 1 else 1.0
         mode = str(payload.get("meta", {}).get("axis_comparison_mode", settings.axis_comparison_mode))
-        z_plane = -0.06
+        z_plane = 1.04
+        z_min = -0.03
+        z_max = 1.12
+        surface_cmap = mpl.colormaps["Greys"]
+        contour_cmap = mpl.colormaps["magma"]
+        light = mpl.colors.LightSource(azdeg=320.0, altdeg=58.0)
+        density_maps: dict[str, dict[str, np.ndarray]] = {}
+        for region in region_tokens:
+            profile = region_profiles.get(str(region))
+            if profile is None:
+                continue
+            density = _kde_2d_weighted(
+                points_xy=np.column_stack([profile["points_x"], profile["points_y"]]),
+                xx=xx,
+                yy=yy,
+                weights=np.asarray(profile["weights"], dtype=float),
+            )
+            threshold = _density_threshold_for_mass(
+                density,
+                cell_area=cell_area,
+                mass_fraction=0.95,
+            )
+            z = density.copy()
+            z[density < threshold] = np.nan
+            radial_mask = _surface_95_mask(
+                r=rr,
+                q_low_mag=float(profile["q_low_mag"]),
+                q_high_mag=float(profile["q_high_mag"]),
+            )
+            z[~radial_mask] = np.nan
+            if np.any(np.isfinite(z)):
+                z_norm = z / float(np.nanmax(z))
+            else:
+                z_norm = np.full_like(z, np.nan, dtype=float)
+            z_fill = np.nan_to_num(z_norm, nan=0.0)
+            z_mask = np.isfinite(z_norm)
+            density_maps[str(region)] = {
+                "z_norm": z_norm,
+                "z_fill": z_fill,
+                "z_mask": z_mask,
+            }
 
         fig = plt.figure(
             figsize=(float(settings.axis_space_regions_letter_width_in), float(region_fig_h)),
@@ -1154,52 +1195,22 @@ def plot_fixation_roi_vs_period_axis_space(
                 _draw_axis_space_plane_guides_3d(ax, lim=lim, z_plane=z_plane, settings=settings)
                 ax.text2D(0.5, 0.5, "No data", transform=ax.transAxes, ha="center", va="center", fontsize=9)
             else:
-                density = _kde_2d_weighted(
-                    points_xy=np.column_stack([profile["points_x"], profile["points_y"]]),
-                    xx=xx,
-                    yy=yy,
-                    weights=np.asarray(profile["weights"], dtype=float),
-                )
-                threshold = _density_threshold_for_mass(
-                    density,
-                    cell_area=cell_area,
-                    mass_fraction=0.95,
-                )
-                z = density.copy()
-                z[density < threshold] = np.nan
-                radial_mask = _surface_95_mask(
-                    r=rr,
-                    q_low_mag=float(profile["q_low_mag"]),
-                    q_high_mag=float(profile["q_high_mag"]),
-                )
-                z[~radial_mask] = np.nan
-                if np.any(np.isfinite(z)):
-                    z_norm = z / float(np.nanmax(z))
-                else:
-                    z_norm = np.full_like(z, np.nan, dtype=float)
+                z_fill = density_maps[str(region)]["z_fill"]
+                z_mask = density_maps[str(region)]["z_mask"]
+                base_rgb = np.full((*z_fill.shape, 3), 0.74, dtype=float)
+                shaded_rgb = light.shade_rgb(base_rgb, z_fill, blend_mode="soft")
+                facecolors = np.zeros((*z_fill.shape, 4), dtype=float)
+                facecolors[..., :3] = shaded_rgb
+                facecolors[..., 3] = np.where(z_mask, 0.95, 0.0)
                 surf = ax.plot_surface(
                     xx,
                     yy,
-                    z_norm,
-                    cmap="viridis",
-                    vmin=0.0,
-                    vmax=1.0,
+                    z_fill,
+                    facecolors=facecolors,
                     linewidth=0.0,
                     antialiased=True,
-                    shade=True,
-                    alpha=0.92,
+                    shade=False,
                     zorder=1.0,
-                )
-                ax.contour(
-                    xx,
-                    yy,
-                    np.nan_to_num(z_norm, nan=0.0),
-                    levels=np.linspace(0.2, 0.95, 7),
-                    zdir="z",
-                    offset=z_plane,
-                    colors="#555555",
-                    linewidths=0.45,
-                    alpha=0.55,
                 )
                 _draw_axis_space_plane_guides_3d(ax, lim=lim, z_plane=z_plane, settings=settings)
                 axis_means = profile.get("axis_means", {})
@@ -1230,12 +1241,12 @@ def plot_fixation_roi_vs_period_axis_space(
             ax.set_title(_display_region(region, settings), fontsize=10)
             ax.set_xlim(-float(lim), float(lim))
             ax.set_ylim(-float(lim), float(lim))
-            ax.set_zlim(float(z_plane), 1.02)
+            ax.set_zlim(float(z_min), float(z_max))
             ax.set_box_aspect((1.0, 1.0, 0.72))
-            ax.view_init(elev=33.0, azim=-60.0)
+            ax.view_init(elev=48.0, azim=-58.0)
             ax.xaxis.pane.set_alpha(0.0)
             ax.yaxis.pane.set_alpha(0.0)
-            ax.zaxis.pane.set_alpha(0.0)
+            ax.zaxis.pane.set_alpha(0.03)
             ax.grid(False)
             ax.tick_params(axis="x", labelsize=6, pad=0)
             ax.tick_params(axis="y", labelsize=6, pad=0)
@@ -1262,8 +1273,12 @@ def plot_fixation_roi_vs_period_axis_space(
         if surf is None:
             plt.close(fig)
             continue
+        mappable = mpl.cm.ScalarMappable(
+            norm=mpl.colors.Normalize(vmin=0.0, vmax=1.0),
+            cmap=surface_cmap,
+        )
         cbar = fig.colorbar(
-            surf,
+            mappable,
             ax=axes_3d,
             fraction=0.020,
             pad=0.01,
@@ -1289,6 +1304,124 @@ def plot_fixation_roi_vs_period_axis_space(
                 "output_path": str(out_path_regions),
                 "window_name": str(win_name),
                 "kind": "regions",
+                "regions": list(region_tokens),
+                "axes": list(axis_tokens),
+            }
+        )
+
+        fig2, axes2 = plt.subplots(
+            1,
+            len(region_tokens),
+            figsize=(float(settings.axis_space_regions_letter_width_in), max(2.6, float(region_fig_h) * 0.72)),
+            dpi=settings.output_dpi,
+            squeeze=False,
+        )
+        axes2 = axes2.ravel()
+        contour_handle = None
+        ux_cross, uy_cross = _axis_direction("cross_interaction")
+        for ridx, region in enumerate(region_tokens):
+            ax2 = axes2[ridx]
+            ax2.axhline(0.0, color="#bdbdbd", linewidth=0.8, zorder=0)
+            ax2.axvline(0.0, color="#bdbdbd", linewidth=0.8, zorder=0)
+            ax2.plot(
+                [-float(lim) * ux_cross, float(lim) * ux_cross],
+                [-float(lim) * uy_cross, float(lim) * uy_cross],
+                linestyle=(0, (3.0, 3.0)),
+                color=settings.axis_colors.get("cross_interaction", "#7a0177"),
+                linewidth=0.9,
+                alpha=0.55,
+                zorder=0,
+            )
+            profile = region_profiles.get(str(region))
+            dmap = density_maps.get(str(region))
+            if profile is None or dmap is None:
+                ax2.text(0.5, 0.5, "No data", transform=ax2.transAxes, ha="center", va="center", fontsize=9)
+            else:
+                z_fill = dmap["z_fill"]
+                levels = np.linspace(0.20, 0.95, 9)
+                contour_handle = ax2.contourf(
+                    xx,
+                    yy,
+                    z_fill,
+                    levels=levels,
+                    cmap=contour_cmap,
+                    alpha=0.95,
+                    antialiased=True,
+                    zorder=1,
+                )
+                ax2.contour(
+                    xx,
+                    yy,
+                    z_fill,
+                    levels=levels,
+                    colors="#252525",
+                    linewidths=0.35,
+                    alpha=0.45,
+                    zorder=2,
+                )
+                axis_means = profile.get("axis_means", {})
+                for axis_name in axis_tokens:
+                    mag = float(axis_means.get(str(axis_name), 0.0))
+                    dx, dy = _axis_direction(axis_name)
+                    color = settings.axis_colors.get(str(axis_name), "#4d4d4d")
+                    ax2.plot(
+                        [0.0, mag * dx],
+                        [0.0, mag * dy],
+                        color=color,
+                        linewidth=2.0,
+                        alpha=0.95,
+                        zorder=3,
+                    )
+                ax2.text(
+                    0.02,
+                    0.95,
+                    f"n={int(profile.get('n_units', 0))}",
+                    transform=ax2.transAxes,
+                    ha="left",
+                    va="top",
+                    fontsize=7,
+                    color="#333333",
+                )
+
+            ax2.set_title(_display_region(region, settings), fontsize=10)
+            ax2.set_xlim(-float(lim), float(lim))
+            ax2.set_ylim(-float(lim), float(lim))
+            ax2.set_aspect("equal")
+            ax2.grid(alpha=0.14, linewidth=0.5)
+            ax2.tick_params(axis="both", labelsize=6)
+            ax2.set_xlabel("Face-Object", fontsize=7)
+            if ridx == 0:
+                ax2.set_ylabel("Interactive-State", fontsize=7)
+            else:
+                ax2.set_ylabel("")
+
+        fig2.legend(handles=axis_handles, loc="upper center", frameon=False, fontsize=8, ncol=max(1, len(axis_handles)))
+        if contour_handle is not None:
+            cbar2 = fig2.colorbar(
+                contour_handle,
+                ax=list(axes2),
+                fraction=0.020,
+                pad=0.02,
+            )
+            cbar2.set_label("Relative Density", fontsize=8)
+            cbar2.ax.tick_params(labelsize=7)
+        fig2.suptitle(
+            (
+                "ROI-vs-Period 2D Density Contours by Region "
+                f"({win_name}; mode={mode}; source={settings.axis_magnitude_source})"
+            ),
+            fontsize=10,
+        )
+        fig2.subplots_adjust(left=0.05, right=0.92, top=0.82, bottom=0.16, wspace=0.22)
+        out_name_contours = ensure_filename(f"{output_filename_contours}{suffix}", f".{ext}")
+        out_path_contours = out_root / out_name_contours
+        save_figure(fig2, out_path_contours, ext=ext, dpi=settings.output_dpi)
+        plt.close(fig2)
+        outputs.append(
+            {
+                "output_path": str(out_path_contours),
+                "window_name": str(win_name),
+                "kind": "contours_2d",
                 "regions": list(region_tokens),
                 "axes": list(axis_tokens),
             }
