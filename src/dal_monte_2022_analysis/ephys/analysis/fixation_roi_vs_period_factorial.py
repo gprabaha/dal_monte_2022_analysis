@@ -11,15 +11,9 @@ import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
 from scipy.stats import (
-    binomtest,
     fisher_exact,
-    friedmanchisquare,
-    mannwhitneyu,
     t,
-    ttest_1samp,
     ttest_ind,
-    ttest_rel,
-    wilcoxon,
 )
 
 from dal_monte_2022_analysis.config.load import load_config
@@ -67,6 +61,7 @@ class FixationROIVsPeriodFactorialSettings:
     output_subdir: str = "ephys/psth/fixation_roi_vs_period_factorial"
     unit_term_filename: str = "unit_glm_terms.csv"
     unit_axis_filename: str = "unit_axis_values.csv"
+    unit_axis_collapsed_filename: str = "unit_axis_collapsed_magnitude.csv"
     unit_window_summary_filename: str = "unit_window_condition_means.csv"
     region_fraction_filename: str = "region_significant_fractions.csv"
     region_fraction_pairwise_filename: str = "region_significant_fraction_pairwise.csv"
@@ -475,15 +470,6 @@ def _compute_axis_from_condition_means(
     }
 
 
-def _safe_ttest_1samp_zero(values: np.ndarray) -> tuple[float, float]:
-    arr = np.asarray(values, dtype=float).reshape(-1)
-    arr = arr[np.isfinite(arr)]
-    if arr.size < 2:
-        return np.nan, np.nan
-    stat, p_value = ttest_1samp(arr, popmean=0.0, nan_policy="omit")
-    return float(stat), float(p_value)
-
-
 def _safe_ttest_ind(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
     x = np.asarray(a, dtype=float).reshape(-1)
     y = np.asarray(b, dtype=float).reshape(-1)
@@ -492,59 +478,6 @@ def _safe_ttest_ind(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
     if x.size < 2 or y.size < 2:
         return np.nan, np.nan
     stat, p_value = ttest_ind(x, y, equal_var=False, nan_policy="omit")
-    return float(stat), float(p_value)
-
-
-def _safe_mannwhitneyu(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
-    x = np.asarray(a, dtype=float).reshape(-1)
-    y = np.asarray(b, dtype=float).reshape(-1)
-    x = x[np.isfinite(x)]
-    y = y[np.isfinite(y)]
-    if x.size == 0 or y.size == 0:
-        return np.nan, np.nan
-    stat, p_value = mannwhitneyu(x, y, alternative="two-sided")
-    return float(stat), float(p_value)
-
-
-def _safe_ttest_rel(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
-    x = np.asarray(a, dtype=float).reshape(-1)
-    y = np.asarray(b, dtype=float).reshape(-1)
-    finite = np.isfinite(x) & np.isfinite(y)
-    x = x[finite]
-    y = y[finite]
-    if x.size < 2:
-        return np.nan, np.nan
-    stat, p_value = ttest_rel(x, y, nan_policy="omit")
-    return float(stat), float(p_value)
-
-
-def _safe_wilcoxon(a: np.ndarray, b: Optional[np.ndarray] = None) -> tuple[float, float]:
-    x = np.asarray(a, dtype=float).reshape(-1)
-    if b is None:
-        x = x[np.isfinite(x)]
-        if x.size < 2:
-            return np.nan, np.nan
-        if np.allclose(x, 0.0, atol=1e-12, rtol=0.0):
-            return np.nan, np.nan
-        try:
-            stat, p_value = wilcoxon(x, zero_method="wilcox", alternative="two-sided")
-        except ValueError:
-            return np.nan, np.nan
-        return float(stat), float(p_value)
-
-    y = np.asarray(b, dtype=float).reshape(-1)
-    finite = np.isfinite(x) & np.isfinite(y)
-    x = x[finite]
-    y = y[finite]
-    if x.size < 2:
-        return np.nan, np.nan
-    d = x - y
-    if np.allclose(d, 0.0, atol=1e-12, rtol=0.0):
-        return np.nan, np.nan
-    try:
-        stat, p_value = wilcoxon(x, y, zero_method="wilcox", alternative="two-sided")
-    except ValueError:
-        return np.nan, np.nan
     return float(stat), float(p_value)
 
 
@@ -807,56 +740,43 @@ def _date_worker(args):
 
 
 def _build_region_fraction_tables(
-    unit_term_df: pd.DataFrame,
+    unit_axis_significance_df: pd.DataFrame,
     *,
     settings: FixationROIVsPeriodFactorialSettings,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    if unit_term_df.empty:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    sig_mode = _resolve_unit_significance_mode(settings.unit_significance_mode)
-    sig_col = "significant_raw" if sig_mode == "raw" else "significant_within_unit"
-    required = {"region", "window_name", "axis_name", "unit_key", "glm_testable", sig_col}
-    if not required.issubset(unit_term_df.columns):
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if unit_axis_significance_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+    required = {"region", "axis_name", "unit_key", "is_significant_axis"}
+    if not required.issubset(unit_axis_significance_df.columns):
+        return pd.DataFrame(), pd.DataFrame()
 
-    df = unit_term_df.copy()
+    df = unit_axis_significance_df.copy()
     df["region"] = df["region"].fillna("unknown").astype(str)
-    df = df.loc[df["counts_toward_significance"]].copy()
-    df = df.loc[df["glm_testable"].map(bool)].copy()
-    if df.empty:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    df[sig_col] = df[sig_col].map(bool)
+    df["is_significant_axis"] = df["is_significant_axis"].map(bool)
 
     frac_rows: list[dict] = []
-    for (region, window_name, axis_name), grp in df.groupby(
-        ["region", "window_name", "axis_name"], dropna=False
-    ):
+    for (region, axis_name), grp in df.groupby(["region", "axis_name"], dropna=False):
         n_total = int(grp["unit_key"].astype(str).nunique())
-        n_sig = int(grp.loc[grp[sig_col], "unit_key"].astype(str).nunique())
+        n_sig = int(grp.loc[grp["is_significant_axis"], "unit_key"].astype(str).nunique())
         frac_rows.append(
             {
                 "region": str(region),
-                "window_name": str(window_name),
                 "axis_name": str(axis_name),
-                "significance_mode": sig_mode,
-                "significance_column": sig_col,
                 "selective_units": n_sig,
                 "total_units": n_total,
                 "fraction_selective": (float(n_sig) / float(n_total)) if n_total > 0 else np.nan,
             }
         )
     fraction_df = pd.DataFrame(frac_rows).sort_values(
-        ["window_name", "axis_name", "region"]
+        ["axis_name", "region"]
     ).reset_index(drop=True)
 
     pair_rows: list[dict] = []
-    for (window_name, axis_name), grp in df.groupby(["window_name", "axis_name"], dropna=False):
-        by_region = {}
-        for region, g_region in grp.groupby("region", dropna=False):
-            n_total = int(g_region["unit_key"].astype(str).nunique())
-            n_sig = int(g_region.loc[g_region[sig_col], "unit_key"].astype(str).nunique())
-            by_region[str(region)] = (n_sig, n_total)
-
+    for axis_name, grp in fraction_df.groupby("axis_name", dropna=False):
+        by_region = {
+            str(row.region): (int(row.selective_units), int(row.total_units))
+            for row in grp.itertuples(index=False)
+        }
         eligible_regions = sorted(
             [
                 region_name
@@ -879,10 +799,7 @@ def _build_region_fraction_tables(
             frac_b = (float(n_sig_b) / float(n_total_b)) if n_total_b > 0 else np.nan
             pair_rows.append(
                 {
-                    "window_name": str(window_name),
                     "axis_name": str(axis_name),
-                    "significance_mode": sig_mode,
-                    "significance_column": sig_col,
                     "region_a": region_a,
                     "region_b": region_b,
                     "n_sig_a": int(n_sig_a),
@@ -905,206 +822,243 @@ def _build_region_fraction_tables(
             p_col="p_value",
             out_col="p_value_adjusted",
             method=settings.pvalue_correction,
-            group_cols=("window_name", "axis_name"),
+            group_cols=("axis_name",),
         )
         pairwise_df["significant_adjusted"] = (
             pairwise_df["p_value_adjusted"].to_numpy(dtype=float) < float(settings.alpha)
         )
         pairwise_df = pairwise_df.sort_values(
-            ["window_name", "axis_name", "region_a", "region_b"]
+            ["axis_name", "region_a", "region_b"]
         ).reset_index(drop=True)
 
-    within_rows: list[dict] = []
-    for (region, window_name), grp in df.groupby(["region", "window_name"], dropna=False):
-        pivot = grp.pivot_table(
-            index="unit_key",
-            columns="axis_name",
-            values=sig_col,
-            aggfunc="max",
-        )
-        pivot = pivot.reindex(columns=list(AXIS_ORDER))
-        for axis_a, axis_b in combinations(AXIS_ORDER, 2):
-            if axis_a not in pivot.columns or axis_b not in pivot.columns:
-                continue
-            pair_mat = pivot.loc[:, [axis_a, axis_b]].dropna().copy()
-            if pair_mat.empty:
-                continue
-            a = pair_mat[axis_a].astype(bool).to_numpy(dtype=bool)
-            b = pair_mat[axis_b].astype(bool).to_numpy(dtype=bool)
-            n_units = int(pair_mat.shape[0])
-            frac_a = float(np.mean(a)) if n_units > 0 else np.nan
-            frac_b = float(np.mean(b)) if n_units > 0 else np.nan
-            n_10 = int(np.sum(a & ~b))
-            n_01 = int(np.sum(~a & b))
-            n_discordant = int(n_10 + n_01)
-            if n_discordant > 0:
-                p_value = float(
-                    binomtest(
-                        min(n_10, n_01),
-                        n=n_discordant,
-                        p=0.5,
-                        alternative="two-sided",
-                    ).pvalue
-                )
-            else:
-                p_value = 1.0
-            within_rows.append(
-                {
-                    "region": str(region),
-                    "window_name": str(window_name),
-                    "axis_a": str(axis_a),
-                    "axis_b": str(axis_b),
-                    "significance_mode": sig_mode,
-                    "significance_column": sig_col,
-                    "n_units_paired": n_units,
-                    "fraction_axis_a": frac_a,
-                    "fraction_axis_b": frac_b,
-                    "fraction_diff_a_minus_b": (
-                        float(frac_a - frac_b) if np.isfinite(frac_a) and np.isfinite(frac_b) else np.nan
-                    ),
-                    "n_a_only": n_10,
-                    "n_b_only": n_01,
-                    "n_discordant": n_discordant,
-                    "p_value": p_value,
-                }
-            )
-    within_df = pd.DataFrame(within_rows)
-    if not within_df.empty:
-        within_df["p_value_adjusted"] = _adjust_pvalues(
-            within_df["p_value"].to_numpy(dtype=float),
-            settings.pvalue_correction,
-        )
-        within_df["significant_adjusted"] = (
-            within_df["p_value_adjusted"].to_numpy(dtype=float) < float(settings.alpha)
-        )
-        within_df = within_df.sort_values(
-            ["window_name", "region", "axis_a", "axis_b"]
-        ).reset_index(drop=True)
+    return fraction_df, pairwise_df
 
-    return fraction_df, pairwise_df, within_df
+
+def _build_unit_axis_significance_table(
+    unit_term_df: pd.DataFrame,
+    *,
+    settings: FixationROIVsPeriodFactorialSettings,
+) -> pd.DataFrame:
+    if unit_term_df.empty:
+        return pd.DataFrame()
+    sig_mode = _resolve_unit_significance_mode(settings.unit_significance_mode)
+    sig_col = "significant_raw" if sig_mode == "raw" else "significant_within_unit"
+    required = {"unit_key", "axis_name", "window_name", "glm_testable", "counts_toward_significance", sig_col}
+    if not required.issubset(unit_term_df.columns):
+        return pd.DataFrame()
+
+    df = unit_term_df.copy()
+    df["region"] = df["region"].fillna("unknown").astype(str)
+    df = df.loc[df["counts_toward_significance"]].copy()
+    df = df.loc[df["glm_testable"].map(bool)].copy()
+    if df.empty:
+        return pd.DataFrame()
+    df[sig_col] = df[sig_col].map(bool)
+
+    meta_cols = [
+        "unit_key",
+        "date",
+        "unit_uuid",
+        "region",
+        "spike_channel",
+        "recorded_agent",
+        "recorded_monkey",
+        "area",
+        "axis_name",
+    ]
+    meta_cols = [col for col in meta_cols if col in df.columns]
+    rows: list[dict] = []
+    for key_vals, grp in df.groupby(meta_cols, dropna=False):
+        if not isinstance(key_vals, tuple):
+            key_vals = (key_vals,)
+        row = {col: val for col, val in zip(meta_cols, key_vals)}
+        sig_mask = grp[sig_col].to_numpy(dtype=bool).reshape(-1)
+        n_sig = int(np.sum(sig_mask))
+        n_testable = int(len(grp))
+        sig_windows = (
+            grp.loc[sig_mask, "window_name"].astype(str).dropna().tolist()
+            if "window_name" in grp.columns
+            else []
+        )
+        row.update(
+            {
+                "significance_mode": sig_mode,
+                "significance_column": sig_col,
+                "n_testable_windows": n_testable,
+                "n_significant_windows": n_sig,
+                "is_significant_axis": bool(n_sig > 0),
+                "significant_windows": "|".join(sorted(set(sig_windows))),
+            }
+        )
+        rows.append(row)
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    sort_cols = [col for col in ("date", "region", "unit_uuid", "axis_name") if col in out.columns]
+    out = out.sort_values(sort_cols).reset_index(drop=True)
+    return out
+
+
+def _build_unit_axis_collapsed_magnitude_table(
+    unit_axis_df: pd.DataFrame,
+    unit_axis_significance_df: pd.DataFrame,
+) -> pd.DataFrame:
+    if unit_axis_df.empty or unit_axis_significance_df.empty:
+        return pd.DataFrame()
+    required_axis = {"unit_key", "axis_name", "axis_source", "window_name", "value_signed", "counts_toward_significance"}
+    required_sig = {"unit_key", "axis_name", "is_significant_axis", "significant_windows"}
+    if not required_axis.issubset(unit_axis_df.columns) or not required_sig.issubset(unit_axis_significance_df.columns):
+        return pd.DataFrame()
+
+    sig_df = unit_axis_significance_df.copy()
+    sig_df = sig_df.loc[sig_df["is_significant_axis"].map(bool)].copy()
+    if sig_df.empty:
+        return pd.DataFrame()
+
+    sig_window_map: dict[tuple[str, str], set[str]] = {}
+    for row in sig_df.itertuples(index=False):
+        unit_key = str(getattr(row, "unit_key"))
+        axis_name = str(getattr(row, "axis_name"))
+        token = str(getattr(row, "significant_windows", "") or "")
+        wins = {w.strip() for w in token.split("|") if str(w).strip()}
+        if wins:
+            sig_window_map[(unit_key, axis_name)] = wins
+
+    df = unit_axis_df.copy()
+    df = df.loc[df["counts_toward_significance"]].copy()
+    if df.empty:
+        return pd.DataFrame()
+    df["region"] = df["region"].fillna("unknown").astype(str)
+
+    rows: list[dict] = []
+    group_cols = [
+        "unit_key",
+        "date",
+        "unit_uuid",
+        "region",
+        "spike_channel",
+        "recorded_agent",
+        "recorded_monkey",
+        "area",
+        "axis_name",
+        "axis_source",
+    ]
+    group_cols = [col for col in group_cols if col in df.columns]
+    for key_vals, grp in df.groupby(group_cols, dropna=False):
+        if not isinstance(key_vals, tuple):
+            key_vals = (key_vals,)
+        row = {col: val for col, val in zip(group_cols, key_vals)}
+        unit_key = str(row.get("unit_key", ""))
+        axis_name = str(row.get("axis_name", ""))
+        sig_windows = sig_window_map.get((unit_key, axis_name), set())
+        if not sig_windows:
+            continue
+        grp_sig = grp.loc[grp["window_name"].astype(str).isin(sig_windows)].copy()
+        if grp_sig.empty:
+            continue
+        vals = np.abs(grp_sig["value_signed"].to_numpy(dtype=float).reshape(-1))
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            continue
+        row.update(
+            {
+                "n_significant_windows_used": int(vals.size),
+                "significant_windows": "|".join(sorted(sig_windows)),
+                "value_abs_mean_over_significant_windows": float(np.mean(vals)),
+                "value_abs_median_over_significant_windows": float(np.median(vals)),
+                "value_abs_std_over_significant_windows": (
+                    float(np.std(vals, ddof=1)) if vals.size > 1 else np.nan
+                ),
+            }
+        )
+        rows.append(row)
+
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    sort_cols = [col for col in ("date", "region", "unit_uuid", "axis_source", "axis_name") if col in out.columns]
+    out = out.sort_values(sort_cols).reset_index(drop=True)
+    return out
 
 
 def _build_region_axis_tables(
-    unit_axis_df: pd.DataFrame,
+    unit_axis_collapsed_df: pd.DataFrame,
     *,
     settings: FixationROIVsPeriodFactorialSettings,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    if unit_axis_df.empty:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if unit_axis_collapsed_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
 
-    required = {"region", "window_name", "axis_name", "axis_source", "unit_key", "value_signed", "value_abs"}
-    if not required.issubset(unit_axis_df.columns):
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    required = {
+        "region",
+        "axis_name",
+        "axis_source",
+        "unit_key",
+        "value_abs_mean_over_significant_windows",
+    }
+    if not required.issubset(unit_axis_collapsed_df.columns):
+        return pd.DataFrame(), pd.DataFrame()
 
-    df = unit_axis_df.copy()
+    df = unit_axis_collapsed_df.copy()
     df["region"] = df["region"].fillna("unknown").astype(str)
-    df = df.loc[df["counts_toward_significance"]].copy()
-    if df.empty:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
     summary_rows: list[dict] = []
-    for (axis_source, region, window_name, axis_name), grp in df.groupby(
-        ["axis_source", "region", "window_name", "axis_name"], dropna=False
+    for (axis_source, region, axis_name), grp in df.groupby(
+        ["axis_source", "region", "axis_name"], dropna=False
     ):
-        signed = grp["value_signed"].to_numpy(dtype=float)
-        signed = signed[np.isfinite(signed)]
-        if signed.size == 0:
+        vals = grp["value_abs_mean_over_significant_windows"].to_numpy(dtype=float).reshape(-1)
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
             continue
-        abs_vals = np.abs(signed)
-        t_stat, t_p = _safe_ttest_1samp_zero(signed)
-        w_stat, w_p = _safe_wilcoxon(signed)
         summary_rows.append(
             {
                 "axis_source": str(axis_source),
                 "region": str(region),
-                "window_name": str(window_name),
                 "axis_name": str(axis_name),
-                "n_units": int(signed.size),
-                "mean_signed": float(np.mean(signed)),
-                "median_signed": float(np.median(signed)),
-                "std_signed": float(np.std(signed, ddof=1)) if signed.size > 1 else np.nan,
-                "mean_abs": float(np.mean(abs_vals)),
-                "median_abs": float(np.median(abs_vals)),
-                "std_abs": float(np.std(abs_vals, ddof=1)) if abs_vals.size > 1 else np.nan,
-                "bias_ttest_statistic": t_stat,
-                "bias_ttest_p_value": t_p,
-                "bias_wilcoxon_statistic": w_stat,
-                "bias_wilcoxon_p_value": w_p,
+                "n_units": int(vals.size),
+                "mean_abs": float(np.mean(vals)),
+                "median_abs": float(np.median(vals)),
+                "std_abs": float(np.std(vals, ddof=1)) if vals.size > 1 else np.nan,
             }
         )
     summary_df = pd.DataFrame(summary_rows)
     if not summary_df.empty:
-        summary_df = _apply_adjusted_pvalues(
-            summary_df,
-            p_col="bias_ttest_p_value",
-            out_col="bias_ttest_p_value_adjusted",
-            method=settings.pvalue_correction,
-            group_cols=("axis_source",),
-        )
-        summary_df = _apply_adjusted_pvalues(
-            summary_df,
-            p_col="bias_wilcoxon_p_value",
-            out_col="bias_wilcoxon_p_value_adjusted",
-            method=settings.pvalue_correction,
-            group_cols=("axis_source",),
-        )
-        summary_df["bias_ttest_significant_adjusted"] = (
-            summary_df["bias_ttest_p_value_adjusted"].to_numpy(dtype=float) < float(settings.alpha)
-        )
-        summary_df["bias_wilcoxon_significant_adjusted"] = (
-            summary_df["bias_wilcoxon_p_value_adjusted"].to_numpy(dtype=float) < float(settings.alpha)
-        )
         summary_df = summary_df.sort_values(
-            ["window_name", "axis_source", "region", "axis_name"]
+            ["axis_source", "region", "axis_name"]
         ).reset_index(drop=True)
 
     pairwise_rows: list[dict] = []
-    for (axis_source, window_name, axis_name), grp in df.groupby(
-        ["axis_source", "window_name", "axis_name"], dropna=False
-    ):
-        by_region_signed = {}
+    for (axis_source, axis_name), grp in df.groupby(["axis_source", "axis_name"], dropna=False):
+        by_region_vals = {}
         for region, g_region in grp.groupby("region", dropna=False):
-            vals = g_region["value_signed"].to_numpy(dtype=float)
+            vals = g_region["value_abs_mean_over_significant_windows"].to_numpy(dtype=float).reshape(-1)
             vals = vals[np.isfinite(vals)]
             if vals.size >= int(settings.min_units_per_region):
-                by_region_signed[str(region)] = vals
-        regions = sorted(by_region_signed.keys())
+                by_region_vals[str(region)] = vals
+        regions = sorted(by_region_vals.keys())
         for region_a, region_b in combinations(regions, 2):
-            arr_a_signed = by_region_signed[region_a]
-            arr_b_signed = by_region_signed[region_b]
-            arr_a_abs = np.abs(arr_a_signed)
-            arr_b_abs = np.abs(arr_b_signed)
-            for metric, arr_a, arr_b in (
-                ("signed", arr_a_signed, arr_b_signed),
-                ("abs", arr_a_abs, arr_b_abs),
-            ):
-                t_stat, t_p = _safe_ttest_ind(arr_a, arr_b)
-                u_stat, u_p = _safe_mannwhitneyu(arr_a, arr_b)
-                for test_name, stat, p_value in (
-                    ("welch_ttest", t_stat, t_p),
-                    ("mannwhitneyu", u_stat, u_p),
-                ):
-                    pairwise_rows.append(
-                        {
-                            "axis_source": str(axis_source),
-                            "window_name": str(window_name),
-                            "axis_name": str(axis_name),
-                            "metric": metric,
-                            "test_name": test_name,
-                            "region_a": region_a,
-                            "region_b": region_b,
-                            "n_units_a": int(arr_a.size),
-                            "n_units_b": int(arr_b.size),
-                            "mean_a": float(np.mean(arr_a)),
-                            "mean_b": float(np.mean(arr_b)),
-                            "median_a": float(np.median(arr_a)),
-                            "median_b": float(np.median(arr_b)),
-                            "delta_mean_a_minus_b": float(np.mean(arr_a) - np.mean(arr_b)),
-                            "delta_median_a_minus_b": float(np.median(arr_a) - np.median(arr_b)),
-                            "statistic": stat,
-                            "p_value": p_value,
-                        }
-                    )
+            arr_a = by_region_vals[region_a]
+            arr_b = by_region_vals[region_b]
+            stat, p_value = _safe_ttest_ind(arr_a, arr_b)
+            pairwise_rows.append(
+                {
+                    "axis_source": str(axis_source),
+                    "axis_name": str(axis_name),
+                    "test_name": "welch_ttest",
+                    "region_a": region_a,
+                    "region_b": region_b,
+                    "n_units_a": int(arr_a.size),
+                    "n_units_b": int(arr_b.size),
+                    "mean_a": float(np.mean(arr_a)),
+                    "mean_b": float(np.mean(arr_b)),
+                    "median_a": float(np.median(arr_a)),
+                    "median_b": float(np.median(arr_b)),
+                    "delta_mean_a_minus_b": float(np.mean(arr_a) - np.mean(arr_b)),
+                    "delta_median_a_minus_b": float(np.median(arr_a) - np.median(arr_b)),
+                    "statistic": stat,
+                    "p_value": p_value,
+                }
+            )
     pairwise_df = pd.DataFrame(pairwise_rows)
     if not pairwise_df.empty:
         pairwise_df = _apply_adjusted_pvalues(
@@ -1112,123 +1066,16 @@ def _build_region_axis_tables(
             p_col="p_value",
             out_col="p_value_adjusted",
             method=settings.pvalue_correction,
-            group_cols=("axis_source", "window_name", "axis_name", "metric", "test_name"),
+            group_cols=("axis_source", "axis_name"),
         )
         pairwise_df["significant_adjusted"] = (
             pairwise_df["p_value_adjusted"].to_numpy(dtype=float) < float(settings.alpha)
         )
         pairwise_df = pairwise_df.sort_values(
-            ["window_name", "axis_source", "axis_name", "metric", "test_name", "region_a", "region_b"]
+            ["axis_source", "axis_name", "region_a", "region_b"]
         ).reset_index(drop=True)
 
-    within_rows: list[dict] = []
-    for (axis_source, region, window_name), grp in df.groupby(
-        ["axis_source", "region", "window_name"], dropna=False
-    ):
-        pivot_signed = grp.pivot_table(
-            index="unit_key",
-            columns="axis_name",
-            values="value_signed",
-            aggfunc="mean",
-        ).reindex(columns=list(AXIS_ORDER))
-        pivot_abs = pivot_signed.abs()
-        for metric, pivot in (("signed", pivot_signed), ("abs", pivot_abs)):
-            for axis_a, axis_b in combinations(AXIS_ORDER, 2):
-                pair_mat = pivot.loc[:, [axis_a, axis_b]].dropna().copy()
-                if pair_mat.shape[0] < 2:
-                    continue
-                arr_a = pair_mat[axis_a].to_numpy(dtype=float)
-                arr_b = pair_mat[axis_b].to_numpy(dtype=float)
-                t_stat, t_p = _safe_ttest_rel(arr_a, arr_b)
-                w_stat, w_p = _safe_wilcoxon(arr_a, arr_b)
-                for test_name, stat, p_value in (
-                    ("paired_ttest", t_stat, t_p),
-                    ("wilcoxon", w_stat, w_p),
-                ):
-                    within_rows.append(
-                        {
-                            "axis_source": str(axis_source),
-                            "region": str(region),
-                            "window_name": str(window_name),
-                            "metric": metric,
-                            "axis_a": str(axis_a),
-                            "axis_b": str(axis_b),
-                            "test_name": test_name,
-                            "n_units_paired": int(pair_mat.shape[0]),
-                            "mean_axis_a": float(np.mean(arr_a)),
-                            "mean_axis_b": float(np.mean(arr_b)),
-                            "median_axis_a": float(np.median(arr_a)),
-                            "median_axis_b": float(np.median(arr_b)),
-                            "delta_mean_a_minus_b": float(np.mean(arr_a) - np.mean(arr_b)),
-                            "delta_median_a_minus_b": float(np.median(arr_a) - np.median(arr_b)),
-                            "statistic": stat,
-                            "p_value": p_value,
-                        }
-                    )
-    within_df = pd.DataFrame(within_rows)
-    if not within_df.empty:
-        within_df = _apply_adjusted_pvalues(
-            within_df,
-            p_col="p_value",
-            out_col="p_value_adjusted",
-            method=settings.pvalue_correction,
-            group_cols=("axis_source", "metric", "test_name"),
-        )
-        within_df["significant_adjusted"] = (
-            within_df["p_value_adjusted"].to_numpy(dtype=float) < float(settings.alpha)
-        )
-        within_df = within_df.sort_values(
-            ["window_name", "axis_source", "region", "metric", "axis_a", "axis_b", "test_name"]
-        ).reset_index(drop=True)
-
-    friedman_rows: list[dict] = []
-    for (axis_source, region, window_name), grp in df.groupby(
-        ["axis_source", "region", "window_name"], dropna=False
-    ):
-        pivot_signed = grp.pivot_table(
-            index="unit_key",
-            columns="axis_name",
-            values="value_signed",
-            aggfunc="mean",
-        ).reindex(columns=list(AXIS_ORDER))
-        pivot_abs = pivot_signed.abs()
-        for metric, pivot in (("signed", pivot_signed), ("abs", pivot_abs)):
-            mat = pivot.dropna()
-            if mat.shape[0] < 3:
-                continue
-            stat, p_value = friedmanchisquare(
-                mat[AXIS_ORDER[0]].to_numpy(dtype=float),
-                mat[AXIS_ORDER[1]].to_numpy(dtype=float),
-                mat[AXIS_ORDER[2]].to_numpy(dtype=float),
-            )
-            friedman_rows.append(
-                {
-                    "axis_source": str(axis_source),
-                    "region": str(region),
-                    "window_name": str(window_name),
-                    "metric": metric,
-                    "n_units_complete": int(mat.shape[0]),
-                    "statistic": float(stat) if np.isfinite(stat) else np.nan,
-                    "p_value": float(p_value) if np.isfinite(p_value) else np.nan,
-                }
-            )
-    friedman_df = pd.DataFrame(friedman_rows)
-    if not friedman_df.empty:
-        friedman_df = _apply_adjusted_pvalues(
-            friedman_df,
-            p_col="p_value",
-            out_col="p_value_adjusted",
-            method=settings.pvalue_correction,
-            group_cols=("axis_source", "metric"),
-        )
-        friedman_df["significant_adjusted"] = (
-            friedman_df["p_value_adjusted"].to_numpy(dtype=float) < float(settings.alpha)
-        )
-        friedman_df = friedman_df.sort_values(
-            ["window_name", "axis_source", "region", "metric"]
-        ).reset_index(drop=True)
-
-    return summary_df, pairwise_df, within_df, friedman_df
+    return summary_df, pairwise_df
 
 
 def run_fixation_roi_vs_period_factorial_analysis(
@@ -1254,6 +1101,8 @@ def run_fixation_roi_vs_period_factorial_analysis(
             return {
                 "unit_terms": pd.DataFrame(),
                 "unit_axis_values": pd.DataFrame(),
+                "unit_axis_collapsed": pd.DataFrame(),
+                "unit_axis_significance": pd.DataFrame(),
                 "unit_window_summary": pd.DataFrame(),
                 "region_significant_fractions": pd.DataFrame(),
                 "region_significant_fraction_pairwise": pd.DataFrame(),
@@ -1278,6 +1127,8 @@ def run_fixation_roi_vs_period_factorial_analysis(
         return {
             "unit_terms": pd.DataFrame(),
             "unit_axis_values": pd.DataFrame(),
+            "unit_axis_collapsed": pd.DataFrame(),
+            "unit_axis_significance": pd.DataFrame(),
             "unit_window_summary": pd.DataFrame(),
             "region_significant_fractions": pd.DataFrame(),
             "region_significant_fraction_pairwise": pd.DataFrame(),
@@ -1299,6 +1150,8 @@ def run_fixation_roi_vs_period_factorial_analysis(
         return {
             "unit_terms": pd.DataFrame(),
             "unit_axis_values": pd.DataFrame(),
+            "unit_axis_collapsed": pd.DataFrame(),
+            "unit_axis_significance": pd.DataFrame(),
             "unit_window_summary": pd.DataFrame(),
             "region_significant_fractions": pd.DataFrame(),
             "region_significant_fraction_pairwise": pd.DataFrame(),
@@ -1432,17 +1285,26 @@ def run_fixation_roi_vs_period_factorial_analysis(
             ["date", "region", "unit_uuid", "window_name"]
         ).reset_index(drop=True)
 
+    unit_axis_significance_df = _build_unit_axis_significance_table(
+        unit_term_df,
+        settings=settings,
+    )
+    unit_axis_collapsed_df = _build_unit_axis_collapsed_magnitude_table(
+        unit_axis_df,
+        unit_axis_significance_df,
+    )
+
     (
         region_fraction_df,
         region_fraction_pairwise_df,
-        region_fraction_within_df,
-    ) = _build_region_fraction_tables(unit_term_df, settings=settings)
+    ) = _build_region_fraction_tables(unit_axis_significance_df, settings=settings)
     (
         region_axis_summary_df,
         region_axis_pairwise_df,
-        region_axis_within_df,
-        region_axis_friedman_df,
-    ) = _build_region_axis_tables(unit_axis_df, settings=settings)
+    ) = _build_region_axis_tables(unit_axis_collapsed_df, settings=settings)
+    region_fraction_within_df = pd.DataFrame()
+    region_axis_within_df = pd.DataFrame()
+    region_axis_friedman_df = pd.DataFrame()
 
     cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
@@ -1450,6 +1312,7 @@ def run_fixation_roi_vs_period_factorial_analysis(
 
     unit_term_csv = out_root / _ensure_filename(settings.unit_term_filename, ".csv")
     unit_axis_csv = out_root / _ensure_filename(settings.unit_axis_filename, ".csv")
+    unit_axis_collapsed_csv = out_root / _ensure_filename(settings.unit_axis_collapsed_filename, ".csv")
     unit_window_csv = out_root / _ensure_filename(settings.unit_window_summary_filename, ".csv")
     region_fraction_csv = out_root / _ensure_filename(settings.region_fraction_filename, ".csv")
     region_fraction_pairwise_csv = out_root / _ensure_filename(settings.region_fraction_pairwise_filename, ".csv")
@@ -1465,6 +1328,7 @@ def run_fixation_roi_vs_period_factorial_analysis(
 
     unit_term_df.to_csv(unit_term_csv, index=False)
     unit_axis_df.to_csv(unit_axis_csv, index=False)
+    unit_axis_collapsed_df.to_csv(unit_axis_collapsed_csv, index=False)
     unit_window_df.to_csv(unit_window_csv, index=False)
     region_fraction_df.to_csv(region_fraction_csv, index=False)
     region_fraction_pairwise_df.to_csv(region_fraction_pairwise_csv, index=False)
@@ -1490,9 +1354,16 @@ def run_fixation_roi_vs_period_factorial_analysis(
             "parallelization_scope": str(settings.parallelization_scope),
             "n_units": int(unit_term_df["unit_key"].nunique()) if not unit_term_df.empty else 0,
             "n_regions": int(unit_term_df["region"].astype(str).nunique()) if not unit_term_df.empty else 0,
+            "n_significant_unit_axis_rows": (
+                int(unit_axis_significance_df.loc[unit_axis_significance_df["is_significant_axis"]].shape[0])
+                if not unit_axis_significance_df.empty and "is_significant_axis" in unit_axis_significance_df.columns
+                else 0
+            ),
         },
         "unit_terms": unit_term_df,
         "unit_axis_values": unit_axis_df,
+        "unit_axis_collapsed": unit_axis_collapsed_df,
+        "unit_axis_significance": unit_axis_significance_df,
         "unit_window_summary": unit_window_df,
         "region_significant_fractions": region_fraction_df,
         "region_significant_fraction_pairwise": region_fraction_pairwise_df,
@@ -1533,13 +1404,12 @@ def _print_table_block(
 def print_fixation_roi_vs_period_factorial_summary(result: dict) -> None:
     """Print human-readable summary tables for ROI-vs-period factorial outputs."""
     unit_term_df = result.get("unit_terms")
+    unit_axis_significance_df = result.get("unit_axis_significance")
+    unit_axis_collapsed_df = result.get("unit_axis_collapsed")
     region_fraction_df = result.get("region_significant_fractions")
     region_fraction_pairwise_df = result.get("region_significant_fraction_pairwise")
-    region_fraction_within_df = result.get("region_significant_fraction_within_region")
     region_axis_summary_df = result.get("region_axis_summary")
     region_axis_pairwise_df = result.get("region_axis_pairwise")
-    region_axis_within_df = result.get("region_axis_within_region")
-    region_axis_friedman_df = result.get("region_axis_friedman")
 
     if unit_term_df is None or unit_term_df.empty:
         print("[analysis] no unit-term factorial rows were produced")
@@ -1552,6 +1422,14 @@ def print_fixation_roi_vs_period_factorial_summary(result: dict) -> None:
         "[analysis] roi-vs-period factorial unit output: "
         f"units={n_units}, term_rows={n_term_rows}, regions={n_regions}"
     )
+    if unit_axis_significance_df is not None and not unit_axis_significance_df.empty:
+        n_sig_axis = int(unit_axis_significance_df["is_significant_axis"].sum())
+        print(
+            "[analysis] collapsed unit-axis significance rows: "
+            f"{len(unit_axis_significance_df)} (significant={n_sig_axis})"
+        )
+    if unit_axis_collapsed_df is not None and not unit_axis_collapsed_df.empty:
+        print(f"[analysis] collapsed unit-axis magnitude rows: {len(unit_axis_collapsed_df)}")
     if region_fraction_df is not None and not region_fraction_df.empty:
         print(f"[analysis] region significant-fraction rows: {len(region_fraction_df)}")
     if region_fraction_pairwise_df is not None and not region_fraction_pairwise_df.empty:
@@ -1585,49 +1463,17 @@ def print_fixation_roi_vs_period_factorial_summary(result: dict) -> None:
             else pd.DataFrame()
         )
         if not frac_region.empty:
-            frac_region = frac_region.sort_values(["window_name", "axis_name"]).reset_index(drop=True)
+            frac_region = frac_region.sort_values(["axis_name"]).reset_index(drop=True)
         _print_table_block(
             "Selective Fraction By Axis",
             frac_region,
             columns=(
-                "window_name",
                 "axis_name",
                 "selective_units",
                 "total_units",
                 "fraction_selective",
-                "significance_mode",
             ),
             empty_message="no selective-fraction rows",
-        )
-
-        frac_within_region = (
-            region_fraction_within_df.loc[region_fraction_within_df["region"].astype(str) == str(region)].copy()
-            if (
-                region_fraction_within_df is not None
-                and not region_fraction_within_df.empty
-                and "region" in region_fraction_within_df.columns
-            )
-            else pd.DataFrame()
-        )
-        if not frac_within_region.empty:
-            frac_within_region = frac_within_region.sort_values(
-                ["window_name", "axis_a", "axis_b"]
-            ).reset_index(drop=True)
-        _print_table_block(
-            "Within-Region Selective Fraction Comparisons",
-            frac_within_region,
-            columns=(
-                "window_name",
-                "axis_a",
-                "axis_b",
-                "fraction_axis_a",
-                "fraction_axis_b",
-                "fraction_diff_a_minus_b",
-                "p_value",
-                "p_value_adjusted",
-                "significant_adjusted",
-            ),
-            empty_message="no within-region fraction comparisons",
         )
 
         axis_summary_region = (
@@ -1641,141 +1487,54 @@ def print_fixation_roi_vs_period_factorial_summary(result: dict) -> None:
         )
         if not axis_summary_region.empty:
             axis_summary_region = axis_summary_region.sort_values(
-                ["window_name", "axis_source", "axis_name"]
+                ["axis_source", "axis_name"]
             ).reset_index(drop=True)
         _print_table_block(
-            "Axis Summary (Signed + Absolute + Bias)",
+            "Axis Magnitude Summary (Significant Units Only)",
             axis_summary_region,
             columns=(
-                "window_name",
                 "axis_source",
                 "axis_name",
                 "n_units",
-                "mean_signed",
-                "median_signed",
                 "mean_abs",
                 "median_abs",
-                "bias_ttest_p_value_adjusted",
-                "bias_wilcoxon_p_value_adjusted",
+                "std_abs",
             ),
             empty_message="no axis-summary rows",
         )
 
-        axis_within_region = (
-            region_axis_within_df.loc[region_axis_within_df["region"].astype(str) == str(region)].copy()
-            if (
-                region_axis_within_df is not None
-                and not region_axis_within_df.empty
-                and "region" in region_axis_within_df.columns
-            )
-            else pd.DataFrame()
-        )
-        if not axis_within_region.empty:
-            axis_within_region = axis_within_region.sort_values(
-                ["window_name", "axis_source", "metric", "axis_a", "axis_b", "test_name"]
-            ).reset_index(drop=True)
-        _print_table_block(
-            "Within-Region Axis Comparisons",
-            axis_within_region,
-            columns=(
-                "window_name",
-                "axis_source",
-                "metric",
-                "axis_a",
-                "axis_b",
-                "test_name",
-                "delta_mean_a_minus_b",
-                "p_value",
-                "p_value_adjusted",
-                "significant_adjusted",
-            ),
-            empty_message="no within-region axis comparisons",
-        )
-
-        axis_friedman_region = (
-            region_axis_friedman_df.loc[region_axis_friedman_df["region"].astype(str) == str(region)].copy()
-            if (
-                region_axis_friedman_df is not None
-                and not region_axis_friedman_df.empty
-                and "region" in region_axis_friedman_df.columns
-            )
-            else pd.DataFrame()
-        )
-        if not axis_friedman_region.empty:
-            axis_friedman_region = axis_friedman_region.sort_values(
-                ["window_name", "axis_source", "metric"]
-            ).reset_index(drop=True)
-        _print_table_block(
-            "Friedman Omnibus Across Axes",
-            axis_friedman_region,
-            columns=(
-                "window_name",
-                "axis_source",
-                "metric",
-                "n_units_complete",
-                "statistic",
-                "p_value",
-                "p_value_adjusted",
-                "significant_adjusted",
-            ),
-            empty_message="no friedman rows",
-        )
-
-    pairwise_fraction_sig = (
-        region_fraction_pairwise_df.loc[region_fraction_pairwise_df["significant_adjusted"]].copy()
-        if (
-            region_fraction_pairwise_df is not None
-            and not region_fraction_pairwise_df.empty
-            and "significant_adjusted" in region_fraction_pairwise_df.columns
-        )
-        else pd.DataFrame()
-    )
-    if not pairwise_fraction_sig.empty:
-        pairwise_fraction_sig = pairwise_fraction_sig.sort_values(
-            ["window_name", "axis_name", "region_a", "region_b"]
-        ).reset_index(drop=True)
     _print_table_block(
-        "Significant Cross-Region Fraction Differences (Adjusted)",
-        pairwise_fraction_sig,
+        "Cross-Region Fraction Differences (All Region Pairs, Adjusted)",
+        region_fraction_pairwise_df,
         columns=(
-            "window_name",
             "axis_name",
             "region_a",
             "region_b",
             "fraction_a",
             "fraction_b",
             "fraction_diff_a_minus_b",
+            "p_value",
             "p_value_adjusted",
+            "significant_adjusted",
         ),
-        empty_message="no significant cross-region fraction differences",
+        empty_message="no cross-region fraction comparison rows",
     )
 
-    pairwise_axis_sig = (
-        region_axis_pairwise_df.loc[region_axis_pairwise_df["significant_adjusted"]].copy()
-        if (
-            region_axis_pairwise_df is not None
-            and not region_axis_pairwise_df.empty
-            and "significant_adjusted" in region_axis_pairwise_df.columns
-        )
-        else pd.DataFrame()
-    )
-    if not pairwise_axis_sig.empty:
-        pairwise_axis_sig = pairwise_axis_sig.sort_values(
-            ["window_name", "axis_source", "axis_name", "metric", "test_name", "region_a", "region_b"]
-        ).reset_index(drop=True)
     _print_table_block(
-        "Significant Cross-Region Axis Differences (Adjusted)",
-        pairwise_axis_sig,
+        "Cross-Region Axis Magnitude Differences (Welch, Adjusted)",
+        region_axis_pairwise_df,
         columns=(
-            "window_name",
             "axis_source",
             "axis_name",
-            "metric",
             "test_name",
             "region_a",
             "region_b",
+            "mean_a",
+            "mean_b",
             "delta_mean_a_minus_b",
+            "p_value",
             "p_value_adjusted",
+            "significant_adjusted",
         ),
-        empty_message="no significant cross-region axis differences",
+        empty_message="no cross-region axis comparison rows",
     )

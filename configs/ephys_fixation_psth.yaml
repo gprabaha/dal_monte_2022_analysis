@@ -136,6 +136,7 @@ selective_significance_windows: [pre_fix, peri_fix, post_fix]
 roi_vs_period_output_subdir: ephys/psth/fixation_roi_vs_period_factorial
 roi_vs_period_unit_term_filename: unit_glm_terms.csv
 roi_vs_period_unit_axis_filename: unit_axis_values.csv
+roi_vs_period_unit_axis_collapsed_filename: unit_axis_collapsed_magnitude.csv
 roi_vs_period_unit_window_summary_filename: unit_window_condition_means.csv
 roi_vs_period_region_fraction_filename: region_significant_fractions.csv
 roi_vs_period_region_fraction_pairwise_filename: region_significant_fraction_pairwise.csv
@@ -147,7 +148,7 @@ roi_vs_period_region_axis_friedman_filename: region_axis_friedman.csv
 roi_vs_period_output_pickle_filename: results.pkl
 # If null, defaults to selective_windows_ms.
 roi_vs_period_windows_ms: null
-# Windows used for significance-based region summaries/comparisons.
+# Windows used to collapse per-unit axis significance (any significant window -> selective).
 roi_vs_period_significance_windows: [pre_fix, peri_fix, post_fix]
 roi_vs_period_smooth_before_window_average: true
 roi_vs_period_smoothing_sigma_ms: 20.0

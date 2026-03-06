@@ -76,6 +76,10 @@ def main() -> None:
         ),
         unit_term_filename=cfg.get("roi_vs_period_unit_term_filename", "unit_glm_terms.csv"),
         unit_axis_filename=cfg.get("roi_vs_period_unit_axis_filename", "unit_axis_values.csv"),
+        unit_axis_collapsed_filename=cfg.get(
+            "roi_vs_period_unit_axis_collapsed_filename",
+            "unit_axis_collapsed_magnitude.csv",
+        ),
         unit_window_summary_filename=cfg.get(
             "roi_vs_period_unit_window_summary_filename",
             "unit_window_condition_means.csv",

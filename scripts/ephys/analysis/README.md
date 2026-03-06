@@ -38,9 +38,14 @@ Current scripts:
   - per-unit GLM term table (`roi_main`, `period_main`, `interaction`)
   - per-unit axis-value table (`face_object`, `interactive_state`, `cross_interaction`)
     from both condition means and GLM coefficients
-  - region-level selective-fraction tables (including pairwise region comparisons
-    and within-region axis-pair comparisons with multiple-comparison correction)
-  - region-level axis summary and pairwise/within/friedman comparison tables
+  - per-unit collapsed axis-significance table (collapsed across configured
+    significance windows)
+  - per-unit collapsed axis magnitudes (absolute values averaged across
+    significant windows only)
+  - region-level selective-fraction tables and cross-region pairwise fraction
+    comparisons (multiple-comparison corrected)
+  - region-level axis-magnitude summaries and Welch cross-region pairwise
+    comparisons (multiple-comparison corrected)
 - `build_fixation_preference_index.py`
   Computes per-bin pairwise fixation preference indices for each unit using:
   - numerator: `A - B` where A/B are condition mean firing rates (Hz) per bin
@@ -132,6 +137,7 @@ Config:
   - `roi_vs_period_output_subdir`
   - `roi_vs_period_unit_term_filename`
   - `roi_vs_period_unit_axis_filename`
+  - `roi_vs_period_unit_axis_collapsed_filename`
   - `roi_vs_period_unit_window_summary_filename`
   - `roi_vs_period_region_fraction_filename`
   - `roi_vs_period_region_fraction_pairwise_filename`
