@@ -120,6 +120,45 @@ selective_windows_ms:
 # Keep full_fix in selective_windows_ms for reporting, but exclude it from calls.
 selective_significance_windows: [pre_fix, peri_fix, post_fix]
 
+# ROI-vs-period factorial analysis from trial fixation PSTHs.
+# Uses a 2x2 design:
+# - ROI type: face vs object
+# - Period state: interactive vs non-interactive
+# For each unit and window:
+# - smooth trial PSTHs
+# - convert to Hz
+# - compute trial-level window means
+# - fit GLM: response ~ roi + period + roi:period
+# Also stores axis values:
+# - face_object
+# - interactive_state
+# - cross_interaction
+roi_vs_period_output_subdir: ephys/psth/fixation_roi_vs_period_factorial
+roi_vs_period_unit_term_filename: unit_glm_terms.csv
+roi_vs_period_unit_axis_filename: unit_axis_values.csv
+roi_vs_period_unit_window_summary_filename: unit_window_condition_means.csv
+roi_vs_period_region_fraction_filename: region_significant_fractions.csv
+roi_vs_period_region_fraction_pairwise_filename: region_significant_fraction_pairwise.csv
+roi_vs_period_region_fraction_within_region_filename: region_significant_fraction_within_region.csv
+roi_vs_period_region_axis_summary_filename: region_axis_summary.csv
+roi_vs_period_region_axis_pairwise_filename: region_axis_pairwise.csv
+roi_vs_period_region_axis_within_region_filename: region_axis_within_region.csv
+roi_vs_period_region_axis_friedman_filename: region_axis_friedman.csv
+roi_vs_period_output_pickle_filename: results.pkl
+# If null, defaults to selective_windows_ms.
+roi_vs_period_windows_ms: null
+# Windows used for significance-based region summaries/comparisons.
+roi_vs_period_significance_windows: [pre_fix, peri_fix, post_fix]
+roi_vs_period_smooth_before_window_average: true
+roi_vs_period_smoothing_sigma_ms: 20.0
+roi_vs_period_min_trials_per_cell: 2
+roi_vs_period_min_units_per_region: 5
+roi_vs_period_alpha: 0.05
+roi_vs_period_pvalue_correction: fdr_bh
+# unit significance mode options: raw | within_unit_corrected
+roi_vs_period_unit_significance_mode: within_unit_corrected
+roi_vs_period_use_parallel: true
+
 # Per-bin pairwise preference-index analysis from fixation PSTH trial rows.
 # For each pair (A, B), computes index=(A-B)/denominator and appends
 # selectivity labels from pair_selectivity.csv and unit_selectivity.csv.

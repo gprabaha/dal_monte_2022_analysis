@@ -29,6 +29,18 @@ Current scripts:
   - object non-interactive
   - object (unsplit)
   and normalized relative components for triangular plotting.
+- `build_fixation_roi_vs_period_factorial.py`
+  Runs a per-unit 2x2 factorial analysis from trial fixation PSTHs:
+  - factors: ROI (`face` vs `object`) and period (`interactive` vs `non_interactive`)
+  - pipeline per window: smooth trial PSTH, convert to Hz, compute trial window means
+  - GLM: `response ~ roi + period + roi:period`
+  Exports:
+  - per-unit GLM term table (`roi_main`, `period_main`, `interaction`)
+  - per-unit axis-value table (`face_object`, `interactive_state`, `cross_interaction`)
+    from both condition means and GLM coefficients
+  - region-level selective-fraction tables (including pairwise region comparisons
+    and within-region axis-pair comparisons with multiple-comparison correction)
+  - region-level axis summary and pairwise/within/friedman comparison tables
 - `build_fixation_preference_index.py`
   Computes per-bin pairwise fixation preference indices for each unit using:
   - numerator: `A - B` where A/B are condition mean firing rates (Hz) per bin
@@ -117,6 +129,28 @@ Config:
   - `selective_use_parallel`
   - `selective_windows_ms`
   - `selective_significance_windows`
+  - `roi_vs_period_output_subdir`
+  - `roi_vs_period_unit_term_filename`
+  - `roi_vs_period_unit_axis_filename`
+  - `roi_vs_period_unit_window_summary_filename`
+  - `roi_vs_period_region_fraction_filename`
+  - `roi_vs_period_region_fraction_pairwise_filename`
+  - `roi_vs_period_region_fraction_within_region_filename`
+  - `roi_vs_period_region_axis_summary_filename`
+  - `roi_vs_period_region_axis_pairwise_filename`
+  - `roi_vs_period_region_axis_within_region_filename`
+  - `roi_vs_period_region_axis_friedman_filename`
+  - `roi_vs_period_output_pickle_filename`
+  - `roi_vs_period_windows_ms`
+  - `roi_vs_period_significance_windows`
+  - `roi_vs_period_smooth_before_window_average`
+  - `roi_vs_period_smoothing_sigma_ms`
+  - `roi_vs_period_min_trials_per_cell`
+  - `roi_vs_period_min_units_per_region`
+  - `roi_vs_period_alpha`
+  - `roi_vs_period_pvalue_correction`
+  - `roi_vs_period_unit_significance_mode`
+  - `roi_vs_period_use_parallel`
   - `average_target_bin_size_ms`
   - `average_target_bin_step_ms`
   - `selective_index_average_output_subdir`
