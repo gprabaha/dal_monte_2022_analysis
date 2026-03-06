@@ -296,16 +296,19 @@ Config:
   - shows condition geometry and labeled formulas for axis definitions.
 
 - `plot_fixation_roi_vs_period_axis_space.py`
-  Plots ROI-vs-period stacked 2D density surfaces (one subplot per region)
-  using per-unit mean magnitude across all three axes:
-  - density surface is radial on the 2D plane and peaks at region mean magnitude
-  - intensity fades inward/outward from that mean ring
-  - overlays plain origin-to-mean lines for `face_object`, `interactive_state`,
-    and `cross_interaction` directions (no arrowheads)
-  - uses shared x/y limits across all regional subplots for direct comparison
+  Plots ROI-vs-period 3D density sheets in region columns (1x4 by default):
+  - each unit contributes one 2D point per window from the
+    face-object / interactive-state plane, with radial scaling from
+    mean magnitude across all three axes
+  - a weighted 2D KDE defines the sheet height (`z = relative density`)
+  - only the 95% support region is rendered for the sheet
+  - mean axis lines for `face_object`, `interactive_state`,
+    and `cross_interaction` are drawn on a slightly lower base plane
+    (no endpoint markers)
+  - uses shared x/y limits across region panels for comparison
   Uses ROI-vs-period analysis outputs (`results.pkl`) and respects analysis mode:
-  - `split_by_window`: writes one stacked figure per window
-  - `averaged_across_windows`: writes one stacked figure
+  - `split_by_window`: writes one 3D region-column figure per window
+  - `averaged_across_windows`: writes one 3D region-column figure
 
   Config:
   - `roi_vs_period_plot_input_subdir`

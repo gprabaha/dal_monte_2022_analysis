@@ -1,4 +1,4 @@
-"""Plot ROI-vs-period 2D axis-space summaries (region panels + overlay)."""
+"""Plot ROI-vs-period 3D axis-space regional surface summaries."""
 
 from __future__ import annotations
 
@@ -40,8 +40,8 @@ def _normalize_str_tuple(raw, fallback: tuple[str, ...]) -> tuple[str, ...]:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Plot ROI-vs-period axis-space vectors with 95% faded disks, "
-            "saving both per-region panels and all-region overlay."
+            "Plot ROI-vs-period 3D regional density sheets with 95% support "
+            "and mean axis lines on the base plane."
         ),
     )
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")

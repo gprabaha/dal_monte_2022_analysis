@@ -278,6 +278,72 @@ def _extract_axis_magnitude_units(
     return pd.DataFrame(rows)
 
 
+def _extract_axis_signed_units(
+    payload: dict,
+    settings: FixationROIVsPeriodFactorialPlotSettings,
+) -> pd.DataFrame:
+    unit_axis_df = _as_df(payload.get("unit_axis_values"))
+    if unit_axis_df.empty:
+        return pd.DataFrame()
+    meta = payload.get("meta", {}) if isinstance(payload, dict) else {}
+    mode = _normalize_mode(meta.get("axis_comparison_mode", settings.axis_comparison_mode))
+    sig_windows = [
+        str(win)
+        for win in meta.get("significance_windows", ("pre_fix", "peri_fix", "post_fix"))
+        if str(win).strip()
+    ]
+
+    df = unit_axis_df.copy()
+    if "axis_source" in df.columns:
+        df["axis_source"] = df["axis_source"].astype(str)
+        df = df.loc[df["axis_source"] == str(settings.axis_magnitude_source)].copy()
+    if df.empty:
+        return pd.DataFrame()
+    if "counts_toward_significance" in df.columns:
+        df = df.loc[df["counts_toward_significance"].map(bool)].copy()
+    elif "window_name" in df.columns:
+        df = df.loc[df["window_name"].astype(str).isin(set(sig_windows))].copy()
+    if df.empty:
+        return pd.DataFrame()
+
+    df["region"] = df["region"].fillna("unknown").astype(str).str.lower()
+    df["axis_name"] = df["axis_name"].astype(str)
+    df["window_name"] = df["window_name"].astype(str)
+    df["value_signed"] = pd.to_numeric(df["value_signed"], errors="coerce")
+    df = df.loc[df["value_signed"].notna()].copy()
+    if df.empty:
+        return pd.DataFrame()
+    if "unit_key" not in df.columns:
+        df = df.reset_index().rename(columns={"index": "unit_key"})
+    df["unit_key"] = df["unit_key"].astype(str)
+
+    if mode == "split_by_window":
+        out = df.copy()
+        out["axis_comparison_mode"] = mode
+        return out
+
+    group_cols = [col for col in ("unit_key", "region", "axis_name", "axis_source") if col in df.columns]
+    rows: list[dict] = []
+    for key_vals, grp in df.groupby(group_cols, dropna=False):
+        if not isinstance(key_vals, tuple):
+            key_vals = (key_vals,)
+        row = {col: val for col, val in zip(group_cols, key_vals)}
+        vals = grp["value_signed"].to_numpy(dtype=float).reshape(-1)
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            continue
+        row.update(
+            {
+                "axis_comparison_mode": mode,
+                "window_name": "avg_pre_peri_post",
+                "value_signed": float(np.mean(vals)),
+                "n_windows_averaged": int(vals.size),
+            }
+        )
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def _extract_within_axis_df(
     payload: dict,
     settings: FixationROIVsPeriodFactorialPlotSettings,
@@ -714,21 +780,19 @@ def _axis_direction(axis_name: object) -> tuple[float, float]:
 
 
 def _build_axis_space_unit_summary(
-    mag_df: pd.DataFrame,
+    signed_df: pd.DataFrame,
     *,
     settings: FixationROIVsPeriodFactorialPlotSettings,
     region_tokens: Sequence[str],
     axis_tokens: Sequence[str],
     window_name: str,
 ) -> pd.DataFrame:
-    win_df = mag_df.loc[mag_df["window_name"].astype(str) == str(window_name)].copy()
+    win_df = signed_df.loc[signed_df["window_name"].astype(str) == str(window_name)].copy()
     if win_df.empty:
         return pd.DataFrame()
-    needed_cols = {"region", "axis_name", "value_abs_norm"}
+    needed_cols = {"region", "axis_name", "value_signed", "unit_key"}
     if not needed_cols.issubset(set(win_df.columns)):
         return pd.DataFrame()
-    if "unit_key" not in win_df.columns:
-        win_df = win_df.reset_index().rename(columns={"index": "unit_key"})
 
     rows: list[dict] = []
     for region in region_tokens:
@@ -738,7 +802,7 @@ def _build_axis_space_unit_summary(
         pivot = reg_df.pivot_table(
             index="unit_key",
             columns="axis_name",
-            values="value_abs_norm",
+            values="value_signed",
             aggfunc="mean",
         )
         if pivot.empty:
@@ -752,11 +816,31 @@ def _build_axis_space_unit_summary(
             vals = vals[np.isfinite(vals)]
             if vals.size == 0:
                 continue
+            fo = float(row.get("face_object", np.nan)) if "face_object" in row.index else np.nan
+            it = float(row.get("interactive_state", np.nan)) if "interactive_state" in row.index else np.nan
+            cr = float(row.get("cross_interaction", np.nan)) if "cross_interaction" in row.index else np.nan
+            mean_mag = float(np.mean(np.abs(vals)))
+            if np.isfinite(fo) and np.isfinite(it):
+                norm_fi = float(np.hypot(fo, it))
+            else:
+                norm_fi = 0.0
+            if norm_fi > 1e-8:
+                ux = float(fo / norm_fi)
+                uy = float(it / norm_fi)
+            elif np.isfinite(cr) and abs(float(cr)) > 1e-8:
+                dx, dy = _axis_direction("cross_interaction")
+                sgn = 1.0 if float(cr) >= 0.0 else -1.0
+                ux = float(sgn * dx)
+                uy = float(sgn * dy)
+            else:
+                ux, uy = (1.0, 0.0)
             rec: dict[str, object] = {
                 "window_name": str(window_name),
                 "region": str(region),
                 "unit_key": str(unit_key),
-                "mean_axis_magnitude": float(np.mean(vals)),
+                "mean_axis_magnitude": mean_mag,
+                "point_x": float(mean_mag * ux),
+                "point_y": float(mean_mag * uy),
             }
             for axis_name in axis_tokens:
                 rec[f"axis_mean__{axis_name}"] = (
@@ -821,25 +905,115 @@ def _radial_density_surface(
     return z
 
 
-def _draw_axis_space_guides(
+def _kde_2d_weighted(
+    *,
+    points_xy: np.ndarray,
+    xx: np.ndarray,
+    yy: np.ndarray,
+    weights: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    pts = np.asarray(points_xy, dtype=float)
+    if pts.ndim != 2 or pts.shape[1] != 2:
+        return np.zeros_like(xx, dtype=float)
+    pts = pts[np.all(np.isfinite(pts), axis=1)]
+    if pts.shape[0] == 0:
+        return np.zeros_like(xx, dtype=float)
+
+    n = int(pts.shape[0])
+    if weights is None:
+        w = np.full(n, 1.0 / float(n), dtype=float)
+    else:
+        ww = np.asarray(weights, dtype=float).reshape(-1)
+        if ww.size != n:
+            ww = np.full(n, 1.0, dtype=float)
+        ww[~np.isfinite(ww)] = 0.0
+        ww = np.clip(ww, 0.0, None)
+        if float(np.sum(ww)) <= 0.0:
+            ww = np.full(n, 1.0, dtype=float)
+        w = ww / float(np.sum(ww))
+
+    std_x = float(np.std(pts[:, 0], ddof=1)) if n > 1 else 0.0
+    std_y = float(np.std(pts[:, 1], ddof=1)) if n > 1 else 0.0
+    span_x = float(np.ptp(pts[:, 0])) if n > 1 else abs(float(pts[0, 0]))
+    span_y = float(np.ptp(pts[:, 1])) if n > 1 else abs(float(pts[0, 1]))
+    scott = float(np.power(max(n, 2), -1.0 / 6.0))
+    hx = max(std_x * scott, 0.10 * max(span_x, 1e-3), 1e-3)
+    hy = max(std_y * scott, 0.10 * max(span_y, 1e-3), 1e-3)
+
+    gx = xx.reshape(1, -1)
+    gy = yy.reshape(1, -1)
+    dx = (gx - pts[:, [0]]) / hx
+    dy = (gy - pts[:, [1]]) / hy
+    exponent = -0.5 * (dx * dx + dy * dy)
+    kernel = np.exp(exponent)
+    norm = 1.0 / (2.0 * np.pi * hx * hy)
+    dens = norm * np.sum(w[:, None] * kernel, axis=0)
+    dens = dens.reshape(xx.shape)
+    dens = np.clip(dens, 0.0, None)
+    return dens
+
+
+def _density_threshold_for_mass(
+    density: np.ndarray,
+    *,
+    cell_area: float,
+    mass_fraction: float = 0.95,
+) -> float:
+    d = np.asarray(density, dtype=float)
+    d = d[np.isfinite(d)]
+    d = d[d > 0.0]
+    if d.size == 0:
+        return 0.0
+    frac = float(np.clip(mass_fraction, 0.0, 1.0))
+    if frac <= 0.0:
+        return float(np.max(d))
+    if frac >= 1.0:
+        return 0.0
+    d_sorted = np.sort(d)[::-1]
+    masses = d_sorted * float(cell_area)
+    cum = np.cumsum(masses)
+    total = float(cum[-1]) if cum.size > 0 else 0.0
+    if total <= 0.0:
+        return 0.0
+    target = frac * total
+    idx = int(np.searchsorted(cum, target, side="left"))
+    idx = min(max(idx, 0), d_sorted.size - 1)
+    return float(d_sorted[idx])
+
+
+def _surface_95_mask(
+    *,
+    r: np.ndarray,
+    q_low_mag: float,
+    q_high_mag: float,
+) -> np.ndarray:
+    lo = max(float(q_low_mag), 0.0)
+    hi = max(float(q_high_mag), lo + 1e-9)
+    rr = np.asarray(r, dtype=float)
+    return (rr >= lo) & (rr <= hi)
+
+
+def _draw_axis_space_plane_guides_3d(
     ax: plt.Axes,
     *,
     lim: float,
+    z_plane: float,
     settings: FixationROIVsPeriodFactorialPlotSettings,
 ) -> None:
     cross_color = settings.axis_colors.get("cross_interaction", "#7a0177")
-    ax.axhline(0.0, color="#bdbdbd", linewidth=0.85, zorder=0)
-    ax.axvline(0.0, color="#bdbdbd", linewidth=0.85, zorder=0)
+    ax.plot([-float(lim), float(lim)], [0.0, 0.0], [z_plane, z_plane], color="#bdbdbd", linewidth=0.9, zorder=0)
+    ax.plot([0.0, 0.0], [-float(lim), float(lim)], [z_plane, z_plane], color="#bdbdbd", linewidth=0.9, zorder=0)
+    ux, uy = _axis_direction("cross_interaction")
     ax.plot(
-        [-float(lim), float(lim)],
-        [-float(lim), float(lim)],
+        [-float(lim) * ux, float(lim) * ux],
+        [-float(lim) * uy, float(lim) * uy],
+        [z_plane, z_plane],
         linestyle=(0, (3.0, 3.0)),
         color=cross_color,
         linewidth=1.0,
-        alpha=0.45,
+        alpha=0.55,
         zorder=0,
     )
-    ax.scatter([0.0], [0.0], s=18, facecolor="#333333", edgecolor="#222222", linewidth=0.5, zorder=3)
 
 
 def plot_fixation_roi_vs_period_axis_space(
@@ -849,27 +1023,30 @@ def plot_fixation_roi_vs_period_axis_space(
     window: Optional[str] = None,
     output_filename_regions: str = "roi_vs_period_axis_space_regions",
 ) -> list[dict]:
-    """Plot stacked per-region radial density surfaces from mean axis magnitudes."""
+    """Plot 3D region-column density sheets on the face-object / interactive-state plane."""
     _apply_plotting_style(settings)
     payload, _ = _load_result_payload(settings)
-    mag_df = _extract_axis_magnitude_units(payload, settings)
-    if mag_df.empty:
-        print("[plot] no axis-magnitude unit rows available for axis-space plot")
+    signed_df = _extract_axis_signed_units(payload, settings)
+    if signed_df.empty:
+        print("[plot] no signed axis unit rows available for axis-space plot")
         return []
 
     region_tokens = _ordered_tokens(
-        available=mag_df["region"].astype(str).unique().tolist(),
+        available=signed_df["region"].astype(str).unique().tolist(),
         preferred=[str(tok).lower() for tok in (regions or settings.region_order)],
     )
     axis_tokens = _ordered_tokens(
-        available=mag_df["axis_name"].astype(str).unique().tolist(),
+        available=signed_df["axis_name"].astype(str).unique().tolist(),
         preferred=[str(tok) for tok in settings.axis_order],
     )
     if not region_tokens or not axis_tokens:
         print("[plot] unable to resolve regions/axes for axis-space plot")
         return []
+    if "face_object" not in axis_tokens or "interactive_state" not in axis_tokens:
+        print("[plot] axis-space plot requires face_object and interactive_state axes")
+        return []
 
-    windows_available = mag_df["window_name"].astype(str).unique().tolist()
+    windows_available = signed_df["window_name"].astype(str).unique().tolist()
     if window is not None:
         window_tokens = [str(window)]
     else:
@@ -882,16 +1059,11 @@ def plot_fixation_roi_vs_period_axis_space(
     out_root = _build_output_root(settings)
     outputs: list[dict] = []
     letter_h = 11.0
-    min_h = 1.55 * max(1, len(region_tokens))
-    region_fig_h = max(float(settings.axis_space_regions_letter_height_frac) * letter_h, min_h)
-    q_low = float(np.clip(settings.axis_space_quantile_low, 0.0, 1.0))
-    q_high = float(np.clip(settings.axis_space_quantile_high, 0.0, 1.0))
-    if q_high < q_low:
-        q_low, q_high = q_high, q_low
+    region_fig_h = max(float(settings.axis_space_regions_letter_height_frac) * letter_h, 2.8)
 
     for win_name in window_tokens:
         unit_df = _build_axis_space_unit_summary(
-            mag_df,
+            signed_df,
             settings=settings,
             region_tokens=region_tokens,
             axis_tokens=axis_tokens,
@@ -899,13 +1071,27 @@ def plot_fixation_roi_vs_period_axis_space(
         )
         if unit_df.empty:
             continue
+
         region_profiles: dict[str, dict] = {}
         global_lim = 0.0
+        q_low = float(np.clip(settings.axis_space_quantile_low, 0.0, 1.0))
+        q_high = float(np.clip(settings.axis_space_quantile_high, 0.0, 1.0))
+        if q_high < q_low:
+            q_low, q_high = q_high, q_low
         for region in region_tokens:
             reg_df = unit_df.loc[unit_df["region"].astype(str) == str(region)].copy()
-            vals = pd.to_numeric(reg_df.get("mean_axis_magnitude"), errors="coerce").to_numpy(dtype=float).reshape(-1)
-            vals = vals[np.isfinite(vals)]
-            profile = _fit_radial_density_profile(vals, q_low=q_low, q_high=q_high)
+            if reg_df.empty:
+                continue
+            px = pd.to_numeric(reg_df.get("point_x"), errors="coerce").to_numpy(dtype=float).reshape(-1)
+            py = pd.to_numeric(reg_df.get("point_y"), errors="coerce").to_numpy(dtype=float).reshape(-1)
+            pu = pd.to_numeric(reg_df.get("mean_axis_magnitude"), errors="coerce").to_numpy(dtype=float).reshape(-1)
+            valid = np.isfinite(px) & np.isfinite(py) & np.isfinite(pu)
+            px = px[valid]
+            py = py[valid]
+            pu = pu[valid]
+            if px.size == 0:
+                continue
+
             axis_means: dict[str, float] = {}
             for axis_name in axis_tokens:
                 col = f"axis_mean__{axis_name}"
@@ -915,82 +1101,107 @@ def plot_fixation_roi_vs_period_axis_space(
                     axis_means[str(axis_name)] = float(np.mean(vv)) if vv.size > 0 else 0.0
                 else:
                     axis_means[str(axis_name)] = 0.0
-            profile["axis_means"] = axis_means
-            profile["n_units"] = int(vals.size)
+
+            radii = np.sqrt(px * px + py * py)
+            qlo = float(np.quantile(radii, q_low))
+            qhi = float(np.quantile(radii, q_high))
+            profile = {
+                "points_x": px,
+                "points_y": py,
+                "weights": pu,
+                "q_low_mag": qlo,
+                "q_high_mag": qhi,
+                "axis_means": axis_means,
+                "n_units": int(px.size),
+            }
             region_profiles[str(region)] = profile
+
+            ux, uy = _axis_direction("cross_interaction")
+            cross_val = float(axis_means.get("cross_interaction", 0.0))
             global_lim = max(
                 global_lim,
-                float(profile["support_radius"]),
-                max(axis_means.values()) if axis_means else 0.0,
+                float(np.quantile(np.abs(px), q_high)),
+                float(np.quantile(np.abs(py), q_high)),
+                abs(float(axis_means.get("face_object", 0.0))),
+                abs(float(axis_means.get("interactive_state", 0.0))),
+                abs(cross_val * ux),
+                abs(cross_val * uy),
+                qhi,
             )
-        lim = max(1.08 * float(global_lim), 0.25)
-        n_grid = 260
+        if not region_profiles:
+            continue
+        lim = max(1.15 * float(global_lim), 0.25)
+        n_grid = 180
         x = np.linspace(-float(lim), float(lim), n_grid)
         y = np.linspace(-float(lim), float(lim), n_grid)
         xx, yy = np.meshgrid(x, y)
-        rr = np.sqrt(xx**2 + yy**2)
+        rr = np.sqrt(xx * xx + yy * yy)
+        cell_area = float((x[1] - x[0]) * (y[1] - y[0])) if n_grid > 1 else 1.0
         mode = str(payload.get("meta", {}).get("axis_comparison_mode", settings.axis_comparison_mode))
+        z_plane = -0.06
 
-        # Stacked (vertical) regional panels with shared scale.
-        fig, axes = plt.subplots(
-            len(region_tokens),
-            1,
+        fig = plt.figure(
             figsize=(float(settings.axis_space_regions_letter_width_in), float(region_fig_h)),
             dpi=settings.output_dpi,
-            squeeze=False,
         )
-        axes = axes[:, 0]
         surf = None
+        axes_3d: list[plt.Axes] = []
         for ridx, region in enumerate(region_tokens):
-            ax = axes[ridx]
-            _draw_axis_space_guides(ax, lim=lim, settings=settings)
+            ax = fig.add_subplot(1, len(region_tokens), ridx + 1, projection="3d")
+            axes_3d.append(ax)
             profile = region_profiles.get(str(region))
             if profile is None:
-                ax.text(0.5, 0.5, "No data", transform=ax.transAxes, ha="center", va="center", fontsize=9)
+                _draw_axis_space_plane_guides_3d(ax, lim=lim, z_plane=z_plane, settings=settings)
+                ax.text2D(0.5, 0.5, "No data", transform=ax.transAxes, ha="center", va="center", fontsize=9)
             else:
-                z = _radial_density_surface(
+                density = _kde_2d_weighted(
+                    points_xy=np.column_stack([profile["points_x"], profile["points_y"]]),
+                    xx=xx,
+                    yy=yy,
+                    weights=np.asarray(profile["weights"], dtype=float),
+                )
+                threshold = _density_threshold_for_mass(
+                    density,
+                    cell_area=cell_area,
+                    mass_fraction=0.95,
+                )
+                z = density.copy()
+                z[density < threshold] = np.nan
+                radial_mask = _surface_95_mask(
                     r=rr,
-                    mean_mag=float(profile["mean_mag"]),
-                    sigma_in=float(profile["sigma_in"]),
-                    sigma_out=float(profile["sigma_out"]),
+                    q_low_mag=float(profile["q_low_mag"]),
+                    q_high_mag=float(profile["q_high_mag"]),
                 )
-                cmap = mpl.colors.LinearSegmentedColormap.from_list(
-                    f"region_surface_{str(region)}",
-                    ["#ffffff", settings.region_outline_colors.get(str(region), "#3b3b3b")],
-                )
-                levels = np.linspace(0.0, 1.0, max(int(settings.axis_space_disk_layers), 10))
-                surf = ax.contourf(
+                z[~radial_mask] = np.nan
+                if np.any(np.isfinite(z)):
+                    z_norm = z / float(np.nanmax(z))
+                else:
+                    z_norm = np.full_like(z, np.nan, dtype=float)
+                surf = ax.plot_surface(
                     xx,
                     yy,
-                    z,
-                    levels=levels,
-                    cmap=cmap,
-                    alpha=0.86,
+                    z_norm,
+                    cmap="viridis",
+                    vmin=0.0,
+                    vmax=1.0,
+                    linewidth=0.0,
                     antialiased=True,
+                    shade=True,
+                    alpha=0.92,
                     zorder=1.0,
                 )
                 ax.contour(
                     xx,
                     yy,
-                    z,
+                    np.nan_to_num(z_norm, nan=0.0),
                     levels=np.linspace(0.2, 0.95, 7),
+                    zdir="z",
+                    offset=z_plane,
                     colors="#555555",
                     linewidths=0.45,
                     alpha=0.55,
-                    zorder=1.5,
                 )
-
-                mean_mag = float(profile["mean_mag"])
-                th = np.linspace(0.0, 2.0 * np.pi, 240)
-                ax.plot(
-                    mean_mag * np.cos(th),
-                    mean_mag * np.sin(th),
-                    color="#202020",
-                    linewidth=0.8,
-                    alpha=0.85,
-                    zorder=2.2,
-                )
-
+                _draw_axis_space_plane_guides_3d(ax, lim=lim, z_plane=z_plane, settings=settings)
                 axis_means = profile.get("axis_means", {})
                 for axis_name in axis_tokens:
                     mag = float(axis_means.get(str(axis_name), 0.0))
@@ -999,21 +1210,13 @@ def plot_fixation_roi_vs_period_axis_space(
                     ax.plot(
                         [0.0, mag * dx],
                         [0.0, mag * dy],
+                        [z_plane, z_plane],
                         color=color,
-                        linewidth=2.0,
-                        alpha=0.95,
-                        zorder=3.2,
+                        linewidth=2.2,
+                        alpha=0.98,
+                        zorder=3.0,
                     )
-                    ax.scatter(
-                        [mag * dx],
-                        [mag * dy],
-                        s=18,
-                        facecolor=color,
-                        edgecolor="#222222",
-                        linewidth=0.45,
-                        zorder=3.4,
-                    )
-                ax.text(
+                ax.text2D(
                     0.02,
                     0.95,
                     f"n={int(profile.get('n_units', 0))}",
@@ -1027,14 +1230,22 @@ def plot_fixation_roi_vs_period_axis_space(
             ax.set_title(_display_region(region, settings), fontsize=10)
             ax.set_xlim(-float(lim), float(lim))
             ax.set_ylim(-float(lim), float(lim))
-            ax.set_aspect("equal")
-            ax.set_ylabel("Interactive-State (+Y)", fontsize=8)
-            if ridx == len(region_tokens) - 1:
-                ax.set_xlabel("Face-Object (+X)", fontsize=8)
+            ax.set_zlim(float(z_plane), 1.02)
+            ax.set_box_aspect((1.0, 1.0, 0.72))
+            ax.view_init(elev=33.0, azim=-60.0)
+            ax.xaxis.pane.set_alpha(0.0)
+            ax.yaxis.pane.set_alpha(0.0)
+            ax.zaxis.pane.set_alpha(0.0)
+            ax.grid(False)
+            ax.tick_params(axis="x", labelsize=6, pad=0)
+            ax.tick_params(axis="y", labelsize=6, pad=0)
+            ax.tick_params(axis="z", labelsize=6, pad=0)
+            ax.set_xlabel("Face-Object", fontsize=7, labelpad=-1)
+            ax.set_ylabel("Interactive-State", fontsize=7, labelpad=-1)
+            if ridx == 0:
+                ax.set_zlabel("Relative Density", fontsize=7, labelpad=1)
             else:
-                ax.set_xlabel("")
-            ax.tick_params(labelsize=7)
-            ax.grid(alpha=0.15, linewidth=0.5)
+                ax.set_zticklabels([])
 
         axis_handles = []
         for axis_name in axis_tokens:
@@ -1047,26 +1258,26 @@ def plot_fixation_roi_vs_period_axis_space(
                     label=_display_axis(axis_name, settings),
                 )
             )
-        fig.legend(handles=axis_handles, loc="upper right", frameon=False, fontsize=8, ncol=1)
+        fig.legend(handles=axis_handles, loc="upper center", frameon=False, fontsize=8, ncol=max(1, len(axis_handles)))
         if surf is None:
             plt.close(fig)
             continue
         cbar = fig.colorbar(
             surf,
-            ax=list(axes),
-            fraction=0.010,
-            pad=0.02,
+            ax=axes_3d,
+            fraction=0.020,
+            pad=0.01,
         )
         cbar.set_label("Relative Density", fontsize=8)
         cbar.ax.tick_params(labelsize=7)
         fig.suptitle(
             (
-                "ROI-vs-Period Mean-Axis Magnitude Surface by Region "
+                "ROI-vs-Period 3D Density Sheet by Region "
                 f"({win_name}; mode={mode}; source={settings.axis_magnitude_source})"
             ),
             fontsize=10,
         )
-        fig.subplots_adjust(left=0.08, right=0.93, top=0.93, bottom=0.06, hspace=0.30)
+        fig.subplots_adjust(left=0.02, right=0.92, top=0.86, bottom=0.10, wspace=0.03)
 
         suffix = f"__window={_safe_suffix_token(win_name)}"
         out_name_regions = ensure_filename(f"{output_filename_regions}{suffix}", f".{ext}")
