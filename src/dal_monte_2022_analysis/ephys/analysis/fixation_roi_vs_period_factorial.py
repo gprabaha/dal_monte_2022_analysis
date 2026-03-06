@@ -54,6 +54,7 @@ TERM_TO_AXIS: tuple[tuple[str, str], ...] = (
 AXIS_ORDER: tuple[str, ...] = tuple(axis_name for _, axis_name in TERM_TO_AXIS)
 _ALLOWED_PVALUE_CORRECTIONS = {"none", "bonferroni", "holm", "fdr_bh"}
 _ALLOWED_UNIT_SIGNIFICANCE_MODE = {"raw", "within_unit_corrected"}
+_ALLOWED_PARALLELIZATION_SCOPE = {"date", "unit"}
 
 
 @dataclass
@@ -91,6 +92,7 @@ class FixationROIVsPeriodFactorialSettings:
     alpha: float = 0.05
     pvalue_correction: str = "fdr_bh"
     unit_significance_mode: str = "within_unit_corrected"
+    parallelization_scope: str = "date"
     use_parallel: bool = True
     max_procs: int = 16
     test_single: bool = False
@@ -235,6 +237,16 @@ def _resolve_unit_significance_mode(mode: str) -> str:
         raise ValueError(
             f"Unsupported unit_significance_mode '{mode}'. "
             f"Expected one of: {sorted(_ALLOWED_UNIT_SIGNIFICANCE_MODE)}"
+        )
+    return token
+
+
+def _resolve_parallelization_scope(scope: str) -> str:
+    token = str(scope).strip().lower()
+    if token not in _ALLOWED_PARALLELIZATION_SCOPE:
+        raise ValueError(
+            f"Unsupported parallelization_scope '{scope}'. "
+            f"Expected one of: {sorted(_ALLOWED_PARALLELIZATION_SCOPE)}"
         )
     return token
 
@@ -777,6 +789,23 @@ def _unit_worker(args):
     return unit_term_rows, unit_axis_rows, unit_window_rows
 
 
+def _date_worker(args):
+    _, df_date, bin_centers_s, settings = args
+    term_rows_all: list[dict] = []
+    axis_rows_all: list[dict] = []
+    unit_window_rows_all: list[dict] = []
+    grouped = df_date.groupby(["date", "unit_uuid"], sort=True, dropna=False)
+    for (date, unit_uuid), df_unit in grouped:
+        unit_key = f"{date}|{unit_uuid}"
+        term_rows, axis_rows, unit_window_rows = _unit_worker(
+            (unit_key, df_unit.copy(), bin_centers_s, settings)
+        )
+        term_rows_all.extend(term_rows)
+        axis_rows_all.extend(axis_rows)
+        unit_window_rows_all.extend(unit_window_rows)
+    return term_rows_all, axis_rows_all, unit_window_rows_all
+
+
 def _build_region_fraction_tables(
     unit_term_df: pd.DataFrame,
     *,
@@ -1241,6 +1270,7 @@ def run_fixation_roi_vs_period_factorial_analysis(
     settings.windows_ms = windows_ms
     settings.significance_windows = significance_windows
     settings.unit_significance_mode = _resolve_unit_significance_mode(settings.unit_significance_mode)
+    settings.parallelization_scope = _resolve_parallelization_scope(settings.parallelization_scope)
 
     trial_df, bin_centers_s = _load_trial_table(settings, dates=dates, sessions=sessions)
     if trial_df.empty or "unit_uuid" not in trial_df.columns:
@@ -1282,26 +1312,41 @@ def run_fixation_roi_vs_period_factorial_analysis(
     if "date" not in trial_df.columns:
         trial_df["date"] = "unknown"
 
-    grouped = trial_df.groupby(["date", "unit_uuid"], sort=True, dropna=False)
-    unit_tasks = []
-    for (date, unit_uuid), df_unit in grouped:
-        unit_key = f"{date}|{unit_uuid}"
-        unit_tasks.append((unit_key, df_unit.copy(), bin_centers_s, settings))
-
-    if settings.test_single and unit_tasks:
-        unit_tasks = [random.choice(unit_tasks)]
-
     term_rows_all: list[dict] = []
     axis_rows_all: list[dict] = []
     unit_window_rows_all: list[dict] = []
-    results = run_tasks(
-        _unit_worker,
-        unit_tasks,
-        desc="ROI-vs-period factorial",
-        unit="unit",
-        use_parallel=settings.use_parallel,
-        max_procs=settings.max_procs,
-    )
+    if str(settings.parallelization_scope) == "date":
+        date_tasks = []
+        grouped_dates = trial_df.groupby(["date"], sort=True, dropna=False)
+        for date_tuple, df_date in grouped_dates:
+            date_value = str(date_tuple[0]) if isinstance(date_tuple, tuple) else str(date_tuple)
+            date_tasks.append((date_value, df_date.copy(), bin_centers_s, settings))
+        if settings.test_single and date_tasks:
+            date_tasks = [random.choice(date_tasks)]
+        results = run_tasks(
+            _date_worker,
+            date_tasks,
+            desc="ROI-vs-period factorial (date-sharded)",
+            unit="date",
+            use_parallel=settings.use_parallel,
+            max_procs=settings.max_procs,
+        )
+    else:
+        unit_tasks = []
+        grouped = trial_df.groupby(["date", "unit_uuid"], sort=True, dropna=False)
+        for (date, unit_uuid), df_unit in grouped:
+            unit_key = f"{date}|{unit_uuid}"
+            unit_tasks.append((unit_key, df_unit.copy(), bin_centers_s, settings))
+        if settings.test_single and unit_tasks:
+            unit_tasks = [random.choice(unit_tasks)]
+        results = run_tasks(
+            _unit_worker,
+            unit_tasks,
+            desc="ROI-vs-period factorial (unit-sharded)",
+            unit="unit",
+            use_parallel=settings.use_parallel,
+            max_procs=settings.max_procs,
+        )
     for term_rows, axis_rows, unit_window_rows in results:
         term_rows_all.extend(term_rows)
         axis_rows_all.extend(axis_rows)
@@ -1442,6 +1487,7 @@ def run_fixation_roi_vs_period_factorial_analysis(
             "alpha": float(settings.alpha),
             "pvalue_correction": str(settings.pvalue_correction),
             "unit_significance_mode": str(settings.unit_significance_mode),
+            "parallelization_scope": str(settings.parallelization_scope),
             "n_units": int(unit_term_df["unit_key"].nunique()) if not unit_term_df.empty else 0,
             "n_regions": int(unit_term_df["region"].astype(str).nunique()) if not unit_term_df.empty else 0,
         },

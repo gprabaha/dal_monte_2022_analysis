@@ -129,6 +129,7 @@ def main() -> None:
         alpha=cfg.get("roi_vs_period_alpha", 0.05),
         pvalue_correction=str(cfg.get("roi_vs_period_pvalue_correction") or "fdr_bh"),
         unit_significance_mode=cfg.get("roi_vs_period_unit_significance_mode", "within_unit_corrected"),
+        parallelization_scope=cfg.get("roi_vs_period_parallelization_scope", "date"),
         use_parallel=cfg.get("roi_vs_period_use_parallel", True),
         max_procs=cfg.get("max_procs", 16),
         test_single=cfg.get("test_single", False),
@@ -154,7 +155,8 @@ def main() -> None:
         f"smoothing_sigma_ms={float(settings.smoothing_sigma_ms):.3f}, "
         f"min_trials_per_cell={int(settings.min_trials_per_cell)}, "
         f"pvalue_correction={settings.pvalue_correction}, "
-        f"unit_significance_mode={settings.unit_significance_mode}"
+        f"unit_significance_mode={settings.unit_significance_mode}, "
+        f"parallelization_scope={settings.parallelization_scope}"
     )
 
     result = run_fixation_roi_vs_period_factorial_analysis(

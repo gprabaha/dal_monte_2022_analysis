@@ -150,6 +150,7 @@ Config:
   - `roi_vs_period_alpha`
   - `roi_vs_period_pvalue_correction`
   - `roi_vs_period_unit_significance_mode`
+  - `roi_vs_period_parallelization_scope`
   - `roi_vs_period_use_parallel`
   - `average_target_bin_size_ms`
   - `average_target_bin_step_ms`
