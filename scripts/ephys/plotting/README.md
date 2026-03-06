@@ -304,10 +304,12 @@ Config:
     mean magnitude across all three axes
   - a weighted 2D KDE defines the sheet height (`z = relative density`)
   - only the 95% support region is rendered
-  - 3D sheet uses neutral gray light-source shading for improved depth cues
+  - 3D sheet is rendered via `pyvista` with neutral gray lighting/shading
+    (no planar axis overlays on top of the surface)
   - 2D contours use a separate `magma` palette for contrast
-  - mean axis lines for `face_object`, `interactive_state`,
-    and `cross_interaction` are drawn without endpoint markers
+  - contour-panel origin axes are emphasized (thicker, above contours)
+  - mean axis vectors are shown in inset mini-axes (separate scale)
+    with no endpoint markers
   - uses shared x/y limits across region panels for comparison
   Uses ROI-vs-period analysis outputs (`results.pkl`) and respects analysis mode:
   - `split_by_window`: writes one pair of figures per window

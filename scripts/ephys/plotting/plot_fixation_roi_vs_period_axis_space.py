@@ -40,8 +40,8 @@ def _normalize_str_tuple(raw, fallback: tuple[str, ...]) -> tuple[str, ...]:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Plot ROI-vs-period 3D regional density sheets with 95% support "
-            "and mean axis lines on the base plane."
+            "Plot ROI-vs-period pyvista 3D regional density sheets with "
+            "separate 2D contour panels and inset mean vectors."
         ),
     )
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")

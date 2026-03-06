@@ -18,6 +18,10 @@ try:
     import seaborn as sns
 except Exception:  # pragma: no cover - handled explicitly at runtime
     sns = None
+try:
+    import pyvista as pv
+except Exception:  # pragma: no cover - optional dependency
+    pv = None
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.plotting.common import apply_plotting_config
@@ -993,27 +997,80 @@ def _surface_95_mask(
     return (rr >= lo) & (rr <= hi)
 
 
-def _draw_axis_space_plane_guides_3d(
-    ax: plt.Axes,
+def _render_pyvista_density_surface_image(
     *,
+    xx: np.ndarray,
+    yy: np.ndarray,
+    z_fill: np.ndarray,
+    z_mask: np.ndarray,
     lim: float,
-    z_plane: float,
-    settings: FixationROIVsPeriodFactorialPlotSettings,
-) -> None:
-    cross_color = settings.axis_colors.get("cross_interaction", "#7a0177")
-    ax.plot([-float(lim), float(lim)], [0.0, 0.0], [z_plane, z_plane], color="#bdbdbd", linewidth=0.9, zorder=0)
-    ax.plot([0.0, 0.0], [-float(lim), float(lim)], [z_plane, z_plane], color="#bdbdbd", linewidth=0.9, zorder=0)
-    ux, uy = _axis_direction("cross_interaction")
-    ax.plot(
-        [-float(lim) * ux, float(lim) * ux],
-        [-float(lim) * uy, float(lim) * uy],
-        [z_plane, z_plane],
-        linestyle=(0, (3.0, 3.0)),
-        color=cross_color,
-        linewidth=1.0,
-        alpha=0.55,
-        zorder=0,
-    )
+) -> Optional[np.ndarray]:
+    if pv is None:
+        return None
+    try:
+        pv.OFF_SCREEN = True
+        z_surface = np.where(np.asarray(z_mask, dtype=bool), np.asarray(z_fill, dtype=float), np.nan)
+        grid = pv.StructuredGrid(
+            np.asarray(xx, dtype=float),
+            np.asarray(yy, dtype=float),
+            np.asarray(z_surface, dtype=float),
+        )
+        grid["support"] = np.where(np.asarray(z_mask, dtype=bool), 1.0, 0.0).ravel(order="F")
+        surface = grid.extract_surface()
+        surface = surface.threshold(value=0.5, scalars="support")
+        if surface.n_points == 0:
+            return None
+
+        plotter = pv.Plotter(off_screen=True, window_size=(980, 760))
+        plotter.set_background("white")
+        plotter.remove_all_lights()
+        plotter.add_light(
+            pv.Light(
+                position=(2.3 * float(lim), -2.5 * float(lim), 2.8),
+                focal_point=(0.0, 0.0, 0.35),
+                color="white",
+                intensity=1.35,
+            )
+        )
+        plotter.add_light(
+            pv.Light(
+                position=(-1.8 * float(lim), 2.1 * float(lim), 1.6),
+                focal_point=(0.0, 0.0, 0.3),
+                color="white",
+                intensity=0.42,
+            )
+        )
+        plotter.add_light(
+            pv.Light(
+                position=(0.0, -2.6 * float(lim), 3.1),
+                focal_point=(0.0, 0.0, 0.4),
+                color="white",
+                intensity=0.28,
+            )
+        )
+        plotter.add_mesh(
+            surface,
+            color="#b6b6b6",
+            smooth_shading=True,
+            ambient=0.22,
+            diffuse=0.74,
+            specular=0.55,
+            specular_power=22.0,
+            opacity=1.0,
+            show_edges=False,
+            lighting=True,
+        )
+        plotter.camera.position = (2.55 * float(lim), -2.05 * float(lim), 2.18)
+        plotter.camera.focal_point = (0.0, 0.0, 0.35)
+        plotter.camera.up = (0.0, 0.0, 1.0)
+        plotter.camera.zoom(1.10)
+        img = plotter.screenshot(return_img=True)
+        plotter.close()
+        if isinstance(img, np.ndarray) and img.size > 0:
+            return img
+    except Exception:
+        return None
+    return None
 
 
 def plot_fixation_roi_vs_period_axis_space(
@@ -1139,12 +1196,7 @@ def plot_fixation_roi_vs_period_axis_space(
         rr = np.sqrt(xx * xx + yy * yy)
         cell_area = float((x[1] - x[0]) * (y[1] - y[0])) if n_grid > 1 else 1.0
         mode = str(payload.get("meta", {}).get("axis_comparison_mode", settings.axis_comparison_mode))
-        z_plane = 1.04
-        z_min = -0.03
-        z_max = 1.12
-        surface_cmap = mpl.colormaps["Greys"]
         contour_cmap = mpl.colormaps["magma"]
-        light = mpl.colors.LightSource(azdeg=320.0, altdeg=58.0)
         density_maps: dict[str, dict[str, np.ndarray]] = {}
         for region in region_tokens:
             profile = region_profiles.get(str(region))
@@ -1185,129 +1237,67 @@ def plot_fixation_roi_vs_period_axis_space(
             figsize=(float(settings.axis_space_regions_letter_width_in), float(region_fig_h)),
             dpi=settings.output_dpi,
         )
-        surf = None
-        axes_3d: list[plt.Axes] = []
+        axes_surface = fig.subplots(1, len(region_tokens), squeeze=False).ravel()
+        any_surface = False
         for ridx, region in enumerate(region_tokens):
-            ax = fig.add_subplot(1, len(region_tokens), ridx + 1, projection="3d")
-            axes_3d.append(ax)
+            axs = axes_surface[ridx]
+            axs.set_title(_display_region(region, settings), fontsize=10)
             profile = region_profiles.get(str(region))
-            if profile is None:
-                _draw_axis_space_plane_guides_3d(ax, lim=lim, z_plane=z_plane, settings=settings)
-                ax.text2D(0.5, 0.5, "No data", transform=ax.transAxes, ha="center", va="center", fontsize=9)
-            else:
-                z_fill = density_maps[str(region)]["z_fill"]
-                z_mask = density_maps[str(region)]["z_mask"]
-                base_rgb = np.full((*z_fill.shape, 3), 0.74, dtype=float)
-                shaded_rgb = light.shade_rgb(base_rgb, z_fill, blend_mode="soft")
-                facecolors = np.zeros((*z_fill.shape, 4), dtype=float)
-                facecolors[..., :3] = shaded_rgb
-                facecolors[..., 3] = np.where(z_mask, 0.95, 0.0)
-                surf = ax.plot_surface(
-                    xx,
-                    yy,
-                    z_fill,
-                    facecolors=facecolors,
-                    linewidth=0.0,
-                    antialiased=True,
-                    shade=False,
-                    zorder=1.0,
-                )
-                _draw_axis_space_plane_guides_3d(ax, lim=lim, z_plane=z_plane, settings=settings)
-                axis_means = profile.get("axis_means", {})
-                for axis_name in axis_tokens:
-                    mag = float(axis_means.get(str(axis_name), 0.0))
-                    dx, dy = _axis_direction(axis_name)
-                    color = settings.axis_colors.get(str(axis_name), "#4d4d4d")
-                    ax.plot(
-                        [0.0, mag * dx],
-                        [0.0, mag * dy],
-                        [z_plane, z_plane],
-                        color=color,
-                        linewidth=2.2,
-                        alpha=0.98,
-                        zorder=3.0,
-                    )
-                ax.text2D(
-                    0.02,
-                    0.95,
-                    f"n={int(profile.get('n_units', 0))}",
-                    transform=ax.transAxes,
-                    ha="left",
-                    va="top",
-                    fontsize=7,
-                    color="#333333",
-                )
-
-            ax.set_title(_display_region(region, settings), fontsize=10)
-            ax.set_xlim(-float(lim), float(lim))
-            ax.set_ylim(-float(lim), float(lim))
-            ax.set_zlim(float(z_min), float(z_max))
-            ax.set_box_aspect((1.0, 1.0, 0.72))
-            ax.view_init(elev=48.0, azim=-58.0)
-            ax.xaxis.pane.set_alpha(0.0)
-            ax.yaxis.pane.set_alpha(0.0)
-            ax.zaxis.pane.set_alpha(0.03)
-            ax.grid(False)
-            ax.tick_params(axis="x", labelsize=6, pad=0)
-            ax.tick_params(axis="y", labelsize=6, pad=0)
-            ax.tick_params(axis="z", labelsize=6, pad=0)
-            ax.set_xlabel("Face-Object", fontsize=7, labelpad=-1)
-            ax.set_ylabel("Interactive-State", fontsize=7, labelpad=-1)
-            if ridx == 0:
-                ax.set_zlabel("Relative Density", fontsize=7, labelpad=1)
-            else:
-                ax.set_zticklabels([])
-
-        axis_handles = []
-        for axis_name in axis_tokens:
-            axis_handles.append(
-                Line2D(
-                    [0],
-                    [0],
-                    color=settings.axis_colors.get(axis_name, "#4d4d4d"),
-                    lw=2.2,
-                    label=_display_axis(axis_name, settings),
-                )
+            dmap = density_maps.get(str(region))
+            if profile is None or dmap is None:
+                axs.text(0.5, 0.5, "No data", transform=axs.transAxes, ha="center", va="center", fontsize=9)
+                axs.axis("off")
+                continue
+            img = _render_pyvista_density_surface_image(
+                xx=xx,
+                yy=yy,
+                z_fill=dmap["z_fill"],
+                z_mask=dmap["z_mask"],
+                lim=float(lim),
             )
-        fig.legend(handles=axis_handles, loc="upper center", frameon=False, fontsize=8, ncol=max(1, len(axis_handles)))
-        if surf is None:
-            plt.close(fig)
-            continue
-        mappable = mpl.cm.ScalarMappable(
-            norm=mpl.colors.Normalize(vmin=0.0, vmax=1.0),
-            cmap=surface_cmap,
-        )
-        cbar = fig.colorbar(
-            mappable,
-            ax=axes_3d,
-            fraction=0.020,
-            pad=0.01,
-        )
-        cbar.set_label("Relative Density", fontsize=8)
-        cbar.ax.tick_params(labelsize=7)
-        fig.suptitle(
-            (
-                "ROI-vs-Period 3D Density Sheet by Region "
-                f"({win_name}; mode={mode}; source={settings.axis_magnitude_source})"
-            ),
-            fontsize=10,
-        )
-        fig.subplots_adjust(left=0.02, right=0.92, top=0.86, bottom=0.10, wspace=0.03)
+            if isinstance(img, np.ndarray) and img.size > 0:
+                axs.imshow(img)
+                axs.axis("off")
+                any_surface = True
+            else:
+                axs.text(0.5, 0.5, "PyVista render failed", transform=axs.transAxes, ha="center", va="center", fontsize=8)
+                axs.axis("off")
+            axs.text(
+                0.02,
+                0.95,
+                f"n={int(profile.get('n_units', 0))}",
+                transform=axs.transAxes,
+                ha="left",
+                va="top",
+                fontsize=7,
+                color="#333333",
+            )
 
         suffix = f"__window={_safe_suffix_token(win_name)}"
-        out_name_regions = ensure_filename(f"{output_filename_regions}{suffix}", f".{ext}")
-        out_path_regions = out_root / out_name_regions
-        save_figure(fig, out_path_regions, ext=ext, dpi=settings.output_dpi)
+        if any_surface:
+            fig.suptitle(
+                (
+                    "ROI-vs-Period 3D Density Surface by Region (PyVista) "
+                    f"({win_name}; mode={mode}; source={settings.axis_magnitude_source})"
+                ),
+                fontsize=10,
+            )
+            fig.subplots_adjust(left=0.01, right=0.99, top=0.86, bottom=0.05, wspace=0.01)
+            out_name_regions = ensure_filename(f"{output_filename_regions}{suffix}", f".{ext}")
+            out_path_regions = out_root / out_name_regions
+            save_figure(fig, out_path_regions, ext=ext, dpi=settings.output_dpi)
+            outputs.append(
+                {
+                    "output_path": str(out_path_regions),
+                    "window_name": str(win_name),
+                    "kind": "regions",
+                    "regions": list(region_tokens),
+                    "axes": list(axis_tokens),
+                }
+            )
+        else:
+            print(f"[plot] pyvista rendering unavailable for window={win_name}; skipping 3D surface output")
         plt.close(fig)
-        outputs.append(
-            {
-                "output_path": str(out_path_regions),
-                "window_name": str(win_name),
-                "kind": "regions",
-                "regions": list(region_tokens),
-                "axes": list(axis_tokens),
-            }
-        )
 
         fig2, axes2 = plt.subplots(
             1,
@@ -1321,17 +1311,6 @@ def plot_fixation_roi_vs_period_axis_space(
         ux_cross, uy_cross = _axis_direction("cross_interaction")
         for ridx, region in enumerate(region_tokens):
             ax2 = axes2[ridx]
-            ax2.axhline(0.0, color="#bdbdbd", linewidth=0.8, zorder=0)
-            ax2.axvline(0.0, color="#bdbdbd", linewidth=0.8, zorder=0)
-            ax2.plot(
-                [-float(lim) * ux_cross, float(lim) * ux_cross],
-                [-float(lim) * uy_cross, float(lim) * uy_cross],
-                linestyle=(0, (3.0, 3.0)),
-                color=settings.axis_colors.get("cross_interaction", "#7a0177"),
-                linewidth=0.9,
-                alpha=0.55,
-                zorder=0,
-            )
             profile = region_profiles.get(str(region))
             dmap = density_maps.get(str(region))
             if profile is None or dmap is None:
@@ -1359,19 +1338,6 @@ def plot_fixation_roi_vs_period_axis_space(
                     alpha=0.45,
                     zorder=2,
                 )
-                axis_means = profile.get("axis_means", {})
-                for axis_name in axis_tokens:
-                    mag = float(axis_means.get(str(axis_name), 0.0))
-                    dx, dy = _axis_direction(axis_name)
-                    color = settings.axis_colors.get(str(axis_name), "#4d4d4d")
-                    ax2.plot(
-                        [0.0, mag * dx],
-                        [0.0, mag * dy],
-                        color=color,
-                        linewidth=2.0,
-                        alpha=0.95,
-                        zorder=3,
-                    )
                 ax2.text(
                     0.02,
                     0.95,
@@ -1382,11 +1348,46 @@ def plot_fixation_roi_vs_period_axis_space(
                     fontsize=7,
                     color="#333333",
                 )
+                inset = ax2.inset_axes([0.67, 0.60, 0.30, 0.34])
+                inset.axhline(0.0, color="#888888", linewidth=0.8, zorder=1)
+                inset.axvline(0.0, color="#888888", linewidth=0.8, zorder=1)
+                axis_means = profile.get("axis_means", {})
+                max_mag = 1e-3
+                for axis_name in axis_tokens:
+                    mag = float(axis_means.get(str(axis_name), 0.0))
+                    dx, dy = _axis_direction(axis_name)
+                    max_mag = max(max_mag, abs(mag * dx), abs(mag * dy), abs(mag))
+                    color = settings.axis_colors.get(str(axis_name), "#4d4d4d")
+                    inset.plot(
+                        [0.0, mag * dx],
+                        [0.0, mag * dy],
+                        color=color,
+                        linewidth=1.5,
+                        alpha=0.95,
+                        zorder=2,
+                    )
+                inset.plot(
+                    [-1.2 * max_mag * ux_cross, 1.2 * max_mag * ux_cross],
+                    [-1.2 * max_mag * uy_cross, 1.2 * max_mag * uy_cross],
+                    linestyle=(0, (2.2, 2.2)),
+                    color=settings.axis_colors.get("cross_interaction", "#7a0177"),
+                    linewidth=0.7,
+                    alpha=0.45,
+                    zorder=1,
+                )
+                inset.set_xlim(-1.2 * max_mag, 1.2 * max_mag)
+                inset.set_ylim(-1.2 * max_mag, 1.2 * max_mag)
+                inset.set_aspect("equal", adjustable="box")
+                inset.set_xticks([])
+                inset.set_yticks([])
+                inset.set_title("Mean Vectors", fontsize=5.5, pad=1.0)
 
             ax2.set_title(_display_region(region, settings), fontsize=10)
             ax2.set_xlim(-float(lim), float(lim))
             ax2.set_ylim(-float(lim), float(lim))
-            ax2.set_aspect("equal")
+            ax2.set_aspect("equal", adjustable="box")
+            ax2.axhline(0.0, color="#1a1a1a", linewidth=1.6, zorder=5)
+            ax2.axvline(0.0, color="#1a1a1a", linewidth=1.6, zorder=5)
             ax2.grid(alpha=0.14, linewidth=0.5)
             ax2.tick_params(axis="both", labelsize=6)
             ax2.set_xlabel("Face-Object", fontsize=7)
