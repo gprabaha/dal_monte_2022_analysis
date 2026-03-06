@@ -41,11 +41,15 @@ Current scripts:
   - per-unit collapsed axis-significance table (collapsed across configured
     significance windows)
   - per-unit collapsed axis magnitudes (absolute values averaged across
-    significant windows only)
+    significant windows only; exported for auditability)
   - region-level selective-fraction tables and cross-region pairwise fraction
     comparisons (multiple-comparison corrected)
-  - region-level axis-magnitude summaries and Welch cross-region pairwise
-    comparisons (multiple-comparison corrected)
+  - region-level axis-magnitude summaries by window (`pre/peri/post`) using
+    all units in each window
+  - within-region axis-pair (`3C2`) Welch comparisons by window with
+    within-window correction
+  - cross-region (`4C2`) Welch comparisons by window with within-window
+    correction
 - `build_fixation_preference_index.py`
   Computes per-bin pairwise fixation preference indices for each unit using:
   - numerator: `A - B` where A/B are condition mean firing rates (Hz) per bin
