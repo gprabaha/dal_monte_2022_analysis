@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 from typing import Optional, Sequence
 
@@ -66,6 +67,7 @@ _WINDOW_SORT_ORDER: dict[str, int] = {
     "avg_pre_peri_post": 3,
 }
 _ALLOWED_AXIS_COMPARISON_MODES = {"split_by_window", "averaged_across_windows"}
+_PYVISTA_RUNTIME_READY = False
 
 
 @dataclass
@@ -1007,7 +1009,28 @@ def _render_pyvista_density_surface_image(
 ) -> Optional[np.ndarray]:
     if pv is None:
         return None
+    global _PYVISTA_RUNTIME_READY
     try:
+        if not _PYVISTA_RUNTIME_READY:
+            os.environ.setdefault("PYVISTA_OFF_SCREEN", "true")
+            os.environ.setdefault("VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN", "1")
+            os.environ.setdefault("PYVISTA_AUTO_CLOSE", "true")
+            pv.OFF_SCREEN = True
+            if not os.environ.get("DISPLAY"):
+                start_xvfb = getattr(pv, "start_xvfb", None)
+                if callable(start_xvfb):
+                    try:
+                        start_xvfb(wait=0.05)
+                    except Exception:
+                        pass
+                try:
+                    import vtk  # type: ignore
+
+                    vtk.vtkObject.GlobalWarningDisplayOff()
+                except Exception:
+                    pass
+            _PYVISTA_RUNTIME_READY = True
+
         pv.OFF_SCREEN = True
         z_surface = np.where(np.asarray(z_mask, dtype=bool), np.asarray(z_fill, dtype=float), np.nan)
         grid = pv.StructuredGrid(
@@ -1016,7 +1039,7 @@ def _render_pyvista_density_surface_image(
             np.asarray(z_surface, dtype=float),
         )
         grid["support"] = np.where(np.asarray(z_mask, dtype=bool), 1.0, 0.0).ravel(order="F")
-        surface = grid.extract_surface()
+        surface = grid.extract_surface(algorithm="dataset_surface")
         surface = surface.threshold(value=0.5, scalars="support")
         if surface.n_points == 0:
             return None
@@ -1308,6 +1331,16 @@ def plot_fixation_roi_vs_period_axis_space(
         )
         axes2 = axes2.ravel()
         contour_handle = None
+        axis_handles = [
+            Line2D(
+                [0],
+                [0],
+                color=settings.axis_colors.get(axis_name, "#4d4d4d"),
+                lw=2.0,
+                label=_display_axis(axis_name, settings),
+            )
+            for axis_name in axis_tokens
+        ]
         ux_cross, uy_cross = _axis_direction("cross_interaction")
         for ridx, region in enumerate(region_tokens):
             ax2 = axes2[ridx]
