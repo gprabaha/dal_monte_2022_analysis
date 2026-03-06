@@ -44,12 +44,12 @@ Current scripts:
     significant windows only; exported for auditability)
   - region-level selective-fraction tables and cross-region pairwise fraction
     comparisons (multiple-comparison corrected)
-  - region-level axis-magnitude summaries by window (`pre/peri/post`) using
-    all units in each window
-  - within-region axis-pair (`3C2`) Welch comparisons by window with
-    within-window correction
-  - cross-region (`4C2`) Welch comparisons by window with within-window
-    correction
+  - region-level axis-magnitude summaries and Welch comparisons with two modes:
+    - `split_by_window`: separate `pre/peri/post` tables
+    - `averaged_across_windows`: per-unit magnitudes averaged across
+      `pre/peri/post`, then compared in one reduced table
+    GLM fitting remains per-window in both modes.
+    Axis magnitude comparisons use the `cell_means` axis source.
 - `build_fixation_preference_index.py`
   Computes per-bin pairwise fixation preference indices for each unit using:
   - numerator: `A - B` where A/B are condition mean firing rates (Hz) per bin
@@ -160,6 +160,7 @@ Config:
   - `roi_vs_period_alpha`
   - `roi_vs_period_pvalue_correction`
   - `roi_vs_period_unit_significance_mode`
+  - `roi_vs_period_axis_comparison_mode`
   - `roi_vs_period_parallelization_scope`
   - `roi_vs_period_use_parallel`
   - `average_target_bin_size_ms`

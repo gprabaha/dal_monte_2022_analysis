@@ -158,6 +158,11 @@ roi_vs_period_alpha: 0.05
 roi_vs_period_pvalue_correction: fdr_bh
 # unit significance mode options: raw | within_unit_corrected
 roi_vs_period_unit_significance_mode: within_unit_corrected
+# axis comparison mode options:
+# - split_by_window: axis magnitude summaries/comparisons are separate for pre/peri/post
+# - averaged_across_windows: GLM remains per-window; axis magnitudes are averaged per unit across pre/peri/post
+# Axis magnitude source is fixed to cell_means.
+roi_vs_period_axis_comparison_mode: averaged_across_windows
 # parallelization scope: date | unit
 # date is preferred here because unit computations are independent, while
 # session structure is shared within date.

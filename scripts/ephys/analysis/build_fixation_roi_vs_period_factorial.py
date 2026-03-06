@@ -59,6 +59,11 @@ def main() -> None:
     parser.add_argument("--region", action="append", default=None)
     parser.add_argument("--window", action="append", default=None)
     parser.add_argument("--unit-uuid", action="append", default=None)
+    parser.add_argument(
+        "--axis-comparison-mode",
+        choices=("split_by_window", "averaged_across_windows"),
+        default=None,
+    )
     parser.add_argument("--no-parallel", action="store_true")
     parser.add_argument("--test-single", action="store_true")
     args = parser.parse_args()
@@ -133,6 +138,7 @@ def main() -> None:
         alpha=cfg.get("roi_vs_period_alpha", 0.05),
         pvalue_correction=str(cfg.get("roi_vs_period_pvalue_correction") or "fdr_bh"),
         unit_significance_mode=cfg.get("roi_vs_period_unit_significance_mode", "within_unit_corrected"),
+        axis_comparison_mode=cfg.get("roi_vs_period_axis_comparison_mode", "averaged_across_windows"),
         parallelization_scope=cfg.get("roi_vs_period_parallelization_scope", "date"),
         use_parallel=cfg.get("roi_vs_period_use_parallel", True),
         max_procs=cfg.get("max_procs", 16),
@@ -146,6 +152,8 @@ def main() -> None:
         settings.use_parallel = False
     if args.test_single:
         settings.test_single = True
+    if args.axis_comparison_mode is not None:
+        settings.axis_comparison_mode = str(args.axis_comparison_mode)
 
     print(
         "[analysis] roi-vs-period factorial request: "
@@ -160,6 +168,7 @@ def main() -> None:
         f"min_trials_per_cell={int(settings.min_trials_per_cell)}, "
         f"pvalue_correction={settings.pvalue_correction}, "
         f"unit_significance_mode={settings.unit_significance_mode}, "
+        f"axis_comparison_mode={settings.axis_comparison_mode}, "
         f"parallelization_scope={settings.parallelization_scope}"
     )
 

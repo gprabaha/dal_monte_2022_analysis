@@ -49,6 +49,7 @@ AXIS_ORDER: tuple[str, ...] = tuple(axis_name for _, axis_name in TERM_TO_AXIS)
 _ALLOWED_PVALUE_CORRECTIONS = {"none", "bonferroni", "holm", "fdr_bh"}
 _ALLOWED_UNIT_SIGNIFICANCE_MODE = {"raw", "within_unit_corrected"}
 _ALLOWED_PARALLELIZATION_SCOPE = {"date", "unit"}
+_ALLOWED_AXIS_COMPARISON_MODE = {"split_by_window", "averaged_across_windows"}
 
 
 @dataclass
@@ -87,6 +88,7 @@ class FixationROIVsPeriodFactorialSettings:
     alpha: float = 0.05
     pvalue_correction: str = "fdr_bh"
     unit_significance_mode: str = "within_unit_corrected"
+    axis_comparison_mode: str = "averaged_across_windows"
     parallelization_scope: str = "date"
     use_parallel: bool = True
     max_procs: int = 16
@@ -244,6 +246,25 @@ def _resolve_parallelization_scope(scope: str) -> str:
             f"Expected one of: {sorted(_ALLOWED_PARALLELIZATION_SCOPE)}"
         )
     return token
+
+
+def _resolve_axis_comparison_mode(mode: str) -> str:
+    token = str(mode).strip().lower()
+    aliases = {
+        "split": "split_by_window",
+        "window_split": "split_by_window",
+        "split_by_window": "split_by_window",
+        "averaged": "averaged_across_windows",
+        "average": "averaged_across_windows",
+        "averaged_across_windows": "averaged_across_windows",
+    }
+    resolved = aliases.get(token, token)
+    if resolved not in _ALLOWED_AXIS_COMPARISON_MODE:
+        raise ValueError(
+            f"Unsupported axis_comparison_mode '{mode}'. "
+            f"Expected one of: {sorted(_ALLOWED_AXIS_COMPARISON_MODE)}"
+        )
+    return resolved
 
 
 def _load_trial_table(
@@ -981,14 +1002,13 @@ def _build_unit_axis_collapsed_magnitude_table(
     return out
 
 
-def _build_region_axis_tables(
+def _build_axis_magnitude_input_table(
     unit_axis_df: pd.DataFrame,
     *,
     settings: FixationROIVsPeriodFactorialSettings,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> pd.DataFrame:
     if unit_axis_df.empty:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
+        return pd.DataFrame()
     required = {
         "region",
         "window_name",
@@ -999,18 +1019,107 @@ def _build_region_axis_tables(
         "counts_toward_significance",
     }
     if not required.issubset(unit_axis_df.columns):
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
 
     df = unit_axis_df.copy()
     df["region"] = df["region"].fillna("unknown").astype(str)
     df = df.loc[df["counts_toward_significance"]].copy()
+    df = df.loc[df["axis_source"].astype(str) == "cell_means"].copy()
     if df.empty:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
     df["value_abs_norm"] = np.abs(df["value_signed"].to_numpy(dtype=float))
 
+    mode = _resolve_axis_comparison_mode(settings.axis_comparison_mode)
+    if mode == "split_by_window":
+        df["window_name"] = df["window_name"].astype(str)
+        df["axis_comparison_mode"] = mode
+        sort_cols = [
+            col
+            for col in ("date", "region", "unit_uuid", "window_name", "axis_source", "axis_name")
+            if col in df.columns
+        ]
+        if sort_cols:
+            df = df.sort_values(sort_cols).reset_index(drop=True)
+        return df
+
+    group_cols = [
+        "unit_key",
+        "date",
+        "unit_uuid",
+        "region",
+        "spike_channel",
+        "recorded_agent",
+        "recorded_monkey",
+        "area",
+        "n_sessions",
+        "axis_name",
+        "axis_source",
+    ]
+    group_cols = [col for col in group_cols if col in df.columns]
+    rows: list[dict] = []
+    for key_vals, grp in df.groupby(group_cols, dropna=False):
+        if not isinstance(key_vals, tuple):
+            key_vals = (key_vals,)
+        row = {col: val for col, val in zip(group_cols, key_vals)}
+        vals = grp["value_abs_norm"].to_numpy(dtype=float).reshape(-1)
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            continue
+        windows_used = (
+            grp["window_name"].astype(str).dropna().tolist()
+            if "window_name" in grp.columns
+            else []
+        )
+        row.update(
+            {
+                "window_name": "avg_pre_peri_post",
+                "axis_comparison_mode": mode,
+                "n_windows_averaged": int(vals.size),
+                "windows_used": "|".join(sorted(set(windows_used))),
+                "value_abs_norm": float(np.mean(vals)),
+            }
+        )
+        rows.append(row)
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    sort_cols = [
+        col
+        for col in ("date", "region", "unit_uuid", "window_name", "axis_source", "axis_name")
+        if col in out.columns
+    ]
+    if sort_cols:
+        out = out.sort_values(sort_cols).reset_index(drop=True)
+    return out
+
+
+def _build_region_axis_tables(
+    unit_axis_magnitude_df: pd.DataFrame,
+    *,
+    settings: FixationROIVsPeriodFactorialSettings,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    if unit_axis_magnitude_df.empty:
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    required = {
+        "region",
+        "window_name",
+        "axis_name",
+        "axis_source",
+        "unit_key",
+        "value_abs_norm",
+        "axis_comparison_mode",
+    }
+    if not required.issubset(unit_axis_magnitude_df.columns):
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    df = unit_axis_magnitude_df.copy()
+    df["region"] = df["region"].fillna("unknown").astype(str)
+
     summary_rows: list[dict] = []
-    for (axis_source, region, window_name, axis_name), grp in df.groupby(
-        ["axis_source", "region", "window_name", "axis_name"], dropna=False
+    for (mode, axis_source, region, window_name, axis_name), grp in df.groupby(
+        ["axis_comparison_mode", "axis_source", "region", "window_name", "axis_name"],
+        dropna=False,
     ):
         vals = grp["value_abs_norm"].to_numpy(dtype=float).reshape(-1)
         vals = vals[np.isfinite(vals)]
@@ -1018,6 +1127,7 @@ def _build_region_axis_tables(
             continue
         summary_rows.append(
             {
+                "axis_comparison_mode": str(mode),
                 "axis_source": str(axis_source),
                 "region": str(region),
                 "window_name": str(window_name),
@@ -1031,12 +1141,13 @@ def _build_region_axis_tables(
     summary_df = pd.DataFrame(summary_rows)
     if not summary_df.empty:
         summary_df = summary_df.sort_values(
-            ["window_name", "axis_source", "region", "axis_name"]
+            ["axis_comparison_mode", "window_name", "axis_source", "region", "axis_name"]
         ).reset_index(drop=True)
 
     pairwise_rows: list[dict] = []
-    for (axis_source, window_name, axis_name), grp in df.groupby(
-        ["axis_source", "window_name", "axis_name"], dropna=False
+    for (mode, axis_source, window_name, axis_name), grp in df.groupby(
+        ["axis_comparison_mode", "axis_source", "window_name", "axis_name"],
+        dropna=False,
     ):
         by_region_vals = {}
         for region, g_region in grp.groupby("region", dropna=False):
@@ -1051,6 +1162,7 @@ def _build_region_axis_tables(
             stat, p_value = _safe_ttest_ind(arr_a, arr_b)
             pairwise_rows.append(
                 {
+                    "axis_comparison_mode": str(mode),
                     "axis_source": str(axis_source),
                     "window_name": str(window_name),
                     "axis_name": str(axis_name),
@@ -1076,18 +1188,18 @@ def _build_region_axis_tables(
             p_col="p_value",
             out_col="p_value_adjusted",
             method=settings.pvalue_correction,
-            group_cols=("axis_source", "window_name", "axis_name"),
+            group_cols=("axis_comparison_mode", "axis_source", "window_name", "axis_name"),
         )
         pairwise_df["significant_adjusted"] = (
             pairwise_df["p_value_adjusted"].to_numpy(dtype=float) < float(settings.alpha)
         )
         pairwise_df = pairwise_df.sort_values(
-            ["window_name", "axis_source", "axis_name", "region_a", "region_b"]
+            ["axis_comparison_mode", "window_name", "axis_source", "axis_name", "region_a", "region_b"]
         ).reset_index(drop=True)
 
     within_rows: list[dict] = []
-    for (axis_source, region, window_name), grp in df.groupby(
-        ["axis_source", "region", "window_name"], dropna=False
+    for (mode, axis_source, region, window_name), grp in df.groupby(
+        ["axis_comparison_mode", "axis_source", "region", "window_name"], dropna=False
     ):
         pivot = grp.pivot_table(
             index="unit_key",
@@ -1106,6 +1218,7 @@ def _build_region_axis_tables(
             stat, p_value = _safe_ttest_ind(arr_a, arr_b)
             within_rows.append(
                 {
+                    "axis_comparison_mode": str(mode),
                     "axis_source": str(axis_source),
                     "region": str(region),
                     "window_name": str(window_name),
@@ -1130,13 +1243,13 @@ def _build_region_axis_tables(
             p_col="p_value",
             out_col="p_value_adjusted",
             method=settings.pvalue_correction,
-            group_cols=("axis_source", "region", "window_name"),
+            group_cols=("axis_comparison_mode", "axis_source", "region", "window_name"),
         )
         within_df["significant_adjusted"] = (
             within_df["p_value_adjusted"].to_numpy(dtype=float) < float(settings.alpha)
         )
         within_df = within_df.sort_values(
-            ["window_name", "axis_source", "region", "axis_a", "axis_b"]
+            ["axis_comparison_mode", "window_name", "axis_source", "region", "axis_a", "axis_b"]
         ).reset_index(drop=True)
 
     return summary_df, pairwise_df, within_df
@@ -1183,6 +1296,7 @@ def run_fixation_roi_vs_period_factorial_analysis(
     settings.windows_ms = windows_ms
     settings.significance_windows = significance_windows
     settings.unit_significance_mode = _resolve_unit_significance_mode(settings.unit_significance_mode)
+    settings.axis_comparison_mode = _resolve_axis_comparison_mode(settings.axis_comparison_mode)
     settings.parallelization_scope = _resolve_parallelization_scope(settings.parallelization_scope)
 
     trial_df, bin_centers_s = _load_trial_table(settings, dates=dates, sessions=sessions)
@@ -1357,6 +1471,10 @@ def run_fixation_roi_vs_period_factorial_analysis(
         unit_axis_df,
         unit_axis_significance_df,
     )
+    unit_axis_magnitude_df = _build_axis_magnitude_input_table(
+        unit_axis_df,
+        settings=settings,
+    )
 
     (
         region_fraction_df,
@@ -1366,7 +1484,7 @@ def run_fixation_roi_vs_period_factorial_analysis(
         region_axis_summary_df,
         region_axis_pairwise_df,
         region_axis_within_df,
-    ) = _build_region_axis_tables(unit_axis_df, settings=settings)
+    ) = _build_region_axis_tables(unit_axis_magnitude_df, settings=settings)
     region_fraction_within_df = pd.DataFrame()
     region_axis_friedman_df = pd.DataFrame()
 
@@ -1415,9 +1533,12 @@ def run_fixation_roi_vs_period_factorial_analysis(
             "alpha": float(settings.alpha),
             "pvalue_correction": str(settings.pvalue_correction),
             "unit_significance_mode": str(settings.unit_significance_mode),
+            "axis_comparison_mode": str(settings.axis_comparison_mode),
+            "axis_magnitude_source": "cell_means",
             "parallelization_scope": str(settings.parallelization_scope),
             "n_units": int(unit_term_df["unit_key"].nunique()) if not unit_term_df.empty else 0,
             "n_regions": int(unit_term_df["region"].astype(str).nunique()) if not unit_term_df.empty else 0,
+            "n_axis_magnitude_rows": int(len(unit_axis_magnitude_df)),
             "n_significant_unit_axis_rows": (
                 int(unit_axis_significance_df.loc[unit_axis_significance_df["is_significant_axis"]].shape[0])
                 if not unit_axis_significance_df.empty and "is_significant_axis" in unit_axis_significance_df.columns
@@ -1481,6 +1602,16 @@ def print_fixation_roi_vs_period_factorial_summary(result: dict) -> None:
         if isinstance(meta, dict)
         else []
     )
+    axis_comparison_mode = (
+        str(meta.get("axis_comparison_mode", "averaged_across_windows"))
+        if isinstance(meta, dict)
+        else "averaged_across_windows"
+    )
+    axis_magnitude_source = (
+        str(meta.get("axis_magnitude_source", "cell_means"))
+        if isinstance(meta, dict)
+        else "cell_means"
+    )
 
     if unit_term_df is None or unit_term_df.empty:
         print("[analysis] no unit-term factorial rows were produced")
@@ -1493,6 +1624,8 @@ def print_fixation_roi_vs_period_factorial_summary(result: dict) -> None:
         "[analysis] roi-vs-period factorial unit output: "
         f"units={n_units}, term_rows={n_term_rows}, regions={n_regions}"
     )
+    print(f"[analysis] axis comparison mode: {axis_comparison_mode}")
+    print(f"[analysis] axis magnitude source: {axis_magnitude_source}")
     if unit_axis_significance_df is not None and not unit_axis_significance_df.empty:
         n_sig_axis = int(unit_axis_significance_df["is_significant_axis"].sum())
         print(
