@@ -268,6 +268,47 @@ Config:
   - `selective_example_grid_rate_window_linewidth`
   - `selective_example_grid_units`
 
+- `plot_fixation_roi_vs_period_axis_violin.py`
+  Plots one combined region-wise violin figure of absolute axis magnitudes:
+  - columns = regions (default order: `BLA`, `ACCg`, `dmPFC`, `OFC`)
+  - x-axis = ROI-vs-period axes (`face_object`, `interactive_state`, `cross_interaction`)
+  - y-axis = per-unit `|axis magnitude|`
+  - overlays significance stars for within-region axis-pair differences
+    from adjusted pairwise tests.
+  Uses ROI-vs-period analysis outputs (`results.pkl`) and respects analysis mode:
+  - `split_by_window`: writes one figure per window
+  - `averaged_across_windows`: writes one reduced figure
+  Axis magnitudes are read from `cell_means` source.
+
+- `plot_fixation_roi_vs_period_cross_region_graph.py`
+  Plots square-node cross-region significance graphs:
+  - one subplot per axis (`face_object`, `interactive_state`, `cross_interaction`)
+  - four region nodes on square vertices
+  - draws edges only for region pairs with adjusted significant differences.
+  Uses ROI-vs-period analysis outputs (`results.pkl`) and respects analysis mode:
+  - `split_by_window`: writes one figure per window
+  - `averaged_across_windows`: writes one reduced figure
+  Axis magnitudes are read from `cell_means` source.
+
+- `plot_fixation_roi_vs_period_axis_geometry.py`
+  Plots an axis-definition geometry diagram (editable vector output):
+  - one panel each for `face_object`, `interactive_state`, `cross_interaction`
+  - shows condition geometry and labeled formulas for axis definitions.
+
+  Config:
+  - `roi_vs_period_plot_input_subdir`
+  - `roi_vs_period_plot_input_filename`
+  - `roi_vs_period_plot_output_subdir`
+  - `roi_vs_period_plot_output_extension`
+  - `roi_vs_period_plot_output_dpi`
+  - `roi_vs_period_plot_axis_violin_output_filename`
+  - `roi_vs_period_plot_cross_region_graph_output_filename`
+  - `roi_vs_period_plot_axis_geometry_output_filename`
+  - `roi_vs_period_plot_axis_magnitude_source`
+  - `roi_vs_period_plot_region_order`
+  - `roi_vs_period_plot_axis_order`
+  - `roi_vs_period_plot_axis_colors`
+
 - `plot_within_region_fixation_neural_cross_correlation.py`
   Within-region neural xcorr summary plotting:
   - date-level (PNG): one figure per date for `pairs` and one for `mean`,
