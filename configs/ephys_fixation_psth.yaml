@@ -178,6 +178,8 @@ roi_vs_period_plot_output_dpi: 300
 roi_vs_period_plot_axis_violin_output_filename: roi_vs_period_axis_violin
 roi_vs_period_plot_cross_region_graph_output_filename: roi_vs_period_cross_region_graph
 roi_vs_period_plot_axis_geometry_output_filename: roi_vs_period_axis_geometry
+roi_vs_period_plot_axis_space_regions_output_filename: roi_vs_period_axis_space_regions
+roi_vs_period_plot_axis_space_overlay_output_filename: roi_vs_period_axis_space_overlay
 roi_vs_period_plot_axis_magnitude_source: cell_means
 roi_vs_period_plot_region_order: [bla, accg, dmpfc, ofc]
 roi_vs_period_plot_axis_order: [face_object, interactive_state, cross_interaction]
@@ -185,6 +187,19 @@ roi_vs_period_plot_axis_colors:
   face_object: "#cc4c02"
   interactive_state: "#2b8cbe"
   cross_interaction: "#7a0177"
+roi_vs_period_plot_region_outline_colors:
+  bla: "#7f3b08"
+  accg: "#1b9e77"
+  dmpfc: "#7570b3"
+  ofc: "#e7298a"
+roi_vs_period_plot_axis_space_regions_letter_width_in: 8.5
+roi_vs_period_plot_axis_space_regions_letter_height_frac: 0.30
+roi_vs_period_plot_axis_space_overlay_letter_width_in: 8.5
+roi_vs_period_plot_axis_space_overlay_letter_height_frac: 0.30
+roi_vs_period_plot_axis_space_disk_alpha: 0.35
+roi_vs_period_plot_axis_space_disk_layers: 14
+roi_vs_period_plot_axis_space_quantile_low: 0.025
+roi_vs_period_plot_axis_space_quantile_high: 0.975
 
 # Per-bin pairwise preference-index analysis from fixation PSTH trial rows.
 # For each pair (A, B), computes index=(A-B)/denominator and appends

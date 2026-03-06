@@ -292,8 +292,20 @@ Config:
 
 - `plot_fixation_roi_vs_period_axis_geometry.py`
   Plots an axis-definition geometry diagram (editable vector output):
-  - one panel each for `face_object`, `interactive_state`, `cross_interaction`
+  - one shared-space panel for `face_object`, `interactive_state`, `cross_interaction`
   - shows condition geometry and labeled formulas for axis definitions.
+
+- `plot_fixation_roi_vs_period_axis_space.py`
+  Plots ROI-vs-period stacked 2D density surfaces (one subplot per region)
+  using per-unit mean magnitude across all three axes:
+  - density surface is radial on the 2D plane and peaks at region mean magnitude
+  - intensity fades inward/outward from that mean ring
+  - overlays plain origin-to-mean lines for `face_object`, `interactive_state`,
+    and `cross_interaction` directions (no arrowheads)
+  - uses shared x/y limits across all regional subplots for direct comparison
+  Uses ROI-vs-period analysis outputs (`results.pkl`) and respects analysis mode:
+  - `split_by_window`: writes one stacked figure per window
+  - `averaged_across_windows`: writes one stacked figure
 
   Config:
   - `roi_vs_period_plot_input_subdir`
@@ -304,10 +316,20 @@ Config:
   - `roi_vs_period_plot_axis_violin_output_filename`
   - `roi_vs_period_plot_cross_region_graph_output_filename`
   - `roi_vs_period_plot_axis_geometry_output_filename`
+  - `roi_vs_period_plot_axis_space_regions_output_filename`
   - `roi_vs_period_plot_axis_magnitude_source`
   - `roi_vs_period_plot_region_order`
   - `roi_vs_period_plot_axis_order`
   - `roi_vs_period_plot_axis_colors`
+  - `roi_vs_period_plot_region_outline_colors`
+  - `roi_vs_period_plot_axis_space_regions_letter_width_in`
+  - `roi_vs_period_plot_axis_space_regions_letter_height_frac`
+  - `roi_vs_period_plot_axis_space_overlay_letter_width_in`
+  - `roi_vs_period_plot_axis_space_overlay_letter_height_frac`
+  - `roi_vs_period_plot_axis_space_disk_alpha`
+  - `roi_vs_period_plot_axis_space_disk_layers`
+  - `roi_vs_period_plot_axis_space_quantile_low`
+  - `roi_vs_period_plot_axis_space_quantile_high`
 
 - `plot_within_region_fixation_neural_cross_correlation.py`
   Within-region neural xcorr summary plotting:

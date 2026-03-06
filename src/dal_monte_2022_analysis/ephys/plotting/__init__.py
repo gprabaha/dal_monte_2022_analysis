@@ -45,6 +45,7 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_population_pca import (
 from dal_monte_2022_analysis.ephys.plotting.fixation_roi_vs_period_factorial import (
     FixationROIVsPeriodFactorialPlotSettings,
     plot_fixation_roi_vs_period_axis_geometry,
+    plot_fixation_roi_vs_period_axis_space,
     plot_fixation_roi_vs_period_axis_violin,
     plot_fixation_roi_vs_period_cross_region_graph,
 )
@@ -77,5 +78,6 @@ __all__ = [
     "FixationROIVsPeriodFactorialPlotSettings",
     "plot_fixation_roi_vs_period_axis_violin",
     "plot_fixation_roi_vs_period_cross_region_graph",
+    "plot_fixation_roi_vs_period_axis_space",
     "plot_fixation_roi_vs_period_axis_geometry",
 ]
