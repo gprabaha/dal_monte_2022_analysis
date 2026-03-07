@@ -13,6 +13,7 @@ mpl.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.collections import PolyCollection
 from matplotlib.lines import Line2D
+from matplotlib.ticker import FormatStrFormatter
 import numpy as np
 import pandas as pd
 try:
@@ -68,6 +69,7 @@ _WINDOW_SORT_ORDER: dict[str, int] = {
 }
 _ALLOWED_AXIS_COMPARISON_MODES = {"split_by_window", "averaged_across_windows"}
 _PYVISTA_RUNTIME_READY = False
+_VECTOR_EXTS = {".pdf", ".svg", ".eps", ".ps", ".tex"}
 
 
 @dataclass
@@ -1006,6 +1008,8 @@ def _render_pyvista_density_surface_image(
     z_fill: np.ndarray,
     z_mask: np.ndarray,
     lim: float,
+    z_axis_max: float,
+    z_scale: float,
 ) -> Optional[np.ndarray]:
     if pv is None:
         return None
@@ -1017,12 +1021,6 @@ def _render_pyvista_density_surface_image(
             os.environ.setdefault("PYVISTA_AUTO_CLOSE", "true")
             pv.OFF_SCREEN = True
             if not os.environ.get("DISPLAY"):
-                start_xvfb = getattr(pv, "start_xvfb", None)
-                if callable(start_xvfb):
-                    try:
-                        start_xvfb(wait=0.05)
-                    except Exception:
-                        pass
                 try:
                     import vtk  # type: ignore
 
@@ -1032,7 +1030,12 @@ def _render_pyvista_density_surface_image(
             _PYVISTA_RUNTIME_READY = True
 
         pv.OFF_SCREEN = True
-        z_surface = np.where(np.asarray(z_mask, dtype=bool), np.asarray(z_fill, dtype=float), np.nan)
+        z_scale = float(z_scale)
+        z_surface = np.where(
+            np.asarray(z_mask, dtype=bool),
+            np.asarray(z_fill, dtype=float) * float(z_scale),
+            np.nan,
+        )
         grid = pv.StructuredGrid(
             np.asarray(xx, dtype=float),
             np.asarray(yy, dtype=float),
@@ -1044,6 +1047,7 @@ def _render_pyvista_density_surface_image(
         if surface.n_points == 0:
             return None
 
+        scene_scale = max(float(lim), float(z_axis_max), 1.0)
         plotter = pv.Plotter(off_screen=True, window_size=(980, 760))
         plotter.set_background("white")
         plotter.remove_all_lights()
@@ -1071,6 +1075,14 @@ def _render_pyvista_density_surface_image(
                 intensity=0.28,
             )
         )
+        bounds = (
+            -float(lim),
+            float(lim),
+            -float(lim),
+            float(lim),
+            0.0,
+            float(max(z_axis_max, 1e-6)),
+        )
         plotter.add_mesh(
             surface,
             color="#b6b6b6",
@@ -1083,17 +1095,193 @@ def _render_pyvista_density_surface_image(
             show_edges=False,
             lighting=True,
         )
-        plotter.camera.position = (2.55 * float(lim), -2.05 * float(lim), 2.18)
-        plotter.camera.focal_point = (0.0, 0.0, 0.35)
+        # Keep subplot axis scaling consistent regardless of each region's support mask.
+        plotter.add_mesh(
+            pv.Box(bounds=bounds),
+            opacity=0.0,
+            lighting=False,
+            show_edges=False,
+            pickable=False,
+        )
+        plotter.show_bounds(
+            grid=False,
+            location="outer",
+            ticks="outside",
+            xtitle="Face-Object",
+            ytitle="Interactive-Noninteractive",
+            ztitle="Distribution Magnitude",
+            font_size=15,
+            minor_ticks=False,
+            fmt="%.2f",
+        )
+        z_focus = 0.32 * float(max(z_axis_max, 1e-6))
+        plotter.camera.position = (3.45 * scene_scale, -3.05 * scene_scale, 2.95 * scene_scale)
+        plotter.camera.focal_point = (0.0, 0.0, z_focus)
         plotter.camera.up = (0.0, 0.0, 1.0)
-        plotter.camera.zoom(1.10)
+        plotter.camera.zoom(0.86)
         img = plotter.screenshot(return_img=True)
         plotter.close()
         if isinstance(img, np.ndarray) and img.size > 0:
             return img
-    except Exception:
+    except Exception as exc:
+        print(f"[plot] pyvista off-screen image render failed: {exc}")
         return None
     return None
+
+
+def _save_pyvista_region_surface_figure(
+    *,
+    out_path: Path,
+    region_tokens: Sequence[str],
+    region_profiles: dict[str, dict],
+    density_maps: dict[str, dict[str, np.ndarray]],
+    xx: np.ndarray,
+    yy: np.ndarray,
+    lim: float,
+    z_axis_max: float,
+    settings: FixationROIVsPeriodFactorialPlotSettings,
+) -> bool:
+    if pv is None:
+        return False
+    global _PYVISTA_RUNTIME_READY
+    try:
+        if not _PYVISTA_RUNTIME_READY:
+            os.environ.setdefault("PYVISTA_OFF_SCREEN", "true")
+            os.environ.setdefault("VTK_DEFAULT_RENDER_WINDOW_OFFSCREEN", "1")
+            os.environ.setdefault("PYVISTA_AUTO_CLOSE", "true")
+            pv.OFF_SCREEN = True
+            if not os.environ.get("DISPLAY"):
+                try:
+                    import vtk  # type: ignore
+
+                    vtk.vtkObject.GlobalWarningDisplayOff()
+                except Exception:
+                    pass
+            _PYVISTA_RUNTIME_READY = True
+
+        n_panels = max(1, len(region_tokens))
+        plotter = pv.Plotter(
+            off_screen=True,
+            shape=(1, n_panels),
+            border=False,
+            window_size=(int(600 * n_panels), 640),
+        )
+        plotter.remove_all_lights()
+        scene_scale = max(float(lim), float(z_axis_max), 1.0)
+        key_light = pv.Light(
+            position=(2.5 * scene_scale, -2.0 * scene_scale, 2.8 * scene_scale),
+            focal_point=(0.0, 0.0, 0.5),
+            color="white",
+            intensity=1.25,
+        )
+        fill_light = pv.Light(
+            position=(-2.2 * scene_scale, 1.9 * scene_scale, 1.8 * scene_scale),
+            focal_point=(0.0, 0.0, 0.45),
+            color="white",
+            intensity=0.45,
+        )
+        rim_light = pv.Light(
+            position=(0.0, -2.8 * scene_scale, 3.2 * scene_scale),
+            focal_point=(0.0, 0.0, 0.55),
+            color="white",
+            intensity=0.32,
+        )
+        plotter.add_light(key_light)
+        plotter.add_light(fill_light)
+        plotter.add_light(rim_light)
+
+        for ridx, region in enumerate(region_tokens):
+            plotter.subplot(0, ridx)
+            plotter.set_background("white")
+            profile = region_profiles.get(str(region))
+            dmap = density_maps.get(str(region))
+            if profile is None or dmap is None:
+                plotter.add_text("No data", position="upper_left", font_size=16, color="black")
+                continue
+
+            z_scale = 1.70
+            z_surface = np.where(dmap["z_mask"], dmap["z_fill"] * float(z_scale), np.nan)
+            grid = pv.StructuredGrid(
+                np.asarray(xx, dtype=float),
+                np.asarray(yy, dtype=float),
+                np.asarray(z_surface, dtype=float),
+            )
+            grid["support"] = np.where(np.asarray(dmap["z_mask"], dtype=bool), 1.0, 0.0).ravel(order="F")
+            surface = grid.extract_surface(algorithm="dataset_surface")
+            surface = surface.threshold(value=0.5, scalars="support")
+            if surface.n_points == 0:
+                plotter.add_text("No support", position="upper_left", font_size=16, color="black")
+                continue
+
+            bounds = (
+                -float(lim),
+                float(lim),
+                -float(lim),
+                float(lim),
+                0.0,
+                float(max(z_axis_max, 1e-6)),
+            )
+            plotter.add_mesh(
+                surface,
+                color="#b6b6b6",
+                smooth_shading=True,
+                ambient=0.24,
+                diffuse=0.73,
+                specular=0.60,
+                specular_power=24.0,
+                opacity=1.0,
+                show_edges=False,
+                lighting=True,
+            )
+            # Add a transparent reference box so all subplots keep identical xyz bounds.
+            plotter.add_mesh(
+                pv.Box(bounds=bounds),
+                opacity=0.0,
+                lighting=False,
+                show_edges=False,
+                pickable=False,
+            )
+            plotter.show_bounds(
+                grid=False,
+                location="outer",
+                ticks="outside",
+                xtitle="Face-Object",
+                ytitle="Interactive-Noninteractive",
+                ztitle="Distribution Magnitude",
+                font_size=18,
+                color="black",
+                n_xlabels=3,
+                n_ylabels=3,
+                n_zlabels=3,
+                fmt="%.2f",
+            )
+            plotter.add_text(_display_region(region, settings), position="upper_left", font_size=18, color="black")
+            plotter.add_text(
+                f"n={int(profile.get('n_units', 0))}",
+                position=(0.02, 0.90),
+                viewport=True,
+                font_size=14,
+                color="black",
+            )
+            z_focus = 0.35 * float(max(z_axis_max, 1e-6))
+            plotter.camera.position = (3.45 * scene_scale, -3.05 * scene_scale, 3.10 * scene_scale)
+            plotter.camera.focal_point = (0.0, 0.0, z_focus)
+            plotter.camera.up = (0.0, 0.0, 1.0)
+            plotter.camera.zoom(0.84)
+
+        suffix = out_path.suffix.lower()
+        if suffix in _VECTOR_EXTS:
+            try:
+                plotter.save_graphic(str(out_path), raster=False)
+            except TypeError:
+                plotter.save_graphic(str(out_path))
+        else:
+            plotter.screenshot(str(out_path), return_img=False)
+        plotter.close()
+        return True
+    except Exception as exc:
+        print(f"[plot] pyvista multi-panel surface export failed: {exc}")
+        return False
 
 
 def plot_fixation_roi_vs_period_axis_space(
@@ -1256,59 +1444,82 @@ def plot_fixation_roi_vs_period_axis_space(
                 "z_mask": z_mask,
             }
 
-        fig = plt.figure(
-            figsize=(float(settings.axis_space_regions_letter_width_in), float(region_fig_h)),
-            dpi=settings.output_dpi,
-        )
-        axes_surface = fig.subplots(1, len(region_tokens), squeeze=False).ravel()
-        any_surface = False
-        for ridx, region in enumerate(region_tokens):
-            axs = axes_surface[ridx]
-            axs.set_title(_display_region(region, settings), fontsize=10)
-            profile = region_profiles.get(str(region))
-            dmap = density_maps.get(str(region))
-            if profile is None or dmap is None:
-                axs.text(0.5, 0.5, "No data", transform=axs.transAxes, ha="center", va="center", fontsize=9)
-                axs.axis("off")
-                continue
-            img = _render_pyvista_density_surface_image(
-                xx=xx,
-                yy=yy,
-                z_fill=dmap["z_fill"],
-                z_mask=dmap["z_mask"],
-                lim=float(lim),
-            )
-            if isinstance(img, np.ndarray) and img.size > 0:
-                axs.imshow(img)
-                axs.axis("off")
-                any_surface = True
-            else:
-                axs.text(0.5, 0.5, "PyVista render failed", transform=axs.transAxes, ha="center", va="center", fontsize=8)
-                axs.axis("off")
-            axs.text(
-                0.02,
-                0.95,
-                f"n={int(profile.get('n_units', 0))}",
-                transform=axs.transAxes,
-                ha="left",
-                va="top",
-                fontsize=7,
-                color="#333333",
-            )
-
         suffix = f"__window={_safe_suffix_token(win_name)}"
-        if any_surface:
-            fig.suptitle(
-                (
-                    "ROI-vs-Period 3D Density Surface by Region (PyVista) "
-                    f"({win_name}; mode={mode}; source={settings.axis_magnitude_source})"
-                ),
-                fontsize=10,
+        out_name_regions = ensure_filename(f"{output_filename_regions}{suffix}", f".{ext}")
+        out_path_regions = out_root / out_name_regions
+        surface_z_scale = 1.70
+        z_norm_max = 0.0
+        for dmap in density_maps.values():
+            z_vals = np.asarray(dmap.get("z_fill"), dtype=float)
+            if z_vals.size > 0 and np.any(np.isfinite(z_vals)):
+                z_norm_max = max(z_norm_max, float(np.nanmax(z_vals)))
+        z_axis_max = max(float(surface_z_scale * max(z_norm_max, 1e-3)), 1e-3)
+        saved_surface = _save_pyvista_region_surface_figure(
+            out_path=out_path_regions,
+            region_tokens=region_tokens,
+            region_profiles=region_profiles,
+            density_maps=density_maps,
+            xx=xx,
+            yy=yy,
+            lim=float(lim),
+            z_axis_max=float(z_axis_max),
+            settings=settings,
+        )
+        if not saved_surface:
+            fig = plt.figure(
+                figsize=(float(settings.axis_space_regions_letter_width_in), float(region_fig_h)),
+                dpi=settings.output_dpi,
             )
-            fig.subplots_adjust(left=0.01, right=0.99, top=0.86, bottom=0.05, wspace=0.01)
-            out_name_regions = ensure_filename(f"{output_filename_regions}{suffix}", f".{ext}")
-            out_path_regions = out_root / out_name_regions
-            save_figure(fig, out_path_regions, ext=ext, dpi=settings.output_dpi)
+            axes_surface = fig.subplots(1, len(region_tokens), squeeze=False).ravel()
+            any_surface = False
+            for ridx, region in enumerate(region_tokens):
+                axs = axes_surface[ridx]
+                axs.set_title(_display_region(region, settings), fontsize=10)
+                profile = region_profiles.get(str(region))
+                dmap = density_maps.get(str(region))
+                if profile is None or dmap is None:
+                    axs.text(0.5, 0.5, "No data", transform=axs.transAxes, ha="center", va="center", fontsize=9)
+                    axs.axis("off")
+                    continue
+                img = _render_pyvista_density_surface_image(
+                    xx=xx,
+                    yy=yy,
+                    z_fill=dmap["z_fill"],
+                    z_mask=dmap["z_mask"],
+                    lim=float(lim),
+                    z_axis_max=float(z_axis_max),
+                    z_scale=float(surface_z_scale),
+                )
+                if isinstance(img, np.ndarray) and img.size > 0:
+                    axs.imshow(img)
+                    axs.axis("off")
+                    any_surface = True
+                else:
+                    axs.text(0.5, 0.5, "PyVista render failed", transform=axs.transAxes, ha="center", va="center", fontsize=8)
+                    axs.axis("off")
+                axs.text(
+                    0.02,
+                    0.95,
+                    f"n={int(profile.get('n_units', 0))}",
+                    transform=axs.transAxes,
+                    ha="left",
+                    va="top",
+                    fontsize=7,
+                    color="#333333",
+                )
+            if any_surface:
+                fig.suptitle(
+                    (
+                        "ROI-vs-Period 3D Density Surface by Region (PyVista) "
+                        f"({win_name}; mode={mode}; source={settings.axis_magnitude_source})"
+                    ),
+                    fontsize=10,
+                )
+                fig.subplots_adjust(left=0.01, right=0.99, top=0.86, bottom=0.05, wspace=0.01)
+                save_figure(fig, out_path_regions, ext=ext, dpi=settings.output_dpi)
+                saved_surface = True
+            plt.close(fig)
+        if saved_surface:
             outputs.append(
                 {
                     "output_path": str(out_path_regions),
@@ -1320,7 +1531,6 @@ def plot_fixation_roi_vs_period_axis_space(
             )
         else:
             print(f"[plot] pyvista rendering unavailable for window={win_name}; skipping 3D surface output")
-        plt.close(fig)
 
         fig2, axes2 = plt.subplots(
             1,
@@ -1331,6 +1541,7 @@ def plot_fixation_roi_vs_period_axis_space(
         )
         axes2 = axes2.ravel()
         contour_handle = None
+        contour_axis_lim = 4.0
         axis_handles = [
             Line2D(
                 [0],
@@ -1381,7 +1592,7 @@ def plot_fixation_roi_vs_period_axis_space(
                     fontsize=7,
                     color="#333333",
                 )
-                inset = ax2.inset_axes([0.67, 0.60, 0.30, 0.34])
+                inset = ax2.inset_axes([0.66, 0.06, 0.31, 0.31])
                 inset.axhline(0.0, color="#888888", linewidth=0.8, zorder=1)
                 inset.axvline(0.0, color="#888888", linewidth=0.8, zorder=1)
                 axis_means = profile.get("axis_means", {})
@@ -1413,12 +1624,30 @@ def plot_fixation_roi_vs_period_axis_space(
                 inset.set_aspect("equal", adjustable="box")
                 inset.set_xticks([])
                 inset.set_yticks([])
+                inset_lim = 1.2 * max_mag
+                scale_candidates = np.asarray([0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 4.0], dtype=float)
+                valid_scales = scale_candidates[scale_candidates <= (0.45 * inset_lim)]
+                scale_len = float(valid_scales[-1]) if valid_scales.size > 0 else 0.01
+                x0 = -0.90 * inset_lim
+                x1 = x0 + scale_len
+                y0 = -0.85 * inset_lim
+                inset.plot([x0, x1], [y0, y0], color="#111111", linewidth=1.2, solid_capstyle="butt", zorder=3)
+                inset.text(
+                    (x0 + x1) / 2.0,
+                    y0 - 0.09 * inset_lim,
+                    f"{scale_len:g}",
+                    ha="center",
+                    va="top",
+                    fontsize=5.2,
+                    color="#111111",
+                )
                 inset.set_title("Mean Vectors", fontsize=5.5, pad=1.0)
 
             ax2.set_title(_display_region(region, settings), fontsize=10)
-            ax2.set_xlim(-float(lim), float(lim))
-            ax2.set_ylim(-float(lim), float(lim))
+            ax2.set_xlim(-float(contour_axis_lim), float(contour_axis_lim))
+            ax2.set_ylim(-float(contour_axis_lim), float(contour_axis_lim))
             ax2.set_aspect("equal", adjustable="box")
+            ax2.set_anchor("C")
             ax2.axhline(0.0, color="#1a1a1a", linewidth=1.6, zorder=5)
             ax2.axvline(0.0, color="#1a1a1a", linewidth=1.6, zorder=5)
             ax2.grid(alpha=0.14, linewidth=0.5)
@@ -1431,14 +1660,15 @@ def plot_fixation_roi_vs_period_axis_space(
 
         fig2.legend(handles=axis_handles, loc="upper center", frameon=False, fontsize=8, ncol=max(1, len(axis_handles)))
         if contour_handle is not None:
+            cax = fig2.add_axes([0.935, 0.22, 0.012, 0.52])
             cbar2 = fig2.colorbar(
                 contour_handle,
-                ax=list(axes2),
-                fraction=0.020,
-                pad=0.02,
+                cax=cax,
             )
             cbar2.set_label("Relative Density", fontsize=8)
             cbar2.ax.tick_params(labelsize=7)
+            cbar2.formatter = FormatStrFormatter("%.2f")
+            cbar2.update_ticks()
         fig2.suptitle(
             (
                 "ROI-vs-Period 2D Density Contours by Region "
@@ -1446,7 +1676,7 @@ def plot_fixation_roi_vs_period_axis_space(
             ),
             fontsize=10,
         )
-        fig2.subplots_adjust(left=0.05, right=0.92, top=0.82, bottom=0.16, wspace=0.22)
+        fig2.subplots_adjust(left=0.05, right=0.90, top=0.82, bottom=0.16, wspace=0.22)
         out_name_contours = ensure_filename(f"{output_filename_contours}{suffix}", f".{ext}")
         out_path_contours = out_root / out_name_contours
         save_figure(fig2, out_path_contours, ext=ext, dpi=settings.output_dpi)
