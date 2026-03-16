@@ -38,6 +38,8 @@ def main() -> None:
     parser.add_argument("--plotting-cfg", default="configs/plotting.yaml")
     parser.add_argument("--ephys-fixation-psth-cfg", default="configs/ephys_fixation_psth.yaml")
     parser.add_argument("--region", action="append", default=None)
+    parser.add_argument("--view-elev", type=float, default=None)
+    parser.add_argument("--view-azim", type=float, default=None)
     args = parser.parse_args()
 
     cfg = load_config(args.ephys_fixation_psth_cfg)
@@ -58,10 +60,22 @@ def main() -> None:
         output_dpi=cfg.get("population_pca_plot_output_dpi", 300),
         trajectory_n_pcs=int(cfg.get("population_pca_plot_trajectory_n_pcs", 3)),
         trajectory_n_columns=int(cfg.get("population_pca_plot_trajectory_n_columns", 4)),
+        trajectory_view_elev=float(cfg.get("population_pca_plot_trajectory_view_elev", 22.0)),
+        trajectory_view_azim=float(cfg.get("population_pca_plot_trajectory_view_azim", -58.0)),
+        trajectory_grid_alpha=float(cfg.get("population_pca_plot_trajectory_grid_alpha", 0.28)),
+        trajectory_hide_standard_axes=bool(cfg.get("population_pca_plot_trajectory_hide_standard_axes", True)),
+        trajectory_axis_anchor=str(cfg.get("population_pca_plot_trajectory_axis_anchor", "back_corner")),
+        trajectory_axis_arrow_length_frac=float(
+            cfg.get("population_pca_plot_trajectory_axis_arrow_length_frac", 0.10)
+        ),
         condition_colors=_normalize_condition_colors(
             cfg.get("population_pca_plot_condition_colors", cfg.get("plot_condition_colors", {})),
         ),
     )
+    if args.view_elev is not None:
+        settings.trajectory_view_elev = float(args.view_elev)
+    if args.view_azim is not None:
+        settings.trajectory_view_azim = float(args.view_azim)
 
     out = plot_fixation_population_pca_trajectories(
         settings,
@@ -76,8 +90,8 @@ def main() -> None:
         return
     print(f"[plot] trajectory figure: {out.get('output_path')}")
     print(f"[plot] regions: {out.get('regions')}")
+    print(f"[plot] view: elev={out.get('view_elev')}, azim={out.get('view_azim')}")
 
 
 if __name__ == "__main__":
     main()
-

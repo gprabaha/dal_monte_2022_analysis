@@ -13,6 +13,8 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import PolyCollection
 from matplotlib.colors import to_rgb
 from matplotlib.lines import Line2D
+from matplotlib.patches import PathPatch
+from matplotlib.path import Path as MplPath
 import numpy as np
 import pandas as pd
 try:
@@ -93,7 +95,16 @@ class FixationPopulationPCAPlotSettings:
     trajectory_n_columns: int = 4
     trajectory_letter_width_in: float = 8.5
     trajectory_letter_height_frac: float = 0.2
-    variance_letter_height_frac: float = 0.4
+    trajectory_view_elev: float = 22.0
+    trajectory_view_azim: float = -58.0
+    trajectory_grid_alpha: float = 0.28
+    trajectory_hide_standard_axes: bool = False
+    trajectory_axis_anchor: str = "back_corner"
+    trajectory_axis_arrow_length_frac: float = 0.10
+    trajectory_axis_label_fontsize: float = 6.5
+    trajectory_show_length_inset: bool = True
+    variance_letter_width_in: float = 7.4
+    variance_letter_height_frac: float = 0.48
     max_components_display: int = 20
     pairwise_violin_letter_width_in: float = 8.5
     pairwise_violin_letter_height_frac: float = 0.28
@@ -364,6 +375,36 @@ def _trajectory_marker_specs() -> list[dict[str, object]]:
     ]
 
 
+def _trajectory_path_length(
+    scores_pc_by_time: np.ndarray,
+    *,
+    n_pcs: int,
+) -> float:
+    scores = np.asarray(scores_pc_by_time, dtype=float)
+    if scores.ndim != 2 or scores.shape[1] < 2:
+        return float("nan")
+    n_use = min(max(1, int(n_pcs)), int(scores.shape[0]))
+    if n_use <= 0:
+        return float("nan")
+    diffs = np.diff(scores[:n_use, :], axis=1)
+    step_lengths = np.linalg.norm(diffs, axis=0)
+    finite = step_lengths[np.isfinite(step_lengths)]
+    if finite.size == 0:
+        return float("nan")
+    return float(np.sum(finite))
+
+
+def _short_condition_label(condition: object) -> str:
+    token = str(condition).strip().lower()
+    if token == "face_interactive":
+        return "Int"
+    if token == "face_non_interactive":
+        return "Non"
+    if token == "object":
+        return "Obj"
+    return str(condition)
+
+
 def _apply_axis_limits_3d(ax, all_points: list[np.ndarray]) -> None:
     if not all_points:
         return
@@ -375,6 +416,121 @@ def _apply_axis_limits_3d(ax, all_points: list[np.ndarray]) -> None:
     ax.set_xlim(mins[0] - pads[0], maxs[0] + pads[0])
     ax.set_ylim(mins[1] - pads[1], maxs[1] + pads[1])
     ax.set_zlim(mins[2] - pads[2], maxs[2] + pads[2])
+
+
+def _hide_trajectory_axes(ax) -> None:
+    ax.set_xlabel("")
+    ax.set_ylabel("")
+    ax.set_zlabel("")
+    ax.set_xticklabels([])
+    ax.set_yticklabels([])
+    ax.set_zticklabels([])
+    ax.tick_params(axis="both", which="major", length=0, pad=-2, labelsize=0)
+    ax.tick_params(axis="z", which="major", length=0, pad=-2, labelsize=0)
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.line.set_color((0.0, 0.0, 0.0, 0.0))
+        try:
+            axis.set_pane_color((1.0, 1.0, 1.0, 0.0))
+        except Exception:
+            pass
+
+
+def _draw_trajectory_axis_arrows(
+    ax,
+    *,
+    all_points: list[np.ndarray],
+    settings: FixationPopulationPCAPlotSettings,
+) -> None:
+    if not all_points:
+        return
+    stack = np.vstack(all_points)
+    mins = np.nanmin(stack, axis=0)
+    maxs = np.nanmax(stack, axis=0)
+    spans = np.maximum(maxs - mins, 1e-6)
+    arrow_len = float(settings.trajectory_axis_arrow_length_frac) * float(np.max(spans))
+    if not np.isfinite(arrow_len) or arrow_len <= 0.0:
+        return
+
+    anchor_mode = str(settings.trajectory_axis_anchor).strip().lower()
+    if anchor_mode == "origin":
+        anchor = np.zeros((3,), dtype=float)
+    else:
+        anchor = mins + 0.05 * spans
+
+    label_fontsize = float(settings.trajectory_axis_label_fontsize)
+    for dim_idx, label in enumerate(("PC1", "PC2", "PC3")):
+        vec = np.zeros((3,), dtype=float)
+        vec[dim_idx] = arrow_len
+        ax.quiver(
+            float(anchor[0]),
+            float(anchor[1]),
+            float(anchor[2]),
+            float(vec[0]),
+            float(vec[1]),
+            float(vec[2]),
+            color="black",
+            linewidth=0.9,
+            arrow_length_ratio=0.22,
+            pivot="tail",
+            normalize=False,
+            zorder=4.5,
+        )
+        tip = anchor + vec
+        ax.text(
+            float(tip[0]),
+            float(tip[1]),
+            float(tip[2]),
+            str(label),
+            fontsize=label_fontsize,
+            color="black",
+            ha="left",
+            va="bottom",
+            zorder=5.0,
+        )
+
+
+def _draw_trajectory_length_inset(
+    ax,
+    *,
+    cond_order: Sequence[str],
+    path_lengths: dict[str, float],
+    color_map: dict[str, str],
+) -> None:
+    inset = ax.inset_axes([0.62, 0.05, 0.32, 0.24])
+    x = np.arange(len(cond_order), dtype=float)
+    y = np.asarray(
+        [float(path_lengths.get(str(condition), np.nan)) for condition in cond_order],
+        dtype=float,
+    )
+    colors = [str(color_map.get(str(condition), "#777777")) for condition in cond_order]
+    finite = y[np.isfinite(y)]
+    if finite.size > 0:
+        inset.bar(
+            x,
+            y,
+            width=0.72,
+            color=colors,
+            edgecolor="black",
+            linewidth=0.5,
+            alpha=0.95,
+        )
+        ymax = float(np.max(finite))
+        inset.set_ylim(0.0, ymax * 1.18 if ymax > 0.0 else 1.0)
+    else:
+        inset.set_ylim(0.0, 1.0)
+    inset.set_xticks(x)
+    inset.set_xticklabels(
+        [_short_condition_label(condition) for condition in cond_order],
+        fontsize=4.8,
+    )
+    inset.tick_params(axis="y", labelsize=4.6, pad=0.6, length=1.5)
+    inset.tick_params(axis="x", pad=0.4, length=0.0)
+    inset.set_title("Path", fontsize=5.2, pad=1.4)
+    inset.grid(axis="y", linewidth=0.25, alpha=0.22)
+    for spine in inset.spines.values():
+        spine.set_linewidth(0.45)
+        spine.set_color("#333333")
+    inset.set_facecolor((1.0, 1.0, 1.0, 0.88))
 
 
 def _apply_plotting_style(plotting_cfg_path: str) -> None:
@@ -474,6 +630,72 @@ def _extract_cross_condition_explained_variance_df(result_obj: dict) -> pd.DataF
     return out
 
 
+def _add_compound_bar_patch(
+    ax,
+    *,
+    centers: np.ndarray,
+    heights: np.ndarray,
+    width: float,
+    facecolor: str,
+    edgecolor: str,
+    linewidth: float,
+    alpha: float,
+    zorder: float = 2.0,
+) -> None:
+    x = np.asarray(centers, dtype=float).reshape(-1)
+    y = np.asarray(heights, dtype=float).reshape(-1)
+    if x.size == 0 or y.size == 0 or x.size != y.size or float(width) <= 0.0:
+        return
+    polys: list[np.ndarray] = []
+    half_width = 0.5 * float(width)
+    for xv, yv in zip(x, y):
+        if not np.isfinite(xv) or not np.isfinite(yv):
+            continue
+        bottom = min(0.0, float(yv))
+        top = max(0.0, float(yv))
+        if np.isclose(bottom, top):
+            continue
+        polys.append(
+            np.asarray(
+                [
+                    [float(xv) - half_width, bottom],
+                    [float(xv) - half_width, top],
+                    [float(xv) + half_width, top],
+                    [float(xv) + half_width, bottom],
+                ],
+                dtype=float,
+            )
+        )
+    if not polys:
+        return
+    compound = MplPath.make_compound_path_from_polys(np.asarray(polys, dtype=float))
+    patch = PathPatch(
+        compound,
+        facecolor=str(facecolor),
+        edgecolor=str(edgecolor),
+        linewidth=float(linewidth),
+        alpha=float(alpha),
+        antialiased=True,
+        joinstyle="miter",
+        capstyle="butt",
+        clip_on=False,
+        zorder=float(zorder),
+    )
+    ax.add_patch(patch)
+
+
+def _rowwise_upper_limit(values: object, *, floor: float) -> float:
+    vec = np.asarray(values, dtype=float).reshape(-1)
+    vec = vec[np.isfinite(vec)]
+    if vec.size == 0:
+        return float(floor)
+    vmax = float(np.max(vec))
+    if vmax <= 0.0:
+        return float(floor)
+    pad = max(0.08 * vmax, 0.01)
+    return max(float(floor), vmax + pad)
+
+
 def plot_fixation_population_pca_trajectories(
     settings: FixationPopulationPCAPlotSettings,
     *,
@@ -517,6 +739,7 @@ def plot_fixation_population_pca_trajectories(
         marker_indices_cache[str(region)] = marker_indices
 
         all_xyz: list[np.ndarray] = []
+        path_lengths: dict[str, float] = {}
         for condition in cond_order:
             raw_scores = scores_map.get(condition, np.asarray([], dtype=float))
             scores = _coerce_scores_pc_by_time(raw_scores, n_time_bins=bin_centers_s.size)
@@ -526,6 +749,10 @@ def plot_fixation_population_pca_trajectories(
             if xyz.shape[0] < 2:
                 continue
             all_xyz.append(xyz)
+            path_lengths[str(condition)] = _trajectory_path_length(
+                scores,
+                n_pcs=int(settings.trajectory_n_pcs),
+            )
 
             border_color = str(color_map.get(condition, DEFAULT_CONDITION_COLORS[condition]))
             # Use continuous 3D line paths instead of per-segment collections so
@@ -568,14 +795,28 @@ def plot_fixation_population_pca_trajectories(
                 )
 
         _apply_axis_limits_3d(ax, all_xyz)
-        ax.view_init(elev=22, azim=-58)
-        ax.grid(True, linewidth=0.35, alpha=0.28)
+        ax.view_init(
+            elev=float(settings.trajectory_view_elev),
+            azim=float(settings.trajectory_view_azim),
+        )
+        ax.grid(True, linewidth=0.35, alpha=float(settings.trajectory_grid_alpha))
+        if bool(settings.trajectory_hide_standard_axes):
+            _hide_trajectory_axes(ax)
+            _draw_trajectory_axis_arrows(ax, all_points=all_xyz, settings=settings)
+        else:
+            ax.set_xlabel("PC1", labelpad=-4, fontsize=7)
+            ax.set_ylabel("PC2", labelpad=-4, fontsize=7)
+            ax.set_zlabel("PC3", labelpad=-3, fontsize=7)
+            ax.tick_params(axis="both", which="major", labelsize=6, pad=0.5)
+            ax.tick_params(axis="z", which="major", labelsize=6, pad=0.5)
+        if bool(settings.trajectory_show_length_inset):
+            _draw_trajectory_length_inset(
+                ax,
+                cond_order=cond_order,
+                path_lengths=path_lengths,
+                color_map=color_map,
+            )
         ax.set_title(_region_display_label(region), fontsize=8, pad=2.0)
-        ax.set_xlabel("PC1", labelpad=-4, fontsize=7)
-        ax.set_ylabel("PC2", labelpad=-4, fontsize=7)
-        ax.set_zlabel("PC3", labelpad=-3, fontsize=7)
-        ax.tick_params(axis="both", which="major", labelsize=6, pad=0.5)
-        ax.tick_params(axis="z", which="major", labelsize=6, pad=0.5)
 
     n_axes_total = n_rows * n_cols
     for idx in range(len(region_order), n_axes_total):
@@ -633,6 +874,8 @@ def plot_fixation_population_pca_trajectories(
         "regions": list(region_order),
         "conditions": list(cond_order),
         "marker_indices": marker_indices_cache,
+        "view_elev": float(settings.trajectory_view_elev),
+        "view_azim": float(settings.trajectory_view_azim),
     }
 
 
@@ -667,7 +910,10 @@ def plot_fixation_population_pca_explained_variance_bars(
     n_rows = len(cond_order)
     n_cols = max(4, len(region_order))
     fig = plt.figure(
-        figsize=(8.5, 8.5 * float(settings.variance_letter_height_frac)),
+        figsize=(
+            float(settings.variance_letter_width_in),
+            8.5 * float(settings.variance_letter_height_frac),
+        ),
         dpi=settings.output_dpi,
     )
     axes = fig.subplots(n_rows, n_cols, squeeze=False)
@@ -675,6 +921,17 @@ def plot_fixation_population_pca_explained_variance_bars(
     eval_order = [cond for cond in settings.conditions if cond in set(explained_df["eval_condition"].unique())]
     bar_width = 0.84 / max(1, len(eval_order))
     x = np.arange(1, max_comp + 1, dtype=float)
+    row_ymax_map: dict[str, float] = {}
+    for fit_condition in cond_order:
+        row_sub = explained_df.loc[
+            (explained_df["fit_condition"] == str(fit_condition))
+            & (explained_df["n_components"] >= 1)
+            & (explained_df["n_components"] <= max_comp)
+        ].copy()
+        row_ymax_map[str(fit_condition)] = _rowwise_upper_limit(
+            row_sub["explained_variance_fraction"].to_numpy(dtype=float),
+            floor=0.05,
+        )
 
     for row_idx, fit_condition in enumerate(cond_order):
         for col_idx in range(n_cols):
@@ -709,18 +966,26 @@ def plot_fixation_population_pca_explained_variance_bars(
                 offset = (float(eval_idx) - (len(eval_order) - 1.0) / 2.0) * bar_width
                 finite = np.isfinite(y)
                 if np.any(finite):
-                    ax.bar(
-                        x[finite] + offset,
-                        y[finite],
+                    _add_compound_bar_patch(
+                        ax,
+                        centers=x[finite] + offset,
+                        heights=y[finite],
                         width=bar_width * 0.95,
-                        color=str(color_map.get(eval_condition, DEFAULT_CONDITION_COLORS.get(eval_condition, "#444444"))),
+                        facecolor=str(
+                            color_map.get(
+                                eval_condition,
+                                DEFAULT_CONDITION_COLORS.get(eval_condition, "#444444"),
+                            )
+                        ),
                         edgecolor="black",
                         linewidth=0.15,
                         alpha=0.95,
+                        zorder=2.5 + 0.1 * float(eval_idx),
                     )
 
             ax.axhline(0.0, color="#222222", linewidth=0.35, alpha=0.7)
             ax.set_xlim(0.3, max_comp + 0.7)
+            ax.set_ylim(0.0, float(row_ymax_map.get(str(fit_condition), 0.05)))
             ax.set_xticks([1, 5, 10, 15, 20] if max_comp >= 20 else list(range(1, max_comp + 1)))
             ax.tick_params(axis="both", which="major", labelsize=5, pad=1.0)
             ax.grid(axis="y", linewidth=0.25, alpha=0.3)
@@ -750,7 +1015,7 @@ def plot_fixation_population_pca_explained_variance_bars(
         fontsize=6,
         frameon=False,
     )
-    fig.subplots_adjust(left=0.045, right=0.995, top=0.80, bottom=0.12, wspace=0.18, hspace=0.34)
+    fig.subplots_adjust(left=0.060, right=0.992, top=0.80, bottom=0.13, wspace=0.13, hspace=0.40)
 
     cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
@@ -810,13 +1075,31 @@ def plot_fixation_population_pca_explained_variance_cumulative(
     n_rows = len(cond_order)
     n_cols = max(4, len(region_order))
     fig = plt.figure(
-        figsize=(8.5, 8.5 * float(settings.variance_letter_height_frac)),
+        figsize=(
+            float(settings.variance_letter_width_in),
+            8.5 * float(settings.variance_letter_height_frac),
+        ),
         dpi=settings.output_dpi,
     )
     axes = fig.subplots(n_rows, n_cols, squeeze=False)
     color_map = _resolve_condition_colors(settings)
     eval_order = [cond for cond in settings.conditions if cond in set(explained_df["eval_condition"].unique())]
     x = np.arange(1, max_comp + 1, dtype=float)
+    row_ymax_map: dict[str, float] = {}
+    for fit_condition in cond_order:
+        row_sub = explained_df.loc[
+            (explained_df["fit_condition"] == str(fit_condition))
+            & (explained_df["n_components"] >= 1)
+            & (explained_df["n_components"] <= max_comp)
+        ].copy()
+        if "explained_variance_cumulative_fraction" in row_sub.columns:
+            row_vals = row_sub["explained_variance_cumulative_fraction"].to_numpy(dtype=float)
+        else:
+            row_vals = row_sub["explained_variance_fraction"].to_numpy(dtype=float)
+        row_ymax_map[str(fit_condition)] = _rowwise_upper_limit(
+            row_vals,
+            floor=0.10,
+        )
 
     for row_idx, fit_condition in enumerate(cond_order):
         for col_idx in range(n_cols):
@@ -869,6 +1152,7 @@ def plot_fixation_population_pca_explained_variance_cumulative(
 
             ax.axhline(0.0, color="#222222", linewidth=0.35, alpha=0.7)
             ax.set_xlim(0.8, max_comp + 0.2)
+            ax.set_ylim(0.0, float(row_ymax_map.get(str(fit_condition), 0.10)))
             ax.set_xticks([1, 5, 10, 15, 20] if max_comp >= 20 else list(range(1, max_comp + 1)))
             ax.tick_params(axis="both", which="major", labelsize=5, pad=1.0)
             ax.grid(axis="y", linewidth=0.25, alpha=0.3)
@@ -901,7 +1185,7 @@ def plot_fixation_population_pca_explained_variance_cumulative(
         fontsize=6,
         frameon=False,
     )
-    fig.subplots_adjust(left=0.045, right=0.995, top=0.80, bottom=0.12, wspace=0.18, hspace=0.34)
+    fig.subplots_adjust(left=0.060, right=0.992, top=0.80, bottom=0.13, wspace=0.13, hspace=0.40)
 
     cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)

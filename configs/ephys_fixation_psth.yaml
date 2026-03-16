@@ -287,6 +287,12 @@ population_pca_plot_cumulative_variance_output_filename: population_pca_explaine
 population_pca_plot_pairwise_geometry_output_filename: population_pca_pairwise_geometry_violin
 population_pca_plot_trajectory_n_pcs: 3
 population_pca_plot_trajectory_n_columns: 4
+population_pca_plot_trajectory_view_elev: 22.0
+population_pca_plot_trajectory_view_azim: -58.0
+population_pca_plot_trajectory_grid_alpha: 0.28
+population_pca_plot_trajectory_hide_standard_axes: false
+population_pca_plot_trajectory_axis_anchor: back_corner
+population_pca_plot_trajectory_axis_arrow_length_frac: 0.10
 population_pca_plot_max_components: 20
 population_pca_plot_condition_colors:
   face_interactive: "#b64198"
