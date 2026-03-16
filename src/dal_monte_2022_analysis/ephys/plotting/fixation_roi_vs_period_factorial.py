@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import PolyCollection
 from matplotlib.lines import Line2D
 from matplotlib.ticker import FormatStrFormatter
+from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
 import numpy as np
 import pandas as pd
 try:
@@ -66,8 +67,13 @@ _WINDOW_SORT_ORDER: dict[str, int] = {
     "peri_fix": 1,
     "post_fix": 2,
     "avg_pre_peri_post": 3,
+    "max_abs_across_windows": 4,
 }
-_ALLOWED_AXIS_COMPARISON_MODES = {"split_by_window", "averaged_across_windows"}
+_ALLOWED_AXIS_COMPARISON_MODES = {
+    "split_by_window",
+    "averaged_across_windows",
+    "max_abs_across_windows",
+}
 _PYVISTA_RUNTIME_READY = False
 _VECTOR_EXTS = {".pdf", ".svg", ".eps", ".ps", ".tex"}
 
@@ -84,7 +90,7 @@ class FixationROIVsPeriodFactorialPlotSettings:
     output_extension: str = "pdf"
     output_dpi: Optional[int] = 300
     axis_magnitude_source: str = "cell_means"
-    axis_comparison_mode: str = "averaged_across_windows"
+    axis_comparison_mode: str = "max_abs_across_windows"
     alpha: float = 0.05
     region_order: tuple[str, ...] = field(
         default_factory=lambda: tuple(DEFAULT_REGION_ORDER),
@@ -131,13 +137,17 @@ def _normalize_mode(mode: object) -> str:
         "split": "split_by_window",
         "window_split": "split_by_window",
         "split_by_window": "split_by_window",
+        "max": "max_abs_across_windows",
+        "max_abs": "max_abs_across_windows",
+        "max_abs_across_windows": "max_abs_across_windows",
+        "max_across_windows": "max_abs_across_windows",
         "averaged": "averaged_across_windows",
         "average": "averaged_across_windows",
         "averaged_across_windows": "averaged_across_windows",
     }
     resolved = aliases.get(token, token)
     if resolved not in _ALLOWED_AXIS_COMPARISON_MODES:
-        return "averaged_across_windows"
+        return "max_abs_across_windows"
     return resolved
 
 
@@ -223,15 +233,68 @@ def _significance_star(p_value_adj: float) -> str:
     return ""
 
 
+def _extract_collapsed_axis_units(
+    payload: dict,
+    settings: FixationROIVsPeriodFactorialPlotSettings,
+    *,
+    mode: str,
+    require_signed: bool,
+) -> pd.DataFrame:
+    if str(mode) == "split_by_window":
+        return pd.DataFrame()
+    df = _as_df(payload.get("unit_axis_collapsed"))
+    if df.empty:
+        return pd.DataFrame()
+    if "axis_source" in df.columns:
+        df["axis_source"] = df["axis_source"].astype(str)
+        df = df.loc[df["axis_source"] == str(settings.axis_magnitude_source)].copy()
+    if "axis_comparison_mode" in df.columns:
+        df = df.loc[df["axis_comparison_mode"].astype(str) == str(mode)].copy()
+    else:
+        df["axis_comparison_mode"] = str(mode)
+    if df.empty:
+        return pd.DataFrame()
+    if "unit_key" not in df.columns:
+        df = df.reset_index().rename(columns={"index": "unit_key"})
+    df["unit_key"] = df["unit_key"].astype(str)
+    if "region" in df.columns:
+        df["region"] = df["region"].fillna("unknown").astype(str).str.lower()
+    if "axis_name" in df.columns:
+        df["axis_name"] = df["axis_name"].astype(str)
+    if "window_name" in df.columns:
+        df["window_name"] = df["window_name"].astype(str)
+    if require_signed:
+        if "value_signed" not in df.columns:
+            return pd.DataFrame()
+        df["value_signed"] = pd.to_numeric(df["value_signed"], errors="coerce")
+        return df.loc[df["value_signed"].notna()].copy()
+    if "value_abs" in df.columns:
+        df["value_abs_norm"] = pd.to_numeric(df["value_abs"], errors="coerce")
+    elif "value_signed" in df.columns:
+        df["value_abs_norm"] = np.abs(pd.to_numeric(df["value_signed"], errors="coerce"))
+    else:
+        return pd.DataFrame()
+    return df.loc[df["value_abs_norm"].notna()].copy()
+
+
 def _extract_axis_magnitude_units(
     payload: dict,
     settings: FixationROIVsPeriodFactorialPlotSettings,
 ) -> pd.DataFrame:
+    meta = payload.get("meta", {}) if isinstance(payload, dict) else {}
+    mode = _normalize_mode(meta.get("axis_comparison_mode", settings.axis_comparison_mode))
+    collapsed_df = _extract_collapsed_axis_units(
+        payload,
+        settings,
+        mode=mode,
+        require_signed=False,
+    )
+    if not collapsed_df.empty:
+        return collapsed_df
+
     unit_axis_df = _as_df(payload.get("unit_axis_values"))
     if unit_axis_df.empty:
         return pd.DataFrame()
-    meta = payload.get("meta", {}) if isinstance(payload, dict) else {}
-    mode = _normalize_mode(meta.get("axis_comparison_mode", settings.axis_comparison_mode))
     sig_windows = [
         str(win)
         for win in meta.get("significance_windows", ("pre_fix", "peri_fix", "post_fix"))
@@ -263,8 +326,10 @@ def _extract_axis_magnitude_units(
         out["axis_comparison_mode"] = mode
         return out
 
-    # averaged_across_windows
+    # Legacy fallback for averaged_across_windows / max_abs_across_windows payloads.
     group_cols = [col for col in ("unit_key", "region", "axis_name", "axis_source") if col in df.columns]
+    df["window_name"] = df["window_name"].astype(str)
+    sig_window_rank = {str(name): idx for idx, name in enumerate(sig_windows)}
     rows: list[dict] = []
     for key_vals, grp in df.groupby(group_cols, dropna=False):
         if not isinstance(key_vals, tuple):
@@ -274,14 +339,39 @@ def _extract_axis_magnitude_units(
         vals = vals[np.isfinite(vals)]
         if vals.size == 0:
             continue
-        row.update(
-            {
-                "axis_comparison_mode": mode,
-                "window_name": "avg_pre_peri_post",
-                "value_abs_norm": float(np.mean(vals)),
-                "n_windows_averaged": int(vals.size),
-            }
-        )
+        if mode == "max_abs_across_windows":
+            grp = grp.sort_values(
+                by=["value_abs_norm", "window_name"],
+                ascending=[False, True],
+                kind="mergesort",
+            ).copy()
+            grp["window_rank"] = grp["window_name"].map(
+                lambda name: int(sig_window_rank.get(str(name), len(sig_window_rank)))
+            )
+            grp = grp.sort_values(
+                by=["value_abs_norm", "window_rank", "window_name"],
+                ascending=[False, True, True],
+                kind="mergesort",
+            ).reset_index(drop=True)
+            selected = grp.iloc[0]
+            row.update(
+                {
+                    "axis_comparison_mode": mode,
+                    "window_name": "max_abs_across_windows",
+                    "value_abs_norm": float(selected["value_abs_norm"]),
+                    "selected_window_name": str(selected.get("window_name", "")),
+                    "n_windows_used": int(vals.size),
+                }
+            )
+        else:
+            row.update(
+                {
+                    "axis_comparison_mode": mode,
+                    "window_name": "avg_pre_peri_post",
+                    "value_abs_norm": float(np.mean(vals)),
+                    "n_windows_averaged": int(vals.size),
+                }
+            )
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -290,11 +380,20 @@ def _extract_axis_signed_units(
     payload: dict,
     settings: FixationROIVsPeriodFactorialPlotSettings,
 ) -> pd.DataFrame:
+    meta = payload.get("meta", {}) if isinstance(payload, dict) else {}
+    mode = _normalize_mode(meta.get("axis_comparison_mode", settings.axis_comparison_mode))
+    collapsed_df = _extract_collapsed_axis_units(
+        payload,
+        settings,
+        mode=mode,
+        require_signed=True,
+    )
+    if not collapsed_df.empty:
+        return collapsed_df
+
     unit_axis_df = _as_df(payload.get("unit_axis_values"))
     if unit_axis_df.empty:
         return pd.DataFrame()
-    meta = payload.get("meta", {}) if isinstance(payload, dict) else {}
-    mode = _normalize_mode(meta.get("axis_comparison_mode", settings.axis_comparison_mode))
     sig_windows = [
         str(win)
         for win in meta.get("significance_windows", ("pre_fix", "peri_fix", "post_fix"))
@@ -330,6 +429,7 @@ def _extract_axis_signed_units(
         out["axis_comparison_mode"] = mode
         return out
 
+    sig_window_rank = {str(name): idx for idx, name in enumerate(sig_windows)}
     group_cols = [col for col in ("unit_key", "region", "axis_name", "axis_source") if col in df.columns]
     rows: list[dict] = []
     for key_vals, grp in df.groupby(group_cols, dropna=False):
@@ -340,14 +440,35 @@ def _extract_axis_signed_units(
         vals = vals[np.isfinite(vals)]
         if vals.size == 0:
             continue
-        row.update(
-            {
-                "axis_comparison_mode": mode,
-                "window_name": "avg_pre_peri_post",
-                "value_signed": float(np.mean(vals)),
-                "n_windows_averaged": int(vals.size),
-            }
-        )
+        if mode == "max_abs_across_windows":
+            grp["value_abs_norm"] = np.abs(grp["value_signed"].to_numpy(dtype=float))
+            grp["window_rank"] = grp["window_name"].map(
+                lambda name: int(sig_window_rank.get(str(name), len(sig_window_rank)))
+            )
+            grp = grp.sort_values(
+                by=["value_abs_norm", "window_rank", "window_name"],
+                ascending=[False, True, True],
+                kind="mergesort",
+            ).reset_index(drop=True)
+            selected = grp.iloc[0]
+            row.update(
+                {
+                    "axis_comparison_mode": mode,
+                    "window_name": "max_abs_across_windows",
+                    "value_signed": float(selected["value_signed"]),
+                    "selected_window_name": str(selected.get("window_name", "")),
+                    "n_windows_used": int(vals.size),
+                }
+            )
+        else:
+            row.update(
+                {
+                    "axis_comparison_mode": mode,
+                    "window_name": "avg_pre_peri_post",
+                    "value_signed": float(np.mean(vals)),
+                    "n_windows_averaged": int(vals.size),
+                }
+            )
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -421,11 +542,12 @@ def plot_fixation_roi_vs_period_axis_violin(
     window: Optional[str] = None,
     output_filename: str = "roi_vs_period_axis_violin",
 ) -> list[dict]:
-    """Plot region-wise axis magnitude violins with within-region significance stars."""
+    """Plot separate within-region and cross-region axis violins."""
     _apply_plotting_style(settings)
     payload, _ = _load_result_payload(settings)
     mag_df = _extract_axis_magnitude_units(payload, settings)
     within_df = _extract_within_axis_df(payload, settings)
+    cross_df = _extract_cross_region_axis_df(payload, settings)
     if mag_df.empty:
         print("[plot] no axis-magnitude unit rows available for violin plot")
         return []
@@ -467,117 +589,253 @@ def plot_fixation_roi_vs_period_axis_violin(
                 "Install seaborn or use an environment that includes it."
             )
 
-        fig, axes = plt.subplots(
+        plot_df = win_df.loc[
+            win_df["region"].astype(str).isin(set(region_tokens))
+            & win_df["axis_name"].astype(str).isin(set(axis_tokens))
+        ].copy()
+        if plot_df.empty:
+            continue
+        plot_df["region"] = plot_df["region"].astype(str)
+        plot_df["axis_name"] = plot_df["axis_name"].astype(str)
+        y_vals = pd.to_numeric(plot_df["value_abs_norm"], errors="coerce").to_numpy(dtype=float).reshape(-1)
+        y_vals = y_vals[np.isfinite(y_vals)]
+        y_max = float(np.nanmax(y_vals)) if y_vals.size > 0 else 1.0
+        y_min = float(np.nanmin(y_vals)) if y_vals.size > 0 else 0.0
+        span = max(y_max - y_min, 1e-6)
+        step = 0.10 * span
+        bar_h = 0.028 * span
+        mode = str(payload.get("meta", {}).get("axis_comparison_mode", settings.axis_comparison_mode))
+        violin_width = 0.88
+
+        fig_within, ax_within = plt.subplots(
             1,
-            len(region_tokens),
+            1,
             figsize=(float(settings.violin_letter_width_in), float(fig_h)),
             dpi=settings.output_dpi,
-            squeeze=False,
         )
-        axes = axes.ravel()
-
-        for ridx, region in enumerate(region_tokens):
-            ax = axes[ridx]
-            reg_df = win_df.loc[win_df["region"].astype(str) == str(region)].copy()
-            plot_df = reg_df.loc[reg_df["axis_name"].astype(str).isin(set(axis_tokens))].copy()
-            if not plot_df.empty:
-                plot_df = plot_df.loc[:, ["axis_name", "value_abs_norm"]].copy()
-                plot_df["axis_name"] = plot_df["axis_name"].astype(str)
-                palette = {
-                    axis_name: settings.axis_colors.get(str(axis_name), "#777777")
-                    for axis_name in axis_tokens
-                }
-                sns.violinplot(
-                    ax=ax,
-                    data=plot_df,
-                    x="axis_name",
-                    y="value_abs_norm",
-                    hue="axis_name",
-                    order=list(axis_tokens),
-                    hue_order=list(axis_tokens),
-                    palette=palette,
-                    legend=False,
-                    width=0.78,
-                    inner="quart",
-                    cut=0.0,
-                    linewidth=0.8,
-                )
-                bodies = [artist for artist in ax.collections if isinstance(artist, PolyCollection)]
-                for body in bodies:
-                    body.set_edgecolor("#222222")
-                    body.set_linewidth(0.75)
-                    body.set_alpha(0.78)
-                    body.set_rasterized(False)
-            ax.set_xticks(np.arange(len(axis_tokens)))
-            ax.set_xticklabels([_display_axis(axis_name, settings) for axis_name in axis_tokens], rotation=26, ha="right", fontsize=8)
-            ax.set_title(_display_region(region, settings), fontsize=10)
-            ax.grid(axis="y", alpha=0.23, linewidth=0.6)
-            if ridx == 0:
-                ax.set_ylabel("|Axis Magnitude| (a.u.)", fontsize=9)
-
-            y_vals = reg_df["value_abs_norm"].to_numpy(dtype=float).reshape(-1)
-            y_vals = y_vals[np.isfinite(y_vals)]
-            if y_vals.size > 0:
-                y_concat = y_vals
-                y_max = float(np.nanmax(y_concat)) if np.any(np.isfinite(y_concat)) else 1.0
-                y_min = float(np.nanmin(y_concat)) if np.any(np.isfinite(y_concat)) else 0.0
-            else:
-                y_max = 1.0
-                y_min = 0.0
-                ax.text(0.5, 0.5, "No data", transform=ax.transAxes, ha="center", va="center", fontsize=9)
-            span = max(y_max - y_min, 1e-6)
-            step = 0.11 * span
-            bar_h = 0.03 * span
-            base_y = y_max + 0.12 * span
-
-            pos_map = {axis_name: idx for idx, axis_name in enumerate(axis_tokens)}
-            within_rows = (
-                within_df.loc[
-                    (within_df["region"].astype(str) == str(region))
-                    & (within_df["window_name"].astype(str) == str(win_name))
-                    & (within_df["significant_adjusted"].map(bool))
-                ].copy()
-                if not within_df.empty
-                else pd.DataFrame()
+        within_palette = {
+            axis_name: settings.axis_colors.get(str(axis_name), "#777777")
+            for axis_name in axis_tokens
+        }
+        sns.violinplot(
+            ax=ax_within,
+            data=plot_df,
+            x="region",
+            y="value_abs_norm",
+            hue="axis_name",
+            order=list(region_tokens),
+            hue_order=list(axis_tokens),
+            palette=within_palette,
+            inner="quart",
+            cut=0.0,
+            linewidth=0.8,
+            width=violin_width,
+        )
+        bodies = [artist for artist in ax_within.collections if isinstance(artist, PolyCollection)]
+        for body in bodies:
+            body.set_edgecolor("#222222")
+            body.set_linewidth(0.65)
+            body.set_alpha(0.72)
+            body.set_rasterized(False)
+        ax_within.set_xticks(np.arange(len(region_tokens)))
+        ax_within.set_xticklabels(
+            [_display_region(region, settings) for region in region_tokens],
+            rotation=0,
+            ha="center",
+            fontsize=9,
+        )
+        ax_within.set_ylabel("|Axis Magnitude| (a.u.)", fontsize=9)
+        ax_within.set_xlabel("")
+        ax_within.grid(axis="y", alpha=0.23, linewidth=0.6)
+        handles, labels = ax_within.get_legend_handles_labels()
+        if handles:
+            ax_within.legend(
+                handles[: len(axis_tokens)],
+                [_display_axis(label, settings) for label in labels[: len(axis_tokens)]],
+                title="Axis",
+                frameon=False,
+                ncol=max(1, len(axis_tokens)),
+                loc="upper center",
+                bbox_to_anchor=(0.5, 1.18),
+                fontsize=8,
+                title_fontsize=8,
             )
-            if not within_rows.empty and "p_value_adjusted" in within_rows.columns:
-                within_rows = within_rows.sort_values("p_value_adjusted", na_position="last")
-            n_bars = 0
-            for row in within_rows.itertuples(index=False):
-                axis_a = str(getattr(row, "axis_a", ""))
-                axis_b = str(getattr(row, "axis_b", ""))
-                if axis_a not in pos_map or axis_b not in pos_map:
-                    continue
-                p_adj = float(getattr(row, "p_value_adjusted", np.nan))
-                stars = _significance_star(p_adj)
-                if not stars:
-                    continue
-                x1 = float(pos_map[axis_a])
-                x2 = float(pos_map[axis_b])
-                y = base_y + step * float(n_bars)
-                ax.plot([x1, x1, x2, x2], [y, y + bar_h, y + bar_h, y], color="black", linewidth=0.85)
-                ax.text((x1 + x2) / 2.0, y + bar_h + 0.01 * span, stars, ha="center", va="bottom", fontsize=10)
-                n_bars += 1
-
-            top_extra = max(0.22 * span, step * max(1, n_bars) + 0.2 * span)
-            ax.set_ylim(y_min - 0.05 * span, y_max + top_extra)
-
-        mode = str(payload.get("meta", {}).get("axis_comparison_mode", settings.axis_comparison_mode))
-        fig.suptitle(
-            f"ROI-vs-Period Axis Magnitude by Region ({win_name}; mode={mode}; source={settings.axis_magnitude_source})",
+        dodge_step = float(violin_width) / float(max(len(axis_tokens), 1))
+        pos_map_within = {
+            (str(region), str(axis_name)): (
+                float(ridx) - float(violin_width) / 2.0 + (float(aidx) + 0.5) * dodge_step
+            )
+            for ridx, region in enumerate(region_tokens)
+            for aidx, axis_name in enumerate(axis_tokens)
+        }
+        within_rows = (
+            within_df.loc[
+                (within_df["window_name"].astype(str) == str(win_name))
+                & (within_df["region"].astype(str).isin(set(region_tokens)))
+                & (within_df["significant_adjusted"].map(bool))
+            ].copy()
+            if not within_df.empty
+            else pd.DataFrame()
+        )
+        if not within_rows.empty and "p_value_adjusted" in within_rows.columns:
+            within_rows = within_rows.sort_values(["region", "p_value_adjusted"], na_position="last")
+        within_counts: dict[str, int] = {}
+        max_within_stack = 0
+        for row in within_rows.itertuples(index=False):
+            region = str(getattr(row, "region", ""))
+            axis_a = str(getattr(row, "axis_a", ""))
+            axis_b = str(getattr(row, "axis_b", ""))
+            if (region, axis_a) not in pos_map_within or (region, axis_b) not in pos_map_within:
+                continue
+            stars = _significance_star(float(getattr(row, "p_value_adjusted", np.nan)))
+            if not stars:
+                continue
+            level = int(within_counts.get(region, 0))
+            y = y_max + 0.16 * span + step * float(level)
+            x1 = float(pos_map_within[(region, axis_a)])
+            x2 = float(pos_map_within[(region, axis_b)])
+            ax_within.plot([x1, x1, x2, x2], [y, y + bar_h, y + bar_h, y], color="#222222", linewidth=0.8)
+            ax_within.text((x1 + x2) / 2.0, y + bar_h + 0.01 * span, stars, ha="center", va="bottom", fontsize=9)
+            within_counts[region] = level + 1
+            max_within_stack = max(max_within_stack, level + 1)
+        within_top_extra = max(0.22 * span, 0.16 * span + step * float(max_within_stack) + 0.18 * span)
+        ax_within.set_ylim(y_min - 0.05 * span, y_max + within_top_extra)
+        fig_within.suptitle(
+            (
+                "ROI-vs-Period Within-Region Axis Comparison "
+                f"({win_name}; mode={mode}; source={settings.axis_magnitude_source})"
+            ),
             fontsize=10,
         )
-        fig.subplots_adjust(left=0.06, right=0.99, top=0.83, bottom=0.30, wspace=0.30)
+        fig_within.subplots_adjust(left=0.08, right=0.99, top=0.78, bottom=0.18)
 
         suffix = f"__window={_safe_suffix_token(win_name)}"
-        out_name = ensure_filename(f"{output_filename}{suffix}", f".{ext}")
-        out_path = out_root / out_name
-        save_figure(fig, out_path, ext=ext, dpi=settings.output_dpi)
-        plt.close(fig)
+        out_name_within = ensure_filename(f"{output_filename}__within_region{suffix}", f".{ext}")
+        out_path_within = out_root / out_name_within
+        save_figure(fig_within, out_path_within, ext=ext, dpi=settings.output_dpi)
+        plt.close(fig_within)
         outputs.append(
             {
-                "output_path": str(out_path),
+                "output_path": str(out_path_within),
                 "window_name": str(win_name),
+                "kind": "within_region",
+                "regions": list(region_tokens),
+                "axes": list(axis_tokens),
+            }
+        )
+
+        fig_cross, ax_cross = plt.subplots(
+            1,
+            1,
+            figsize=(float(settings.violin_letter_width_in), float(fig_h)),
+            dpi=settings.output_dpi,
+        )
+        cross_palette = {
+            region: settings.region_outline_colors.get(str(region), "#777777")
+            for region in region_tokens
+        }
+        sns.violinplot(
+            ax=ax_cross,
+            data=plot_df,
+            x="axis_name",
+            y="value_abs_norm",
+            hue="region",
+            order=list(axis_tokens),
+            hue_order=list(region_tokens),
+            palette=cross_palette,
+            inner="quart",
+            cut=0.0,
+            linewidth=0.8,
+            width=violin_width,
+        )
+        bodies = [artist for artist in ax_cross.collections if isinstance(artist, PolyCollection)]
+        for body in bodies:
+            body.set_edgecolor("#222222")
+            body.set_linewidth(0.65)
+            body.set_alpha(0.70)
+            body.set_rasterized(False)
+        ax_cross.set_xticks(np.arange(len(axis_tokens)))
+        ax_cross.set_xticklabels(
+            [_display_axis(axis_name, settings) for axis_name in axis_tokens],
+            rotation=0,
+            ha="center",
+            fontsize=9,
+        )
+        ax_cross.set_ylabel("|Axis Magnitude| (a.u.)", fontsize=9)
+        ax_cross.set_xlabel("")
+        ax_cross.grid(axis="y", alpha=0.23, linewidth=0.6)
+        handles, labels = ax_cross.get_legend_handles_labels()
+        if handles:
+            ax_cross.legend(
+                handles[: len(region_tokens)],
+                [_display_region(label, settings) for label in labels[: len(region_tokens)]],
+                title="Region",
+                frameon=False,
+                ncol=max(1, len(region_tokens)),
+                loc="upper center",
+                bbox_to_anchor=(0.5, 1.18),
+                fontsize=8,
+                title_fontsize=8,
+            )
+        dodge_step = float(violin_width) / float(max(len(region_tokens), 1))
+        pos_map_cross = {
+            (str(axis_name), str(region)): (
+                float(aidx) - float(violin_width) / 2.0 + (float(ridx) + 0.5) * dodge_step
+            )
+            for aidx, axis_name in enumerate(axis_tokens)
+            for ridx, region in enumerate(region_tokens)
+        }
+        cross_rows = (
+            cross_df.loc[
+                (cross_df["window_name"].astype(str) == str(win_name))
+                & (cross_df["axis_name"].astype(str).isin(set(axis_tokens)))
+                & (cross_df["significant_adjusted"].map(bool))
+            ].copy()
+            if not cross_df.empty
+            else pd.DataFrame()
+        )
+        if not cross_rows.empty and "p_value_adjusted" in cross_rows.columns:
+            cross_rows = cross_rows.sort_values(["axis_name", "p_value_adjusted"], na_position="last")
+        cross_counts: dict[str, int] = {}
+        max_cross_stack = 0
+        for row in cross_rows.itertuples(index=False):
+            region_a = str(getattr(row, "region_a", ""))
+            region_b = str(getattr(row, "region_b", ""))
+            axis_name = str(getattr(row, "axis_name", ""))
+            if (axis_name, region_a) not in pos_map_cross or (axis_name, region_b) not in pos_map_cross:
+                continue
+            stars = _significance_star(float(getattr(row, "p_value_adjusted", np.nan)))
+            if not stars:
+                continue
+            level = int(cross_counts.get(axis_name, 0))
+            y = y_max + 0.16 * span + step * float(level)
+            x1 = float(pos_map_cross[(axis_name, region_a)])
+            x2 = float(pos_map_cross[(axis_name, region_b)])
+            bar_color = settings.axis_colors.get(axis_name, "#7f0000")
+            ax_cross.plot([x1, x1, x2, x2], [y, y + bar_h, y + bar_h, y], color=bar_color, linewidth=0.95)
+            ax_cross.text((x1 + x2) / 2.0, y + bar_h + 0.01 * span, stars, ha="center", va="bottom", fontsize=9, color=bar_color)
+            cross_counts[axis_name] = level + 1
+            max_cross_stack = max(max_cross_stack, level + 1)
+        cross_top_extra = max(0.22 * span, 0.16 * span + step * float(max_cross_stack) + 0.18 * span)
+        ax_cross.set_ylim(y_min - 0.05 * span, y_max + cross_top_extra)
+        fig_cross.suptitle(
+            (
+                "ROI-vs-Period Cross-Region Axis Comparison "
+                f"({win_name}; mode={mode}; source={settings.axis_magnitude_source})"
+            ),
+            fontsize=10,
+        )
+        fig_cross.subplots_adjust(left=0.08, right=0.99, top=0.78, bottom=0.18)
+
+        out_name_cross = ensure_filename(f"{output_filename}__cross_region{suffix}", f".{ext}")
+        out_path_cross = out_root / out_name_cross
+        save_figure(fig_cross, out_path_cross, ext=ext, dpi=settings.output_dpi)
+        plt.close(fig_cross)
+        outputs.append(
+            {
+                "output_path": str(out_path_cross),
+                "window_name": str(win_name),
+                "kind": "cross_region",
                 "regions": list(region_tokens),
                 "axes": list(axis_tokens),
             }
@@ -802,62 +1060,356 @@ def _build_axis_space_unit_summary(
     if not needed_cols.issubset(set(win_df.columns)):
         return pd.DataFrame()
 
+    sig_cols = [col for col in ("is_significant_axis", "significant_within_unit", "significant_raw") if col in win_df.columns]
     rows: list[dict] = []
     for region in region_tokens:
         reg_df = win_df.loc[win_df["region"].astype(str) == str(region)].copy()
         if reg_df.empty:
             continue
-        pivot = reg_df.pivot_table(
-            index="unit_key",
-            columns="axis_name",
-            values="value_signed",
-            aggfunc="mean",
-        )
-        if pivot.empty:
-            continue
-        available_axes = [axis_name for axis_name in axis_tokens if axis_name in pivot.columns]
-        if not available_axes:
-            continue
-        pivot = pivot[available_axes].copy()
-        for unit_key, row in pivot.iterrows():
-            vals = pd.to_numeric(row, errors="coerce").to_numpy(dtype=float).reshape(-1)
-            vals = vals[np.isfinite(vals)]
-            if vals.size == 0:
-                continue
-            fo = float(row.get("face_object", np.nan)) if "face_object" in row.index else np.nan
-            it = float(row.get("interactive_state", np.nan)) if "interactive_state" in row.index else np.nan
-            cr = float(row.get("cross_interaction", np.nan)) if "cross_interaction" in row.index else np.nan
-            mean_mag = float(np.mean(np.abs(vals)))
-            if np.isfinite(fo) and np.isfinite(it):
-                norm_fi = float(np.hypot(fo, it))
-            else:
-                norm_fi = 0.0
-            if norm_fi > 1e-8:
-                ux = float(fo / norm_fi)
-                uy = float(it / norm_fi)
-            elif np.isfinite(cr) and abs(float(cr)) > 1e-8:
-                dx, dy = _axis_direction("cross_interaction")
-                sgn = 1.0 if float(cr) >= 0.0 else -1.0
-                ux = float(sgn * dx)
-                uy = float(sgn * dy)
-            else:
-                ux, uy = (1.0, 0.0)
+        for unit_key, unit_grp in reg_df.groupby("unit_key", dropna=False):
             rec: dict[str, object] = {
                 "window_name": str(window_name),
                 "region": str(region),
                 "unit_key": str(unit_key),
-                "mean_axis_magnitude": mean_mag,
-                "point_x": float(mean_mag * ux),
-                "point_y": float(mean_mag * uy),
             }
+            for meta_col in ("date", "unit_uuid", "spike_channel", "recorded_agent", "recorded_monkey", "area"):
+                if meta_col in unit_grp.columns:
+                    rec[meta_col] = unit_grp.iloc[0].get(meta_col)
+            sig_axes: list[str] = []
+            vals_abs: list[float] = []
             for axis_name in axis_tokens:
-                rec[f"axis_mean__{axis_name}"] = (
-                    float(row.get(axis_name))
-                    if axis_name in row.index and np.isfinite(float(row.get(axis_name)))
-                    else np.nan
-                )
+                axis_grp = unit_grp.loc[unit_grp["axis_name"].astype(str) == str(axis_name)].copy()
+                if axis_grp.empty:
+                    rec[str(axis_name)] = np.nan
+                    rec[f"{axis_name}_window"] = np.nan
+                    rec[f"{axis_name}_significant"] = False
+                    continue
+                axis_row = axis_grp.iloc[0]
+                value = pd.to_numeric(pd.Series([axis_row.get("value_signed", np.nan)]), errors="coerce").iloc[0]
+                axis_sig = False
+                for sig_col in sig_cols:
+                    raw_flag = axis_row.get(sig_col, False)
+                    axis_sig = axis_sig or (bool(raw_flag) if pd.notna(raw_flag) else False)
+                rec[str(axis_name)] = float(value) if pd.notna(value) else np.nan
+                rec[f"{axis_name}_window"] = axis_row.get("selected_window_name", axis_row.get("window_name", np.nan))
+                rec[f"{axis_name}_significant"] = bool(axis_sig)
+                if axis_sig:
+                    sig_axes.append(str(axis_name))
+                if pd.notna(value):
+                    vals_abs.append(abs(float(value)))
+            needed_axes = ("face_object", "interactive_state", "cross_interaction")
+            if not all(np.isfinite(float(rec.get(axis_name, np.nan))) for axis_name in needed_axes):
+                continue
+            rec["mean_axis_magnitude"] = float(np.mean(vals_abs)) if vals_abs else np.nan
+            rec["n_significant_axes"] = int(len(sig_axes))
+            rec["significant_axes"] = "|".join(sig_axes)
+            rec["is_significant_unit"] = bool(len(sig_axes) > 0)
             rows.append(rec)
     return pd.DataFrame(rows)
+
+
+def _pairwise_kde_projection(
+    values_a: np.ndarray,
+    values_b: np.ndarray,
+    *,
+    lim: float,
+    n_grid: int = 90,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    grid = np.linspace(-float(lim), float(lim), int(max(n_grid, 30)))
+    xx, yy = np.meshgrid(grid, grid)
+    density = _kde_2d_weighted(
+        points_xy=np.column_stack([values_a, values_b]),
+        xx=xx,
+        yy=yy,
+        weights=None,
+    )
+    if np.any(np.isfinite(density)) and float(np.nanmax(density)) > 0.0:
+        density = density / float(np.nanmax(density))
+    else:
+        density = np.zeros_like(xx, dtype=float)
+    return xx, yy, density
+
+
+def _add_origin_axis_arrows(
+    ax: Axes,
+    *,
+    lim: float,
+    axis_x: str,
+    axis_y: str,
+    settings: FixationROIVsPeriodFactorialPlotSettings,
+) -> None:
+    arrow_lim = 0.92 * float(lim)
+    x_color = settings.axis_colors.get(str(axis_x), "#4d4d4d")
+    y_color = settings.axis_colors.get(str(axis_y), "#4d4d4d")
+    ax.annotate(
+        "",
+        xy=(arrow_lim, 0.0),
+        xytext=(-arrow_lim, 0.0),
+        arrowprops=dict(arrowstyle="<->", color=x_color, linewidth=1.0, alpha=0.80, shrinkA=0.0, shrinkB=0.0),
+        zorder=0,
+    )
+    ax.annotate(
+        "",
+        xy=(0.0, arrow_lim),
+        xytext=(0.0, -arrow_lim),
+        arrowprops=dict(arrowstyle="<->", color=y_color, linewidth=1.0, alpha=0.80, shrinkA=0.0, shrinkB=0.0),
+        zorder=0,
+    )
+
+
+def _add_origin_axis_arrows_3d(
+    ax: Axes3D,
+    *,
+    lim: float,
+    settings: FixationROIVsPeriodFactorialPlotSettings,
+) -> None:
+    axis_specs = (
+        ("face_object", (1.0, 0.0, 0.0)),
+        ("interactive_state", (0.0, 1.0, 0.0)),
+        ("cross_interaction", (0.0, 0.0, 1.0)),
+    )
+    arrow_lim = 0.92 * float(lim)
+    for axis_name, direction in axis_specs:
+        color = settings.axis_colors.get(str(axis_name), "#4d4d4d")
+        dx = float(direction[0]) * arrow_lim
+        dy = float(direction[1]) * arrow_lim
+        dz = float(direction[2]) * arrow_lim
+        ax.plot(
+            [-dx, dx],
+            [-dy, dy],
+            [-dz, dz],
+            color=color,
+            linewidth=1.1,
+            alpha=0.55,
+        )
+        ax.quiver(
+            0.0,
+            0.0,
+            0.0,
+            dx,
+            dy,
+            dz,
+            color=color,
+            linewidth=1.3,
+            alpha=0.92,
+            arrow_length_ratio=0.08,
+        )
+        ax.quiver(
+            0.0,
+            0.0,
+            0.0,
+            -dx,
+            -dy,
+            -dz,
+            color=color,
+            linewidth=1.0,
+            alpha=0.70,
+            arrow_length_ratio=0.08,
+        )
+
+
+def _plot_fixation_roi_vs_period_axis_space_true_3d(
+    settings: FixationROIVsPeriodFactorialPlotSettings,
+    *,
+    regions: Optional[Sequence[str]] = None,
+    window: Optional[str] = None,
+    output_filename_regions: str = "roi_vs_period_axis_space_regions",
+    output_filename_contours: str = "roi_vs_period_axis_space_contours",
+) -> list[dict]:
+    _apply_plotting_style(settings)
+    payload, _ = _load_result_payload(settings)
+    signed_df = _extract_axis_signed_units(payload, settings)
+    if signed_df.empty:
+        print("[plot] no signed axis unit rows available for axis-space plot")
+        return []
+
+    region_tokens = _ordered_tokens(
+        available=signed_df["region"].astype(str).unique().tolist(),
+        preferred=[str(tok).lower() for tok in (regions or settings.region_order)],
+    )
+    axis_tokens = _ordered_tokens(
+        available=signed_df["axis_name"].astype(str).unique().tolist(),
+        preferred=[str(tok) for tok in settings.axis_order],
+    )
+    required_axes = ("face_object", "interactive_state", "cross_interaction")
+    if not region_tokens or any(axis_name not in axis_tokens for axis_name in required_axes):
+        print("[plot] axis-space plot requires face_object, interactive_state, and cross_interaction axes")
+        return []
+
+    windows_available = signed_df["window_name"].astype(str).unique().tolist()
+    if window is not None:
+        window_tokens = [str(window)]
+    else:
+        window_tokens = _window_order(windows_available)
+    if not window_tokens:
+        print("[plot] no window rows available for axis-space plot")
+        return []
+
+    ext = _resolve_output_ext(settings)
+    out_root = _build_output_root(settings)
+    outputs: list[dict] = []
+    letter_h = 11.0
+    region_fig_h = max(float(settings.axis_space_regions_letter_height_frac) * letter_h, 3.2)
+    q_high = float(np.clip(settings.axis_space_quantile_high, 0.0, 1.0))
+
+    for win_name in window_tokens:
+        unit_df = _build_axis_space_unit_summary(
+            signed_df,
+            settings=settings,
+            region_tokens=region_tokens,
+            axis_tokens=axis_tokens,
+            window_name=str(win_name),
+        )
+        if unit_df.empty:
+            continue
+        for axis_name in required_axes:
+            unit_df[axis_name] = pd.to_numeric(unit_df[axis_name], errors="coerce")
+        unit_df = unit_df.loc[unit_df.loc[:, list(required_axes)].notna().all(axis=1)].copy()
+        if unit_df.empty:
+            continue
+
+        mode = str(payload.get("meta", {}).get("axis_comparison_mode", settings.axis_comparison_mode))
+        abs_vals = np.abs(unit_df.loc[:, list(required_axes)].to_numpy(dtype=float).reshape(-1))
+        abs_vals = abs_vals[np.isfinite(abs_vals)]
+        lim = float(np.quantile(abs_vals, q_high)) if abs_vals.size > 0 else 1.0
+        lim = max(1.15 * float(lim), 0.25)
+        levels = np.linspace(0.18, 0.92, 6)
+        sig_color = "#c62828"
+        nonsig_color = "#7a7a7a"
+        scatter_handles = [
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="",
+                markerfacecolor=nonsig_color,
+                markeredgecolor="#2b2b2b",
+                alpha=0.42,
+                markersize=6.0,
+                label="All other units",
+            ),
+            Line2D(
+                [0],
+                [0],
+                marker="o",
+                linestyle="",
+                markerfacecolor=sig_color,
+                markeredgecolor="#2b2b2b",
+                alpha=0.90,
+                markersize=6.0,
+                label="Significant units",
+            ),
+        ]
+
+        fig = plt.figure(
+            figsize=(float(settings.axis_space_regions_letter_width_in), float(region_fig_h)),
+            dpi=settings.output_dpi,
+        )
+        for ridx, region in enumerate(region_tokens):
+            ax = fig.add_subplot(1, len(region_tokens), ridx + 1, projection="3d")
+            reg_df = unit_df.loc[unit_df["region"].astype(str) == str(region)].copy()
+            if reg_df.empty:
+                ax.text(0.0, 0.0, 0.0, "No data", ha="center", va="center", fontsize=9)
+            else:
+                x = reg_df["face_object"].to_numpy(dtype=float)
+                y = reg_df["interactive_state"].to_numpy(dtype=float)
+                z = reg_df["cross_interaction"].to_numpy(dtype=float)
+                sig_mask = reg_df["is_significant_unit"].map(bool).to_numpy(dtype=bool).reshape(-1)
+                xx, yy, dens = _pairwise_kde_projection(x, y, lim=float(lim))
+                if np.any(np.isfinite(dens)) and float(np.nanmax(dens)) > 0.0:
+                    ax.contour(
+                        xx,
+                        yy,
+                        dens,
+                        levels=levels,
+                        zdir="z",
+                        offset=-float(lim),
+                        cmap=mpl.colormaps["magma"],
+                        linewidths=0.90,
+                        alpha=0.72,
+                    )
+                ax.scatter(
+                    x[~sig_mask],
+                    y[~sig_mask],
+                    z[~sig_mask],
+                    s=16.0,
+                    c=nonsig_color,
+                    edgecolors="#2b2b2b",
+                    linewidths=0.2,
+                    alpha=0.34,
+                    depthshade=False,
+                )
+                if np.any(sig_mask):
+                    ax.scatter(
+                        x[sig_mask],
+                        y[sig_mask],
+                        z[sig_mask],
+                        s=24.0,
+                        c=sig_color,
+                        edgecolors="#2b2b2b",
+                        linewidths=0.3,
+                        alpha=0.92,
+                        depthshade=False,
+                    )
+            _add_origin_axis_arrows_3d(ax, lim=float(lim), settings=settings)
+            ax.set_xlim(-float(lim), float(lim))
+            ax.set_ylim(-float(lim), float(lim))
+            ax.set_zlim(-float(lim), float(lim))
+            ax.set_box_aspect((1.0, 1.0, 1.0))
+            ax.view_init(elev=22.0, azim=38.0)
+            ax.set_xlabel("Face-Object", fontsize=8, labelpad=2.0)
+            ax.set_ylabel("Interactive State", fontsize=8, labelpad=2.0)
+            ax.set_zlabel("Cross Interaction", fontsize=8, labelpad=3.0)
+            ax.tick_params(labelsize=6, pad=0)
+            ax.xaxis.set_major_formatter(FormatStrFormatter("%.2f"))
+            ax.yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
+            ax.zaxis.set_major_formatter(FormatStrFormatter("%.2f"))
+            ax.xaxis.pane.set_facecolor((0.95, 0.95, 0.95, 0.08))
+            ax.yaxis.pane.set_facecolor((0.95, 0.95, 0.95, 0.08))
+            ax.zaxis.pane.set_facecolor((0.95, 0.95, 0.95, 0.08))
+            ax.xaxis._axinfo["grid"]["color"] = (0.7, 0.7, 0.7, 0.28)
+            ax.yaxis._axinfo["grid"]["color"] = (0.7, 0.7, 0.7, 0.28)
+            ax.zaxis._axinfo["grid"]["color"] = (0.7, 0.7, 0.7, 0.28)
+            n_units_region = int(reg_df.shape[0]) if not reg_df.empty else 0
+            n_sig_region = int(reg_df["is_significant_unit"].sum()) if not reg_df.empty else 0
+            ax.set_title(
+                f"{_display_region(region, settings)}\nN={n_units_region}, sig={n_sig_region}",
+                fontsize=9,
+                pad=8.0,
+            )
+
+        fig.suptitle(
+            (
+                "ROI-vs-Period 3D Unit Distributions "
+                f"({win_name}; mode={mode}; source={settings.axis_magnitude_source})"
+            ),
+            fontsize=10,
+        )
+        fig.legend(
+            handles=scatter_handles,
+            loc="upper center",
+            frameon=False,
+            fontsize=8,
+            ncol=2,
+            bbox_to_anchor=(0.5, 0.98),
+        )
+        fig.subplots_adjust(left=0.03, right=0.99, top=0.83, bottom=0.06, wspace=0.18)
+
+        suffix = f"__window={_safe_suffix_token(win_name)}"
+        out_name_regions = ensure_filename(f"{output_filename_regions}{suffix}", f".{ext}")
+        out_path_regions = out_root / out_name_regions
+        save_figure(fig, out_path_regions, ext=ext, dpi=settings.output_dpi)
+        plt.close(fig)
+        outputs.append(
+            {
+                "output_path": str(out_path_regions),
+                "window_name": str(win_name),
+                "kind": "regions",
+                "regions": list(region_tokens),
+                "axes": list(axis_tokens),
+            }
+        )
+    return outputs
 
 
 def _fit_radial_density_profile(
@@ -1292,7 +1844,14 @@ def plot_fixation_roi_vs_period_axis_space(
     output_filename_regions: str = "roi_vs_period_axis_space_regions",
     output_filename_contours: str = "roi_vs_period_axis_space_contours",
 ) -> list[dict]:
-    """Plot 3D region-column density sheets on the face-object / interactive-state plane."""
+    """Plot true 3D unit-coordinate regional distributions with density contours."""
+    return _plot_fixation_roi_vs_period_axis_space_true_3d(
+        settings,
+        regions=regions,
+        window=window,
+        output_filename_regions=output_filename_regions,
+        output_filename_contours=output_filename_contours,
+    )
     _apply_plotting_style(settings)
     payload, _ = _load_result_payload(settings)
     signed_df = _extract_axis_signed_units(payload, settings)

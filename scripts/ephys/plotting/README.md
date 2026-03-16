@@ -269,14 +269,16 @@ Config:
   - `selective_example_grid_units`
 
 - `plot_fixation_roi_vs_period_axis_violin.py`
-  Plots one combined region-wise violin figure of absolute axis magnitudes:
-  - columns = regions (default order: `BLA`, `ACCg`, `dmPFC`, `OFC`)
+  Plots one combined grouped-violin figure of absolute axis magnitudes:
   - x-axis = ROI-vs-period axes (`face_object`, `interactive_state`, `cross_interaction`)
+  - hue = regions (default order: `BLA`, `ACCg`, `dmPFC`, `OFC`)
   - y-axis = per-unit `|axis magnitude|`
-  - overlays significance stars for within-region axis-pair differences
-    from adjusted pairwise tests.
+  - annotates how many cross-region adjusted pairwise differences were
+    significant for each axis/window.
   Uses ROI-vs-period analysis outputs (`results.pkl`) and respects analysis mode:
   - `split_by_window`: writes one figure per window
+  - `max_abs_across_windows`: writes one reduced figure from the max-abs
+    window chosen separately for each unit-axis
   - `averaged_across_windows`: writes one reduced figure
   Axis magnitudes are read from `cell_means` source.
 
@@ -287,6 +289,8 @@ Config:
   - draws edges only for region pairs with adjusted significant differences.
   Uses ROI-vs-period analysis outputs (`results.pkl`) and respects analysis mode:
   - `split_by_window`: writes one figure per window
+  - `max_abs_across_windows`: writes one reduced figure from the max-abs
+    window chosen separately for each unit-axis
   - `averaged_across_windows`: writes one reduced figure
   Axis magnitudes are read from `cell_means` source.
 
@@ -296,23 +300,18 @@ Config:
   - shows condition geometry and labeled formulas for axis definitions.
 
 - `plot_fixation_roi_vs_period_axis_space.py`
-  Plots ROI-vs-period axis-space outputs as two complementary figures:
-  - 3D density-sheet panels in region columns (1x4 by default)
-  - separate 2D contour panels in region columns (same x/y scale)
-  - each unit contributes one 2D point per window from the
-    face-object / interactive-state plane, with radial scaling from
-    mean magnitude across all three axes
-  - a weighted 2D KDE defines the sheet height (`z = relative density`)
-  - only the 95% support region is rendered
-  - 3D sheet is rendered via `pyvista` with neutral gray lighting/shading
-    (no planar axis overlays on top of the surface)
-  - 2D contours use a separate `magma` palette for contrast
-  - contour-panel origin axes are emphasized (thicker, above contours)
-  - mean axis vectors are shown in inset mini-axes (separate scale)
-    with no endpoint markers
-  - uses shared x/y limits across region panels for comparison
+  Plots ROI-vs-period unit-coordinate distributions as two complementary figures:
+  - 3D scatter panels in region columns (1x4 by default)
+  - coordinates = (`face_object`, `interactive_state`, `cross_interaction`)
+  - significant units are highlighted in red; all other units are gray
+  - orthogonal KDE contour projections are drawn on the 3D bounding planes
+  - a companion 2D contour figure shows the three pairwise axis projections
+    for each region with the same significant-unit highlighting
+  - uses shared limits across region panels for comparison
   Uses ROI-vs-period analysis outputs (`results.pkl`) and respects analysis mode:
   - `split_by_window`: writes one pair of figures per window
+  - `max_abs_across_windows`: writes one pair of figures using the max-abs
+    window chosen separately for each unit-axis
   - `averaged_across_windows`: writes one pair of figures
 
   Config:

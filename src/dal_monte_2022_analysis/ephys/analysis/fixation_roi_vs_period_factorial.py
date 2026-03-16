@@ -46,10 +46,30 @@ TERM_TO_AXIS: tuple[tuple[str, str], ...] = (
     ("interaction", "cross_interaction"),
 )
 AXIS_ORDER: tuple[str, ...] = tuple(axis_name for _, axis_name in TERM_TO_AXIS)
+CELL_MEAN_AXIS_SOURCE = "cell_means"
+CELL_MEAN_UNIT_RANGE_NORM_AXIS_SOURCE = "cell_means_unit_range_norm"
+CELL_MEAN_MAGNITUDE_SOURCES: tuple[str, ...] = (
+    CELL_MEAN_AXIS_SOURCE,
+    CELL_MEAN_UNIT_RANGE_NORM_AXIS_SOURCE,
+)
+UNIT_WINDOW_MEAN_FR_COLUMNS: tuple[str, ...] = (
+    "mean_fr_face_interactive_hz",
+    "mean_fr_face_non_interactive_hz",
+    "mean_fr_object_interactive_hz",
+    "mean_fr_object_non_interactive_hz",
+)
 _ALLOWED_PVALUE_CORRECTIONS = {"none", "bonferroni", "holm", "fdr_bh"}
 _ALLOWED_UNIT_SIGNIFICANCE_MODE = {"raw", "within_unit_corrected"}
 _ALLOWED_PARALLELIZATION_SCOPE = {"date", "unit"}
-_ALLOWED_AXIS_COMPARISON_MODE = {"split_by_window", "averaged_across_windows"}
+_ALLOWED_AXIS_COMPARISON_MODE = {
+    "split_by_window",
+    "averaged_across_windows",
+    "max_abs_across_windows",
+}
+_COLLAPSED_WINDOW_NAME_BY_MODE = {
+    "averaged_across_windows": "avg_pre_peri_post",
+    "max_abs_across_windows": "max_abs_across_windows",
+}
 
 
 @dataclass
@@ -88,7 +108,7 @@ class FixationROIVsPeriodFactorialSettings:
     alpha: float = 0.05
     pvalue_correction: str = "fdr_bh"
     unit_significance_mode: str = "within_unit_corrected"
-    axis_comparison_mode: str = "averaged_across_windows"
+    axis_comparison_mode: str = "max_abs_across_windows"
     parallelization_scope: str = "date"
     use_parallel: bool = True
     max_procs: int = 16
@@ -254,6 +274,10 @@ def _resolve_axis_comparison_mode(mode: str) -> str:
         "split": "split_by_window",
         "window_split": "split_by_window",
         "split_by_window": "split_by_window",
+        "max": "max_abs_across_windows",
+        "max_abs": "max_abs_across_windows",
+        "max_abs_across_windows": "max_abs_across_windows",
+        "max_across_windows": "max_abs_across_windows",
         "averaged": "averaged_across_windows",
         "average": "averaged_across_windows",
         "averaged_across_windows": "averaged_across_windows",
@@ -265,6 +289,10 @@ def _resolve_axis_comparison_mode(mode: str) -> str:
             f"Expected one of: {sorted(_ALLOWED_AXIS_COMPARISON_MODE)}"
         )
     return resolved
+
+
+def _collapsed_window_name_for_mode(mode: str) -> str:
+    return str(_COLLAPSED_WINDOW_NAME_BY_MODE.get(str(mode), str(mode)))
 
 
 def _load_trial_table(
@@ -491,6 +519,184 @@ def _compute_axis_from_condition_means(
     }
 
 
+def _build_unit_axis_normalization_table(
+    unit_window_df: pd.DataFrame,
+    *,
+    significance_windows: Sequence[str],
+) -> pd.DataFrame:
+    if unit_window_df.empty:
+        return pd.DataFrame()
+    required = {"unit_key", "window_name", *UNIT_WINDOW_MEAN_FR_COLUMNS}
+    if not required.issubset(unit_window_df.columns):
+        return pd.DataFrame()
+
+    df = unit_window_df.copy()
+    df["window_name"] = df["window_name"].astype(str)
+    norm_windows = {str(name).strip() for name in significance_windows if str(name).strip()}
+    if norm_windows:
+        df = df.loc[df["window_name"].astype(str).isin(norm_windows)].copy()
+    if df.empty:
+        return pd.DataFrame()
+
+    window_rank = {str(name): idx for idx, name in enumerate([str(name) for name in significance_windows if str(name).strip()])}
+    meta_cols = [
+        "unit_key",
+        "date",
+        "unit_uuid",
+        "region",
+        "spike_channel",
+        "recorded_agent",
+        "recorded_monkey",
+        "area",
+        "n_sessions",
+    ]
+    meta_cols = [col for col in meta_cols if col in df.columns]
+    rows: list[dict] = []
+    for key_vals, grp in df.groupby(meta_cols, dropna=False):
+        if not isinstance(key_vals, tuple):
+            key_vals = (key_vals,)
+        row = {col: val for col, val in zip(meta_cols, key_vals)}
+        mean_mat = grp.loc[:, list(UNIT_WINDOW_MEAN_FR_COLUMNS)].apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
+        vals = mean_mat[np.isfinite(mean_mat)]
+        if vals.size == 0:
+            continue
+        min_fr = float(np.min(vals))
+        max_fr = float(np.max(vals))
+        dynamic_range = float(max_fr - min_fr)
+        used_windows = sorted(
+            {str(name) for name in grp["window_name"].astype(str).tolist() if str(name).strip()},
+            key=lambda name: (int(window_rank.get(str(name), len(window_rank))), str(name)),
+        )
+        row.update(
+            {
+                "unit_axis_reference_windows": "|".join(used_windows),
+                "unit_fr_min_hz": min_fr,
+                "unit_fr_max_hz": max_fr,
+                "unit_fr_dynamic_range_hz": dynamic_range,
+                "unit_axis_normalization_scale_hz": dynamic_range,
+                "unit_axis_normalization_valid": bool(np.isfinite(dynamic_range) and dynamic_range > 0.0),
+                "normalized_axis_source": CELL_MEAN_UNIT_RANGE_NORM_AXIS_SOURCE,
+                "normalized_axis_method": "unit_dynamic_range_over_significance_windows",
+            }
+        )
+        rows.append(row)
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    sort_cols = [col for col in ("date", "region", "unit_uuid") if col in out.columns]
+    if sort_cols:
+        out = out.sort_values(sort_cols).reset_index(drop=True)
+    return out
+
+
+def _normalize_axis_values_by_scale(
+    values: pd.Series | np.ndarray,
+    scales: pd.Series | np.ndarray,
+) -> np.ndarray:
+    vals = pd.to_numeric(pd.Series(values), errors="coerce").to_numpy(dtype=float).reshape(-1)
+    scl = pd.to_numeric(pd.Series(scales), errors="coerce").to_numpy(dtype=float).reshape(-1)
+    out = np.full(vals.shape, np.nan, dtype=float)
+    valid = np.isfinite(vals) & np.isfinite(scl) & (scl > 0.0)
+    out[valid] = vals[valid] / scl[valid]
+    near_zero = np.isfinite(vals) & (np.abs(vals) <= 1e-12)
+    zero_scale = np.isfinite(scl) & (scl <= 0.0)
+    out[near_zero & zero_scale] = 0.0
+    out[near_zero & ~np.isfinite(scl)] = 0.0
+    return out
+
+
+def _attach_normalized_axis_values_to_window_summary(
+    unit_window_df: pd.DataFrame,
+    unit_norm_df: pd.DataFrame,
+) -> pd.DataFrame:
+    if unit_window_df.empty or unit_norm_df.empty or "unit_key" not in unit_window_df.columns:
+        return unit_window_df
+    norm_cols = [
+        "unit_key",
+        "unit_axis_reference_windows",
+        "unit_fr_min_hz",
+        "unit_fr_max_hz",
+        "unit_fr_dynamic_range_hz",
+        "unit_axis_normalization_scale_hz",
+        "unit_axis_normalization_valid",
+        "normalized_axis_source",
+        "normalized_axis_method",
+    ]
+    norm_cols = [col for col in norm_cols if col in unit_norm_df.columns]
+    if "unit_key" not in norm_cols:
+        norm_cols = ["unit_key", *norm_cols]
+    df = unit_window_df.copy()
+    df = df.merge(unit_norm_df.loc[:, norm_cols].drop_duplicates(subset=["unit_key"]), on="unit_key", how="left")
+    axis_col_map = {
+        "axis_face_object_from_means": "axis_face_object_from_means_unit_range_norm",
+        "axis_interactive_state_from_means": "axis_interactive_state_from_means_unit_range_norm",
+        "axis_cross_interaction_from_means": "axis_cross_interaction_from_means_unit_range_norm",
+    }
+    for raw_col, norm_col in axis_col_map.items():
+        if raw_col not in df.columns:
+            continue
+        df[norm_col] = _normalize_axis_values_by_scale(
+            df[raw_col],
+            df["unit_axis_normalization_scale_hz"],
+        )
+    return df
+
+
+def _append_normalized_cell_mean_axis_rows(
+    unit_axis_df: pd.DataFrame,
+    unit_norm_df: pd.DataFrame,
+) -> pd.DataFrame:
+    if unit_axis_df.empty:
+        return unit_axis_df
+    df = unit_axis_df.copy()
+    if unit_norm_df.empty or "unit_key" not in df.columns or "axis_source" not in df.columns:
+        return df
+
+    norm_cols = [
+        "unit_key",
+        "unit_axis_reference_windows",
+        "unit_fr_min_hz",
+        "unit_fr_max_hz",
+        "unit_fr_dynamic_range_hz",
+        "unit_axis_normalization_scale_hz",
+        "unit_axis_normalization_valid",
+        "normalized_axis_source",
+        "normalized_axis_method",
+    ]
+    norm_cols = [col for col in norm_cols if col in unit_norm_df.columns]
+    norm_lookup = unit_norm_df.loc[:, norm_cols].drop_duplicates(subset=["unit_key"])
+    df = df.merge(norm_lookup, on="unit_key", how="left")
+    if "axis_value_units" not in df.columns:
+        df["axis_value_units"] = np.where(
+            df["axis_source"].astype(str) == str(CELL_MEAN_AXIS_SOURCE),
+            "hz_difference",
+            np.where(df["axis_source"].astype(str) == "glm_coef", "glm_coefficient", ""),
+        )
+
+    raw_cell_df = df.loc[df["axis_source"].astype(str) == str(CELL_MEAN_AXIS_SOURCE)].copy()
+    if raw_cell_df.empty:
+        return df
+    raw_cell_df["value_signed"] = _normalize_axis_values_by_scale(
+        raw_cell_df["value_signed"],
+        raw_cell_df["unit_axis_normalization_scale_hz"],
+    )
+    raw_cell_df["value_abs"] = np.abs(raw_cell_df["value_signed"].to_numpy(dtype=float))
+    raw_cell_df["axis_source"] = str(CELL_MEAN_UNIT_RANGE_NORM_AXIS_SOURCE)
+    raw_cell_df["axis_value_units"] = "unit_dynamic_range_fraction"
+    raw_cell_df = raw_cell_df.loc[raw_cell_df["value_signed"].notna()].copy()
+    if raw_cell_df.empty:
+        return df
+    out = pd.concat([df, raw_cell_df], ignore_index=True, sort=False)
+    sort_cols = [
+        col
+        for col in ("date", "region", "unit_uuid", "window_name", "axis_source", "axis_name")
+        if col in out.columns
+    ]
+    if sort_cols:
+        out = out.sort_values(sort_cols).reset_index(drop=True)
+    return out
+
+
 def _safe_ttest_ind(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
     x = np.asarray(a, dtype=float).reshape(-1)
     y = np.asarray(b, dtype=float).reshape(-1)
@@ -674,6 +880,7 @@ def _unit_worker(args):
                     "window_stop_ms": float(stop_ms),
                     "axis_name": axis_name,
                     "axis_source": "glm_coef",
+                    "axis_value_units": "glm_coefficient",
                     "value_signed": coeff,
                     "value_abs": abs(coeff) if np.isfinite(coeff) else np.nan,
                     "p_value": p_term,
@@ -698,7 +905,8 @@ def _unit_worker(args):
                     "window_start_ms": float(start_ms),
                     "window_stop_ms": float(stop_ms),
                     "axis_name": axis_name,
-                    "axis_source": "cell_means",
+                    "axis_source": str(CELL_MEAN_AXIS_SOURCE),
+                    "axis_value_units": "hz_difference",
                     "value_signed": mean_axis_val,
                     "value_abs": abs(mean_axis_val) if np.isfinite(mean_axis_val) else np.nan,
                     "p_value": np.nan,
@@ -923,33 +1131,66 @@ def _build_unit_axis_significance_table(
 def _build_unit_axis_collapsed_magnitude_table(
     unit_axis_df: pd.DataFrame,
     unit_axis_significance_df: pd.DataFrame,
+    *,
+    settings: FixationROIVsPeriodFactorialSettings,
 ) -> pd.DataFrame:
-    if unit_axis_df.empty or unit_axis_significance_df.empty:
+    if unit_axis_df.empty:
         return pd.DataFrame()
     required_axis = {"unit_key", "axis_name", "axis_source", "window_name", "value_signed", "counts_toward_significance"}
-    required_sig = {"unit_key", "axis_name", "is_significant_axis", "significant_windows"}
-    if not required_axis.issubset(unit_axis_df.columns) or not required_sig.issubset(unit_axis_significance_df.columns):
+    if not required_axis.issubset(unit_axis_df.columns):
         return pd.DataFrame()
 
-    sig_df = unit_axis_significance_df.copy()
-    sig_df = sig_df.loc[sig_df["is_significant_axis"].map(bool)].copy()
-    if sig_df.empty:
-        return pd.DataFrame()
-
-    sig_window_map: dict[tuple[str, str], set[str]] = {}
-    for row in sig_df.itertuples(index=False):
-        unit_key = str(getattr(row, "unit_key"))
-        axis_name = str(getattr(row, "axis_name"))
-        token = str(getattr(row, "significant_windows", "") or "")
-        wins = {w.strip() for w in token.split("|") if str(w).strip()}
-        if wins:
-            sig_window_map[(unit_key, axis_name)] = wins
-
+    mode = _resolve_axis_comparison_mode(settings.axis_comparison_mode)
+    collapsed_window_name = _collapsed_window_name_for_mode(mode)
     df = unit_axis_df.copy()
     df = df.loc[df["counts_toward_significance"]].copy()
     if df.empty:
         return pd.DataFrame()
     df["region"] = df["region"].fillna("unknown").astype(str)
+    df["window_name"] = df["window_name"].astype(str)
+    df["value_signed"] = pd.to_numeric(df["value_signed"], errors="coerce")
+    if "value_abs" in df.columns:
+        df["value_abs"] = pd.to_numeric(df["value_abs"], errors="coerce")
+    else:
+        df["value_abs"] = np.abs(df["value_signed"].to_numpy(dtype=float))
+
+    sig_cols = {
+        "unit_key",
+        "axis_name",
+        "significance_mode",
+        "significance_column",
+        "n_testable_windows",
+        "n_significant_windows",
+        "is_significant_axis",
+        "significant_windows",
+    }
+    if not unit_axis_significance_df.empty and sig_cols.issubset(unit_axis_significance_df.columns):
+        sig_df = unit_axis_significance_df.loc[:, sorted(sig_cols)].copy()
+        sig_df["unit_key"] = sig_df["unit_key"].astype(str)
+        sig_df["axis_name"] = sig_df["axis_name"].astype(str)
+        df = df.merge(sig_df, on=["unit_key", "axis_name"], how="left")
+    else:
+        df["significance_mode"] = _resolve_unit_significance_mode(settings.unit_significance_mode)
+        df["significance_column"] = (
+            "significant_raw"
+            if str(settings.unit_significance_mode).strip().lower() == "raw"
+            else "significant_within_unit"
+        )
+        df["n_testable_windows"] = 0
+        df["n_significant_windows"] = 0
+        df["is_significant_axis"] = False
+        df["significant_windows"] = ""
+
+    window_rank: dict[str, int] = {}
+    ordered_windows: list[str] = []
+    ordered_windows.extend(str(name) for name in settings.significance_windows if str(name).strip())
+    ordered_windows.extend(
+        str(name)
+        for name in settings.windows_ms.keys()
+        if str(name).strip() and str(name) not in set(ordered_windows)
+    )
+    for idx, name in enumerate(ordered_windows):
+        window_rank[str(name)] = idx
 
     rows: list[dict] = []
     group_cols = [
@@ -961,34 +1202,113 @@ def _build_unit_axis_collapsed_magnitude_table(
         "recorded_agent",
         "recorded_monkey",
         "area",
+        "n_sessions",
         "axis_name",
         "axis_source",
+        "axis_value_units",
+        "unit_axis_reference_windows",
+        "unit_fr_min_hz",
+        "unit_fr_max_hz",
+        "unit_fr_dynamic_range_hz",
+        "unit_axis_normalization_scale_hz",
+        "unit_axis_normalization_valid",
+        "normalized_axis_source",
+        "normalized_axis_method",
     ]
     group_cols = [col for col in group_cols if col in df.columns]
     for key_vals, grp in df.groupby(group_cols, dropna=False):
         if not isinstance(key_vals, tuple):
             key_vals = (key_vals,)
         row = {col: val for col, val in zip(group_cols, key_vals)}
-        unit_key = str(row.get("unit_key", ""))
-        axis_name = str(row.get("axis_name", ""))
-        sig_windows = sig_window_map.get((unit_key, axis_name), set())
-        if not sig_windows:
+        grp_valid = grp.loc[grp["value_abs"].notna()].copy()
+        if grp_valid.empty:
             continue
-        grp_sig = grp.loc[grp["window_name"].astype(str).isin(sig_windows)].copy()
-        if grp_sig.empty:
-            continue
-        vals = np.abs(grp_sig["value_signed"].to_numpy(dtype=float).reshape(-1))
-        vals = vals[np.isfinite(vals)]
-        if vals.size == 0:
-            continue
+        grp_valid["window_rank"] = grp_valid["window_name"].map(
+            lambda name: int(window_rank.get(str(name), len(window_rank)))
+        )
+        used_windows = sorted(
+            {str(name) for name in grp_valid["window_name"].astype(str).tolist() if str(name).strip()},
+            key=lambda name: (int(window_rank.get(str(name), len(window_rank))), str(name)),
+        )
+        is_sig_axis_raw = grp.iloc[0].get("is_significant_axis", False)
+        n_sig_windows_raw = grp.iloc[0].get("n_significant_windows", 0)
+        n_testable_windows_raw = grp.iloc[0].get("n_testable_windows", 0)
+        sig_windows = {
+            token.strip()
+            for token in str(grp.iloc[0].get("significant_windows", "") or "").split("|")
+            if str(token).strip()
+        }
         row.update(
             {
-                "n_significant_windows_used": int(vals.size),
+                "axis_comparison_mode": str(mode),
+                "window_name": collapsed_window_name,
+                "window_start_ms": np.nan,
+                "window_stop_ms": np.nan,
+                "n_windows_used": int(grp_valid.shape[0]),
+                "windows_used": "|".join(used_windows),
+                "is_significant_axis": bool(is_sig_axis_raw) if pd.notna(is_sig_axis_raw) else False,
+                "n_significant_windows": (
+                    int(n_sig_windows_raw) if pd.notna(n_sig_windows_raw) else 0
+                ),
+                "n_testable_windows": (
+                    int(n_testable_windows_raw) if pd.notna(n_testable_windows_raw) else 0
+                ),
                 "significant_windows": "|".join(sorted(sig_windows)),
-                "value_abs_mean_over_significant_windows": float(np.mean(vals)),
-                "value_abs_median_over_significant_windows": float(np.median(vals)),
-                "value_abs_std_over_significant_windows": (
-                    float(np.std(vals, ddof=1)) if vals.size > 1 else np.nan
+                "significance_mode": str(grp.iloc[0].get("significance_mode", "")),
+                "significance_column": str(grp.iloc[0].get("significance_column", "")),
+            }
+        )
+        if mode == "max_abs_across_windows":
+            grp_valid = grp_valid.sort_values(
+                ["value_abs", "window_rank", "window_name"],
+                ascending=[False, True, True],
+                kind="mergesort",
+            ).reset_index(drop=True)
+            selected = grp_valid.iloc[0]
+            selected_window_name = str(selected.get("window_name", ""))
+            selected_glm_testable_raw = selected.get("glm_testable", False)
+            selected_trials_total_raw = selected.get("n_trials_total", 0)
+            row.update(
+                {
+                    "collapsed_value_method": "max_abs_over_windows",
+                    "value_signed": float(selected["value_signed"]),
+                    "value_abs": float(selected["value_abs"]),
+                    "selected_window_name": selected_window_name,
+                    "selected_window_start_ms": float(selected.get("window_start_ms", np.nan)),
+                    "selected_window_stop_ms": float(selected.get("window_stop_ms", np.nan)),
+                    "selected_window_p_value": float(selected.get("p_value", np.nan)),
+                    "selected_window_glm_testable": (
+                        bool(selected_glm_testable_raw) if pd.notna(selected_glm_testable_raw) else False
+                    ),
+                    "selected_window_n_trials_total": (
+                        int(selected_trials_total_raw) if pd.notna(selected_trials_total_raw) else 0
+                    ),
+                    "selected_window_is_significant": bool(selected_window_name in sig_windows),
+                }
+            )
+        else:
+            signed_vals = grp_valid["value_signed"].to_numpy(dtype=float).reshape(-1)
+            abs_vals = grp_valid["value_abs"].to_numpy(dtype=float).reshape(-1)
+            row.update(
+                {
+                    "collapsed_value_method": "mean_over_windows",
+                    "value_signed": float(np.mean(signed_vals)),
+                    "value_abs": float(np.mean(abs_vals)),
+                    "selected_window_name": np.nan,
+                    "selected_window_start_ms": np.nan,
+                    "selected_window_stop_ms": np.nan,
+                    "selected_window_p_value": np.nan,
+                    "selected_window_glm_testable": np.nan,
+                    "selected_window_n_trials_total": np.nan,
+                    "selected_window_is_significant": np.nan,
+                }
+            )
+        row.update(
+            {
+                "value_abs_std_over_windows": (
+                    float(np.std(grp_valid["value_abs"].to_numpy(dtype=float), ddof=1))
+                    if grp_valid.shape[0] > 1
+                    else np.nan
                 ),
             }
         )
@@ -1006,7 +1326,49 @@ def _build_axis_magnitude_input_table(
     unit_axis_df: pd.DataFrame,
     *,
     settings: FixationROIVsPeriodFactorialSettings,
+    unit_axis_collapsed_df: Optional[pd.DataFrame] = None,
 ) -> pd.DataFrame:
+    mode = _resolve_axis_comparison_mode(settings.axis_comparison_mode)
+    if mode != "split_by_window" and unit_axis_collapsed_df is not None and not unit_axis_collapsed_df.empty:
+        collapsed_df = unit_axis_collapsed_df.copy()
+        required_collapsed = {
+            "region",
+            "window_name",
+            "axis_name",
+            "axis_source",
+            "unit_key",
+        }
+        if required_collapsed.issubset(collapsed_df.columns):
+            collapsed_df["region"] = collapsed_df["region"].fillna("unknown").astype(str)
+            collapsed_df = collapsed_df.loc[
+                collapsed_df["axis_source"].astype(str).isin(set(CELL_MEAN_MAGNITUDE_SOURCES))
+            ].copy()
+            if "axis_comparison_mode" in collapsed_df.columns:
+                collapsed_df = collapsed_df.loc[
+                    collapsed_df["axis_comparison_mode"].astype(str) == str(mode)
+                ].copy()
+            else:
+                collapsed_df["axis_comparison_mode"] = mode
+            if collapsed_df.empty:
+                return pd.DataFrame()
+            if "value_abs" in collapsed_df.columns:
+                collapsed_df["value_abs_norm"] = pd.to_numeric(collapsed_df["value_abs"], errors="coerce")
+            else:
+                collapsed_df["value_abs_norm"] = np.abs(
+                    pd.to_numeric(collapsed_df["value_signed"], errors="coerce")
+                )
+            collapsed_df = collapsed_df.loc[collapsed_df["value_abs_norm"].notna()].copy()
+            if collapsed_df.empty:
+                return pd.DataFrame()
+            sort_cols = [
+                col
+                for col in ("date", "region", "unit_uuid", "window_name", "axis_source", "axis_name")
+                if col in collapsed_df.columns
+            ]
+            if sort_cols:
+                collapsed_df = collapsed_df.sort_values(sort_cols).reset_index(drop=True)
+            return collapsed_df
+
     if unit_axis_df.empty:
         return pd.DataFrame()
     required = {
@@ -1024,12 +1386,11 @@ def _build_axis_magnitude_input_table(
     df = unit_axis_df.copy()
     df["region"] = df["region"].fillna("unknown").astype(str)
     df = df.loc[df["counts_toward_significance"]].copy()
-    df = df.loc[df["axis_source"].astype(str) == "cell_means"].copy()
+    df = df.loc[df["axis_source"].astype(str).isin(set(CELL_MEAN_MAGNITUDE_SOURCES))].copy()
     if df.empty:
         return pd.DataFrame()
     df["value_abs_norm"] = np.abs(df["value_signed"].to_numpy(dtype=float))
 
-    mode = _resolve_axis_comparison_mode(settings.axis_comparison_mode)
     if mode == "split_by_window":
         df["window_name"] = df["window_name"].astype(str)
         df["axis_comparison_mode"] = mode
@@ -1056,6 +1417,13 @@ def _build_axis_magnitude_input_table(
         "axis_source",
     ]
     group_cols = [col for col in group_cols if col in df.columns]
+    df["window_name"] = df["window_name"].astype(str)
+    window_rank = {
+        str(name): idx
+        for idx, name in enumerate(
+            [str(name) for name in settings.significance_windows if str(name).strip()]
+        )
+    }
     rows: list[dict] = []
     for key_vals, grp in df.groupby(group_cols, dropna=False):
         if not isinstance(key_vals, tuple):
@@ -1070,15 +1438,41 @@ def _build_axis_magnitude_input_table(
             if "window_name" in grp.columns
             else []
         )
-        row.update(
-            {
-                "window_name": "avg_pre_peri_post",
-                "axis_comparison_mode": mode,
-                "n_windows_averaged": int(vals.size),
-                "windows_used": "|".join(sorted(set(windows_used))),
-                "value_abs_norm": float(np.mean(vals)),
-            }
-        )
+        if mode == "max_abs_across_windows":
+            grp = grp.sort_values(
+                by=["value_abs_norm", "window_name"],
+                ascending=[False, True],
+                kind="mergesort",
+            ).copy()
+            grp["window_rank"] = grp["window_name"].map(
+                lambda name: int(window_rank.get(str(name), len(window_rank)))
+            )
+            grp = grp.sort_values(
+                by=["value_abs_norm", "window_rank", "window_name"],
+                ascending=[False, True, True],
+                kind="mergesort",
+            ).reset_index(drop=True)
+            selected = grp.iloc[0]
+            row.update(
+                {
+                    "window_name": _collapsed_window_name_for_mode(mode),
+                    "axis_comparison_mode": mode,
+                    "n_windows_used": int(vals.size),
+                    "windows_used": "|".join(sorted(set(windows_used))),
+                    "value_abs_norm": float(selected["value_abs_norm"]),
+                    "selected_window_name": str(selected.get("window_name", "")),
+                }
+            )
+        else:
+            row.update(
+                {
+                    "window_name": _collapsed_window_name_for_mode(mode),
+                    "axis_comparison_mode": mode,
+                    "n_windows_averaged": int(vals.size),
+                    "windows_used": "|".join(sorted(set(windows_used))),
+                    "value_abs_norm": float(np.mean(vals)),
+                }
+            )
         rows.append(row)
     out = pd.DataFrame(rows)
     if out.empty:
@@ -1430,6 +1824,14 @@ def run_fixation_roi_vs_period_factorial_analysis(
         ).reset_index(drop=True)
 
     if not unit_axis_df.empty:
+        unit_norm_df = _build_unit_axis_normalization_table(
+            unit_window_df,
+            significance_windows=significance_windows,
+        )
+        unit_axis_df = _append_normalized_cell_mean_axis_rows(
+            unit_axis_df,
+            unit_norm_df,
+        )
         unit_axis_df["counts_toward_significance"] = unit_axis_df["window_name"].astype(str).isin(
             set(str(name) for name in significance_windows)
         )
@@ -1457,8 +1859,14 @@ def run_fixation_roi_vs_period_factorial_analysis(
         unit_axis_df = unit_axis_df.sort_values(
             ["date", "region", "unit_uuid", "window_name", "axis_source", "axis_name"]
         ).reset_index(drop=True)
+    else:
+        unit_norm_df = pd.DataFrame()
 
     if not unit_window_df.empty:
+        unit_window_df = _attach_normalized_axis_values_to_window_summary(
+            unit_window_df,
+            unit_norm_df,
+        )
         unit_window_df = unit_window_df.sort_values(
             ["date", "region", "unit_uuid", "window_name"]
         ).reset_index(drop=True)
@@ -1470,10 +1878,12 @@ def run_fixation_roi_vs_period_factorial_analysis(
     unit_axis_collapsed_df = _build_unit_axis_collapsed_magnitude_table(
         unit_axis_df,
         unit_axis_significance_df,
+        settings=settings,
     )
     unit_axis_magnitude_df = _build_axis_magnitude_input_table(
         unit_axis_df,
         settings=settings,
+        unit_axis_collapsed_df=unit_axis_collapsed_df,
     )
 
     (
@@ -1534,7 +1944,10 @@ def run_fixation_roi_vs_period_factorial_analysis(
             "pvalue_correction": str(settings.pvalue_correction),
             "unit_significance_mode": str(settings.unit_significance_mode),
             "axis_comparison_mode": str(settings.axis_comparison_mode),
-            "axis_magnitude_source": "cell_means",
+            "axis_magnitude_source": str(CELL_MEAN_AXIS_SOURCE),
+            "axis_magnitude_sources": list(CELL_MEAN_MAGNITUDE_SOURCES),
+            "normalized_axis_source": str(CELL_MEAN_UNIT_RANGE_NORM_AXIS_SOURCE),
+            "normalized_axis_method": "unit_dynamic_range_over_significance_windows",
             "parallelization_scope": str(settings.parallelization_scope),
             "n_units": int(unit_term_df["unit_key"].nunique()) if not unit_term_df.empty else 0,
             "n_regions": int(unit_term_df["region"].astype(str).nunique()) if not unit_term_df.empty else 0,
@@ -1603,9 +2016,9 @@ def print_fixation_roi_vs_period_factorial_summary(result: dict) -> None:
         else []
     )
     axis_comparison_mode = (
-        str(meta.get("axis_comparison_mode", "averaged_across_windows"))
+        str(meta.get("axis_comparison_mode", "max_abs_across_windows"))
         if isinstance(meta, dict)
-        else "averaged_across_windows"
+        else "max_abs_across_windows"
     )
     axis_magnitude_source = (
         str(meta.get("axis_magnitude_source", "cell_means"))

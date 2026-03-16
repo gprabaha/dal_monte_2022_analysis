@@ -160,9 +160,11 @@ roi_vs_period_pvalue_correction: fdr_bh
 roi_vs_period_unit_significance_mode: within_unit_corrected
 # axis comparison mode options:
 # - split_by_window: axis magnitude summaries/comparisons are separate for pre/peri/post
-# - averaged_across_windows: GLM remains per-window; axis magnitudes are averaged per unit across pre/peri/post
-# Axis magnitude source is fixed to cell_means.
-roi_vs_period_axis_comparison_mode: averaged_across_windows
+# - max_abs_across_windows: keep one row per unit-axis using the max-abs window across counted windows
+# - averaged_across_windows: legacy mode; GLM remains per-window and axis magnitudes are averaged per unit
+# Axis magnitude comparisons are always saved for raw `cell_means` and
+# unit-range-normalized `cell_means_unit_range_norm`.
+roi_vs_period_axis_comparison_mode: max_abs_across_windows
 # parallelization scope: date | unit
 # date is preferred here because unit computations are independent, while
 # session structure is shared within date.
@@ -182,6 +184,7 @@ roi_vs_period_plot_axis_space_regions_output_filename: roi_vs_period_axis_space_
 roi_vs_period_plot_axis_space_overlay_output_filename: roi_vs_period_axis_space_overlay
 roi_vs_period_plot_axis_space_contour_output_filename: roi_vs_period_axis_space_contours
 roi_vs_period_plot_axis_magnitude_source: cell_means
+roi_vs_period_plot_axis_magnitude_sources: [cell_means, cell_means_unit_range_norm]
 roi_vs_period_plot_region_order: [bla, accg, dmpfc, ofc]
 roi_vs_period_plot_axis_order: [face_object, interactive_state, cross_interaction]
 roi_vs_period_plot_axis_colors:

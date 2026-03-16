@@ -37,6 +37,18 @@ def _normalize_str_tuple(raw, fallback: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(out) if out else tuple(fallback)
 
 
+def _normalize_axis_sources(raw_multi, raw_single) -> tuple[str, ...]:
+    if isinstance(raw_multi, (list, tuple)):
+        vals = [str(item).strip() for item in raw_multi if str(item).strip()]
+    else:
+        vals = [str(raw_single).strip()] if str(raw_single).strip() else ["cell_means"]
+    out: list[str] = []
+    for value in vals:
+        if value not in out:
+            out.append(value)
+    return tuple(out) if out else ("cell_means",)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Plot ROI-vs-period region-wise axis-magnitude violin summaries.",
@@ -49,36 +61,44 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_config(args.ephys_fixation_psth_cfg)
-    settings = FixationROIVsPeriodFactorialPlotSettings(
-        cfg_path=args.dataset_cfg,
-        plotting_cfg_path=args.plotting_cfg,
-        input_subdir=cfg.get("roi_vs_period_plot_input_subdir", cfg.get("roi_vs_period_output_subdir", "ephys/psth/fixation_roi_vs_period_factorial")),
-        input_filename=cfg.get("roi_vs_period_plot_input_filename", cfg.get("roi_vs_period_output_pickle_filename", "results.pkl")),
-        output_subdir=cfg.get(
-            "roi_vs_period_plot_output_subdir",
-            "ephys/psth/fixation_roi_vs_period_factorial/plots",
-        ),
-        output_extension=cfg.get("roi_vs_period_plot_output_extension", "pdf"),
-        output_dpi=cfg.get("roi_vs_period_plot_output_dpi", 300),
-        axis_magnitude_source=cfg.get("roi_vs_period_plot_axis_magnitude_source", "cell_means"),
-        axis_comparison_mode=cfg.get("roi_vs_period_axis_comparison_mode", "averaged_across_windows"),
-        region_order=_normalize_str_tuple(cfg.get("roi_vs_period_plot_region_order"), ("bla", "accg", "dmpfc", "ofc")),
-        axis_order=_normalize_str_tuple(cfg.get("roi_vs_period_plot_axis_order"), ("face_object", "interactive_state", "cross_interaction")),
-        axis_colors=_normalize_axis_colors(cfg.get("roi_vs_period_plot_axis_colors", {})),
+    axis_sources = _normalize_axis_sources(
+        cfg.get("roi_vs_period_plot_axis_magnitude_sources"),
+        cfg.get("roi_vs_period_plot_axis_magnitude_source", "cell_means"),
     )
-    outputs = plot_fixation_roi_vs_period_axis_violin(
-        settings,
-        regions=args.region,
-        window=args.window,
-        output_filename=cfg.get("roi_vs_period_plot_axis_violin_output_filename", "roi_vs_period_axis_violin"),
-    )
-    if not outputs:
+    base_output = cfg.get("roi_vs_period_plot_axis_violin_output_filename", "roi_vs_period_axis_violin")
+    all_outputs = []
+    for axis_source in axis_sources:
+        settings = FixationROIVsPeriodFactorialPlotSettings(
+            cfg_path=args.dataset_cfg,
+            plotting_cfg_path=args.plotting_cfg,
+            input_subdir=cfg.get("roi_vs_period_plot_input_subdir", cfg.get("roi_vs_period_output_subdir", "ephys/psth/fixation_roi_vs_period_factorial")),
+            input_filename=cfg.get("roi_vs_period_plot_input_filename", cfg.get("roi_vs_period_output_pickle_filename", "results.pkl")),
+            output_subdir=cfg.get(
+                "roi_vs_period_plot_output_subdir",
+                "ephys/psth/fixation_roi_vs_period_factorial/plots",
+            ),
+            output_extension=cfg.get("roi_vs_period_plot_output_extension", "pdf"),
+            output_dpi=cfg.get("roi_vs_period_plot_output_dpi", 300),
+            axis_magnitude_source=axis_source,
+            axis_comparison_mode=cfg.get("roi_vs_period_axis_comparison_mode", "max_abs_across_windows"),
+            region_order=_normalize_str_tuple(cfg.get("roi_vs_period_plot_region_order"), ("bla", "accg", "dmpfc", "ofc")),
+            axis_order=_normalize_str_tuple(cfg.get("roi_vs_period_plot_axis_order"), ("face_object", "interactive_state", "cross_interaction")),
+            axis_colors=_normalize_axis_colors(cfg.get("roi_vs_period_plot_axis_colors", {})),
+        )
+        suffix = f"__source={axis_source}" if len(axis_sources) > 1 or str(axis_source) != "cell_means" else ""
+        outputs = plot_fixation_roi_vs_period_axis_violin(
+            settings,
+            regions=args.region,
+            window=args.window,
+            output_filename=f"{base_output}{suffix}",
+        )
+        all_outputs.extend(outputs)
+    if not all_outputs:
         print("[plot] no ROI-vs-period axis violin figure generated")
         return
-    for row in outputs:
+    for row in all_outputs:
         print(f"[plot] axis-violin figure: {row.get('output_path')}")
 
 
 if __name__ == "__main__":
     main()
-

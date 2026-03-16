@@ -59,7 +59,7 @@ def main() -> None:
         output_extension=cfg.get("roi_vs_period_plot_output_extension", "pdf"),
         output_dpi=cfg.get("roi_vs_period_plot_output_dpi", 300),
         axis_magnitude_source=cfg.get("roi_vs_period_plot_axis_magnitude_source", "cell_means"),
-        axis_comparison_mode=cfg.get("roi_vs_period_axis_comparison_mode", "averaged_across_windows"),
+        axis_comparison_mode=cfg.get("roi_vs_period_axis_comparison_mode", "max_abs_across_windows"),
         region_order=_normalize_str_tuple(cfg.get("roi_vs_period_plot_region_order"), ("bla", "accg", "dmpfc", "ofc")),
         axis_order=_normalize_str_tuple(cfg.get("roi_vs_period_plot_axis_order"), ("face_object", "interactive_state", "cross_interaction")),
         axis_colors=_normalize_axis_colors(cfg.get("roi_vs_period_plot_axis_colors", {})),
@@ -73,4 +73,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

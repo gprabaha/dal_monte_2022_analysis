@@ -61,7 +61,7 @@ def main() -> None:
     parser.add_argument("--unit-uuid", action="append", default=None)
     parser.add_argument(
         "--axis-comparison-mode",
-        choices=("split_by_window", "averaged_across_windows"),
+        choices=("split_by_window", "averaged_across_windows", "max_abs_across_windows"),
         default=None,
     )
     parser.add_argument("--no-parallel", action="store_true")
@@ -138,7 +138,7 @@ def main() -> None:
         alpha=cfg.get("roi_vs_period_alpha", 0.05),
         pvalue_correction=str(cfg.get("roi_vs_period_pvalue_correction") or "fdr_bh"),
         unit_significance_mode=cfg.get("roi_vs_period_unit_significance_mode", "within_unit_corrected"),
-        axis_comparison_mode=cfg.get("roi_vs_period_axis_comparison_mode", "averaged_across_windows"),
+        axis_comparison_mode=cfg.get("roi_vs_period_axis_comparison_mode", "max_abs_across_windows"),
         parallelization_scope=cfg.get("roi_vs_period_parallelization_scope", "date"),
         use_parallel=cfg.get("roi_vs_period_use_parallel", True),
         max_procs=cfg.get("max_procs", 16),

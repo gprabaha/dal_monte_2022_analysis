@@ -40,12 +40,14 @@ Current scripts:
     from both condition means and GLM coefficients
   - per-unit collapsed axis-significance table (collapsed across configured
     significance windows)
-  - per-unit collapsed axis magnitudes (absolute values averaged across
-    significant windows only; exported for auditability)
+  - per-unit collapsed axis table with one stored row per unit/axis/source
+    across the configured significance windows
   - region-level selective-fraction tables and cross-region pairwise fraction
     comparisons (multiple-comparison corrected)
   - region-level axis-magnitude summaries and Welch comparisons with two modes:
     - `split_by_window`: separate `pre/peri/post` tables
+    - `max_abs_across_windows`: one reduced table using the max-abs window per
+      unit-axis
     - `averaged_across_windows`: per-unit magnitudes averaged across
       `pre/peri/post`, then compared in one reduced table
     GLM fitting remains per-window in both modes.
