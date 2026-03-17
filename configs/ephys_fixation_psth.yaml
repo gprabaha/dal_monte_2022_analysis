@@ -215,7 +215,7 @@ roi_vs_period_plot_axis_space_quantile_high: 0.975
 # denominator mode:
 # - unit_max_sum: max(A+B) across bins for that unit/pair (default)
 # - per_bin_sum:  A+B at each bin (legacy behavior)
-selective_index_output_subdir: ephys/psth/fixation_psth_preference_index
+selective_index_output_subdir: ephys/fixation_preference_index
 selective_index_timeseries_filename: preference_index_timeseries.csv
 selective_index_output_pickle_filename: results.pkl
 selective_index_use_parallel: true
@@ -305,7 +305,7 @@ population_pca_plot_condition_colors:
 
 # Preference-index heatmap plotting.
 # Default footprint for combined 3x4 output: letter width x <= 2/5 letter height.
-selective_index_plot_output_subdir: ephys/psth/fixation_psth_preference_index/plots
+selective_index_plot_output_subdir: ephys/fixation_preference_index/plots
 selective_index_plot_output_filename: preference_index_heatmaps
 selective_index_plot_output_extension: pdf
 selective_index_plot_output_dpi: 220

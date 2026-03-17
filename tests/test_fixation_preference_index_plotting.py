@@ -49,7 +49,7 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
             cfg_path = root / "dataset.yaml"
             _write_dataset_cfg(cfg_path, processed_root=processed_root, analysis_root=analysis_root)
 
-            in_root = analysis_root / "ephys/psth/fixation_psth_preference_index"
+            in_root = analysis_root / "ephys/fixation_preference_index"
             in_root.mkdir(parents=True, exist_ok=True)
 
             pairs = [
@@ -98,9 +98,9 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
 
             settings = FixationPreferenceIndexHeatmapPlotSettings(
                 cfg_path=str(cfg_path),
-                input_subdir="ephys/psth/fixation_psth_preference_index",
+                input_subdir="ephys/fixation_preference_index",
                 timeseries_filename="preference_index_timeseries.csv",
-                output_subdir="ephys/psth/fixation_psth_preference_index/plots",
+                output_subdir="ephys/fixation_preference_index/plots",
                 output_filename="index_heatmap_test",
                 output_extension="png",
                 output_dpi=110,
@@ -145,7 +145,7 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
             cfg_path = root / "dataset.yaml"
             _write_dataset_cfg(cfg_path, processed_root=processed_root, analysis_root=analysis_root)
 
-            in_root = analysis_root / "ephys/psth/fixation_psth_preference_index"
+            in_root = analysis_root / "ephys/fixation_preference_index"
             in_root.mkdir(parents=True, exist_ok=True)
 
             pairs = [
@@ -194,9 +194,9 @@ class TestFixationPreferenceIndexPlotting(unittest.TestCase):
 
             settings = FixationPreferenceIndexHeatmapPlotSettings(
                 cfg_path=str(cfg_path),
-                input_subdir="ephys/psth/fixation_psth_preference_index",
+                input_subdir="ephys/fixation_preference_index",
                 timeseries_filename="preference_index_timeseries.csv",
-                output_subdir="ephys/psth/fixation_psth_preference_index/plots",
+                output_subdir="ephys/fixation_preference_index/plots",
                 output_filename="index_heatmap_test_any_selective",
                 output_extension="png",
                 output_dpi=110,

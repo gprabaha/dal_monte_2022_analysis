@@ -184,7 +184,7 @@ class TestFixationPreferenceIndex(unittest.TestCase):
                 trial_input_modality="psth",
                 trial_input_filename="fixations.pkl",
                 selectivity_input_subdir="ephys/psth/fixation_psth_selectivity",
-                output_subdir="ephys/psth/fixation_psth_preference_index",
+                output_subdir="ephys/fixation_preference_index",
                 use_parallel=False,
             )
             result = run_fixation_preference_index_analysis(settings)
@@ -230,7 +230,7 @@ class TestFixationPreferenceIndex(unittest.TestCase):
                 trial_input_modality="psth",
                 trial_input_filename="fixations.pkl",
                 selectivity_input_subdir="ephys/psth/fixation_psth_selectivity",
-                output_subdir="ephys/psth/fixation_psth_preference_index_per_bin",
+                output_subdir="ephys/fixation_preference_index_per_bin",
                 normalization_mode="per_bin_sum",
                 use_parallel=False,
             )
@@ -255,7 +255,7 @@ class TestFixationPreferenceIndex(unittest.TestCase):
 
             out_csv = (
                 analysis_root
-                / "ephys/psth/fixation_psth_preference_index"
+                / "ephys/fixation_preference_index"
                 / "preference_index_timeseries.csv"
             )
             self.assertTrue(out_csv.exists())
@@ -273,15 +273,15 @@ class TestFixationPreferenceIndex(unittest.TestCase):
 
             split_avg_path = (
                 analysis_root
-                / "ephys/psth/fixation_preference_index_input_averages"
+                / "ephys/psth/fixation_psth_averages"
                 / f"date={dummy_date}"
-                / "fixations_split.pkl"
+                / "fixations_psth_50ms_step_25ms_split_by_interactive_state.pkl"
             )
             unsplit_avg_path = (
                 analysis_root
-                / "ephys/psth/fixation_preference_index_input_averages"
+                / "ephys/psth/fixation_psth_averages"
                 / f"date={dummy_date}"
-                / "fixations_unsplit.pkl"
+                / "fixations_psth_50ms_step_25ms_unsplit_by_interactive_state.pkl"
             )
             split_avg_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -423,14 +423,14 @@ class TestFixationPreferenceIndex(unittest.TestCase):
 
             settings = FixationPSTHPreferenceIndexSettings(
                 cfg_path=str(cfg_path),
-                average_input_subdir="ephys/psth/fixation_preference_index_input_averages",
-                average_input_filename="fixations_split.pkl",
-                average_object_input_subdir="ephys/psth/fixation_preference_index_input_averages",
-                average_object_input_filename="fixations_unsplit.pkl",
+                average_input_subdir="ephys/psth/fixation_psth_averages",
+                average_input_filename="fixations_psth_50ms_step_25ms_split_by_interactive_state.pkl",
+                average_object_input_subdir="ephys/psth/fixation_psth_averages",
+                average_object_input_filename="fixations_psth_50ms_step_25ms_unsplit_by_interactive_state.pkl",
                 trial_input_modality="psth",
                 trial_input_filename="fixations.pkl",
                 selectivity_input_subdir="ephys/psth/fixation_psth_selectivity",
-                output_subdir="ephys/psth/fixation_psth_preference_index_avg",
+                output_subdir="ephys/fixation_preference_index_avg",
                 use_parallel=False,
             )
             result = run_fixation_preference_index_analysis(settings, dates=[dummy_date])
@@ -444,7 +444,7 @@ class TestFixationPreferenceIndex(unittest.TestCase):
             self.assertAlmostEqual(float(result["meta"]["bin_stride_s"]), 0.025, places=9)
             self.assertEqual(
                 str(result["meta"]["average_object_input_filename"]),
-                "fixations_unsplit.pkl",
+                "fixations_psth_50ms_step_25ms_unsplit_by_interactive_state.pkl",
             )
 
             row = out_df.loc[

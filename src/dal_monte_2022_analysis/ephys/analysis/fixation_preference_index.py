@@ -48,13 +48,13 @@ class FixationPSTHPreferenceIndexSettings:
     trial_input_modality: str = "psth"
     trial_input_filename: str = "fixations.pkl"
     average_input_subdir: Optional[str] = None
-    average_input_filename: str = "fixations.pkl"
+    average_input_filename: str = "fixations_psth_50ms_step_25ms.pkl"
     average_object_input_subdir: Optional[str] = None
     average_object_input_filename: Optional[str] = None
     selectivity_input_subdir: str = "ephys/psth/fixation_psth_selectivity"
     pair_summary_filename: str = "pair_selectivity.csv"
     unit_summary_filename: str = "unit_selectivity.csv"
-    output_subdir: str = "ephys/psth/fixation_psth_preference_index"
+    output_subdir: str = "ephys/fixation_preference_index"
     timeseries_filename: str = "preference_index_timeseries.csv"
     output_pickle_filename: str = "results.pkl"
     interactive_label: str = "interactive"

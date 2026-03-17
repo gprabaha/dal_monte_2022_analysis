@@ -49,8 +49,8 @@ def _derive_unsplit_filename(split_filename: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Build wide-binned mean firing-rate averages for fixation preference-index "
-            "input (default 50 ms bins with 25 ms step)."
+            "Build mean firing-rate averages for fixation preference-index input "
+            "from explicit 50 ms / 25 ms fixation trial PSTHs."
         ),
     )
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
@@ -91,13 +91,13 @@ def main() -> None:
     combined_output_filename_raw = cfg.get("selective_index_average_output_filename_combined")
     if combined_output_filename_raw is None:
         legacy_output_filename = _ensure_pkl_filename(
-            cfg.get("selective_index_average_output_filename", "fixations.pkl")
+            cfg.get("selective_index_average_output_filename", "fixations_psth_50ms_step_25ms.pkl")
         )
         if (
             legacy_output_filename.endswith("_split_by_interactive_state.pkl")
             or legacy_output_filename.endswith("_unsplit_by_interactive_state.pkl")
         ):
-            combined_output_filename_raw = "fixations.pkl"
+            combined_output_filename_raw = "fixations_psth_50ms_step_25ms.pkl"
         else:
             combined_output_filename_raw = legacy_output_filename
     combined_output_filename = _ensure_pkl_filename(combined_output_filename_raw)
@@ -112,7 +112,7 @@ def main() -> None:
     split_output_filename = _ensure_pkl_filename(
         cfg.get(
             "selective_index_average_output_filename_split",
-            cfg.get("selective_index_average_output_filename", "fixations.pkl"),
+            "fixations_psth_50ms_step_25ms_split_by_interactive_state.pkl",
         ),
     )
     unsplit_output_subdir = cfg.get("selective_index_average_output_subdir_unsplit", split_output_subdir)
@@ -126,7 +126,10 @@ def main() -> None:
     settings_common = FixationPSTHAverageSettings(
         cfg_path=str(dataset_cfg_path),
         trial_input_modality=cfg.get("trial_output_modality", "psth"),
-        trial_input_filename=cfg.get("trial_output_filename", "fixations.pkl"),
+        trial_input_filename=cfg.get(
+            "selective_index_trial_input_filename",
+            "fixations_psth_50ms_step_25ms.pkl",
+        ),
         output_subdir=combined_output_subdir,
         output_filename=combined_output_filename,
         split_by_interactive_state=True,
@@ -148,8 +151,8 @@ def main() -> None:
             "selective_index_average_convert_to_firing_rate_before_average",
             cfg.get("average_convert_to_firing_rate_before_average", True),
         ),
-        target_bin_size_ms=cfg.get("selective_index_average_target_bin_size_ms", 50.0),
-        target_bin_step_ms=cfg.get("selective_index_average_target_bin_step_ms", 25.0),
+        target_bin_size_ms=None,
+        target_bin_step_ms=None,
         use_parallel=cfg.get("average_use_parallel", True),
         max_procs=cfg.get("max_procs", 16),
         test_single=cfg.get("test_single", False),
