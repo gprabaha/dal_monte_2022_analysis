@@ -99,6 +99,27 @@ Config:
   - `selective_venn_combined_wspace`
   - `selective_venn_combined_show_pair_key`
 
+- `plot_fixation_selectivity_comparison_group.py`
+  Generates region-wise summary figures for a named fixation selectivity
+  comparison group. The default target is `interactive_state_matched`.
+  Writes two figures:
+  - fractional selective-unit bars by pair, with each region panel titled by total `N`
+  - a region-wise overlap matrix for the same pair sets
+
+  Config:
+  - `selective_comparison_plot_comparison_label`
+  - `selective_comparison_plot_output_subdir`
+  - `selective_comparison_plot_output_extension`
+  - `selective_comparison_plot_output_dpi`
+  - `selective_comparison_plot_selective_windows`
+  - `selective_comparison_plot_region_order`
+  - `selective_comparison_plot_min_units_per_region`
+  - `selective_comparison_plot_pair_order`
+  - `selective_comparison_plot_pair_labels`
+  - `selective_comparison_plot_pair_colors`
+  - `selective_comparison_plot_fraction_bar_output_filename`
+  - `selective_comparison_plot_overlap_output_filename`
+
 - `plot_fixation_three_way_selectivity_triangular.py`
   Generates one large triangular-population summary with:
   - rows = fixation PSTH windows

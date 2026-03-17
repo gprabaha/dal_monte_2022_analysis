@@ -18,6 +18,10 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_selectivity_venn import (
     FixationSelectivityVennPlotSettings,
     build_fixation_selectivity_venn_summaries,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_selectivity_comparison_group import (
+    FixationSelectivityComparisonGroupPlotSettings,
+    plot_fixation_selectivity_comparison_group_summaries,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_three_way_selectivity_triangular import (
     FixationThreeWayTriangularPlotSettings,
     plot_fixation_three_way_selectivity_triangular,
@@ -62,6 +66,8 @@ __all__ = [
     "plot_period_psth_units",
     "FixationSelectivityVennPlotSettings",
     "build_fixation_selectivity_venn_summaries",
+    "FixationSelectivityComparisonGroupPlotSettings",
+    "plot_fixation_selectivity_comparison_group_summaries",
     "FixationThreeWayTriangularPlotSettings",
     "plot_fixation_three_way_selectivity_triangular",
     "FixationThreeWayRegionComparisonPlotSettings",

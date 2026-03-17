@@ -373,6 +373,37 @@ selective_venn_combined_bottom_margin: 0.06
 selective_venn_combined_wspace: 0.15
 selective_venn_combined_show_pair_key: true
 
+# Comparison-group summary plotting from fixation selectivity pair outputs.
+# Default target is the interactive-state-matched comparison family.
+selective_comparison_plot_comparison_label: interactive_state_matched
+selective_comparison_plot_output_subdir: ephys/psth/fixation_psth_selectivity_comparison_group_plots
+selective_comparison_plot_output_extension: pdf
+selective_comparison_plot_output_dpi: 220
+selective_comparison_plot_selective_windows: [pre_fix, peri_fix, post_fix]
+selective_comparison_plot_region_order: [BLA, ACCg, dmPFC, OFC]
+selective_comparison_plot_min_units_per_region: 1
+selective_comparison_plot_pair_order:
+  - face_interactive__vs__face_non_interactive
+  - face_interactive__vs__object_interactive
+  - face_non_interactive__vs__object_non_interactive
+  - object_interactive__vs__object_non_interactive
+selective_comparison_plot_pair_labels:
+  face_interactive__vs__face_non_interactive: "Int Face\nvs Non-Int Face"
+  face_interactive__vs__object_interactive: "Int Face\nvs Int Object"
+  face_non_interactive__vs__object_non_interactive: "Non-Int Face\nvs Non-Int Object"
+  object_interactive__vs__object_non_interactive: "Int Object\nvs Non-Int Object"
+selective_comparison_plot_pair_colors:
+  face_interactive__vs__face_non_interactive: "#C44E52"
+  face_interactive__vs__object_interactive: "#4C72B0"
+  face_non_interactive__vs__object_non_interactive: "#55A868"
+  object_interactive__vs__object_non_interactive: "#8172B3"
+selective_comparison_plot_fraction_bar_output_filename: interactive_state_matched_fraction_bars
+selective_comparison_plot_overlap_output_filename: interactive_state_matched_overlap_matrix
+selective_comparison_plot_fraction_bar_figure_width_in: 8.5
+selective_comparison_plot_fraction_bar_figure_height_in: 2.9
+selective_comparison_plot_overlap_figure_width_in: 9.2
+selective_comparison_plot_overlap_figure_height_in: 5.6
+
 # Region-by-window triangular population plotting from three-way condition means
 selective_triangular_output_subdir: ephys/psth/fixation_psth_selectivity_triangular
 selective_triangular_output_filename: population_triangular
