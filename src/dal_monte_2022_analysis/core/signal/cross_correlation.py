@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 import numpy as np
+from scipy.signal import correlate, correlation_lags
 
 
 def fft_cross_correlation(
@@ -14,7 +15,7 @@ def fft_cross_correlation(
     max_lag: Optional[int] = None,
     round_to_int: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute full linear cross-correlation using FFT and fftshift ordering."""
+    """Compute full linear cross-correlation using SciPy's FFT-backed correlate."""
     x_vec = np.asarray(x, dtype=np.float64).reshape(-1)
     y_vec = np.asarray(y, dtype=np.float64).reshape(-1)
     n = int(x_vec.size)
@@ -22,16 +23,14 @@ def fft_cross_correlation(
     if n == 0 or m == 0:
         return np.array([], dtype=np.int64), np.array([], dtype=np.float64)
 
-    full_len = n + m - 1
-    nfft = 1 << (full_len - 1).bit_length()
-    spectrum = np.fft.fft(x_vec, nfft) * np.conj(np.fft.fft(y_vec, nfft))
-    corr_circular = np.fft.ifft(spectrum, nfft)
-
-    corr_shifted = np.real(np.fft.fftshift(corr_circular)).astype(np.float64, copy=False).reshape(-1)
-    lags_shifted = (np.arange(nfft, dtype=np.int64) - int(nfft // 2)).reshape(-1)
-    valid = (lags_shifted >= -int(m - 1)) & (lags_shifted <= int(n - 1))
-    lags = lags_shifted[valid]
-    corr_full = corr_shifted[valid]
+    corr_full = np.asarray(
+        correlate(x_vec, y_vec, mode="full", method="fft"),
+        dtype=np.float64,
+    ).reshape(-1)
+    lags = np.asarray(
+        correlation_lags(n, m, mode="full"),
+        dtype=np.int64,
+    ).reshape(-1)
 
     if max_lag is not None:
         keep = np.abs(lags) <= int(max(0, int(max_lag)))

@@ -1,4 +1,4 @@
-"""Regression tests for FFT cross-correlation helpers."""
+"""Regression tests for cross-correlation helpers."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from dal_monte_2022_analysis.core.signal.cross_correlation import fft_cross_corr
 
 
 class TestFftCrossCorrelation(unittest.TestCase):
-    """Checks fftshift-based lag ordering against simple known cases."""
+    """Checks SciPy-backed lag ordering against simple known cases."""
 
     def test_fft_cross_correlation_matches_expected_lag_order(self) -> None:
         x = np.asarray([1.0, 0.0], dtype=float)
