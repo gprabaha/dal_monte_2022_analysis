@@ -85,7 +85,7 @@ def main() -> None:
         "selective_index_average_output_subdir_combined",
         cfg.get(
             "selective_index_average_output_subdir",
-            "ephys/psth/fixation_preference_index_input_averages",
+            "ephys/psth/fixation_psth_averages",
         ),
     )
     combined_output_filename_raw = cfg.get("selective_index_average_output_filename_combined")
@@ -106,7 +106,7 @@ def main() -> None:
         "selective_index_average_output_subdir_split",
         cfg.get(
             "selective_index_average_output_subdir",
-            "ephys/psth/fixation_preference_index_input_averages",
+            "ephys/psth/fixation_psth_averages",
         ),
     )
     split_output_filename = _ensure_pkl_filename(

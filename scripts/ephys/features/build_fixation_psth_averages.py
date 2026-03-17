@@ -111,8 +111,6 @@ def _derive_split_filename(base_filename: str) -> str:
 
 
 def _default_output_subdir(prefix: str) -> str:
-    if prefix == "selective_index_average":
-        return "ephys/psth/fixation_preference_index_input_averages"
     return "ephys/psth/fixation_psth_averages"
 
 

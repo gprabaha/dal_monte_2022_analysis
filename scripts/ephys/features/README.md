@@ -52,7 +52,7 @@ Current scripts:
   Builds date-level averages from explicit `50 ms` / `25 ms stride` fixation
   trial PSTH files.
   Outputs are stored by default as:
-  `analysis_output_root/ephys/psth/fixation_preference_index_input_averages/date=<date>/fixations_psth_50ms_step_25ms.pkl`
+  `analysis_output_root/ephys/psth/fixation_psth_averages/date=<date>/fixations_psth_50ms_step_25ms.pkl`
 
 Config:
 - `configs/ephys_fixation_psth.yaml`
