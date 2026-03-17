@@ -93,8 +93,10 @@ Current scripts:
   - `pairwise_region_comparisons.csv`
   - `window_region_comparisons.csv`
 - `build_within_region_fixation_neural_cross_correlation.py`
-  Computes fixation-level neural PSTH cross-correlations for within-region
-  unit pairs (nC2 per region per fixation).
+  Computes fixation-level neural cross-correlations for within-region
+  unit pairs (nC2 per region per fixation) from fixation-aligned trial signals.
+  Current defaults use `spike_train_counts` from `fixations_spike_train_1ms.pkl`,
+  windowed to `[-500, 500] ms` before xcorr.
   Output pickle stores:
   - `cross_correlations` (per-fixation pair traces)
   - `pair_averages` (per-session pair averages by condition)
@@ -116,8 +118,11 @@ Current scripts:
   - `region_unit_inventory.csv`
   - `results.pkl`
 - `build_cross_region_fixation_neural_cross_correlation.py`
-  Computes fixation-level neural PSTH cross-correlations for cross-region
-  unit pairs (anchor-region units x partner-region units per fixation).
+  Computes fixation-level neural cross-correlations for cross-region
+  unit pairs (anchor-region units x partner-region units per fixation) from
+  fixation-aligned trial signals. Current defaults use `spike_train_counts`
+  from `fixations_spike_train_1ms.pkl`, windowed to `[-500, 500] ms`
+  before xcorr.
   Output pickle stores:
   - `cross_correlations` (per-fixation pair traces)
   - `pair_averages` (per-session pair averages by condition)
@@ -227,6 +232,8 @@ Config:
 - `configs/ephys_fixation_neural_cross_correlation.yaml`
   - `trial_input_modality`
   - `trial_input_filename`
+  - `signal_input_column`
+  - `signal_window_ms`
   - `within_output_subdir` / `cross_output_subdir`
   - `within_output_filename` / `cross_output_filename`
   - `within_pair_average_output_filename` / `cross_pair_average_output_filename`

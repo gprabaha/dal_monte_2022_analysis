@@ -152,6 +152,116 @@ def _validate_xcorr_normalization(normalization: str) -> str:
     return token
 
 
+def _normalize_signal_window_ms(raw: object) -> Optional[tuple[float, float]]:
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        raise ValueError("signal_window_ms must be null or a 2-item [start_ms, stop_ms] sequence.")
+    start_ms = float(raw[0])
+    stop_ms = float(raw[1])
+    if not np.isfinite(start_ms) or not np.isfinite(stop_ms):
+        raise ValueError("signal_window_ms bounds must be finite.")
+    if stop_ms <= start_ms:
+        raise ValueError("signal_window_ms must satisfy stop_ms > start_ms.")
+    return float(start_ms), float(stop_ms)
+
+
+def _signal_meta_keys(signal_column: str) -> dict[str, str]:
+    token = str(signal_column).strip()
+    if token == "spike_train_counts":
+        prefix = "spike_train_"
+        return {
+            "centers": f"{prefix}bin_centers_s_rel",
+            "edges": f"{prefix}bin_edges_s_rel",
+            "left_edges": f"{prefix}bin_left_edges_s_rel",
+            "right_edges": f"{prefix}bin_right_edges_s_rel",
+            "bin_size_ms": f"{prefix}bin_size_ms",
+            "bin_step_ms": f"{prefix}bin_step_ms",
+        }
+    return {
+        "centers": "bin_centers_s_rel",
+        "edges": "bin_edges_s_rel",
+        "left_edges": "bin_left_edges_s_rel",
+        "right_edges": "bin_right_edges_s_rel",
+        "bin_size_ms": "bin_size_ms",
+        "bin_step_ms": "bin_step_ms",
+    }
+
+
+def _resolve_signal_bin_centers_from_meta(
+    meta: dict,
+    *,
+    signal_column: str,
+) -> Optional[np.ndarray]:
+    keys = _signal_meta_keys(signal_column)
+    centers = meta.get(keys["centers"])
+    if centers is not None:
+        arr = np.asarray(centers, dtype=float).reshape(-1)
+        if arr.size > 0:
+            return arr
+    edges = meta.get(keys["edges"])
+    if edges is not None:
+        arr = np.asarray(edges, dtype=float).reshape(-1)
+        if arr.size > 1:
+            return 0.5 * (arr[:-1] + arr[1:])
+    return None
+
+
+def _resolve_signal_bin_edges_from_meta(
+    meta: dict,
+    *,
+    signal_column: str,
+) -> Optional[np.ndarray]:
+    keys = _signal_meta_keys(signal_column)
+    edges = meta.get(keys["edges"])
+    if edges is None:
+        return None
+    arr = np.asarray(edges, dtype=float).reshape(-1)
+    if arr.size <= 1:
+        return None
+    return arr
+
+
+def _resolve_signal_bin_size_ms_from_meta(
+    meta: dict,
+    *,
+    signal_column: str,
+    signal_bin_centers_s: Optional[np.ndarray],
+) -> Optional[float]:
+    keys = _signal_meta_keys(signal_column)
+    raw = meta.get(keys["bin_size_ms"])
+    if raw is not None:
+        try:
+            value = float(raw)
+        except Exception:
+            value = np.nan
+        if np.isfinite(value) and value > 0.0:
+            return float(value)
+    if signal_bin_centers_s is not None:
+        centers = np.asarray(signal_bin_centers_s, dtype=float).reshape(-1)
+        if centers.size > 1:
+            step_s = float(np.mean(np.diff(centers)))
+            if np.isfinite(step_s) and step_s > 0.0:
+                return 1000.0 * step_s
+    return None
+
+
+def _build_signal_window_mask(
+    signal_bin_centers_s: np.ndarray,
+    *,
+    signal_window_ms: Optional[tuple[float, float]],
+) -> np.ndarray:
+    centers = np.asarray(signal_bin_centers_s, dtype=float).reshape(-1)
+    if centers.size == 0:
+        return np.zeros(0, dtype=bool)
+    if signal_window_ms is None:
+        return np.ones(centers.shape, dtype=bool)
+    start_s = float(signal_window_ms[0]) / 1000.0
+    stop_s = float(signal_window_ms[1]) / 1000.0
+    tol = 1e-12
+    return (centers >= (start_s - tol)) & (centers <= (stop_s + tol))
+
+
 def _normalize_roi_groups(groups: Optional[dict[str, Sequence[str]]]) -> dict[str, list[str]]:
     return normalize_roi_groups(
         groups,
@@ -321,16 +431,27 @@ def _collect_fixation_groups(
     default_session: str,
     include_region_keys: Optional[set[str]],
     roi_groups: dict[str, list[str]],
+    signal_column: str,
+    signal_bin_mask: Optional[np.ndarray],
 ) -> list[dict]:
     grouped: dict[tuple, dict] = {}
     order: list[tuple] = []
 
     for row_index, row in enumerate(trial_df.itertuples(index=False)):
-        counts = np.asarray(getattr(row, "psth_counts", []), dtype=np.float64).reshape(-1)
-        if counts.size == 0:
+        signal = np.asarray(getattr(row, signal_column, []), dtype=np.float64).reshape(-1)
+        if signal.size == 0:
             continue
-        if not np.isfinite(counts).all():
-            counts = np.where(np.isfinite(counts), counts, 0.0)
+        if signal_bin_mask is not None:
+            if signal.shape != signal_bin_mask.shape:
+                raise ValueError(
+                    f"Encountered {signal_column} length {signal.size} that does not match "
+                    f"signal window mask length {signal_bin_mask.size}."
+                )
+            signal = signal[np.asarray(signal_bin_mask, dtype=bool)]
+        if signal.size == 0:
+            continue
+        if not np.isfinite(signal).all():
+            signal = np.where(np.isfinite(signal), signal, 0.0)
 
         unit_uuid = _as_optional_str(getattr(row, "unit_uuid", None))
         if unit_uuid is None:
@@ -368,7 +489,7 @@ def _collect_fixation_groups(
             "recorded_agent": _as_optional_str(getattr(row, "recorded_agent", None)),
             "recorded_monkey": _as_optional_str(getattr(row, "recorded_monkey", None)),
             "area": _as_optional_str(getattr(row, "area", None)),
-            "psth_counts": counts,
+            "signal": signal,
         }
 
     out: list[dict] = []
@@ -463,8 +584,8 @@ def _compute_pair_xcorr_worker(task: tuple[int, int, int]) -> Optional[dict]:
     unit_1 = _GLOBAL_SIGNAL_ENTRIES[signal_idx_1]
     unit_2 = _GLOBAL_SIGNAL_ENTRIES[signal_idx_2]
 
-    signal_1 = _apply_signal_transform(unit_1["psth_counts"], _GLOBAL_SIGNAL_TRANSFORM)
-    signal_2 = _apply_signal_transform(unit_2["psth_counts"], _GLOBAL_SIGNAL_TRANSFORM)
+    signal_1 = _apply_signal_transform(unit_1["signal"], _GLOBAL_SIGNAL_TRANSFORM)
+    signal_2 = _apply_signal_transform(unit_2["signal"], _GLOBAL_SIGNAL_TRANSFORM)
     lags, corr = _fft_cross_correlation(signal_1, signal_2, max_lag=_GLOBAL_MAX_LAG)
     if corr.size == 0:
         return None
@@ -754,11 +875,57 @@ def build_fixation_neural_cross_correlations_for_session(
     signal_transform = _validate_signal_transform(settings.signal_transform)
     xcorr_normalization = _validate_xcorr_normalization(settings.xcorr_normalization)
     max_lag = None if settings.max_lag is None else int(max(0, int(settings.max_lag)))
+    signal_column = str(settings.signal_input_column).strip() or "spike_train_counts"
+    signal_window_ms = _normalize_signal_window_ms(settings.signal_window_ms)
 
     obj = load_pickle_path(Path(session_row["path"]))
     trial_df, trial_meta = _extract_trials_df_and_meta(obj)
-    if trial_df.empty or "psth_counts" not in trial_df.columns:
+    if trial_df.empty:
         return None
+    if signal_column not in trial_df.columns:
+        raise ValueError(
+            f"Trial file {session_row['path']} is missing required neural xcorr signal column "
+            f"'{signal_column}'."
+        )
+
+    signal_bin_centers_s = _resolve_signal_bin_centers_from_meta(
+        trial_meta,
+        signal_column=signal_column,
+    )
+    if signal_bin_centers_s is None:
+        raise ValueError(
+            f"Trial file {session_row['path']} is missing bin-center metadata for "
+            f"signal column '{signal_column}'."
+        )
+    signal_bin_edges_s = _resolve_signal_bin_edges_from_meta(
+        trial_meta,
+        signal_column=signal_column,
+    )
+    signal_bin_size_ms = _resolve_signal_bin_size_ms_from_meta(
+        trial_meta,
+        signal_column=signal_column,
+        signal_bin_centers_s=signal_bin_centers_s,
+    )
+    signal_bin_mask = _build_signal_window_mask(
+        signal_bin_centers_s,
+        signal_window_ms=signal_window_ms,
+    )
+    if signal_bin_mask.size != signal_bin_centers_s.size or not np.any(signal_bin_mask):
+        raise ValueError(
+            f"Resolved empty neural xcorr signal window for {session_row['path']} "
+            f"and signal column '{signal_column}'."
+        )
+    signal_window_centers_s = np.asarray(signal_bin_centers_s, dtype=float)[signal_bin_mask]
+    signal_window_edges_s: Optional[np.ndarray] = None
+    if signal_bin_edges_s is not None and signal_bin_edges_s.size == signal_bin_centers_s.size + 1:
+        selected_idx = np.flatnonzero(signal_bin_mask)
+        if selected_idx.size:
+            start_idx = int(selected_idx[0])
+            stop_idx = int(selected_idx[-1]) + 1
+            signal_window_edges_s = np.asarray(
+                signal_bin_edges_s[start_idx : stop_idx + 1],
+                dtype=float,
+            ).reshape(-1)
 
     include_region_keys = _normalize_region_keys(settings.include_regions)
     roi_groups = _normalize_roi_groups(settings.roi_groups)
@@ -768,6 +935,8 @@ def build_fixation_neural_cross_correlations_for_session(
         default_session=str(session_row["session"]),
         include_region_keys=include_region_keys,
         roi_groups=roi_groups,
+        signal_column=signal_column,
+        signal_bin_mask=signal_bin_mask,
     )
     if not fixation_groups:
         return None
@@ -868,6 +1037,8 @@ def build_fixation_neural_cross_correlations_for_session(
         "session": str(session_row["session"]),
         "source_modality": settings.trial_input_modality,
         "source_filename": _ensure_filename(settings.trial_input_filename, ".pkl"),
+        "signal_input_column": signal_column,
+        "signal_window_ms": None if signal_window_ms is None else [float(signal_window_ms[0]), float(signal_window_ms[1])],
         "signal_transform": signal_transform,
         "xcorr_normalization": xcorr_normalization,
         "max_lag": max_lag,
@@ -884,10 +1055,25 @@ def build_fixation_neural_cross_correlations_for_session(
         "n_pairs_computed": int(len(result_df)),
         "n_pair_averages": int(len(pair_averages_df)),
         "lags": lag_axis,
+        "signal_bin_size_ms": signal_bin_size_ms,
+        "signal_n_bins": int(signal_window_centers_s.size),
+        "signal_bin_centers_s_rel": signal_window_centers_s,
+        "bin_centers_s_rel": signal_window_centers_s,
     }
+    if signal_window_edges_s is not None:
+        meta["signal_bin_edges_s_rel"] = signal_window_edges_s
+        meta["bin_edges_s_rel"] = signal_window_edges_s
 
-    for key in ("bin_size_ms", "window_pre_s", "window_post_s", "bin_edges_s_rel", "bin_centers_s_rel"):
-        if key in trial_meta:
+    if signal_bin_size_ms is not None:
+        meta["bin_size_ms"] = float(signal_bin_size_ms)
+    if signal_window_ms is not None:
+        meta["window_pre_s"] = max(0.0, -float(signal_window_ms[0]) / 1000.0)
+        meta["window_post_s"] = max(0.0, float(signal_window_ms[1]) / 1000.0)
+    for key in ("window_pre_s", "window_post_s"):
+        if key not in meta and key in trial_meta:
+            meta[key] = trial_meta[key]
+    for key in ("bin_size_ms",):
+        if key not in meta and key in trial_meta:
             meta[key] = trial_meta[key]
 
     return {

@@ -382,6 +382,8 @@ Config:
   - same date/global outputs as above
   - uses stored `pair_averages` from analysis outputs when available
     (falls back to per-fixation `cross_correlations`)
+  - lag units come from the saved xcorr metadata, which now reflects the
+    selected source signal window/binning (for example `1 ms` spike trains)
 
   In each subplot, all 3 fixation-condition traces are overlaid in the same axis:
   - face interactive

@@ -44,7 +44,9 @@ class FixationNeuralCrossCorrelationSettings:
 
     cfg_path: str
     trial_input_modality: str = "psth"
-    trial_input_filename: str = "fixations.pkl"
+    trial_input_filename: str = "fixations_spike_train_1ms.pkl"
+    signal_input_column: str = "spike_train_counts"
+    signal_window_ms: Optional[tuple[float, float]] = (-500.0, 500.0)
     within_output_subdir: str = "ephys/psth/fixation_neural_cross_correlation/within_region"
     cross_output_subdir: str = "ephys/psth/fixation_neural_cross_correlation/cross_region"
     within_output_filename: str = "fixations.pkl"
@@ -59,7 +61,7 @@ class FixationNeuralCrossCorrelationSettings:
     )
     signal_transform: str = "zscore"
     xcorr_normalization: str = "energy"
-    max_lag: Optional[int] = None
+    max_lag: Optional[int] = 500
     use_parallel: bool = True
     max_procs: int = 32
     parallelize_across_sessions: bool = True
@@ -107,7 +109,9 @@ def build_fixation_neural_cross_correlation_settings_from_config(
     return FixationNeuralCrossCorrelationSettings(
         cfg_path=dataset_cfg_path,
         trial_input_modality=cfg.get("trial_input_modality", "psth"),
-        trial_input_filename=cfg.get("trial_input_filename", "fixations.pkl"),
+        trial_input_filename=cfg.get("trial_input_filename", "fixations_spike_train_1ms.pkl"),
+        signal_input_column=cfg.get("signal_input_column", "spike_train_counts"),
+        signal_window_ms=cfg.get("signal_window_ms", (-500.0, 500.0)),
         within_output_subdir=cfg.get(
             "within_output_subdir",
             "ephys/psth/fixation_neural_cross_correlation/within_region",
@@ -126,7 +130,7 @@ def build_fixation_neural_cross_correlation_settings_from_config(
         roi_groups=cfg.get("roi_groups"),
         signal_transform=cfg.get("signal_transform", "zscore"),
         xcorr_normalization=cfg.get("xcorr_normalization", "energy"),
-        max_lag=cfg.get("max_lag"),
+        max_lag=cfg.get("max_lag", 500),
         use_parallel=cfg.get("use_parallel", True),
         max_procs=cfg.get("max_procs", 32),
         parallelize_across_sessions=cfg.get("parallelize_across_sessions", True),
@@ -220,6 +224,8 @@ def print_fixation_neural_cross_correlation_example(
     print(f"  n_pair_average_rows: {n_pair_avg_rows}")
     if meta:
         base_meta = (
+            f"signal_input_column={meta.get('signal_input_column')}, "
+            f"signal_window_ms={meta.get('signal_window_ms')}, "
             f"signal_transform={meta.get('signal_transform')}, "
             f"xcorr_normalization={meta.get('xcorr_normalization')}, "
             f"max_lag={meta.get('max_lag')}, "

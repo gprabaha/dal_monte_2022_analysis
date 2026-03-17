@@ -14,7 +14,7 @@ def fft_cross_correlation(
     max_lag: Optional[int] = None,
     round_to_int: bool = False,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Compute full linear cross-correlation using FFT."""
+    """Compute full linear cross-correlation using FFT and fftshift ordering."""
     x_vec = np.asarray(x, dtype=np.float64).reshape(-1)
     y_vec = np.asarray(y, dtype=np.float64).reshape(-1)
     n = int(x_vec.size)
@@ -24,15 +24,14 @@ def fft_cross_correlation(
 
     full_len = n + m - 1
     nfft = 1 << (full_len - 1).bit_length()
-    corr_circular = np.fft.irfft(
-        np.fft.rfft(x_vec, nfft) * np.conj(np.fft.rfft(y_vec, nfft)),
-        nfft,
-    )
-    if m == 1:
-        corr_full = corr_circular[:n]
-    else:
-        corr_full = np.concatenate([corr_circular[-(m - 1) :], corr_circular[:n]])
-    lags = np.arange(-(m - 1), n, dtype=np.int64)
+    spectrum = np.fft.fft(x_vec, nfft) * np.conj(np.fft.fft(y_vec, nfft))
+    corr_circular = np.fft.ifft(spectrum, nfft)
+
+    corr_shifted = np.real(np.fft.fftshift(corr_circular)).astype(np.float64, copy=False).reshape(-1)
+    lags_shifted = (np.arange(nfft, dtype=np.int64) - int(nfft // 2)).reshape(-1)
+    valid = (lags_shifted >= -int(m - 1)) & (lags_shifted <= int(n - 1))
+    lags = lags_shifted[valid]
+    corr_full = corr_shifted[valid]
 
     if max_lag is not None:
         keep = np.abs(lags) <= int(max(0, int(max_lag)))
@@ -101,4 +100,3 @@ def assert_lag_axis_match(expected_lags: np.ndarray, lags: np.ndarray, *, messag
     """Raise when two lag vectors are not identical."""
     if expected_lags.shape != lags.shape or not np.array_equal(expected_lags, lags):
         raise ValueError(message)
-
