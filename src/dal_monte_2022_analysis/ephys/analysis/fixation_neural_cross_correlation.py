@@ -61,7 +61,7 @@ class FixationNeuralCrossCorrelationSettings:
     )
     signal_transform: str = "zscore"
     xcorr_normalization: str = "energy"
-    max_lag: Optional[int] = 500
+    max_lag: Optional[int] = None
     use_parallel: bool = True
     max_procs: int = 32
     parallelize_across_sessions: bool = True
@@ -130,7 +130,7 @@ def build_fixation_neural_cross_correlation_settings_from_config(
         roi_groups=cfg.get("roi_groups"),
         signal_transform=cfg.get("signal_transform", "zscore"),
         xcorr_normalization=cfg.get("xcorr_normalization", "energy"),
-        max_lag=cfg.get("max_lag", 500),
+        max_lag=cfg.get("max_lag"),
         use_parallel=cfg.get("use_parallel", True),
         max_procs=cfg.get("max_procs", 32),
         parallelize_across_sessions=cfg.get("parallelize_across_sessions", True),
