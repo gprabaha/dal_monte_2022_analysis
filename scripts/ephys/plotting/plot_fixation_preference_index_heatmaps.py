@@ -65,11 +65,11 @@ def main() -> None:
     settings = FixationPreferenceIndexHeatmapPlotSettings(
         cfg_path=args.dataset_cfg,
         plotting_cfg_path=args.plotting_cfg,
-        input_subdir=cfg.get("selective_index_output_subdir", "ephys/psth/fixation_psth_preference_index"),
+        input_subdir=cfg.get("selective_index_output_subdir", "ephys/fixation_preference_index"),
         timeseries_filename=cfg.get("selective_index_timeseries_filename", "preference_index_timeseries.csv"),
         output_subdir=cfg.get(
             "selective_index_plot_output_subdir",
-            "ephys/psth/fixation_psth_preference_index/plots",
+            "ephys/fixation_preference_index/plots",
         ),
         output_filename=cfg.get("selective_index_plot_output_filename", "preference_index_heatmaps"),
         output_extension=cfg.get("selective_index_plot_output_extension", "pdf"),

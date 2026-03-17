@@ -61,15 +61,16 @@ average_target_bin_step_ms: null
 
 # Dedicated date-level average PSTH output for preference-index heatmaps.
 # Uses wider bins and overlapping stride while keeping trial PSTHs unchanged.
-selective_index_average_output_subdir: ephys/psth/fixation_preference_index_input_averages
+# Store alongside the standard fixation PSTH averages, but with explicit filenames.
+selective_index_average_output_subdir: ephys/psth/fixation_psth_averages
 # Combined index-input file stores both split and unsplit tables.
-selective_index_average_output_filename: fixations.pkl
-selective_index_average_output_filename_combined: fixations.pkl
+selective_index_average_output_filename: fixations_psth_50ms_step_25ms.pkl
+selective_index_average_output_filename_combined: fixations_psth_50ms_step_25ms.pkl
 selective_index_average_store_split_and_unsplit_together: true
 # Legacy separate-file names retained for compatibility.
-selective_index_average_output_filename_split: fixations_split_by_interactive_state.pkl
-selective_index_average_output_subdir_unsplit: ephys/psth/fixation_preference_index_input_averages
-selective_index_average_output_filename_unsplit: fixations_unsplit_by_interactive_state.pkl
+selective_index_average_output_filename_split: fixations_psth_50ms_step_25ms_split_by_interactive_state.pkl
+selective_index_average_output_subdir_unsplit: ephys/psth/fixation_psth_averages
+selective_index_average_output_filename_unsplit: fixations_psth_50ms_step_25ms_unsplit_by_interactive_state.pkl
 # Optional override for unsplit-object average subdir when different from split.
 selective_index_average_object_output_subdir: null
 selective_index_average_split_by_interactive_state: true
@@ -214,7 +215,7 @@ roi_vs_period_plot_axis_space_quantile_high: 0.975
 # denominator mode:
 # - unit_max_sum: max(A+B) across bins for that unit/pair (default)
 # - per_bin_sum:  A+B at each bin (legacy behavior)
-selective_index_output_subdir: ephys/psth/fixation_psth_preference_index
+selective_index_output_subdir: ephys/fixation_preference_index
 selective_index_timeseries_filename: preference_index_timeseries.csv
 selective_index_output_pickle_filename: results.pkl
 selective_index_use_parallel: true
@@ -304,7 +305,7 @@ population_pca_plot_condition_colors:
 
 # Preference-index heatmap plotting.
 # Default footprint for combined 3x4 output: letter width x <= 2/5 letter height.
-selective_index_plot_output_subdir: ephys/psth/fixation_psth_preference_index/plots
+selective_index_plot_output_subdir: ephys/fixation_preference_index/plots
 selective_index_plot_output_filename: preference_index_heatmaps
 selective_index_plot_output_extension: pdf
 selective_index_plot_output_dpi: 220

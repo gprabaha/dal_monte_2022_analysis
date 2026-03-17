@@ -56,9 +56,9 @@ class FixationPreferenceIndexHeatmapPlotSettings:
 
     cfg_path: str
     plotting_cfg_path: str = "configs/plotting.yaml"
-    input_subdir: str = "ephys/psth/fixation_psth_preference_index"
+    input_subdir: str = "ephys/fixation_preference_index"
     timeseries_filename: str = "preference_index_timeseries.csv"
-    output_subdir: str = "ephys/psth/fixation_psth_preference_index/plots"
+    output_subdir: str = "ephys/fixation_preference_index/plots"
     output_filename: str = "preference_index_heatmaps"
     output_extension: str = "pdf"
     output_dpi: Optional[int] = 220

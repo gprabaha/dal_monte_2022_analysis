@@ -118,13 +118,13 @@ def main() -> None:
     )
     average_split_subdir = cfg.get(
         "selective_index_average_output_subdir",
-        "ephys/psth/fixation_preference_index_input_averages",
+        "ephys/psth/fixation_psth_averages",
     )
     combined_average_filename = cfg.get(
         "selective_index_average_output_filename_combined",
         cfg.get(
             "selective_index_average_output_filename",
-            cfg.get("average_output_filename", "fixations.pkl"),
+            "fixations_psth_50ms_step_25ms.pkl",
         ),
     )
     if use_combined_index_average:
@@ -133,11 +133,11 @@ def main() -> None:
     else:
         average_split_filename = cfg.get(
             "selective_index_average_output_filename_split",
-            combined_average_filename,
+            "fixations_psth_50ms_step_25ms_split_by_interactive_state.pkl",
         )
         average_object_filename = cfg.get(
             "selective_index_average_output_filename_unsplit",
-            cfg.get("selective_index_average_output_filename", average_split_filename),
+            "fixations_psth_50ms_step_25ms_unsplit_by_interactive_state.pkl",
         )
     average_object_subdir_raw = cfg.get("selective_index_average_object_output_subdir")
     if average_object_subdir_raw is None and average_object_filename is None:
@@ -164,7 +164,7 @@ def main() -> None:
         selectivity_input_subdir=cfg.get("selective_output_subdir", "ephys/psth/fixation_psth_selectivity"),
         pair_summary_filename=cfg.get("selective_pair_summary_filename", "pair_selectivity.csv"),
         unit_summary_filename=cfg.get("selective_unit_summary_filename", "unit_selectivity.csv"),
-        output_subdir=cfg.get("selective_index_output_subdir", "ephys/psth/fixation_psth_preference_index"),
+        output_subdir=cfg.get("selective_index_output_subdir", "ephys/fixation_preference_index"),
         timeseries_filename=cfg.get("selective_index_timeseries_filename", "preference_index_timeseries.csv"),
         output_pickle_filename=cfg.get("selective_index_output_pickle_filename", "results.pkl"),
         interactive_label=cfg.get("interactive_high_label", "interactive"),

@@ -44,6 +44,18 @@ from dal_monte_2022_analysis.core.behav.roi_groups import (
 DEFAULT_FIXATION_ROI_GROUPS: Dict[str, Sequence[str]] = DEFAULT_SHARED_FIXATION_ROI_GROUPS
 
 
+@dataclass(frozen=True)
+class TrialBinLayout:
+    """Fixed-width event-aligned counting windows."""
+
+    bin_size_ms: float
+    bin_step_ms: float
+    left_edges_s_rel: np.ndarray
+    right_edges_s_rel: np.ndarray
+    centers_s_rel: np.ndarray
+    histogram_edges_s_rel: Optional[np.ndarray] = None
+
+
 @dataclass
 class FixationPSTHSettings:
     """Configuration for session-level trial PSTH extraction."""
@@ -63,7 +75,10 @@ class FixationPSTHSettings:
     include_interactive_state: bool = True
     interactive_high_label: str = "interactive"
     bin_size_ms: float = 10.0
+    bin_step_ms: Optional[float] = None
     spike_train_bin_size_ms: float = 1.0
+    store_psth_counts: bool = True
+    store_spike_train_counts: bool = True
     window_pre_s: float = 1.0
     window_post_s: float = 1.0
     use_parallel: bool = True
@@ -115,20 +130,96 @@ def _build_average_output_path(cfg: dict, date: str, settings: FixationPSTHAvera
     return out_root / f"date={date}" / _ensure_pkl_filename(settings.output_filename)
 
 
-def _build_bin_edges(settings: FixationPSTHSettings) -> np.ndarray:
-    return build_symmetric_bin_edges(
+def _validate_trial_output_settings(settings: FixationPSTHSettings) -> None:
+    if not bool(settings.store_psth_counts) and not bool(settings.store_spike_train_counts):
+        raise ValueError("At least one of store_psth_counts or store_spike_train_counts must be enabled.")
+
+
+def _build_trial_bin_layout(
+    *,
+    bin_size_ms: float,
+    window_pre_s: float,
+    window_post_s: float,
+    bin_step_ms: Optional[float] = None,
+) -> TrialBinLayout:
+    bin_size_s = float(bin_size_ms) / 1000.0
+    if not np.isfinite(bin_size_s) or bin_size_s <= 0:
+        raise ValueError("bin_size_ms must be > 0.")
+    step_ms = float(bin_size_ms if bin_step_ms is None else bin_step_ms)
+    step_s = step_ms / 1000.0
+    if not np.isfinite(step_s) or step_s <= 0:
+        raise ValueError("bin_step_ms must be > 0 when provided.")
+    pre = float(window_pre_s)
+    post = float(window_post_s)
+    if pre <= 0 or post <= 0:
+        raise ValueError("window_pre_s and window_post_s must be > 0.")
+
+    if np.isclose(step_s, bin_size_s, atol=max(1e-12, abs(bin_size_s) * 1e-9)):
+        hist_edges = build_symmetric_bin_edges(
+            bin_size_ms=bin_size_ms,
+            window_pre_s=window_pre_s,
+            window_post_s=window_post_s,
+        )
+        return TrialBinLayout(
+            bin_size_ms=float(bin_size_ms),
+            bin_step_ms=float(step_ms),
+            left_edges_s_rel=hist_edges[:-1],
+            right_edges_s_rel=hist_edges[1:],
+            centers_s_rel=0.5 * (hist_edges[:-1] + hist_edges[1:]),
+            histogram_edges_s_rel=hist_edges,
+        )
+
+    start_center = -pre + 0.5 * bin_size_s
+    end_center = post - 0.5 * bin_size_s
+    if end_center < start_center:
+        raise ValueError("bin_size_ms is larger than the available fixation trial window.")
+
+    centers = np.arange(
+        start_center,
+        end_center + 0.5 * step_s,
+        step_s,
+        dtype=float,
+    )
+    if centers.size == 0:
+        raise ValueError("No fixation trial bin centers were generated.")
+    left_edges = centers - 0.5 * bin_size_s
+    right_edges = centers + 0.5 * bin_size_s
+    return TrialBinLayout(
+        bin_size_ms=float(bin_size_ms),
+        bin_step_ms=float(step_ms),
+        left_edges_s_rel=left_edges,
+        right_edges_s_rel=right_edges,
+        centers_s_rel=centers,
+        histogram_edges_s_rel=None,
+    )
+
+
+def _build_psth_bin_layout(settings: FixationPSTHSettings) -> TrialBinLayout:
+    return _build_trial_bin_layout(
         bin_size_ms=settings.bin_size_ms,
+        bin_step_ms=settings.bin_step_ms,
         window_pre_s=settings.window_pre_s,
         window_post_s=settings.window_post_s,
     )
 
 
-def _build_spike_train_bin_edges(settings: FixationPSTHSettings) -> np.ndarray:
-    return build_symmetric_bin_edges(
+def _build_spike_train_bin_layout(settings: FixationPSTHSettings) -> TrialBinLayout:
+    return _build_trial_bin_layout(
         bin_size_ms=settings.spike_train_bin_size_ms,
+        bin_step_ms=settings.spike_train_bin_size_ms,
         window_pre_s=settings.window_pre_s,
         window_post_s=settings.window_post_s,
     )
+
+
+def _count_spikes_in_layout(spike_times_rel_s: np.ndarray, layout: TrialBinLayout) -> np.ndarray:
+    if layout.histogram_edges_s_rel is not None:
+        counts, _ = np.histogram(spike_times_rel_s, bins=layout.histogram_edges_s_rel)
+        return counts
+    spike_arr = np.sort(np.asarray(spike_times_rel_s, dtype=float).reshape(-1))
+    left_idx = np.searchsorted(spike_arr, layout.left_edges_s_rel, side="left")
+    right_idx = np.searchsorted(spike_arr, layout.right_edges_s_rel, side="left")
+    return right_idx - left_idx
 
 
 def _iter_interactive_periods(df: Optional[pd.DataFrame]) -> list[tuple[int, int, str]]:
@@ -290,19 +381,19 @@ def _build_session_events(
 
 
 _GLOBAL_TRIAL_EVENTS: list[dict] = []
-_GLOBAL_BIN_EDGES: np.ndarray = np.array([], dtype=float)
-_GLOBAL_SPIKE_TRAIN_BIN_EDGES: np.ndarray = np.array([], dtype=float)
+_GLOBAL_PSTH_BIN_LAYOUT: Optional[TrialBinLayout] = None
+_GLOBAL_SPIKE_TRAIN_BIN_LAYOUT: Optional[TrialBinLayout] = None
 
 
 def _init_trial_worker(
     events: list[dict],
-    bin_edges: np.ndarray,
-    spike_train_bin_edges: np.ndarray,
+    psth_bin_layout: Optional[TrialBinLayout],
+    spike_train_bin_layout: Optional[TrialBinLayout],
 ) -> None:
-    global _GLOBAL_TRIAL_EVENTS, _GLOBAL_BIN_EDGES, _GLOBAL_SPIKE_TRAIN_BIN_EDGES
+    global _GLOBAL_TRIAL_EVENTS, _GLOBAL_PSTH_BIN_LAYOUT, _GLOBAL_SPIKE_TRAIN_BIN_LAYOUT
     _GLOBAL_TRIAL_EVENTS = events
-    _GLOBAL_BIN_EDGES = bin_edges
-    _GLOBAL_SPIKE_TRAIN_BIN_EDGES = spike_train_bin_edges
+    _GLOBAL_PSTH_BIN_LAYOUT = psth_bin_layout
+    _GLOBAL_SPIKE_TRAIN_BIN_LAYOUT = spike_train_bin_layout
 
 
 def _compute_unit_trial_rows(unit_payload: dict) -> list[dict]:
@@ -311,40 +402,41 @@ def _compute_unit_trial_rows(unit_payload: dict) -> list[dict]:
 
     for event in _GLOBAL_TRIAL_EVENTS:
         rel = spike_ts - float(event["fixation_start_time_s"])
-        counts, _ = np.histogram(rel, bins=_GLOBAL_BIN_EDGES)
-        spike_train_counts, _ = np.histogram(rel, bins=_GLOBAL_SPIKE_TRAIN_BIN_EDGES)
-        rows.append(
-            {
-                **event,
-                "unit_uuid": unit_payload["unit_uuid"],
-                "region": unit_payload["region"],
-                "spike_channel": unit_payload["spike_channel"],
-                "session_name": unit_payload["session_name"],
-                "recorded_agent": unit_payload["recorded_agent"],
-                "recorded_monkey": unit_payload["recorded_monkey"],
-                "area": unit_payload["area"],
-                "psth_counts": counts.astype(np.int32),
-                "spike_train_counts": spike_train_counts.astype(np.int16),
-            }
-        )
+        row = {
+            **event,
+            "unit_uuid": unit_payload["unit_uuid"],
+            "region": unit_payload["region"],
+            "spike_channel": unit_payload["spike_channel"],
+            "session_name": unit_payload["session_name"],
+            "recorded_agent": unit_payload["recorded_agent"],
+            "recorded_monkey": unit_payload["recorded_monkey"],
+            "area": unit_payload["area"],
+        }
+        if _GLOBAL_PSTH_BIN_LAYOUT is not None:
+            counts = _count_spikes_in_layout(rel, _GLOBAL_PSTH_BIN_LAYOUT)
+            row["psth_counts"] = np.asarray(counts, dtype=np.int32)
+        if _GLOBAL_SPIKE_TRAIN_BIN_LAYOUT is not None:
+            spike_train_counts = _count_spikes_in_layout(rel, _GLOBAL_SPIKE_TRAIN_BIN_LAYOUT)
+            row["spike_train_counts"] = np.asarray(spike_train_counts, dtype=np.int16)
+        rows.append(row)
     return rows
 
 
 _GLOBAL_FIXATION_EVENTS_BY_DATE: dict[str, list[dict]] = {}
-_GLOBAL_FIXATION_BIN_EDGES: np.ndarray = np.array([], dtype=float)
-_GLOBAL_FIXATION_SPIKE_TRAIN_BIN_EDGES: np.ndarray = np.array([], dtype=float)
+_GLOBAL_FIXATION_PSTH_BIN_LAYOUT: Optional[TrialBinLayout] = None
+_GLOBAL_FIXATION_SPIKE_TRAIN_BIN_LAYOUT: Optional[TrialBinLayout] = None
 
 
 def _init_fixation_unit_worker(
     events_by_date: dict[str, list[dict]],
-    bin_edges: np.ndarray,
-    spike_train_bin_edges: np.ndarray,
+    psth_bin_layout: Optional[TrialBinLayout],
+    spike_train_bin_layout: Optional[TrialBinLayout],
 ) -> None:
     global _GLOBAL_FIXATION_EVENTS_BY_DATE
-    global _GLOBAL_FIXATION_BIN_EDGES, _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_EDGES
+    global _GLOBAL_FIXATION_PSTH_BIN_LAYOUT, _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_LAYOUT
     _GLOBAL_FIXATION_EVENTS_BY_DATE = events_by_date
-    _GLOBAL_FIXATION_BIN_EDGES = bin_edges
-    _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_EDGES = spike_train_bin_edges
+    _GLOBAL_FIXATION_PSTH_BIN_LAYOUT = psth_bin_layout
+    _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_LAYOUT = spike_train_bin_layout
 
 
 def _compute_unit_rows_across_fixation_sessions(
@@ -362,25 +454,23 @@ def _compute_unit_rows_across_fixation_sessions(
         session_rows: list[dict] = []
         for event in events:
             rel = spike_ts - float(event["fixation_start_time_s"])
-            counts, _ = np.histogram(rel, bins=_GLOBAL_FIXATION_BIN_EDGES)
-            spike_train_counts, _ = np.histogram(
-                rel,
-                bins=_GLOBAL_FIXATION_SPIKE_TRAIN_BIN_EDGES,
-            )
-            session_rows.append(
-                {
-                    **event,
-                    "unit_uuid": unit_payload["unit_uuid"],
-                    "region": unit_payload["region"],
-                    "spike_channel": unit_payload["spike_channel"],
-                    "session_name": unit_payload["session_name"],
-                    "recorded_agent": unit_payload["recorded_agent"],
-                    "recorded_monkey": unit_payload["recorded_monkey"],
-                    "area": unit_payload["area"],
-                    "psth_counts": counts.astype(np.int32),
-                    "spike_train_counts": spike_train_counts.astype(np.int16),
-                }
-            )
+            row = {
+                **event,
+                "unit_uuid": unit_payload["unit_uuid"],
+                "region": unit_payload["region"],
+                "spike_channel": unit_payload["spike_channel"],
+                "session_name": unit_payload["session_name"],
+                "recorded_agent": unit_payload["recorded_agent"],
+                "recorded_monkey": unit_payload["recorded_monkey"],
+                "area": unit_payload["area"],
+            }
+            if _GLOBAL_FIXATION_PSTH_BIN_LAYOUT is not None:
+                counts = _count_spikes_in_layout(rel, _GLOBAL_FIXATION_PSTH_BIN_LAYOUT)
+                row["psth_counts"] = np.asarray(counts, dtype=np.int32)
+            if _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_LAYOUT is not None:
+                spike_train_counts = _count_spikes_in_layout(rel, _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_LAYOUT)
+                row["spike_train_counts"] = np.asarray(spike_train_counts, dtype=np.int16)
+            session_rows.append(row)
         if session_rows:
             rows_by_session[(session_date, session_name)] = session_rows
 
@@ -393,16 +483,17 @@ def build_fixation_psth_trials_for_session(
     units_for_date: Sequence[object],
 ) -> Optional[dict]:
     """Build session-level fixation PSTH trials for all units on a date."""
+    _validate_trial_output_settings(settings)
     events, _ = _build_session_events(settings, row)
     if not events:
         return None
     if not units_for_date:
         return None
 
-    bin_edges = _build_bin_edges(settings)
-    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-    spike_train_bin_edges = _build_spike_train_bin_edges(settings)
-    spike_train_bin_centers = 0.5 * (spike_train_bin_edges[:-1] + spike_train_bin_edges[1:])
+    psth_bin_layout = _build_psth_bin_layout(settings) if settings.store_psth_counts else None
+    spike_train_bin_layout = (
+        _build_spike_train_bin_layout(settings) if settings.store_spike_train_counts else None
+    )
     payloads = _units_to_payloads(units_for_date)
     if not payloads:
         return None
@@ -413,13 +504,13 @@ def build_fixation_psth_trials_for_session(
         with Pool(
             processes=n_proc,
             initializer=_init_trial_worker,
-            initargs=(events, bin_edges, spike_train_bin_edges),
+            initargs=(events, psth_bin_layout, spike_train_bin_layout),
         ) as pool:
             for unit_rows in pool.imap_unordered(_compute_unit_trial_rows, payloads):
                 if unit_rows:
                     all_rows.extend(unit_rows)
     else:
-        _init_trial_worker(events, bin_edges, spike_train_bin_edges)
+        _init_trial_worker(events, psth_bin_layout, spike_train_bin_layout)
         for payload in payloads:
             unit_rows = _compute_unit_trial_rows(payload)
             if unit_rows:
@@ -430,22 +521,13 @@ def build_fixation_psth_trials_for_session(
 
     trial_df = pd.DataFrame(all_rows)
     return {
-        "meta": {
-            "date": row["date"],
-            "session": row["session"],
-            "event_source": "fixations",
-            "event_anchor": "fixation_start",
-            "bin_size_ms": float(settings.bin_size_ms),
-            "spike_train_bin_size_ms": float(settings.spike_train_bin_size_ms),
-            "window_pre_s": float(settings.window_pre_s),
-            "window_post_s": float(settings.window_post_s),
-            "bin_edges_s_rel": bin_edges,
-            "bin_centers_s_rel": bin_centers,
-            "spike_train_bin_edges_s_rel": spike_train_bin_edges,
-            "spike_train_bin_centers_s_rel": spike_train_bin_centers,
-            "output_modality": settings.output_modality,
-            "trial_output_filename": _ensure_pkl_filename(settings.trial_output_filename),
-        },
+        "meta": _build_fixation_trial_meta(
+            settings,
+            date=str(row["date"]),
+            session=str(row["session"]),
+            psth_bin_layout=psth_bin_layout,
+            spike_train_bin_layout=spike_train_bin_layout,
+        ),
         "trials": trial_df,
     }
 
@@ -465,35 +547,67 @@ def process_fixation_psth_trials_for_session(
     return data
 
 
+def _build_fixation_trial_meta(
+    settings: FixationPSTHSettings,
+    *,
+    date: str,
+    session: str,
+    psth_bin_layout: Optional[TrialBinLayout],
+    spike_train_bin_layout: Optional[TrialBinLayout],
+) -> dict:
+    meta = {
+        "date": date,
+        "session": session,
+        "event_source": "fixations",
+        "event_anchor": "fixation_start",
+        "window_pre_s": float(settings.window_pre_s),
+        "window_post_s": float(settings.window_post_s),
+        "output_modality": settings.output_modality,
+        "trial_output_filename": _ensure_pkl_filename(settings.trial_output_filename),
+    }
+    if psth_bin_layout is not None:
+        meta.update(
+            {
+                "bin_size_ms": float(psth_bin_layout.bin_size_ms),
+                "bin_step_ms": float(psth_bin_layout.bin_step_ms),
+                "bin_edges_s_rel": psth_bin_layout.histogram_edges_s_rel,
+                "bin_left_edges_s_rel": psth_bin_layout.left_edges_s_rel,
+                "bin_right_edges_s_rel": psth_bin_layout.right_edges_s_rel,
+                "bin_centers_s_rel": psth_bin_layout.centers_s_rel,
+            }
+        )
+    if spike_train_bin_layout is not None:
+        meta.update(
+            {
+                "spike_train_bin_size_ms": float(spike_train_bin_layout.bin_size_ms),
+                "spike_train_bin_step_ms": float(spike_train_bin_layout.bin_step_ms),
+                "spike_train_bin_edges_s_rel": spike_train_bin_layout.histogram_edges_s_rel,
+                "spike_train_bin_left_edges_s_rel": spike_train_bin_layout.left_edges_s_rel,
+                "spike_train_bin_right_edges_s_rel": spike_train_bin_layout.right_edges_s_rel,
+                "spike_train_bin_centers_s_rel": spike_train_bin_layout.centers_s_rel,
+            }
+        )
+    return meta
+
+
 def _build_fixation_trial_payload(
     settings: FixationPSTHSettings,
     *,
     date: str,
     session: str,
     rows: list[dict],
-    bin_edges: np.ndarray,
-    bin_centers: np.ndarray,
-    spike_train_bin_edges: np.ndarray,
-    spike_train_bin_centers: np.ndarray,
+    psth_bin_layout: Optional[TrialBinLayout],
+    spike_train_bin_layout: Optional[TrialBinLayout],
 ) -> dict:
     trial_df = pd.DataFrame(rows)
     return {
-        "meta": {
-            "date": date,
-            "session": session,
-            "event_source": "fixations",
-            "event_anchor": "fixation_start",
-            "bin_size_ms": float(settings.bin_size_ms),
-            "spike_train_bin_size_ms": float(settings.spike_train_bin_size_ms),
-            "window_pre_s": float(settings.window_pre_s),
-            "window_post_s": float(settings.window_post_s),
-            "bin_edges_s_rel": bin_edges,
-            "bin_centers_s_rel": bin_centers,
-            "spike_train_bin_edges_s_rel": spike_train_bin_edges,
-            "spike_train_bin_centers_s_rel": spike_train_bin_centers,
-            "output_modality": settings.output_modality,
-            "trial_output_filename": _ensure_pkl_filename(settings.trial_output_filename),
-        },
+        "meta": _build_fixation_trial_meta(
+            settings,
+            date=date,
+            session=session,
+            psth_bin_layout=psth_bin_layout,
+            spike_train_bin_layout=spike_train_bin_layout,
+        ),
         "trials": trial_df,
     }
 
@@ -503,10 +617,8 @@ def _flush_fixation_session_rows(
     settings: FixationPSTHSettings,
     rows_for_session: dict[tuple[str, str], list[dict]],
     *,
-    bin_edges: np.ndarray,
-    bin_centers: np.ndarray,
-    spike_train_bin_edges: np.ndarray,
-    spike_train_bin_centers: np.ndarray,
+    psth_bin_layout: Optional[TrialBinLayout],
+    spike_train_bin_layout: Optional[TrialBinLayout],
 ) -> None:
     for (date, session), rows in rows_for_session.items():
         if not rows:
@@ -517,10 +629,8 @@ def _flush_fixation_session_rows(
             date=str(date),
             session=str(session),
             rows=rows,
-            bin_edges=bin_edges,
-            bin_centers=bin_centers,
-            spike_train_bin_edges=spike_train_bin_edges,
-            spike_train_bin_centers=spike_train_bin_centers,
+            psth_bin_layout=psth_bin_layout,
+            spike_train_bin_layout=spike_train_bin_layout,
         )
         out_path = _build_trial_output_path(cfg, row, settings)
         save_pickle_path(data, out_path)
@@ -535,6 +645,7 @@ def run_fixation_psth_trial_build(
     test_single: Optional[bool] = None,
 ) -> None:
     """Run fixation PSTH extraction with global unit-level parallelization."""
+    _validate_trial_output_settings(settings)
     if use_parallel is not None:
         settings.use_parallel = bool(use_parallel)
     if test_single is not None:
@@ -584,10 +695,8 @@ def run_fixation_psth_trial_build(
         print("No matching ephys units found for fixation PSTH tasks.")
         return
 
-    bin_edges = _build_bin_edges(settings)
-    bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
-    spike_train_bin_edges = _build_spike_train_bin_edges(settings)
-    spike_train_bin_centers = 0.5 * (spike_train_bin_edges[:-1] + spike_train_bin_edges[1:])
+    psth_bin_layout = _build_psth_bin_layout(settings) if settings.store_psth_counts else None
+    spike_train_bin_layout = _build_spike_train_bin_layout(settings) if settings.store_spike_train_counts else None
 
     buffered_rows_by_date: dict[str, dict[tuple[str, str], list[dict]]] = {}
     for date, session_payloads in session_events_by_date.items():
@@ -614,10 +723,8 @@ def run_fixation_psth_trial_build(
                 cfg,
                 settings,
                 rows_for_date,
-                bin_edges=bin_edges,
-                bin_centers=bin_centers,
-                spike_train_bin_edges=spike_train_bin_edges,
-                spike_train_bin_centers=spike_train_bin_centers,
+                psth_bin_layout=psth_bin_layout,
+                spike_train_bin_layout=spike_train_bin_layout,
             )
 
     if settings.use_parallel and len(payloads) > 1:
@@ -625,7 +732,7 @@ def run_fixation_psth_trial_build(
         with Pool(
             processes=n_proc,
             initializer=_init_fixation_unit_worker,
-            initargs=(session_events_by_date, bin_edges, spike_train_bin_edges),
+            initargs=(session_events_by_date, psth_bin_layout, spike_train_bin_layout),
         ) as pool:
             iterator = pool.imap_unordered(_compute_unit_rows_across_fixation_sessions, payloads)
             for unit_date, rows_by_session in tqdm(
@@ -636,7 +743,7 @@ def run_fixation_psth_trial_build(
             ):
                 _accumulate_and_flush(str(unit_date), rows_by_session)
     else:
-        _init_fixation_unit_worker(session_events_by_date, bin_edges, spike_train_bin_edges)
+        _init_fixation_unit_worker(session_events_by_date, psth_bin_layout, spike_train_bin_layout)
         for payload in tqdm(payloads, desc="Building fixation PSTH trials", unit="unit"):
             unit_date, rows_by_session = _compute_unit_rows_across_fixation_sessions(payload)
             _accumulate_and_flush(str(unit_date), rows_by_session)
@@ -646,10 +753,8 @@ def run_fixation_psth_trial_build(
             cfg,
             settings,
             rows_for_date,
-            bin_edges=bin_edges,
-            bin_centers=bin_centers,
-            spike_train_bin_edges=spike_train_bin_edges,
-            spike_train_bin_centers=spike_train_bin_centers,
+            psth_bin_layout=psth_bin_layout,
+            spike_train_bin_layout=spike_train_bin_layout,
         )
 
 
