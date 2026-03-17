@@ -43,7 +43,12 @@ def _write_dataset_cfg(path: Path, processed_root: Path, analysis_root: Path) ->
 class TestFixationPSTHTrialSpikeTrainStorage(unittest.TestCase):
     """Checks that fixation trial outputs keep a separate 1 ms spike-train vector."""
 
-    def test_trial_builder_stores_spike_train_counts_and_metadata(self) -> None:
+    def _build_single_fixation_trial_output(
+        self,
+        *,
+        settings: FixationPSTHSettings,
+        spike_ts: np.ndarray,
+    ) -> dict:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             processed_root = root / "processed"
@@ -89,43 +94,100 @@ class TestFixationPSTHTrialSpikeTrainStorage(unittest.TestCase):
                     recorded_agent="m1",
                     area="BLA",
                 ),
-                spike_ts=np.asarray(
-                    [0.9905, 0.9998, 1.0002, 1.0098, 1.0102, 1.0197],
-                    dtype=float,
-                ),
+                spike_ts=np.asarray(spike_ts, dtype=float),
             )
 
-            settings = FixationPSTHSettings(
-                cfg_path=str(cfg_path),
-                include_interactive_state=False,
-                bin_size_ms=10.0,
-                spike_train_bin_size_ms=1.0,
-                window_pre_s=0.01,
-                window_post_s=0.02,
-                use_parallel=False,
-            )
+            settings.cfg_path = str(cfg_path)
             row = {"date": "20990101", "session": "s1", "agent_paths": {"m1": fix_path}}
-
             data = build_fixation_psth_trials_for_session(settings, row, [unit])
-
             self.assertIsNotNone(data)
             assert data is not None
+            return data
 
-            meta = data["meta"]
-            trial_df = data["trials"]
-            self.assertEqual(len(trial_df), 1)
-            self.assertEqual(float(meta["bin_size_ms"]), 10.0)
-            self.assertEqual(float(meta["spike_train_bin_size_ms"]), 1.0)
-            self.assertEqual(len(np.asarray(meta["bin_centers_s_rel"], dtype=float)), 3)
-            self.assertEqual(len(np.asarray(meta["spike_train_bin_centers_s_rel"], dtype=float)), 30)
+    def test_trial_builder_stores_spike_train_counts_and_metadata(self) -> None:
+        settings = FixationPSTHSettings(
+            cfg_path="",
+            include_interactive_state=False,
+            bin_size_ms=10.0,
+            spike_train_bin_size_ms=1.0,
+            window_pre_s=0.01,
+            window_post_s=0.02,
+            use_parallel=False,
+        )
+        data = self._build_single_fixation_trial_output(
+            settings=settings,
+            spike_ts=np.asarray([0.9905, 0.9998, 1.0002, 1.0098, 1.0102, 1.0197], dtype=float),
+        )
 
-            trial_row = trial_df.iloc[0]
-            psth_counts = np.asarray(trial_row["psth_counts"], dtype=int).reshape(-1)
-            spike_train_counts = np.asarray(trial_row["spike_train_counts"], dtype=int).reshape(-1)
+        meta = data["meta"]
+        trial_df = data["trials"]
+        self.assertEqual(len(trial_df), 1)
+        self.assertEqual(float(meta["bin_size_ms"]), 10.0)
+        self.assertEqual(float(meta["bin_step_ms"]), 10.0)
+        self.assertEqual(float(meta["spike_train_bin_size_ms"]), 1.0)
+        self.assertEqual(len(np.asarray(meta["bin_centers_s_rel"], dtype=float)), 3)
+        self.assertEqual(len(np.asarray(meta["spike_train_bin_centers_s_rel"], dtype=float)), 30)
 
-            self.assertTrue(np.array_equal(psth_counts, np.asarray([2, 2, 2], dtype=int)))
-            self.assertEqual(int(spike_train_counts.sum()), 6)
-            self.assertEqual(np.flatnonzero(spike_train_counts).tolist(), [0, 9, 10, 19, 20, 29])
+        trial_row = trial_df.iloc[0]
+        psth_counts = np.asarray(trial_row["psth_counts"], dtype=int).reshape(-1)
+        spike_train_counts = np.asarray(trial_row["spike_train_counts"], dtype=int).reshape(-1)
+
+        self.assertTrue(np.array_equal(psth_counts, np.asarray([2, 2, 2], dtype=int)))
+        self.assertEqual(int(spike_train_counts.sum()), 6)
+        self.assertEqual(np.flatnonzero(spike_train_counts).tolist(), [0, 9, 10, 19, 20, 29])
+
+    def test_trial_builder_can_store_spike_train_only_outputs(self) -> None:
+        settings = FixationPSTHSettings(
+            cfg_path="",
+            include_interactive_state=False,
+            bin_size_ms=10.0,
+            spike_train_bin_size_ms=1.0,
+            store_psth_counts=False,
+            store_spike_train_counts=True,
+            window_pre_s=0.01,
+            window_post_s=0.02,
+            use_parallel=False,
+        )
+        data = self._build_single_fixation_trial_output(
+            settings=settings,
+            spike_ts=np.asarray([0.9998, 1.0002, 1.0098], dtype=float),
+        )
+
+        meta = data["meta"]
+        trial_row = data["trials"].iloc[0]
+        self.assertNotIn("bin_size_ms", meta)
+        self.assertNotIn("bin_centers_s_rel", meta)
+        self.assertEqual(float(meta["spike_train_bin_size_ms"]), 1.0)
+        self.assertIn("spike_train_bin_centers_s_rel", meta)
+        self.assertNotIn("psth_counts", trial_row.index)
+        self.assertIn("spike_train_counts", trial_row.index)
+
+    def test_trial_builder_supports_overlapping_psth_windows(self) -> None:
+        settings = FixationPSTHSettings(
+            cfg_path="",
+            include_interactive_state=False,
+            bin_size_ms=20.0,
+            bin_step_ms=10.0,
+            store_psth_counts=True,
+            store_spike_train_counts=False,
+            window_pre_s=0.02,
+            window_post_s=0.02,
+            use_parallel=False,
+        )
+        data = self._build_single_fixation_trial_output(
+            settings=settings,
+            spike_ts=np.asarray([0.9850, 0.9950, 1.0050, 1.0150], dtype=float),
+        )
+
+        meta = data["meta"]
+        trial_row = data["trials"].iloc[0]
+        psth_counts = np.asarray(trial_row["psth_counts"], dtype=int).reshape(-1)
+        self.assertEqual(float(meta["bin_size_ms"]), 20.0)
+        self.assertEqual(float(meta["bin_step_ms"]), 10.0)
+        self.assertIsNone(meta["bin_edges_s_rel"])
+        self.assertEqual(len(np.asarray(meta["bin_left_edges_s_rel"], dtype=float)), 3)
+        self.assertEqual(len(np.asarray(meta["bin_right_edges_s_rel"], dtype=float)), 3)
+        self.assertTrue(np.array_equal(psth_counts, np.asarray([2, 2, 2], dtype=int)))
 
 
 if __name__ == "__main__":
