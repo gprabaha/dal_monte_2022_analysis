@@ -1,4 +1,9 @@
-"""Build date-level fixation PSTH averages from trial PSTH outputs."""
+"""Build date-level fixation PSTH averages from trial PSTH outputs.
+
+This legacy entrypoint preserves the original average builder configuration.
+Newer explicit entrypoints split the 10 ms and 50 ms / 25 ms average outputs
+into separate files while reusing the same averaging implementation.
+"""
 
 import argparse
 import pickle
@@ -17,6 +22,52 @@ from dal_monte_2022_analysis.ephys.features.fixation_psth import (
 from dal_monte_2022_analysis.runtime.io.analysis_index import (
     scan_analysis_date_paths,
 )
+
+
+AVERAGE_BUILD_PROFILES = {
+    "legacy_combined": {
+        "description": "Build date-level averaged fixation PSTH features (legacy average builder).",
+        "config_prefix": "average",
+        "trial_input_filename": None,
+        "combined_output_filename": None,
+        "categories_key": "categories",
+        "restrict_interactive_state_key": "restrict_interactive_state",
+        "group_by_session_key": "group_by_session",
+        "smooth_before_average_key": "smooth_before_average",
+        "smoothing_sigma_ms_key": "smoothing_sigma_ms",
+        "convert_to_firing_rate_key": "average_convert_to_firing_rate_before_average",
+        "store_together_key": "average_store_split_and_unsplit_together",
+        "use_cfg_target_bins": True,
+    },
+    "average_10ms": {
+        "description": "Build date-level averaged fixation PSTHs from explicit 10 ms trial spike counts.",
+        "config_prefix": "average",
+        "trial_input_filename": "fixations_psth_10ms.pkl",
+        "combined_output_filename": "fixations_psth_10ms.pkl",
+        "categories_key": "categories",
+        "restrict_interactive_state_key": "restrict_interactive_state",
+        "group_by_session_key": "group_by_session",
+        "smooth_before_average_key": "smooth_before_average",
+        "smoothing_sigma_ms_key": "smoothing_sigma_ms",
+        "convert_to_firing_rate_key": "average_convert_to_firing_rate_before_average",
+        "store_together_key": "average_store_split_and_unsplit_together",
+        "use_cfg_target_bins": False,
+    },
+    "average_50ms_step_25ms": {
+        "description": "Build date-level averaged fixation PSTHs from explicit 50 ms / 25 ms trial spike counts.",
+        "config_prefix": "selective_index_average",
+        "trial_input_filename": "fixations_psth_50ms_step_25ms.pkl",
+        "combined_output_filename": "fixations_psth_50ms_step_25ms.pkl",
+        "categories_key": "selective_index_average_categories",
+        "restrict_interactive_state_key": "selective_index_average_restrict_interactive_state",
+        "group_by_session_key": "selective_index_average_group_by_session",
+        "smooth_before_average_key": "selective_index_average_smooth_before_average",
+        "smoothing_sigma_ms_key": "selective_index_average_smoothing_sigma_ms",
+        "convert_to_firing_rate_key": "selective_index_average_convert_to_firing_rate_before_average",
+        "store_together_key": "selective_index_average_store_split_and_unsplit_together",
+        "use_cfg_target_bins": False,
+    },
+}
 
 
 def _iter_average_output_paths(
@@ -51,6 +102,77 @@ def _derive_unsplit_filename(split_filename: str) -> str:
     if stem.endswith("_split_by_interactive_state"):
         return f"{stem[: -len('_split_by_interactive_state')]}_unsplit_by_interactive_state.pkl"
     return f"{stem}_unsplit_by_interactive_state.pkl"
+
+
+def _derive_split_filename(base_filename: str) -> str:
+    token = _ensure_pkl_filename(base_filename)
+    stem = token[:-4]
+    return f"{stem}_split_by_interactive_state.pkl"
+
+
+def _default_output_subdir(prefix: str) -> str:
+    if prefix == "selective_index_average":
+        return "ephys/psth/fixation_preference_index_input_averages"
+    return "ephys/psth/fixation_psth_averages"
+
+
+def _resolve_subdirs(cfg: dict, prefix: str) -> tuple[str, str, str]:
+    default_subdir = _default_output_subdir(prefix)
+    combined_output_subdir = cfg.get(
+        f"{prefix}_output_subdir_combined",
+        cfg.get(f"{prefix}_output_subdir", default_subdir),
+    )
+    split_output_subdir = cfg.get(
+        f"{prefix}_output_subdir_split",
+        cfg.get(f"{prefix}_output_subdir", default_subdir),
+    )
+    unsplit_output_subdir = cfg.get(f"{prefix}_output_subdir_unsplit", split_output_subdir)
+    return (
+        str(combined_output_subdir),
+        str(split_output_subdir),
+        str(unsplit_output_subdir),
+    )
+
+
+def _resolve_legacy_output_filenames(cfg: dict, prefix: str) -> tuple[str, str, str]:
+    combined_output_filename_raw = cfg.get(f"{prefix}_output_filename_combined")
+    if combined_output_filename_raw is None:
+        legacy_output_filename = _ensure_pkl_filename(
+            cfg.get(f"{prefix}_output_filename", "fixations.pkl")
+        )
+        if (
+            legacy_output_filename.endswith("_split_by_interactive_state.pkl")
+            or legacy_output_filename.endswith("_unsplit_by_interactive_state.pkl")
+        ):
+            combined_output_filename_raw = "fixations.pkl"
+        else:
+            combined_output_filename_raw = legacy_output_filename
+    combined_output_filename = _ensure_pkl_filename(combined_output_filename_raw)
+
+    split_output_filename = _ensure_pkl_filename(
+        cfg.get(
+            f"{prefix}_output_filename_split",
+            cfg.get(f"{prefix}_output_filename", "fixations.pkl"),
+        ),
+    )
+    unsplit_output_filename = _ensure_pkl_filename(
+        cfg.get(
+            f"{prefix}_output_filename_unsplit",
+            _derive_unsplit_filename(split_output_filename),
+        ),
+    )
+    return combined_output_filename, split_output_filename, unsplit_output_filename
+
+
+def _resolve_profile_output_filenames(profile_name: str, cfg: dict, prefix: str) -> tuple[str, str, str]:
+    profile = AVERAGE_BUILD_PROFILES[profile_name]
+    if profile_name == "legacy_combined":
+        return _resolve_legacy_output_filenames(cfg, prefix)
+
+    combined_output_filename = _ensure_pkl_filename(str(profile["combined_output_filename"]))
+    split_output_filename = _derive_split_filename(combined_output_filename)
+    unsplit_output_filename = _derive_unsplit_filename(split_output_filename)
+    return combined_output_filename, split_output_filename, unsplit_output_filename
 
 
 def _print_average_example(path: Path, *, max_bins: int = 12) -> None:
@@ -113,10 +235,7 @@ def _print_average_example(path: Path, *, max_bins: int = 12) -> None:
 
     row = df.iloc[0]
     psth_mean = np.asarray(row.get("psth_mean"), dtype=float).reshape(-1)
-    if "psth_sem" in df.columns:
-        psth_sem = np.asarray(row.get("psth_sem"), dtype=float).reshape(-1)
-    else:
-        psth_sem = np.asarray([], dtype=float)
+    psth_sem = np.asarray(row.get("psth_sem"), dtype=float).reshape(-1)
     preview = psth_mean[: max(1, int(max_bins))]
     sem_preview = psth_sem[: max(1, int(max_bins))]
 
@@ -142,14 +261,82 @@ def _print_average_example(path: Path, *, max_bins: int = 12) -> None:
         f"interactive_state={row.get('interactive_state') if 'interactive_state' in df.columns else None}"
     )
     print(f"  sample_psth_mean_first_{len(preview)}bins: {preview.tolist()}")
-    if psth_sem.size > 0:
-        print(f"  sample_psth_sem_first_{len(sem_preview)}bins: {sem_preview.tolist()}")
+    print(f"  sample_psth_sem_first_{len(sem_preview)}bins: {sem_preview.tolist()}")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Build date-level averaged fixation PSTH features."
+def _build_settings_common(
+    *,
+    dataset_cfg: str,
+    fixation_cfg_path: str,
+    profile_name: str,
+) -> tuple[
+    FixationPSTHAverageSettings,
+    str,
+    str,
+    str,
+    str,
+    str,
+    str,
+]:
+    cfg = load_config(fixation_cfg_path)
+    profile = AVERAGE_BUILD_PROFILES[profile_name]
+    prefix = str(profile["config_prefix"])
+
+    combined_output_subdir, split_output_subdir, unsplit_output_subdir = _resolve_subdirs(cfg, prefix)
+    combined_output_filename, split_output_filename, unsplit_output_filename = _resolve_profile_output_filenames(
+        profile_name,
+        cfg,
+        prefix,
     )
+
+    trial_input_filename = profile["trial_input_filename"]
+    if trial_input_filename is None:
+        trial_input_filename = cfg.get("trial_output_filename", "fixations.pkl")
+
+    if bool(profile["use_cfg_target_bins"]):
+        target_bin_size_ms = cfg.get(f"{prefix}_target_bin_size_ms")
+        target_bin_step_ms = cfg.get(f"{prefix}_target_bin_step_ms")
+    else:
+        target_bin_size_ms = None
+        target_bin_step_ms = None
+
+    settings_common = FixationPSTHAverageSettings(
+        cfg_path=dataset_cfg,
+        trial_input_modality=cfg.get("trial_output_modality", "psth"),
+        trial_input_filename=str(trial_input_filename),
+        output_subdir=combined_output_subdir,
+        output_filename=combined_output_filename,
+        split_by_interactive_state=True,
+        store_split_and_unsplit_together=cfg.get(str(profile["store_together_key"]), True),
+        restrict_interactive_state=cfg.get(str(profile["restrict_interactive_state_key"])),
+        group_by_session=cfg.get(str(profile["group_by_session_key"]), False),
+        smooth_before_average=cfg.get(str(profile["smooth_before_average_key"]), True),
+        smoothing_sigma_ms=cfg.get(str(profile["smoothing_sigma_ms_key"]), 20.0),
+        convert_to_firing_rate_before_average=cfg.get(
+            str(profile["convert_to_firing_rate_key"]),
+            True,
+        ),
+        target_bin_size_ms=target_bin_size_ms,
+        target_bin_step_ms=target_bin_step_ms,
+        use_parallel=cfg.get("average_use_parallel", True),
+        max_procs=cfg.get("max_procs", 16),
+        test_single=cfg.get("test_single", False),
+        categories=cfg.get(str(profile["categories_key"]), ("face", "object", "out_of_roi")),
+    )
+    return (
+        settings_common,
+        combined_output_subdir,
+        combined_output_filename,
+        split_output_subdir,
+        split_output_filename,
+        unsplit_output_subdir,
+        unsplit_output_filename,
+    )
+
+
+def main(*, profile_name: str = "legacy_combined") -> None:
+    profile = AVERAGE_BUILD_PROFILES[profile_name]
+    parser = argparse.ArgumentParser(description=str(profile["description"]))
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
     parser.add_argument("--ephys-fixation-psth-cfg", default="configs/ephys_fixation_psth.yaml")
     parser.add_argument("--date", default=None)
@@ -182,68 +369,18 @@ def main() -> None:
     parser.add_argument("--example-max-bins", type=int, default=12)
     args = parser.parse_args()
 
-    cfg = load_config(args.ephys_fixation_psth_cfg)
-    combined_output_subdir = cfg.get(
-        "average_output_subdir_combined",
-        cfg.get("average_output_subdir", "ephys/psth/fixation_psth_averages"),
-    )
-    combined_output_filename_raw = cfg.get("average_output_filename_combined")
-    if combined_output_filename_raw is None:
-        legacy_output_filename = _ensure_pkl_filename(
-            cfg.get("average_output_filename", "fixations.pkl")
-        )
-        if (
-            legacy_output_filename.endswith("_split_by_interactive_state.pkl")
-            or legacy_output_filename.endswith("_unsplit_by_interactive_state.pkl")
-        ):
-            combined_output_filename_raw = "fixations.pkl"
-        else:
-            combined_output_filename_raw = legacy_output_filename
-    combined_output_filename = _ensure_pkl_filename(combined_output_filename_raw)
-
-    split_output_subdir = cfg.get(
-        "average_output_subdir_split",
-        cfg.get("average_output_subdir", "ephys/psth/fixation_psth_averages"),
-    )
-    split_output_filename = _ensure_pkl_filename(
-        cfg.get(
-            "average_output_filename_split",
-            cfg.get("average_output_filename", "fixations.pkl"),
-        ),
-    )
-    unsplit_output_subdir = cfg.get("average_output_subdir_unsplit", split_output_subdir)
-    unsplit_output_filename = _ensure_pkl_filename(
-        cfg.get(
-            "average_output_filename_unsplit",
-            _derive_unsplit_filename(split_output_filename),
-        ),
-    )
-
-    settings_common = FixationPSTHAverageSettings(
-        cfg_path=args.dataset_cfg,
-        trial_input_modality=cfg.get("trial_output_modality", "psth"),
-        trial_input_filename=cfg.get("trial_output_filename", "fixations.pkl"),
-        output_subdir=split_output_subdir,
-        output_filename=combined_output_filename,
-        split_by_interactive_state=True,
-        store_split_and_unsplit_together=cfg.get(
-            "average_store_split_and_unsplit_together",
-            True,
-        ),
-        restrict_interactive_state=cfg.get("restrict_interactive_state"),
-        group_by_session=cfg.get("group_by_session", False),
-        smooth_before_average=cfg.get("smooth_before_average", True),
-        smoothing_sigma_ms=cfg.get("smoothing_sigma_ms", 20.0),
-        convert_to_firing_rate_before_average=cfg.get(
-            "average_convert_to_firing_rate_before_average",
-            True,
-        ),
-        target_bin_size_ms=cfg.get("average_target_bin_size_ms"),
-        target_bin_step_ms=cfg.get("average_target_bin_step_ms"),
-        use_parallel=cfg.get("average_use_parallel", True),
-        max_procs=cfg.get("max_procs", 16),
-        test_single=cfg.get("test_single", False),
-        categories=cfg.get("categories", ("face", "object", "out_of_roi")),
+    (
+        settings_common,
+        combined_output_subdir,
+        combined_output_filename,
+        split_output_subdir,
+        split_output_filename,
+        unsplit_output_subdir,
+        unsplit_output_filename,
+    ) = _build_settings_common(
+        dataset_cfg=args.dataset_cfg,
+        fixation_cfg_path=args.ephys_fixation_psth_cfg,
+        profile_name=profile_name,
     )
 
     if args.split_only and args.unsplit_only:
@@ -341,13 +478,12 @@ def main() -> None:
                 date=args.date,
             )
             if not paths:
-                print(f"\n[example] No {label} average PSTH output files found to preview.")
                 continue
-            print(f"\n[example] Previewing {label} average output")
+            print(f"\n[example] Previewing {label} output")
             _print_average_example(paths[0], max_bins=args.example_max_bins)
             any_examples = True
         if not any_examples:
-            print("\n[example] No average PSTH output files found to preview.")
+            print("\n[example] No fixation PSTH average output files found to preview.")
 
 
 if __name__ == "__main__":

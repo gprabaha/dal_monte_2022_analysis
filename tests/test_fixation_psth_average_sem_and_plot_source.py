@@ -97,6 +97,59 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
             self.assertTrue(np.allclose(mean_vec, np.asarray([3.0, 5.0], dtype=float)))
             self.assertTrue(np.allclose(sem_vec, np.asarray([2.0, 2.0], dtype=float)))
 
+    def test_average_builder_accepts_center_only_overlapping_trial_bins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            trial_path = root / "trials.pkl"
+
+            trials_df = pd.DataFrame(
+                [
+                    {
+                        "unit_uuid": "u1",
+                        "fixation_category": "face",
+                        "interactive_state": "interactive",
+                        "psth_counts": np.asarray([2.0, 4.0, 6.0], dtype=float),
+                    },
+                    {
+                        "unit_uuid": "u1",
+                        "fixation_category": "face",
+                        "interactive_state": "interactive",
+                        "psth_counts": np.asarray([4.0, 6.0, 8.0], dtype=float),
+                    },
+                ]
+            )
+            obj = {
+                "meta": {
+                    "bin_edges_s_rel": None,
+                    "bin_centers_s_rel": np.asarray([-0.01, 0.0, 0.01], dtype=float),
+                    "bin_left_edges_s_rel": np.asarray([-0.02, -0.01, 0.0], dtype=float),
+                    "bin_right_edges_s_rel": np.asarray([0.0, 0.01, 0.02], dtype=float),
+                    "bin_size_ms": 20.0,
+                    "bin_step_ms": 10.0,
+                },
+                "trials": trials_df,
+            }
+            with trial_path.open("wb") as f:
+                pickle.dump(obj, f)
+
+            settings = FixationPSTHAverageSettings(
+                cfg_path=str(root / "dataset.yaml"),
+                smooth_before_average=False,
+                split_by_interactive_state=True,
+                categories=("face",),
+            )
+            result = build_fixation_psth_averages_for_date(settings, "20990101", [trial_path])
+
+            self.assertIsNotNone(result)
+            assert result is not None
+            meta = result["meta"]
+            averages_df = result["averages"]
+            row = averages_df.iloc[0]
+            self.assertTrue(np.allclose(np.asarray(meta["bin_centers_s_rel"], dtype=float), np.asarray([-0.01, 0.0, 0.01], dtype=float)))
+            self.assertIsNone(meta["bin_edges_s_rel"])
+            self.assertTrue(np.allclose(np.asarray(row["psth_mean"], dtype=float), np.asarray([3.0, 5.0, 7.0], dtype=float)))
+            self.assertTrue(np.allclose(np.asarray(row["psth_sem"], dtype=float), np.asarray([1.0, 1.0, 1.0], dtype=float)))
+
     def test_plot_payloads_use_precomputed_average_traces(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

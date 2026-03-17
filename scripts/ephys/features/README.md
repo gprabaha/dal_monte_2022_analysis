@@ -31,6 +31,7 @@ Current scripts:
   Outputs are stored in `processed_data_root` under:
   `date=<date>/session=<session>/psth/interactive_periods.pkl`.
 - `build_fixation_psth_averages.py`
+  Legacy fixation-average builder retained for backward compatibility.
   Builds date-level average PSTH summaries from trial PSTHs.
   Each averaged row stores `psth_mean`, `psth_sem`, and `n_trials`.
   By default, trial PSTH counts are smoothed, converted to firing rate (Hz)
@@ -43,6 +44,15 @@ Current scripts:
   Legacy separate-file mode is still available:
   - `fixations_split_by_interactive_state.pkl`
   - `fixations_unsplit_by_interactive_state.pkl`
+- `build_fixation_psth_averages_10ms.py`
+  Builds date-level averages from explicit `10 ms` fixation trial PSTH files.
+  Outputs are stored by default as:
+  `analysis_output_root/ephys/psth/fixation_psth_averages/date=<date>/fixations_psth_10ms.pkl`
+- `build_fixation_psth_averages_50ms_step_25ms.py`
+  Builds date-level averages from explicit `50 ms` / `25 ms stride` fixation
+  trial PSTH files.
+  Outputs are stored by default as:
+  `analysis_output_root/ephys/psth/fixation_preference_index_input_averages/date=<date>/fixations_psth_50ms_step_25ms.pkl`
 
 Config:
 - `configs/ephys_fixation_psth.yaml`
@@ -52,5 +62,5 @@ Config:
 - `average_use_parallel`: parallelize averaging across dates.
 
 Preview output:
-- The fixation and period trial-builder scripts print one example output row by default after completion.
+- The fixation trial, fixation average, and period trial builder scripts print one example output row by default after completion.
 - Use `--no-show-example` to disable.
