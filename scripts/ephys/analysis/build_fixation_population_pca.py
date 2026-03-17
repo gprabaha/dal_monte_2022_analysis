@@ -115,6 +115,22 @@ def main() -> None:
         timecourse_filename=cfg.get("population_pca_timecourse_filename", "concatenated_pc_timecourses.csv"),
         explained_variance_filename=cfg.get("population_pca_explained_variance_filename", "cross_condition_explained_variance.csv"),
         unit_inventory_filename=cfg.get("population_pca_unit_inventory_filename", "region_unit_inventory.csv"),
+        pairwise_geometry_timecourse_filename=cfg.get(
+            "population_pca_pairwise_geometry_timecourse_filename",
+            "pairwise_geometry_timecourses.csv",
+        ),
+        pairwise_geometry_summary_filename=cfg.get(
+            "population_pca_pairwise_geometry_summary_filename",
+            "pairwise_geometry_summary.csv",
+        ),
+        pairwise_geometry_within_region_stats_filename=cfg.get(
+            "population_pca_pairwise_geometry_within_region_stats_filename",
+            "pairwise_geometry_within_region_stats.csv",
+        ),
+        pairwise_geometry_cross_region_stats_filename=cfg.get(
+            "population_pca_pairwise_geometry_cross_region_stats_filename",
+            "pairwise_geometry_cross_region_stats.csv",
+        ),
         output_pickle_filename=cfg.get("population_pca_output_pickle_filename", "results.pkl"),
         interactive_label=cfg.get("interactive_high_label", "interactive"),
         face_label=cfg.get("face_label", "face"),
@@ -125,6 +141,10 @@ def main() -> None:
         min_units_per_region=cfg.get("population_pca_min_units_per_region", 3),
         require_all_conditions=cfg.get("population_pca_require_all_conditions", True),
         require_face_interactive_state=cfg.get("population_pca_require_face_interactive_state", True),
+        geometry_n_pcs=cfg.get("population_pca_geometry_n_pcs", 20),
+        geometry_angle_unit=cfg.get("population_pca_geometry_angle_unit", "degrees"),
+        geometry_alpha=cfg.get("population_pca_geometry_alpha", 0.05),
+        geometry_pvalue_correction=cfg.get("population_pca_geometry_pvalue_correction", "fdr_bh"),
         smooth_before_average=cfg.get("population_pca_smooth_before_average", cfg.get("smooth_before_average", True)),
         smoothing_sigma_ms=cfg.get("population_pca_smoothing_sigma_ms", cfg.get("smoothing_sigma_ms", 20.0)),
         verbose_logging=cfg.get("population_pca_verbose_logging", True),
@@ -150,6 +170,10 @@ def main() -> None:
     fit_df = result.get("fit_summary")
     time_df = result.get("concatenated_timecourses")
     explained_df = result.get("cross_condition_explained_variance")
+    geometry_time_df = result.get("pairwise_geometry_timecourses")
+    geometry_summary_df = result.get("pairwise_geometry_summary")
+    geometry_within_df = result.get("pairwise_geometry_within_region_stats")
+    geometry_cross_df = result.get("pairwise_geometry_cross_region_stats")
     unit_df = result.get("unit_inventory")
 
     n_fit_rows = 0 if fit_df is None else int(len(fit_df))
@@ -157,6 +181,10 @@ def main() -> None:
     n_units = 0 if unit_df is None or unit_df.empty else int(unit_df["unit_key"].astype(str).nunique())
     n_time_rows = 0 if time_df is None else int(len(time_df))
     n_explained_rows = 0 if explained_df is None else int(len(explained_df))
+    n_geometry_time_rows = 0 if geometry_time_df is None else int(len(geometry_time_df))
+    n_geometry_summary_rows = 0 if geometry_summary_df is None else int(len(geometry_summary_df))
+    n_geometry_within_rows = 0 if geometry_within_df is None else int(len(geometry_within_df))
+    n_geometry_cross_rows = 0 if geometry_cross_df is None else int(len(geometry_cross_df))
 
     print(
         "[analysis] config paths: "
@@ -168,6 +196,8 @@ def main() -> None:
         f"window_ms=[{settings.window_start_ms}, {settings.window_stop_ms}], "
         f"min_units_per_region={settings.min_units_per_region}, "
         f"max_components={settings.max_components}, "
+        f"geometry_n_pcs={settings.geometry_n_pcs}, "
+        f"geometry_angle_unit={settings.geometry_angle_unit}, "
         f"fixation_types={list(settings.conditions)}, "
         f"region_filter={args.region if args.region else 'all'}, "
         f"verbose_logging={settings.verbose_logging}"
@@ -187,6 +217,10 @@ def main() -> None:
     print(f"[analysis] common units in outputs: {n_units}")
     print(f"[analysis] concatenated PC timecourse rows: {n_time_rows}")
     print(f"[analysis] cross-condition explained-variance rows: {n_explained_rows}")
+    print(f"[analysis] pairwise geometry timecourse rows: {n_geometry_time_rows}")
+    print(f"[analysis] pairwise geometry summary rows: {n_geometry_summary_rows}")
+    print(f"[analysis] pairwise geometry within-region stats rows: {n_geometry_within_rows}")
+    print(f"[analysis] pairwise geometry cross-region stats rows: {n_geometry_cross_rows}")
     print("[analysis] wrote population PCA outputs to configured analysis subdir")
 
 

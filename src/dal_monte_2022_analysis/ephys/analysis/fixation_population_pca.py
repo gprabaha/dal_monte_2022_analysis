@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from itertools import combinations
 from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
+from scipy.stats import ttest_rel
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
@@ -33,6 +35,9 @@ DEFAULT_POPULATION_PCA_CONDITIONS: tuple[str, ...] = (
     "face_non_interactive",
     "object",
 )
+_ALLOWED_PVALUE_CORRECTIONS: frozenset[str] = frozenset(
+    {"none", "bonferroni", "holm", "bh", "fdr_bh"}
+)
 
 
 @dataclass
@@ -53,6 +58,14 @@ class FixationPopulationPCASettings:
     timecourse_filename: str = "concatenated_pc_timecourses.csv"
     explained_variance_filename: str = "cross_condition_explained_variance.csv"
     unit_inventory_filename: str = "region_unit_inventory.csv"
+    pairwise_geometry_timecourse_filename: str = "pairwise_geometry_timecourses.csv"
+    pairwise_geometry_summary_filename: str = "pairwise_geometry_summary.csv"
+    pairwise_geometry_within_region_stats_filename: str = (
+        "pairwise_geometry_within_region_stats.csv"
+    )
+    pairwise_geometry_cross_region_stats_filename: str = (
+        "pairwise_geometry_cross_region_stats.csv"
+    )
     output_pickle_filename: str = "results.pkl"
     interactive_label: str = "interactive"
     face_label: str = "face"
@@ -66,6 +79,10 @@ class FixationPopulationPCASettings:
     min_units_per_region: int = 3
     require_all_conditions: bool = True
     require_face_interactive_state: bool = True
+    geometry_n_pcs: Optional[int] = 20
+    geometry_angle_unit: str = "degrees"
+    geometry_alpha: float = 0.05
+    geometry_pvalue_correction: str = "fdr_bh"
     smooth_before_average: bool = True
     smoothing_sigma_ms: float = 20.0
     verbose_logging: bool = True
@@ -838,6 +855,437 @@ def _window_mask_from_centers(
     return mask
 
 
+def _condition_pair_token(condition_a: str, condition_b: str) -> str:
+    return f"{str(condition_a)}__vs__{str(condition_b)}"
+
+
+def _normalize_pvalue_correction(method: object) -> str:
+    token = str(method).strip().lower()
+    aliases = {
+        "fdr": "fdr_bh",
+        "benjamini_hochberg": "fdr_bh",
+        "benjamini-hochberg": "fdr_bh",
+        "bh": "fdr_bh",
+    }
+    resolved = aliases.get(token, token)
+    if resolved not in _ALLOWED_PVALUE_CORRECTIONS:
+        raise ValueError(
+            f"Unsupported p-value correction '{method}'. "
+            f"Expected one of: {sorted(_ALLOWED_PVALUE_CORRECTIONS)}"
+        )
+    return resolved
+
+
+def _adjust_pvalues(p_values: Sequence[float], method: str) -> np.ndarray:
+    resolved = _normalize_pvalue_correction(method)
+    vec = np.asarray(p_values, dtype=float).reshape(-1)
+    out = np.full(vec.shape, np.nan, dtype=float)
+    finite = np.isfinite(vec)
+    if not np.any(finite):
+        return out
+    vals = vec[finite]
+    m = int(vals.size)
+    if resolved == "none":
+        out[finite] = vals
+        return out
+    if resolved == "bonferroni":
+        out[finite] = np.minimum(vals * float(m), 1.0)
+        return out
+
+    order = np.argsort(vals)
+    ranked = vals[order]
+    if resolved == "holm":
+        holm_ranked = (m - np.arange(m, dtype=float)) * ranked
+        holm_ranked = np.maximum.accumulate(holm_ranked)
+        holm_ranked = np.clip(holm_ranked, 0.0, 1.0)
+        adjusted = np.empty(m, dtype=float)
+        adjusted[order] = holm_ranked
+        out[finite] = adjusted
+        return out
+
+    bh_ranked = ranked * (float(m) / np.arange(1.0, float(m) + 1.0))
+    bh_ranked = np.minimum.accumulate(bh_ranked[::-1])[::-1]
+    bh_ranked = np.clip(bh_ranked, 0.0, 1.0)
+    adjusted = np.empty(m, dtype=float)
+    adjusted[order] = bh_ranked
+    out[finite] = adjusted
+    return out
+
+
+def _apply_adjusted_pvalues(
+    df: pd.DataFrame,
+    *,
+    p_col: str,
+    out_col: str,
+    method: str,
+    group_cols: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    out = df.copy()
+    out[out_col] = np.nan
+    if out.empty or p_col not in out.columns:
+        return out
+    if group_cols is None or len(group_cols) == 0:
+        out[out_col] = _adjust_pvalues(out[p_col].to_numpy(dtype=float), method)
+        return out
+    for _, idx in out.groupby(list(group_cols), dropna=False).groups.items():
+        out.loc[idx, out_col] = _adjust_pvalues(
+            out.loc[idx, p_col].to_numpy(dtype=float),
+            method,
+        )
+    return out
+
+
+def _safe_ttest_rel(a: np.ndarray, b: np.ndarray) -> tuple[float, float, int]:
+    x = np.asarray(a, dtype=float).reshape(-1)
+    y = np.asarray(b, dtype=float).reshape(-1)
+    mask = np.isfinite(x) & np.isfinite(y)
+    x = x[mask]
+    y = y[mask]
+    if x.size < 2 or y.size < 2:
+        return np.nan, np.nan, int(mask.sum())
+    stat, p_value = ttest_rel(x, y, nan_policy="omit")
+    return float(stat), float(p_value), int(x.size)
+
+
+def _resolve_angle_unit(settings: FixationPopulationPCASettings) -> str:
+    token = str(settings.geometry_angle_unit).strip().lower()
+    aliases = {
+        "deg": "degrees",
+        "degree": "degrees",
+        "degrees": "degrees",
+        "rad": "radians",
+        "radian": "radians",
+        "radians": "radians",
+    }
+    resolved = aliases.get(token, token)
+    if resolved not in {"degrees", "radians"}:
+        raise ValueError(
+            f"Unsupported geometry angle unit '{settings.geometry_angle_unit}'. "
+            "Expected 'degrees' or 'radians'."
+        )
+    return resolved
+
+
+def _resolve_geometry_n_pcs_requested(
+    settings: FixationPopulationPCASettings,
+) -> Optional[int]:
+    if settings.geometry_n_pcs is not None:
+        return max(1, int(settings.geometry_n_pcs))
+    if settings.max_components is not None:
+        return max(1, int(settings.max_components))
+    return None
+
+
+def _euclidean_distance_by_time(
+    scores_a_pc_by_time: np.ndarray,
+    scores_b_pc_by_time: np.ndarray,
+    *,
+    n_pcs: int,
+) -> np.ndarray:
+    a = np.asarray(scores_a_pc_by_time, dtype=float)
+    b = np.asarray(scores_b_pc_by_time, dtype=float)
+    if a.ndim != 2 or b.ndim != 2:
+        return np.asarray([], dtype=float)
+    n_use = min(int(max(1, n_pcs)), int(a.shape[0]), int(b.shape[0]))
+    if n_use <= 0 or a.shape[1] != b.shape[1]:
+        return np.asarray([], dtype=float)
+    diff = a[:n_use, :] - b[:n_use, :]
+    return np.sqrt(np.sum(diff * diff, axis=0))
+
+
+def _angle_between_traces_by_time(
+    scores_a_pc_by_time: np.ndarray,
+    scores_b_pc_by_time: np.ndarray,
+    *,
+    n_pcs: int,
+    angle_unit: str,
+) -> np.ndarray:
+    a = np.asarray(scores_a_pc_by_time, dtype=float)
+    b = np.asarray(scores_b_pc_by_time, dtype=float)
+    if a.ndim != 2 or b.ndim != 2:
+        return np.asarray([], dtype=float)
+    n_use = min(int(max(1, n_pcs)), int(a.shape[0]), int(b.shape[0]))
+    if n_use <= 0 or a.shape[1] != b.shape[1]:
+        return np.asarray([], dtype=float)
+    x = a[:n_use, :].T
+    y = b[:n_use, :].T
+    norms = np.linalg.norm(x, axis=1) * np.linalg.norm(y, axis=1)
+    out = np.full((x.shape[0],), np.nan, dtype=float)
+    valid = np.isfinite(norms) & (norms > 1e-12)
+    if not np.any(valid):
+        return out
+    cos_theta = np.sum(x[valid] * y[valid], axis=1) / norms[valid]
+    cos_theta = np.clip(cos_theta, -1.0, 1.0)
+    angles = np.arccos(cos_theta)
+    if str(angle_unit) == "degrees":
+        angles = np.degrees(angles)
+    out[valid] = angles
+    return out
+
+
+def _build_region_pairwise_geometry_rows(
+    *,
+    region: str,
+    condition_scores_pc_by_time: dict[str, np.ndarray],
+    bin_centers_s_window: np.ndarray,
+    settings: FixationPopulationPCASettings,
+) -> tuple[list[dict], list[dict]]:
+    angle_unit = _resolve_angle_unit(settings)
+    n_bins = int(np.asarray(bin_centers_s_window, dtype=float).size)
+    metrics = (
+        ("euclidean_distance", "Euclidean Distance", "a.u."),
+        (
+            "angle_degrees" if angle_unit == "degrees" else "angle_radians",
+            f"Angle ({'deg' if angle_unit == 'degrees' else 'rad'})",
+            "deg" if angle_unit == "degrees" else "rad",
+        ),
+    )
+    time_rows: list[dict] = []
+    summary_rows: list[dict] = []
+    requested_n_pcs = _resolve_geometry_n_pcs_requested(settings)
+
+    for condition_a, condition_b in combinations(settings.conditions, 2):
+        scores_a = np.asarray(
+            condition_scores_pc_by_time.get(str(condition_a), np.asarray([], dtype=float)),
+            dtype=float,
+        )
+        scores_b = np.asarray(
+            condition_scores_pc_by_time.get(str(condition_b), np.asarray([], dtype=float)),
+            dtype=float,
+        )
+        if scores_a.ndim != 2 or scores_b.ndim != 2:
+            continue
+        if scores_a.shape[1] != n_bins or scores_b.shape[1] != n_bins:
+            continue
+        if requested_n_pcs is None:
+            n_pcs_used = min(int(scores_a.shape[0]), int(scores_b.shape[0]))
+        else:
+            n_pcs_used = min(
+                int(requested_n_pcs),
+                int(scores_a.shape[0]),
+                int(scores_b.shape[0]),
+            )
+        if n_pcs_used <= 0:
+            continue
+        pair_token = _condition_pair_token(str(condition_a), str(condition_b))
+        values_by_metric = {
+            "euclidean_distance": _euclidean_distance_by_time(
+                scores_a,
+                scores_b,
+                n_pcs=n_pcs_used,
+            ),
+            metrics[1][0]: _angle_between_traces_by_time(
+                scores_a,
+                scores_b,
+                n_pcs=n_pcs_used,
+                angle_unit=angle_unit,
+            ),
+        }
+        for metric_name, metric_label, metric_unit in metrics:
+            values = np.asarray(values_by_metric.get(metric_name, np.asarray([], dtype=float)), dtype=float)
+            if values.size != n_bins:
+                continue
+            for bin_idx, bin_center_s in enumerate(np.asarray(bin_centers_s_window, dtype=float)):
+                time_rows.append(
+                    {
+                        "region": str(region),
+                        "condition_a": str(condition_a),
+                        "condition_b": str(condition_b),
+                        "condition_pair": str(pair_token),
+                        "metric_name": str(metric_name),
+                        "metric_label": str(metric_label),
+                        "metric_unit": str(metric_unit),
+                        "n_pcs_used": int(n_pcs_used),
+                        "bin_index": int(bin_idx),
+                        "bin_center_s": float(bin_center_s),
+                        "value": float(values[bin_idx]) if np.isfinite(values[bin_idx]) else np.nan,
+                    }
+                )
+            finite = values[np.isfinite(values)]
+            if finite.size == 0:
+                continue
+            summary_rows.append(
+                {
+                    "region": str(region),
+                    "condition_a": str(condition_a),
+                    "condition_b": str(condition_b),
+                    "condition_pair": str(pair_token),
+                    "metric_name": str(metric_name),
+                    "metric_label": str(metric_label),
+                    "metric_unit": str(metric_unit),
+                    "n_pcs_used": int(n_pcs_used),
+                    "n_time_bins_total": int(values.size),
+                    "n_time_bins_valid": int(finite.size),
+                    "mean_value": float(np.mean(finite)),
+                    "median_value": float(np.median(finite)),
+                    "std_value": float(np.std(finite, ddof=1)) if finite.size > 1 else np.nan,
+                    "min_value": float(np.min(finite)),
+                    "max_value": float(np.max(finite)),
+                }
+            )
+    return time_rows, summary_rows
+
+
+def _build_pairwise_geometry_stat_tables(
+    pairwise_geometry_timecourse_df: pd.DataFrame,
+    *,
+    settings: FixationPopulationPCASettings,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if pairwise_geometry_timecourse_df.empty:
+        return pd.DataFrame(), pd.DataFrame()
+
+    required = {
+        "region",
+        "condition_pair",
+        "metric_name",
+        "metric_label",
+        "metric_unit",
+        "bin_index",
+        "value",
+    }
+    if not required.issubset(pairwise_geometry_timecourse_df.columns):
+        return pd.DataFrame(), pd.DataFrame()
+
+    df = pairwise_geometry_timecourse_df.copy()
+    df["region"] = df["region"].astype(str)
+    df["condition_pair"] = df["condition_pair"].astype(str)
+    df["metric_name"] = df["metric_name"].astype(str)
+    df["metric_label"] = df["metric_label"].astype(str)
+    df["metric_unit"] = df["metric_unit"].astype(str)
+    df["bin_index"] = pd.to_numeric(df["bin_index"], errors="coerce").astype("Int64")
+    df["value"] = pd.to_numeric(df["value"], errors="coerce")
+    df = df.loc[df["bin_index"].notna()].copy()
+
+    within_rows: list[dict] = []
+    for (metric_name, metric_label, metric_unit, region), grp in df.groupby(
+        ["metric_name", "metric_label", "metric_unit", "region"],
+        dropna=False,
+        sort=False,
+    ):
+        pair_tokens = [str(token) for token in grp["condition_pair"].dropna().astype(str).unique().tolist()]
+        pivot = grp.pivot_table(
+            index="bin_index",
+            columns="condition_pair",
+            values="value",
+            aggfunc="mean",
+        )
+        for pair_a, pair_b in combinations(pair_tokens, 2):
+            if pair_a not in pivot.columns or pair_b not in pivot.columns:
+                continue
+            arr_a = pivot[pair_a].to_numpy(dtype=float)
+            arr_b = pivot[pair_b].to_numpy(dtype=float)
+            stat, p_value, n_paired = _safe_ttest_rel(arr_a, arr_b)
+            if n_paired < 2:
+                continue
+            valid_mask = np.isfinite(arr_a) & np.isfinite(arr_b)
+            vals_a = arr_a[valid_mask]
+            vals_b = arr_b[valid_mask]
+            within_rows.append(
+                {
+                    "metric_name": str(metric_name),
+                    "metric_label": str(metric_label),
+                    "metric_unit": str(metric_unit),
+                    "region": str(region),
+                    "condition_pair_a": str(pair_a),
+                    "condition_pair_b": str(pair_b),
+                    "test_name": "paired_ttest",
+                    "n_time_bins_paired": int(n_paired),
+                    "mean_a": float(np.mean(vals_a)),
+                    "mean_b": float(np.mean(vals_b)),
+                    "median_a": float(np.median(vals_a)),
+                    "median_b": float(np.median(vals_b)),
+                    "delta_mean_a_minus_b": float(np.mean(vals_a) - np.mean(vals_b)),
+                    "delta_median_a_minus_b": float(np.median(vals_a) - np.median(vals_b)),
+                    "statistic": stat,
+                    "p_value": p_value,
+                }
+            )
+    within_df = pd.DataFrame(within_rows)
+    if not within_df.empty:
+        correction = _normalize_pvalue_correction(settings.geometry_pvalue_correction)
+        within_df = _apply_adjusted_pvalues(
+            within_df,
+            p_col="p_value",
+            out_col="p_value_adjusted",
+            method=correction,
+            group_cols=("metric_name", "region"),
+        )
+        within_df["pvalue_correction"] = str(correction)
+        within_df["alpha"] = float(settings.geometry_alpha)
+        within_df["significant_adjusted"] = (
+            pd.to_numeric(within_df["p_value_adjusted"], errors="coerce").to_numpy(dtype=float)
+            < float(settings.geometry_alpha)
+        )
+        within_df = within_df.sort_values(
+            ["metric_name", "region", "condition_pair_a", "condition_pair_b"]
+        ).reset_index(drop=True)
+
+    cross_rows: list[dict] = []
+    for (metric_name, metric_label, metric_unit, condition_pair), grp in df.groupby(
+        ["metric_name", "metric_label", "metric_unit", "condition_pair"],
+        dropna=False,
+        sort=False,
+    ):
+        region_tokens = [str(token) for token in grp["region"].dropna().astype(str).unique().tolist()]
+        pivot = grp.pivot_table(
+            index="bin_index",
+            columns="region",
+            values="value",
+            aggfunc="mean",
+        )
+        for region_a, region_b in combinations(region_tokens, 2):
+            if region_a not in pivot.columns or region_b not in pivot.columns:
+                continue
+            arr_a = pivot[region_a].to_numpy(dtype=float)
+            arr_b = pivot[region_b].to_numpy(dtype=float)
+            stat, p_value, n_paired = _safe_ttest_rel(arr_a, arr_b)
+            if n_paired < 2:
+                continue
+            valid_mask = np.isfinite(arr_a) & np.isfinite(arr_b)
+            vals_a = arr_a[valid_mask]
+            vals_b = arr_b[valid_mask]
+            cross_rows.append(
+                {
+                    "metric_name": str(metric_name),
+                    "metric_label": str(metric_label),
+                    "metric_unit": str(metric_unit),
+                    "condition_pair": str(condition_pair),
+                    "region_a": str(region_a),
+                    "region_b": str(region_b),
+                    "test_name": "paired_ttest",
+                    "n_time_bins_paired": int(n_paired),
+                    "mean_a": float(np.mean(vals_a)),
+                    "mean_b": float(np.mean(vals_b)),
+                    "median_a": float(np.median(vals_a)),
+                    "median_b": float(np.median(vals_b)),
+                    "delta_mean_a_minus_b": float(np.mean(vals_a) - np.mean(vals_b)),
+                    "delta_median_a_minus_b": float(np.median(vals_a) - np.median(vals_b)),
+                    "statistic": stat,
+                    "p_value": p_value,
+                }
+            )
+    cross_df = pd.DataFrame(cross_rows)
+    if not cross_df.empty:
+        correction = _normalize_pvalue_correction(settings.geometry_pvalue_correction)
+        cross_df = _apply_adjusted_pvalues(
+            cross_df,
+            p_col="p_value",
+            out_col="p_value_adjusted",
+            method=correction,
+            group_cols=("metric_name", "condition_pair"),
+        )
+        cross_df["pvalue_correction"] = str(correction)
+        cross_df["alpha"] = float(settings.geometry_alpha)
+        cross_df["significant_adjusted"] = (
+            pd.to_numeric(cross_df["p_value_adjusted"], errors="coerce").to_numpy(dtype=float)
+            < float(settings.geometry_alpha)
+        )
+        cross_df = cross_df.sort_values(
+            ["metric_name", "condition_pair", "region_a", "region_b"]
+        ).reset_index(drop=True)
+    return within_df, cross_df
+
+
 def _fit_pca_units_by_time(
     matrix_units_by_time: np.ndarray,
     *,
@@ -1078,6 +1526,8 @@ def _build_region_analysis(args) -> dict:
             "summary_rows": [],
             "timecourse_rows": [],
             "explained_rows": [],
+            "geometry_time_rows": [],
+            "geometry_summary_rows": [],
             "unit_rows": [],
             "payload": None,
         }
@@ -1107,6 +1557,8 @@ def _build_region_analysis(args) -> dict:
             "summary_rows": [],
             "timecourse_rows": [],
             "explained_rows": [],
+            "geometry_time_rows": [],
+            "geometry_summary_rows": [],
             "unit_rows": [],
             "payload": None,
         }
@@ -1246,6 +1698,13 @@ def _build_region_analysis(args) -> dict:
                     }
                 )
 
+    geometry_time_rows, geometry_summary_rows = _build_region_pairwise_geometry_rows(
+        region=str(region),
+        condition_scores_pc_by_time=concatenated_condition_scores_pc_by_time,
+        bin_centers_s_window=np.asarray(bin_centers_s_window, dtype=float),
+        settings=settings,
+    )
+
     explained_rows: list[dict] = []
     for fit_condition in settings.conditions:
         fit_model = per_condition_fits[fit_condition]
@@ -1338,13 +1797,16 @@ def _build_region_analysis(args) -> dict:
             dtype=float,
         ),
         "concatenated_projection_condition_slices": dict(sample_condition_slices),
+        "pairwise_geometry_timecourses": pd.DataFrame(geometry_time_rows),
+        "pairwise_geometry_summary": pd.DataFrame(geometry_summary_rows),
     }
     if settings.verbose_logging:
         print(
             "[analysis] region PCA payload ready: "
             f"region={region}, n_units_common={int(len(common_unit_keys))}, "
             f"n_window_time_bins={n_bins_window}, "
-            f"timecourse_rows={len(timecourse_rows)}, explained_variance_rows={len(explained_rows)}"
+            f"timecourse_rows={len(timecourse_rows)}, explained_variance_rows={len(explained_rows)}, "
+            f"geometry_rows={len(geometry_time_rows)}"
         )
         print("[analysis] ===== region PCA end =====")
     return {
@@ -1354,6 +1816,8 @@ def _build_region_analysis(args) -> dict:
         "summary_rows": fit_summary_rows,
         "timecourse_rows": timecourse_rows,
         "explained_rows": explained_rows,
+        "geometry_time_rows": geometry_time_rows,
+        "geometry_summary_rows": geometry_summary_rows,
         "unit_rows": unit_rows,
         "payload": payload,
     }
@@ -1393,6 +1857,10 @@ def run_fixation_population_pca_analysis(
             "fit_summary": pd.DataFrame(),
             "concatenated_timecourses": pd.DataFrame(),
             "cross_condition_explained_variance": pd.DataFrame(),
+            "pairwise_geometry_timecourses": pd.DataFrame(),
+            "pairwise_geometry_summary": pd.DataFrame(),
+            "pairwise_geometry_within_region_stats": pd.DataFrame(),
+            "pairwise_geometry_cross_region_stats": pd.DataFrame(),
             "unit_inventory": pd.DataFrame(),
             "regions": {},
         }
@@ -1445,6 +1913,10 @@ def run_fixation_population_pca_analysis(
             "fit_summary": pd.DataFrame(),
             "concatenated_timecourses": pd.DataFrame(),
             "cross_condition_explained_variance": pd.DataFrame(),
+            "pairwise_geometry_timecourses": pd.DataFrame(),
+            "pairwise_geometry_summary": pd.DataFrame(),
+            "pairwise_geometry_within_region_stats": pd.DataFrame(),
+            "pairwise_geometry_cross_region_stats": pd.DataFrame(),
             "unit_inventory": pd.DataFrame(),
             "regions": {},
         }
@@ -1464,6 +1936,10 @@ def run_fixation_population_pca_analysis(
             "fit_summary": pd.DataFrame(),
             "concatenated_timecourses": pd.DataFrame(),
             "cross_condition_explained_variance": pd.DataFrame(),
+            "pairwise_geometry_timecourses": pd.DataFrame(),
+            "pairwise_geometry_summary": pd.DataFrame(),
+            "pairwise_geometry_within_region_stats": pd.DataFrame(),
+            "pairwise_geometry_cross_region_stats": pd.DataFrame(),
             "unit_inventory": pd.DataFrame(),
             "regions": {},
         }
@@ -1495,6 +1971,8 @@ def run_fixation_population_pca_analysis(
     summary_rows: list[dict] = []
     timecourse_rows: list[dict] = []
     explained_rows: list[dict] = []
+    geometry_time_rows: list[dict] = []
+    geometry_summary_rows: list[dict] = []
     unit_rows: list[dict] = []
     region_payloads: dict[str, dict] = {}
     skipped_regions: dict[str, dict] = {}
@@ -1512,6 +1990,8 @@ def run_fixation_population_pca_analysis(
         summary_rows.extend(result.get("summary_rows", []))
         timecourse_rows.extend(result.get("timecourse_rows", []))
         explained_rows.extend(result.get("explained_rows", []))
+        geometry_time_rows.extend(result.get("geometry_time_rows", []))
+        geometry_summary_rows.extend(result.get("geometry_summary_rows", []))
         unit_rows.extend(result.get("unit_rows", []))
         payload = result.get("payload")
         if payload is not None:
@@ -1520,6 +2000,12 @@ def run_fixation_population_pca_analysis(
     summary_df = pd.DataFrame(summary_rows)
     timecourse_df = pd.DataFrame(timecourse_rows)
     explained_df = pd.DataFrame(explained_rows)
+    geometry_time_df = pd.DataFrame(geometry_time_rows)
+    geometry_summary_df = pd.DataFrame(geometry_summary_rows)
+    geometry_within_df, geometry_cross_df = _build_pairwise_geometry_stat_tables(
+        geometry_time_df,
+        settings=settings,
+    )
     unit_df = pd.DataFrame(unit_rows)
 
     if not summary_df.empty:
@@ -1534,8 +2020,22 @@ def run_fixation_population_pca_analysis(
         explained_df = explained_df.sort_values(
             ["region", "fit_condition", "eval_condition", "n_components"],
         ).reset_index(drop=True)
+    if not geometry_time_df.empty:
+        geometry_time_df = geometry_time_df.sort_values(
+            ["metric_name", "region", "condition_pair", "bin_index"],
+        ).reset_index(drop=True)
+    if not geometry_summary_df.empty:
+        geometry_summary_df = geometry_summary_df.sort_values(
+            ["metric_name", "region", "condition_pair"],
+        ).reset_index(drop=True)
     if not unit_df.empty:
         unit_df = unit_df.sort_values(["region", "date", "unit_uuid"]).reset_index(drop=True)
+    geometry_n_pcs_effective_max = 0
+    if not geometry_time_df.empty and "n_pcs_used" in geometry_time_df.columns:
+        n_pcs_used = pd.to_numeric(geometry_time_df["n_pcs_used"], errors="coerce").to_numpy(dtype=float)
+        n_pcs_used = n_pcs_used[np.isfinite(n_pcs_used)]
+        if n_pcs_used.size > 0:
+            geometry_n_pcs_effective_max = int(np.max(n_pcs_used))
 
     cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
@@ -1544,12 +2044,26 @@ def run_fixation_population_pca_analysis(
     summary_csv = out_root / _ensure_filename(settings.summary_filename, ".csv")
     timecourse_csv = out_root / _ensure_filename(settings.timecourse_filename, ".csv")
     explained_csv = out_root / _ensure_filename(settings.explained_variance_filename, ".csv")
+    geometry_time_csv = out_root / _ensure_filename(settings.pairwise_geometry_timecourse_filename, ".csv")
+    geometry_summary_csv = out_root / _ensure_filename(settings.pairwise_geometry_summary_filename, ".csv")
+    geometry_within_csv = out_root / _ensure_filename(
+        settings.pairwise_geometry_within_region_stats_filename,
+        ".csv",
+    )
+    geometry_cross_csv = out_root / _ensure_filename(
+        settings.pairwise_geometry_cross_region_stats_filename,
+        ".csv",
+    )
     unit_csv = out_root / _ensure_filename(settings.unit_inventory_filename, ".csv")
     result_pkl = out_root / _ensure_filename(settings.output_pickle_filename, ".pkl")
 
     summary_df.to_csv(summary_csv, index=False)
     timecourse_df.to_csv(timecourse_csv, index=False)
     explained_df.to_csv(explained_csv, index=False)
+    geometry_time_df.to_csv(geometry_time_csv, index=False)
+    geometry_summary_df.to_csv(geometry_summary_csv, index=False)
+    geometry_within_df.to_csv(geometry_within_csv, index=False)
+    geometry_cross_df.to_csv(geometry_cross_csv, index=False)
     unit_df.to_csv(unit_csv, index=False)
     if settings.verbose_logging:
         print(
@@ -1635,6 +2149,18 @@ def run_fixation_population_pca_analysis(
             "max_components": (
                 None if settings.max_components is None else int(settings.max_components)
             ),
+            "geometry_n_pcs_requested": _resolve_geometry_n_pcs_requested(settings),
+            "geometry_n_pcs_effective_max": int(geometry_n_pcs_effective_max),
+            "geometry_n_pcs": (
+                int(geometry_n_pcs_effective_max)
+                if int(geometry_n_pcs_effective_max) > 0
+                else _resolve_geometry_n_pcs_requested(settings)
+            ),
+            "geometry_angle_unit": _resolve_angle_unit(settings),
+            "geometry_alpha": float(settings.geometry_alpha),
+            "geometry_pvalue_correction": _normalize_pvalue_correction(
+                settings.geometry_pvalue_correction
+            ),
             "n_regions_input": int(len(region_names)),
             "n_regions_analyzed": int(len(region_payloads)),
             "n_units_common_total": int(unit_df["unit_key"].nunique()) if not unit_df.empty else 0,
@@ -1645,6 +2171,10 @@ def run_fixation_population_pca_analysis(
         "fit_summary": summary_df,
         "concatenated_timecourses": timecourse_df,
         "cross_condition_explained_variance": explained_df,
+        "pairwise_geometry_timecourses": geometry_time_df,
+        "pairwise_geometry_summary": geometry_summary_df,
+        "pairwise_geometry_within_region_stats": geometry_within_df,
+        "pairwise_geometry_cross_region_stats": geometry_cross_df,
         "unit_inventory": unit_df,
         "regions": region_payloads,
     }
