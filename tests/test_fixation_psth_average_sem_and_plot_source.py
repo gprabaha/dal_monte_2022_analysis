@@ -221,8 +221,10 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
             payloads = _build_unit_condition_payloads(
                 trial_df,
                 unit_key="20990101|u1",
-                bin_centers=np.asarray([-0.5, 0.0, 0.5], dtype=float),
-                bin_size_s=1.0,
+                trace_bin_centers=np.asarray([-0.5, 0.0, 0.5], dtype=float),
+                trace_bin_size_s=1.0,
+                raster_bin_centers=np.asarray([-0.5, 0.0, 0.5], dtype=float),
+                raster_bin_size_s=1.0,
                 settings=settings,
             )
 
@@ -248,6 +250,53 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
                 self.assertTrue(np.allclose(np.asarray(payload["mean_hz"], dtype=float), mean_expected))
                 self.assertTrue(np.allclose(np.asarray(payload["sem_hz"], dtype=float), sem_expected))
                 self.assertEqual(len(payload["spike_rows"]), 1)
+
+    def test_plot_payloads_use_trial_spike_train_counts_for_rasters(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            processed_root = root / "processed"
+            analysis_root = root / "analysis"
+            processed_root.mkdir(parents=True, exist_ok=True)
+            analysis_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, processed_root=processed_root, analysis_root=analysis_root)
+
+            trial_df = pd.DataFrame(
+                [
+                    {
+                        "unit_uuid": "u1",
+                        "fixation_category": "face",
+                        "interactive_state": "interactive",
+                        "psth_counts": np.asarray([1.0, 0.0], dtype=float),
+                        "spike_train_counts": np.asarray([0.0, 1.0], dtype=float),
+                    }
+                ]
+            )
+
+            settings = FixationPSTHUnitPlotSettings(
+                cfg_path=str(cfg_path),
+                smooth_before_average=False,
+                use_precomputed_average_traces=False,
+            )
+            payloads = _build_unit_condition_payloads(
+                trial_df,
+                unit_key="20990101|u1",
+                trace_bin_centers=np.asarray([-0.5, 0.5], dtype=float),
+                trace_bin_size_s=1.0,
+                raster_bin_centers=np.asarray([-0.001, 0.001], dtype=float),
+                raster_bin_size_s=0.001,
+                settings=settings,
+            )
+
+            by_key = {str(payload["key"]): payload for payload in payloads}
+            face_payload = by_key["face_interactive"]
+            self.assertEqual(len(face_payload["spike_rows"]), 1)
+            self.assertTrue(
+                np.allclose(
+                    np.asarray(face_payload["spike_rows"][0], dtype=float),
+                    np.asarray([0.001], dtype=float),
+                )
+            )
 
 
 if __name__ == "__main__":

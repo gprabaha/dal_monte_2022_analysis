@@ -157,6 +157,13 @@ def row_counts(row, n_bins: int) -> Optional[np.ndarray]:
     return counts
 
 
+def row_spike_train_counts(row, n_bins: int) -> Optional[np.ndarray]:
+    counts = np.asarray(getattr(row, "spike_train_counts", []), dtype=float).reshape(-1)
+    if counts.size != n_bins:
+        return None
+    return counts
+
+
 def counts_to_spike_times(
     counts: np.ndarray,
     bin_centers: np.ndarray,

@@ -37,6 +37,7 @@ from dal_monte_2022_analysis.ephys.plotting.common import (
     sample_rows as _sample_rows_shared,
     stable_seed as _stable_seed_shared,
     row_counts as _row_counts_shared,
+    row_spike_train_counts as _row_spike_train_counts_shared,
 )
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.runtime.io.analysis_index import scan_analysis_date_paths
@@ -138,14 +139,38 @@ def _fallback_bin_centers(settings: FixationPSTHUnitPlotSettings) -> np.ndarray:
     )
 
 
+def _resolve_spike_train_bin_centers_from_meta(meta: dict) -> Optional[np.ndarray]:
+    centers = meta.get("spike_train_bin_centers_s_rel")
+    if centers is not None:
+        arr = np.asarray(centers, dtype=float).reshape(-1)
+        if arr.size > 0:
+            return arr
+    edges = meta.get("spike_train_bin_edges_s_rel")
+    if edges is not None:
+        arr = np.asarray(edges, dtype=float).reshape(-1)
+        if arr.size > 1:
+            return 0.5 * (arr[:-1] + arr[1:])
+    return None
+
+
+def _resolve_bin_duration_from_centers(bin_centers: np.ndarray, fallback_bin_size_ms: float) -> float:
+    centers = np.asarray(bin_centers, dtype=float).reshape(-1)
+    if centers.size > 1:
+        inferred = float(np.mean(np.diff(centers)))
+        if np.isfinite(inferred) and inferred > 0.0:
+            return inferred
+    return float(fallback_bin_size_ms) / 1000.0
+
+
 def _load_trials_for_date(
     paths: Sequence[Path],
     *,
     date: str,
     settings: FixationPSTHUnitPlotSettings,
-) -> tuple[pd.DataFrame, np.ndarray]:
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
     all_rows: list[pd.DataFrame] = []
     bin_centers_ref: Optional[np.ndarray] = None
+    raster_bin_centers_ref: Optional[np.ndarray] = None
 
     for path in paths:
         obj = load_pickle_path(path)
@@ -163,6 +188,16 @@ def _load_trials_for_date(
             ):
                 print(f"[plot] skipping {path} due to mismatched PSTH bin centers")
                 continue
+        local_raster_centers = _resolve_spike_train_bin_centers_from_meta(meta)
+        if local_raster_centers is not None:
+            if raster_bin_centers_ref is None:
+                raster_bin_centers_ref = local_raster_centers
+            elif (
+                local_raster_centers.shape != raster_bin_centers_ref.shape
+                or not np.allclose(local_raster_centers, raster_bin_centers_ref)
+            ):
+                print(f"[plot] skipping {path} due to mismatched spike-train bin centers")
+                continue
 
         df = trials_df.copy()
         if "date" not in df.columns:
@@ -176,12 +211,15 @@ def _load_trials_for_date(
         all_rows.append(df)
 
     if not all_rows:
-        return pd.DataFrame(), _fallback_bin_centers(settings)
+        fallback = _fallback_bin_centers(settings)
+        return pd.DataFrame(), fallback, fallback
 
     out_df = pd.concat(all_rows, axis=0, ignore_index=True)
     if bin_centers_ref is None:
         bin_centers_ref = _fallback_bin_centers(settings)
-    return out_df, bin_centers_ref
+    if raster_bin_centers_ref is None:
+        raster_bin_centers_ref = np.asarray(bin_centers_ref, dtype=float)
+    return out_df, bin_centers_ref, raster_bin_centers_ref
 
 
 def _resolve_figsize_and_dpi(settings: FixationPSTHUnitPlotSettings) -> tuple[list[float], Optional[int]]:
@@ -501,8 +539,10 @@ def _build_unit_condition_payloads(
     df_unit: pd.DataFrame,
     *,
     unit_key: str,
-    bin_centers: np.ndarray,
-    bin_size_s: float,
+    trace_bin_centers: np.ndarray,
+    trace_bin_size_s: float,
+    raster_bin_centers: np.ndarray,
+    raster_bin_size_s: float,
     settings: FixationPSTHUnitPlotSettings,
 ) -> list[dict]:
     masks = _condition_masks(
@@ -511,10 +551,11 @@ def _build_unit_condition_payloads(
         face_label=settings.face_label,
         object_label=settings.object_label,
     )
-    n_bins = int(bin_centers.size)
+    n_bins = int(trace_bin_centers.size)
+    raster_n_bins = int(raster_bin_centers.size)
 
     payloads: list[dict] = []
-    sigma_bins = _resolve_plot_sigma_bins(settings, bin_size_s)
+    sigma_bins = _resolve_plot_sigma_bins(settings, trace_bin_size_s)
 
     for cond_key, cond_label in _PLOT_CONDITION_ORDER:
         cond_df = df_unit.loc[masks[cond_key]].copy()
@@ -528,14 +569,22 @@ def _build_unit_condition_payloads(
             if counts is None:
                 continue
             count_rows.append(counts)
+            spike_counts = _row_spike_train_counts_shared(row, raster_n_bins)
+            if spike_counts is not None:
+                spike_bin_centers = raster_bin_centers
+                spike_bin_size_s = raster_bin_size_s
+            else:
+                spike_counts = counts
+                spike_bin_centers = trace_bin_centers
+                spike_bin_size_s = trace_bin_size_s
             trial_rng = np.random.default_rng(
                 _stable_seed_shared(settings.random_seed, unit_key, cond_key, str(trial_i)),
             )
             spike_rows.append(
                 _counts_to_spike_times_shared(
-                    counts,
-                    bin_centers,
-                    bin_size_s,
+                    spike_counts,
+                    spike_bin_centers,
+                    spike_bin_size_s,
                     jitter_within_bin=settings.raster_jitter_within_bin,
                     rng=trial_rng,
                 )
@@ -551,14 +600,14 @@ def _build_unit_condition_payloads(
                     "spike_rows": [],
                     "mean_hz": np.zeros(n_bins, dtype=float),
                     "sem_hz": np.zeros(n_bins, dtype=float),
-                    "trace_bin_centers": np.asarray(bin_centers, dtype=float),
+                    "trace_bin_centers": np.asarray(trace_bin_centers, dtype=float),
                     "trace_n_trials": 0,
                 },
             )
             continue
 
         mat = np.vstack(count_rows)
-        rates_hz = mat / float(bin_size_s)
+        rates_hz = mat / float(trace_bin_size_s)
         if settings.smooth_before_average:
             rates_hz = gaussian_filter1d(rates_hz, sigma=sigma_bins, axis=1, mode="nearest")
         mean_hz = np.mean(rates_hz, axis=0)
@@ -576,7 +625,7 @@ def _build_unit_condition_payloads(
                 "spike_rows": spike_rows,
                 "mean_hz": mean_hz,
                 "sem_hz": sem_hz,
-                "trace_bin_centers": np.asarray(bin_centers, dtype=float),
+                "trace_bin_centers": np.asarray(trace_bin_centers, dtype=float),
                 "trace_n_trials": int(rates_hz.shape[0]),
             },
         )
@@ -764,24 +813,34 @@ def _plot_single_unit(
     df_unit: pd.DataFrame,
     date: str,
     unit_uuid: str,
-    bin_centers: np.ndarray,
+    trace_bin_centers: np.ndarray,
+    raster_bin_centers: np.ndarray,
     settings: FixationPSTHUnitPlotSettings,
     out_dir: Path,
     figsize: list[float],
     dpi: Optional[int],
 ) -> Optional[Path]:
-    if bin_centers.size < 2:
+    if trace_bin_centers.size < 2:
         return None
-    bin_size_s = float(np.mean(np.diff(bin_centers)))
-    if bin_size_s <= 0:
+    trace_bin_size_s = _resolve_bin_duration_from_centers(
+        trace_bin_centers,
+        settings.bin_size_ms_fallback,
+    )
+    raster_bin_size_s = _resolve_bin_duration_from_centers(
+        raster_bin_centers,
+        settings.bin_size_ms_fallback,
+    )
+    if trace_bin_size_s <= 0 or raster_bin_size_s <= 0:
         return None
 
     unit_key = f"{date}|{unit_uuid}"
     payloads = _build_unit_condition_payloads(
         df_unit,
         unit_key=unit_key,
-        bin_centers=bin_centers,
-        bin_size_s=bin_size_s,
+        trace_bin_centers=trace_bin_centers,
+        trace_bin_size_s=trace_bin_size_s,
+        raster_bin_centers=raster_bin_centers,
+        raster_bin_size_s=raster_bin_size_s,
         settings=settings,
     )
     if not any(payload["n_trials"] > 0 for payload in payloads):
@@ -845,17 +904,17 @@ def _plot_single_unit(
     for payload in payloads:
         if int(payload["n_trials"]) <= 0:
             continue
-        trace_bin_centers = np.asarray(
-            payload.get("trace_bin_centers", bin_centers),
+        payload_trace_bin_centers = np.asarray(
+            payload.get("trace_bin_centers", trace_bin_centers),
             dtype=float,
         ).reshape(-1)
         mean_hz = np.asarray(payload["mean_hz"], dtype=float)
         sem_hz = np.asarray(payload["sem_hz"], dtype=float)
-        if trace_bin_centers.size != mean_hz.size or sem_hz.size != mean_hz.size:
+        if payload_trace_bin_centers.size != mean_hz.size or sem_hz.size != mean_hz.size:
             continue
-        ax_rate.plot(trace_bin_centers, mean_hz, color=payload["color"], label=payload["label"])
+        ax_rate.plot(payload_trace_bin_centers, mean_hz, color=payload["color"], label=payload["label"])
         ax_rate.fill_between(
-            trace_bin_centers,
+            payload_trace_bin_centers,
             mean_hz - sem_hz,
             mean_hz + sem_hz,
             color=payload["color"],
@@ -866,14 +925,14 @@ def _plot_single_unit(
     ax_rate.axvline(0.0, color="#333333", linestyle="--", linewidth=1.0)
     ax_rate.set_xlabel("Time From Fixation Start (s)")
     ax_rate.set_ylabel("Firing Rate (Hz)")
-    ax_rate.set_xlim(float(bin_centers[0]), float(bin_centers[-1]))
+    ax_rate.set_xlim(float(trace_bin_centers[0]), float(trace_bin_centers[-1]))
     ax_rate.legend(loc="upper right", frameon=False)
 
     if settings.show_significance_ticks:
         pair_masks = _pair_significance_masks(
             df_unit,
-            bin_centers=bin_centers,
-            bin_size_s=bin_size_s,
+            bin_centers=trace_bin_centers,
+            bin_size_s=trace_bin_size_s,
             settings=settings,
         )
         y_min, y_max = ax_rate.get_ylim()
@@ -886,7 +945,7 @@ def _plot_single_unit(
 
         for idx, pair in enumerate(pair_masks):
             y0 = y_min - row_gap * float(n_rows - idx)
-            sig_x = bin_centers[np.asarray(pair["mask"], dtype=bool)]
+            sig_x = trace_bin_centers[np.asarray(pair["mask"], dtype=bool)]
             if sig_x.size > 0:
                 ax_rate.vlines(sig_x, y0, y0 + tick_h, color=pair["color"], linewidth=0.8, alpha=0.95)
 
@@ -942,12 +1001,13 @@ def _plot_single_unit(
 
 
 def _plot_single_unit_worker(args) -> Optional[Path]:
-    df_unit, date, unit_uuid, bin_centers, settings, out_dir, figsize, dpi = args
+    df_unit, date, unit_uuid, trace_bin_centers, raster_bin_centers, settings, out_dir, figsize, dpi = args
     return _plot_single_unit(
         df_unit=df_unit,
         date=date,
         unit_uuid=unit_uuid,
-        bin_centers=bin_centers,
+        trace_bin_centers=trace_bin_centers,
+        raster_bin_centers=raster_bin_centers,
         settings=settings,
         out_dir=out_dir,
         figsize=figsize,
@@ -959,7 +1019,7 @@ def _build_unit_plot_tasks_for_date(args):
     settings, date, paths, unit_filter, unit_key_filter = args
     cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
-    df, bin_centers = _load_trials_for_date(paths, date=date, settings=settings)
+    df, trace_bin_centers, raster_bin_centers = _load_trials_for_date(paths, date=date, settings=settings)
     if df.empty or "unit_uuid" not in df.columns:
         return []
 
@@ -995,7 +1055,8 @@ def _build_unit_plot_tasks_for_date(args):
                 df_unit,
                 date,
                 unit_uuid,
-                bin_centers,
+                trace_bin_centers,
+                raster_bin_centers,
                 settings,
                 unit_out_dir,
                 figsize,
