@@ -9,8 +9,9 @@ Current scripts:
   `.../region=<region>/date=<date>__unit=<unit_uuid>.pdf`
   Each figure has:
   - top: color-coded rasters for interactive face, non-interactive face, and object fixations
-    using trial-level `spike_train_counts` when available
+    using the separate `1 ms` fixation spike-train trial file when configured
   - bottom: mean firing rate (Hz) with SEM shading for the same conditions
+    using the `10 ms` fixation PSTH trial file plus the matching date-level averages
   - trial PSTHs are smoothed before mean/SEM by default (`plot_smooth_before_average`)
 
 Config:

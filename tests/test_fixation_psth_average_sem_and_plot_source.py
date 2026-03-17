@@ -18,6 +18,7 @@ try:
     from dal_monte_2022_analysis.ephys.plotting.fixation_psth import (
         FixationPSTHUnitPlotSettings,
         _build_unit_condition_payloads,
+        _load_trials_for_date,
     )
 
     _HAS_FIX_PSTH_MODULES = True
@@ -350,6 +351,100 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
                     np.asarray([0.001], dtype=float),
                 )
             )
+
+    def test_load_trials_for_date_merges_separate_raster_trial_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            processed_root = root / "processed"
+            analysis_root = root / "analysis"
+            processed_root.mkdir(parents=True, exist_ok=True)
+            analysis_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, processed_root=processed_root, analysis_root=analysis_root)
+
+            session_root = processed_root / "date=20990101" / "session=s1" / "psth"
+            session_root.mkdir(parents=True, exist_ok=True)
+            primary_path = session_root / "fixations_psth_10ms.pkl"
+            raster_path = session_root / "fixations_spike_train_1ms.pkl"
+
+            primary_df = pd.DataFrame(
+                [
+                    {
+                        "date": "20990101",
+                        "session": "s1",
+                        "unit_uuid": "u1",
+                        "fixation_agent": "m1",
+                        "fixation_start_idx": 10,
+                        "fixation_stop_idx": 12,
+                        "fixation_category": "face",
+                        "interactive_state": "interactive",
+                        "psth_counts": np.asarray([1.0, 2.0], dtype=float),
+                    }
+                ]
+            )
+            raster_df = pd.DataFrame(
+                [
+                    {
+                        "date": "20990101",
+                        "session": "s1",
+                        "unit_uuid": "u1",
+                        "fixation_agent": "m1",
+                        "fixation_start_idx": 10,
+                        "fixation_stop_idx": 12,
+                        "fixation_category": "face",
+                        "interactive_state": "interactive",
+                        "spike_train_counts": np.asarray([0.0, 1.0, 0.0], dtype=float),
+                    }
+                ]
+            )
+            with primary_path.open("wb") as f:
+                pickle.dump(
+                    {
+                        "meta": {
+                            "bin_centers_s_rel": np.asarray([-0.005, 0.005], dtype=float),
+                            "bin_size_s": 0.01,
+                        },
+                        "trials": primary_df,
+                    },
+                    f,
+                )
+            with raster_path.open("wb") as f:
+                pickle.dump(
+                    {
+                        "meta": {
+                            "spike_train_bin_centers_s_rel": np.asarray([-0.001, 0.0, 0.001], dtype=float),
+                            "spike_train_bin_size_ms": 1.0,
+                        },
+                        "trials": raster_df,
+                    },
+                    f,
+                )
+
+            settings = FixationPSTHUnitPlotSettings(
+                cfg_path=str(cfg_path),
+                trial_input_filename="fixations_psth_10ms.pkl",
+                raster_trial_input_filename="fixations_spike_train_1ms.pkl",
+                smooth_before_average=False,
+                use_precomputed_average_traces=False,
+            )
+            merged_df, trace_centers, raster_centers = _load_trials_for_date(
+                [primary_path],
+                raster_paths=[raster_path],
+                date="20990101",
+                settings=settings,
+            )
+
+            self.assertEqual(len(merged_df), 1)
+            row = merged_df.iloc[0]
+            self.assertIn("spike_train_counts", merged_df.columns)
+            self.assertTrue(
+                np.allclose(
+                    np.asarray(row["spike_train_counts"], dtype=float),
+                    np.asarray([0.0, 1.0, 0.0], dtype=float),
+                )
+            )
+            self.assertTrue(np.allclose(np.asarray(trace_centers, dtype=float), np.asarray([-0.005, 0.005], dtype=float)))
+            self.assertTrue(np.allclose(np.asarray(raster_centers, dtype=float), np.asarray([-0.001, 0.0, 0.001], dtype=float)))
 
 
 if __name__ == "__main__":

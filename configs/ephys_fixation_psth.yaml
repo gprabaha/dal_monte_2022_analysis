@@ -86,6 +86,8 @@ selective_index_average_target_bin_step_ms: 25.0
 selective_index_average_categories: ["face", "object"]
 
 # Fixation selective-unit analysis (stored in analysis_output_root)
+selective_trial_input_modality: psth
+selective_trial_input_filename: fixations_psth_10ms.pkl
 selective_output_subdir: ephys/psth/fixation_psth_selectivity
 selective_window_stats_filename: window_stats.csv
 selective_pair_summary_filename: pair_selectivity.csv
@@ -487,18 +489,23 @@ plot_use_parallel: true
 plot_parallelize_units: true
 plot_unit_parallel_min_units: 2
 # Use precomputed date-level averages for mean/SEM traces in unit PSTH plots.
-# Rasters still come from trial-level PSTHs.
+# Mean/SEM traces and per-bin significance come from 10 ms trial PSTHs.
+# Rasters come from the separate 1 ms spike-train trials.
 # For face interactive/non-interactive traces, build averages with
 # split_by_interactive_state: true.
 plot_use_precomputed_average_traces: true
+plot_trial_input_modality: psth
+plot_trial_input_filename: fixations_psth_10ms.pkl
+plot_raster_trial_input_modality: psth
+plot_raster_trial_input_filename: fixations_spike_train_1ms.pkl
 plot_average_input_subdir: ephys/psth/fixation_psth_averages
-plot_average_input_filename: fixations_split_by_interactive_state.pkl
-plot_average_input_filename_split: fixations_split_by_interactive_state.pkl
+plot_average_input_filename: fixations_psth_10ms_split_by_interactive_state.pkl
+plot_average_input_filename_split: fixations_psth_10ms_split_by_interactive_state.pkl
 # Object traces can be sourced from an unsplit average file so object is not
 # split by interactive state in downstream plotting/index workflows.
 plot_average_object_input_subdir: ephys/psth/fixation_psth_averages
-plot_average_object_input_filename: fixations_unsplit_by_interactive_state.pkl
-plot_average_input_filename_unsplit: fixations_unsplit_by_interactive_state.pkl
+plot_average_object_input_filename: fixations_psth_10ms_unsplit_by_interactive_state.pkl
+plot_average_input_filename_unsplit: fixations_psth_10ms_unsplit_by_interactive_state.pkl
 # If true, conditions missing from average rows fall back to trial-derived traces.
 plot_allow_trial_trace_fallback: false
 plot_max_trials_per_condition: 300

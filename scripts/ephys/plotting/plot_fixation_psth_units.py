@@ -45,13 +45,15 @@ def main() -> None:
     settings = FixationPSTHUnitPlotSettings(
         cfg_path=args.dataset_cfg,
         plotting_cfg_path=args.plotting_cfg,
-        trial_input_modality=cfg.get("trial_output_modality", "psth"),
-        trial_input_filename=cfg.get("trial_output_filename", "fixations.pkl"),
+        trial_input_modality=cfg.get("plot_trial_input_modality", cfg.get("trial_output_modality", "psth")),
+        trial_input_filename=cfg.get("plot_trial_input_filename", "fixations_psth_10ms.pkl"),
+        raster_trial_input_modality=cfg.get("plot_raster_trial_input_modality", cfg.get("plot_trial_input_modality", cfg.get("trial_output_modality", "psth"))),
+        raster_trial_input_filename=cfg.get("plot_raster_trial_input_filename", "fixations_spike_train_1ms.pkl"),
         use_precomputed_average_traces=cfg.get("plot_use_precomputed_average_traces", True),
         average_trace_input_subdir=cfg.get("plot_average_input_subdir", "ephys/psth/fixation_psth_averages"),
         average_trace_input_filename=cfg.get(
             "plot_average_input_filename_split",
-            cfg.get("plot_average_input_filename", "fixations.pkl"),
+            cfg.get("plot_average_input_filename", "fixations_psth_10ms_split_by_interactive_state.pkl"),
         ),
         average_trace_object_input_subdir=cfg.get(
             "plot_average_object_input_subdir",
@@ -59,7 +61,7 @@ def main() -> None:
         ),
         average_trace_object_input_filename=cfg.get(
             "plot_average_object_input_filename",
-            cfg.get("plot_average_input_filename_unsplit"),
+            cfg.get("plot_average_input_filename_unsplit", "fixations_psth_10ms_unsplit_by_interactive_state.pkl"),
         ),
         allow_trial_trace_fallback=cfg.get("plot_allow_trial_trace_fallback", True),
         output_subdir=cfg.get("plot_output_subdir", "ephys/psth/fixation_psth_unit_plots"),

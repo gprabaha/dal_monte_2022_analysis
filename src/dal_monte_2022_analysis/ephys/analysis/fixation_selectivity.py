@@ -106,7 +106,7 @@ class FixationPSTHSelectivitySettings:
 
     cfg_path: str
     trial_input_modality: str = "psth"
-    trial_input_filename: str = "fixations.pkl"
+    trial_input_filename: str = "fixations_psth_10ms.pkl"
     output_subdir: str = "ephys/psth/fixation_psth_selectivity"
     window_stats_filename: str = "window_stats.csv"
     pair_summary_filename: str = "pair_selectivity.csv"

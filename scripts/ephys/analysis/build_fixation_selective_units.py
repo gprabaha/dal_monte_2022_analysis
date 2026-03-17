@@ -75,8 +75,8 @@ def main() -> None:
     cfg = load_config(ephys_fix_psth_cfg_path)
     settings = FixationPSTHSelectivitySettings(
         cfg_path=str(dataset_cfg_path),
-        trial_input_modality=cfg.get("trial_output_modality", "psth"),
-        trial_input_filename=cfg.get("trial_output_filename", "fixations.pkl"),
+        trial_input_modality=cfg.get("selective_trial_input_modality", cfg.get("trial_output_modality", "psth")),
+        trial_input_filename=cfg.get("selective_trial_input_filename", "fixations_psth_10ms.pkl"),
         output_subdir=cfg.get("selective_output_subdir", "ephys/psth/fixation_psth_selectivity"),
         window_stats_filename=cfg.get("selective_window_stats_filename", "window_stats.csv"),
         pair_summary_filename=cfg.get("selective_pair_summary_filename", "pair_selectivity.csv"),

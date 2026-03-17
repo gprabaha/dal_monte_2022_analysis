@@ -67,6 +67,8 @@ class FixationPSTHUnitPlotSettings:
     plotting_cfg_path: str = "configs/plotting.yaml"
     trial_input_modality: str = "psth"
     trial_input_filename: str = "fixations.pkl"
+    raster_trial_input_modality: Optional[str] = None
+    raster_trial_input_filename: Optional[str] = None
     use_precomputed_average_traces: bool = True
     average_trace_input_subdir: str = "ephys/psth/fixation_psth_averages"
     average_trace_input_filename: str = "fixations.pkl"
@@ -121,11 +123,13 @@ def _iter_trial_rows(
     *,
     dates: Optional[Sequence[str]] = None,
     sessions: Optional[Sequence[str]] = None,
+    modality: Optional[str] = None,
+    filename: Optional[str] = None,
 ) -> list[dict]:
     return _iter_trial_rows_shared(
         cfg,
-        modality=settings.trial_input_modality,
-        filename=settings.trial_input_filename,
+        modality=str(modality or settings.trial_input_modality),
+        filename=str(filename or settings.trial_input_filename),
         dates=dates,
         sessions=sessions,
     )
@@ -162,12 +166,13 @@ def _resolve_bin_duration_from_centers(bin_centers: np.ndarray, fallback_bin_siz
     return float(fallback_bin_size_ms) / 1000.0
 
 
-def _load_trials_for_date(
+def _load_trials_from_paths_for_date(
     paths: Sequence[Path],
     *,
     date: str,
     settings: FixationPSTHUnitPlotSettings,
-) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    require_psth_counts: bool,
+) -> tuple[pd.DataFrame, Optional[np.ndarray], Optional[np.ndarray]]:
     all_rows: list[pd.DataFrame] = []
     bin_centers_ref: Optional[np.ndarray] = None
     raster_bin_centers_ref: Optional[np.ndarray] = None
@@ -175,7 +180,9 @@ def _load_trials_for_date(
     for path in paths:
         obj = load_pickle_path(path)
         trials_df, meta = _extract_trials_df_and_meta_shared(obj)
-        if trials_df.empty or "psth_counts" not in trials_df.columns:
+        if trials_df.empty:
+            continue
+        if require_psth_counts and "psth_counts" not in trials_df.columns:
             continue
 
         local_centers = _resolve_bin_centers_from_meta_shared(meta)
@@ -211,15 +218,113 @@ def _load_trials_for_date(
         all_rows.append(df)
 
     if not all_rows:
+        return pd.DataFrame(), None, None
+
+    out_df = pd.concat(all_rows, axis=0, ignore_index=True)
+    return out_df, bin_centers_ref, raster_bin_centers_ref
+
+
+def _resolve_raster_trial_input(
+    settings: FixationPSTHUnitPlotSettings,
+) -> Optional[tuple[str, str]]:
+    filename = _safe_optional_str_shared(settings.raster_trial_input_filename)
+    if filename is None:
+        return None
+    modality = _safe_optional_str_shared(settings.raster_trial_input_modality)
+    if modality is None:
+        modality = str(settings.trial_input_modality)
+    return str(modality), str(filename)
+
+
+def _resolve_trial_merge_keys(primary_df: pd.DataFrame, raster_df: pd.DataFrame) -> list[str]:
+    candidate_keys = (
+        "date",
+        "session",
+        "unit_uuid",
+        "fixation_agent",
+        "fixation_start_idx",
+        "fixation_stop_idx",
+        "fixation_category",
+        "interactive_state",
+    )
+    keys = [col for col in candidate_keys if col in primary_df.columns and col in raster_df.columns]
+    if not keys:
+        return []
+    if primary_df.duplicated(subset=keys).any():
+        return []
+    if raster_df.duplicated(subset=keys).any():
+        return []
+    return keys
+
+
+def _merge_raster_trial_rows(
+    primary_df: pd.DataFrame,
+    raster_df: pd.DataFrame,
+) -> pd.DataFrame:
+    if primary_df.empty or raster_df.empty or "spike_train_counts" not in raster_df.columns:
+        return primary_df
+
+    merge_keys = _resolve_trial_merge_keys(primary_df, raster_df)
+    if not merge_keys:
+        print("[plot] unable to merge separate raster trial file; no unique fixation-trial key columns found")
+        return primary_df
+
+    raster_cols = merge_keys + ["spike_train_counts"]
+    raster_merge_df = raster_df.loc[:, raster_cols].copy()
+
+    base_df = primary_df.copy()
+    if "spike_train_counts" in base_df.columns:
+        base_df = base_df.drop(columns=["spike_train_counts"])
+
+    return base_df.merge(
+        raster_merge_df,
+        on=merge_keys,
+        how="left",
+        validate="one_to_one",
+    )
+
+
+def _load_trials_for_date(
+    primary_paths: Sequence[Path],
+    *,
+    raster_paths: Optional[Sequence[Path]],
+    date: str,
+    settings: FixationPSTHUnitPlotSettings,
+) -> tuple[pd.DataFrame, np.ndarray, np.ndarray]:
+    primary_df, trace_bin_centers_ref, primary_raster_centers_ref = _load_trials_from_paths_for_date(
+        primary_paths,
+        date=date,
+        settings=settings,
+        require_psth_counts=True,
+    )
+    if primary_df.empty:
         fallback = _fallback_bin_centers(settings)
         return pd.DataFrame(), fallback, fallback
 
-    out_df = pd.concat(all_rows, axis=0, ignore_index=True)
-    if bin_centers_ref is None:
-        bin_centers_ref = _fallback_bin_centers(settings)
-    if raster_bin_centers_ref is None:
-        raster_bin_centers_ref = np.asarray(bin_centers_ref, dtype=float)
-    return out_df, bin_centers_ref, raster_bin_centers_ref
+    trace_bin_centers = (
+        np.asarray(trace_bin_centers_ref, dtype=float)
+        if trace_bin_centers_ref is not None
+        else _fallback_bin_centers(settings)
+    )
+    raster_bin_centers = (
+        np.asarray(primary_raster_centers_ref, dtype=float)
+        if primary_raster_centers_ref is not None
+        else np.asarray(trace_bin_centers, dtype=float)
+    )
+
+    if raster_paths:
+        raster_df, _, raster_centers_ref = _load_trials_from_paths_for_date(
+            raster_paths,
+            date=date,
+            settings=settings,
+            require_psth_counts=False,
+        )
+        if not raster_df.empty and "spike_train_counts" in raster_df.columns:
+            primary_df = _merge_raster_trial_rows(primary_df, raster_df)
+            if raster_centers_ref is not None:
+                raster_bin_centers = np.asarray(raster_centers_ref, dtype=float)
+
+    return primary_df, trace_bin_centers, raster_bin_centers
 
 
 def _resolve_figsize_and_dpi(settings: FixationPSTHUnitPlotSettings) -> tuple[list[float], Optional[int]]:
@@ -1016,10 +1121,15 @@ def _plot_single_unit_worker(args) -> Optional[Path]:
 
 
 def _build_unit_plot_tasks_for_date(args):
-    settings, date, paths, unit_filter, unit_key_filter = args
+    settings, date, primary_paths, raster_paths, unit_filter, unit_key_filter = args
     cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
-    df, trace_bin_centers, raster_bin_centers = _load_trials_for_date(paths, date=date, settings=settings)
+    df, trace_bin_centers, raster_bin_centers = _load_trials_for_date(
+        primary_paths,
+        raster_paths=raster_paths,
+        date=date,
+        settings=settings,
+    )
     if df.empty or "unit_uuid" not in df.columns:
         return []
 
@@ -1076,25 +1186,53 @@ def plot_fixation_psth_units(
 ) -> list[Path]:
     """Generate one raster + average firing-rate PSTH figure per unit/date."""
     cfg = load_config(settings.cfg_path)
-    trial_rows = _iter_trial_rows(cfg, settings, dates=dates, sessions=sessions)
-    if not trial_rows:
+    primary_trial_rows = _iter_trial_rows(cfg, settings, dates=dates, sessions=sessions)
+    if not primary_trial_rows:
         print("[plot] no fixation PSTH trial files found")
         return []
 
-    grouped: dict[str, list[Path]] = {}
-    for row in trial_rows:
-        grouped.setdefault(str(row["date"]), []).append(Path(row["path"]))
+    grouped_primary: dict[str, list[Path]] = {}
+    for row in primary_trial_rows:
+        grouped_primary.setdefault(str(row["date"]), []).append(Path(row["path"]))
 
-    tasks = sorted(grouped.items(), key=lambda item: item[0])
+    grouped_raster: dict[str, list[Path]] = {}
+    raster_input = _resolve_raster_trial_input(settings)
+    if raster_input is not None:
+        raster_modality, raster_filename = raster_input
+        if (
+            str(raster_modality) != str(settings.trial_input_modality)
+            or str(raster_filename) != str(settings.trial_input_filename)
+        ):
+            raster_trial_rows = _iter_trial_rows(
+                cfg,
+                settings,
+                dates=dates,
+                sessions=sessions,
+                modality=raster_modality,
+                filename=raster_filename,
+            )
+            for row in raster_trial_rows:
+                grouped_raster.setdefault(str(row["date"]), []).append(Path(row["path"]))
+
+    tasks = sorted(grouped_primary.items(), key=lambda item: item[0])
 
     unit_filter = None if unit_uuids is None else {str(unit) for unit in unit_uuids}
     unit_key_filter = None if unit_keys is None else {str(key) for key in unit_keys}
     out_paths: list[Path] = []
 
     all_unit_tasks = []
-    for date, paths in tasks:
+    for date, primary_paths in tasks:
         all_unit_tasks.extend(
-            _build_unit_plot_tasks_for_date((settings, date, paths, unit_filter, unit_key_filter))
+            _build_unit_plot_tasks_for_date(
+                (
+                    settings,
+                    date,
+                    primary_paths,
+                    grouped_raster.get(date),
+                    unit_filter,
+                    unit_key_filter,
+                )
+            )
         )
     if settings.test_single and all_unit_tasks:
         all_unit_tasks = [random.choice(all_unit_tasks)]
