@@ -63,6 +63,7 @@ class FixationPSTHSettings:
     include_interactive_state: bool = True
     interactive_high_label: str = "interactive"
     bin_size_ms: float = 10.0
+    spike_train_bin_size_ms: float = 1.0
     window_pre_s: float = 1.0
     window_post_s: float = 1.0
     use_parallel: bool = True
@@ -117,6 +118,14 @@ def _build_average_output_path(cfg: dict, date: str, settings: FixationPSTHAvera
 def _build_bin_edges(settings: FixationPSTHSettings) -> np.ndarray:
     return build_symmetric_bin_edges(
         bin_size_ms=settings.bin_size_ms,
+        window_pre_s=settings.window_pre_s,
+        window_post_s=settings.window_post_s,
+    )
+
+
+def _build_spike_train_bin_edges(settings: FixationPSTHSettings) -> np.ndarray:
+    return build_symmetric_bin_edges(
+        bin_size_ms=settings.spike_train_bin_size_ms,
         window_pre_s=settings.window_pre_s,
         window_post_s=settings.window_post_s,
     )
@@ -282,12 +291,18 @@ def _build_session_events(
 
 _GLOBAL_TRIAL_EVENTS: list[dict] = []
 _GLOBAL_BIN_EDGES: np.ndarray = np.array([], dtype=float)
+_GLOBAL_SPIKE_TRAIN_BIN_EDGES: np.ndarray = np.array([], dtype=float)
 
 
-def _init_trial_worker(events: list[dict], bin_edges: np.ndarray) -> None:
-    global _GLOBAL_TRIAL_EVENTS, _GLOBAL_BIN_EDGES
+def _init_trial_worker(
+    events: list[dict],
+    bin_edges: np.ndarray,
+    spike_train_bin_edges: np.ndarray,
+) -> None:
+    global _GLOBAL_TRIAL_EVENTS, _GLOBAL_BIN_EDGES, _GLOBAL_SPIKE_TRAIN_BIN_EDGES
     _GLOBAL_TRIAL_EVENTS = events
     _GLOBAL_BIN_EDGES = bin_edges
+    _GLOBAL_SPIKE_TRAIN_BIN_EDGES = spike_train_bin_edges
 
 
 def _compute_unit_trial_rows(unit_payload: dict) -> list[dict]:
@@ -297,6 +312,7 @@ def _compute_unit_trial_rows(unit_payload: dict) -> list[dict]:
     for event in _GLOBAL_TRIAL_EVENTS:
         rel = spike_ts - float(event["fixation_start_time_s"])
         counts, _ = np.histogram(rel, bins=_GLOBAL_BIN_EDGES)
+        spike_train_counts, _ = np.histogram(rel, bins=_GLOBAL_SPIKE_TRAIN_BIN_EDGES)
         rows.append(
             {
                 **event,
@@ -308,6 +324,7 @@ def _compute_unit_trial_rows(unit_payload: dict) -> list[dict]:
                 "recorded_monkey": unit_payload["recorded_monkey"],
                 "area": unit_payload["area"],
                 "psth_counts": counts.astype(np.int32),
+                "spike_train_counts": spike_train_counts.astype(np.int16),
             }
         )
     return rows
@@ -315,12 +332,19 @@ def _compute_unit_trial_rows(unit_payload: dict) -> list[dict]:
 
 _GLOBAL_FIXATION_EVENTS_BY_DATE: dict[str, list[dict]] = {}
 _GLOBAL_FIXATION_BIN_EDGES: np.ndarray = np.array([], dtype=float)
+_GLOBAL_FIXATION_SPIKE_TRAIN_BIN_EDGES: np.ndarray = np.array([], dtype=float)
 
 
-def _init_fixation_unit_worker(events_by_date: dict[str, list[dict]], bin_edges: np.ndarray) -> None:
-    global _GLOBAL_FIXATION_EVENTS_BY_DATE, _GLOBAL_FIXATION_BIN_EDGES
+def _init_fixation_unit_worker(
+    events_by_date: dict[str, list[dict]],
+    bin_edges: np.ndarray,
+    spike_train_bin_edges: np.ndarray,
+) -> None:
+    global _GLOBAL_FIXATION_EVENTS_BY_DATE
+    global _GLOBAL_FIXATION_BIN_EDGES, _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_EDGES
     _GLOBAL_FIXATION_EVENTS_BY_DATE = events_by_date
     _GLOBAL_FIXATION_BIN_EDGES = bin_edges
+    _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_EDGES = spike_train_bin_edges
 
 
 def _compute_unit_rows_across_fixation_sessions(
@@ -339,6 +363,10 @@ def _compute_unit_rows_across_fixation_sessions(
         for event in events:
             rel = spike_ts - float(event["fixation_start_time_s"])
             counts, _ = np.histogram(rel, bins=_GLOBAL_FIXATION_BIN_EDGES)
+            spike_train_counts, _ = np.histogram(
+                rel,
+                bins=_GLOBAL_FIXATION_SPIKE_TRAIN_BIN_EDGES,
+            )
             session_rows.append(
                 {
                     **event,
@@ -350,6 +378,7 @@ def _compute_unit_rows_across_fixation_sessions(
                     "recorded_monkey": unit_payload["recorded_monkey"],
                     "area": unit_payload["area"],
                     "psth_counts": counts.astype(np.int32),
+                    "spike_train_counts": spike_train_counts.astype(np.int16),
                 }
             )
         if session_rows:
@@ -372,6 +401,8 @@ def build_fixation_psth_trials_for_session(
 
     bin_edges = _build_bin_edges(settings)
     bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    spike_train_bin_edges = _build_spike_train_bin_edges(settings)
+    spike_train_bin_centers = 0.5 * (spike_train_bin_edges[:-1] + spike_train_bin_edges[1:])
     payloads = _units_to_payloads(units_for_date)
     if not payloads:
         return None
@@ -382,13 +413,13 @@ def build_fixation_psth_trials_for_session(
         with Pool(
             processes=n_proc,
             initializer=_init_trial_worker,
-            initargs=(events, bin_edges),
+            initargs=(events, bin_edges, spike_train_bin_edges),
         ) as pool:
             for unit_rows in pool.imap_unordered(_compute_unit_trial_rows, payloads):
                 if unit_rows:
                     all_rows.extend(unit_rows)
     else:
-        _init_trial_worker(events, bin_edges)
+        _init_trial_worker(events, bin_edges, spike_train_bin_edges)
         for payload in payloads:
             unit_rows = _compute_unit_trial_rows(payload)
             if unit_rows:
@@ -405,10 +436,13 @@ def build_fixation_psth_trials_for_session(
             "event_source": "fixations",
             "event_anchor": "fixation_start",
             "bin_size_ms": float(settings.bin_size_ms),
+            "spike_train_bin_size_ms": float(settings.spike_train_bin_size_ms),
             "window_pre_s": float(settings.window_pre_s),
             "window_post_s": float(settings.window_post_s),
             "bin_edges_s_rel": bin_edges,
             "bin_centers_s_rel": bin_centers,
+            "spike_train_bin_edges_s_rel": spike_train_bin_edges,
+            "spike_train_bin_centers_s_rel": spike_train_bin_centers,
             "output_modality": settings.output_modality,
             "trial_output_filename": _ensure_pkl_filename(settings.trial_output_filename),
         },
@@ -439,6 +473,8 @@ def _build_fixation_trial_payload(
     rows: list[dict],
     bin_edges: np.ndarray,
     bin_centers: np.ndarray,
+    spike_train_bin_edges: np.ndarray,
+    spike_train_bin_centers: np.ndarray,
 ) -> dict:
     trial_df = pd.DataFrame(rows)
     return {
@@ -448,10 +484,13 @@ def _build_fixation_trial_payload(
             "event_source": "fixations",
             "event_anchor": "fixation_start",
             "bin_size_ms": float(settings.bin_size_ms),
+            "spike_train_bin_size_ms": float(settings.spike_train_bin_size_ms),
             "window_pre_s": float(settings.window_pre_s),
             "window_post_s": float(settings.window_post_s),
             "bin_edges_s_rel": bin_edges,
             "bin_centers_s_rel": bin_centers,
+            "spike_train_bin_edges_s_rel": spike_train_bin_edges,
+            "spike_train_bin_centers_s_rel": spike_train_bin_centers,
             "output_modality": settings.output_modality,
             "trial_output_filename": _ensure_pkl_filename(settings.trial_output_filename),
         },
@@ -466,6 +505,8 @@ def _flush_fixation_session_rows(
     *,
     bin_edges: np.ndarray,
     bin_centers: np.ndarray,
+    spike_train_bin_edges: np.ndarray,
+    spike_train_bin_centers: np.ndarray,
 ) -> None:
     for (date, session), rows in rows_for_session.items():
         if not rows:
@@ -478,6 +519,8 @@ def _flush_fixation_session_rows(
             rows=rows,
             bin_edges=bin_edges,
             bin_centers=bin_centers,
+            spike_train_bin_edges=spike_train_bin_edges,
+            spike_train_bin_centers=spike_train_bin_centers,
         )
         out_path = _build_trial_output_path(cfg, row, settings)
         save_pickle_path(data, out_path)
@@ -543,6 +586,8 @@ def run_fixation_psth_trial_build(
 
     bin_edges = _build_bin_edges(settings)
     bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+    spike_train_bin_edges = _build_spike_train_bin_edges(settings)
+    spike_train_bin_centers = 0.5 * (spike_train_bin_edges[:-1] + spike_train_bin_edges[1:])
 
     buffered_rows_by_date: dict[str, dict[tuple[str, str], list[dict]]] = {}
     for date, session_payloads in session_events_by_date.items():
@@ -571,6 +616,8 @@ def run_fixation_psth_trial_build(
                 rows_for_date,
                 bin_edges=bin_edges,
                 bin_centers=bin_centers,
+                spike_train_bin_edges=spike_train_bin_edges,
+                spike_train_bin_centers=spike_train_bin_centers,
             )
 
     if settings.use_parallel and len(payloads) > 1:
@@ -578,7 +625,7 @@ def run_fixation_psth_trial_build(
         with Pool(
             processes=n_proc,
             initializer=_init_fixation_unit_worker,
-            initargs=(session_events_by_date, bin_edges),
+            initargs=(session_events_by_date, bin_edges, spike_train_bin_edges),
         ) as pool:
             iterator = pool.imap_unordered(_compute_unit_rows_across_fixation_sessions, payloads)
             for unit_date, rows_by_session in tqdm(
@@ -589,7 +636,7 @@ def run_fixation_psth_trial_build(
             ):
                 _accumulate_and_flush(str(unit_date), rows_by_session)
     else:
-        _init_fixation_unit_worker(session_events_by_date, bin_edges)
+        _init_fixation_unit_worker(session_events_by_date, bin_edges, spike_train_bin_edges)
         for payload in tqdm(payloads, desc="Building fixation PSTH trials", unit="unit"):
             unit_date, rows_by_session = _compute_unit_rows_across_fixation_sessions(payload)
             _accumulate_and_flush(str(unit_date), rows_by_session)
@@ -601,6 +648,8 @@ def run_fixation_psth_trial_build(
             rows_for_date,
             bin_edges=bin_edges,
             bin_centers=bin_centers,
+            spike_train_bin_edges=spike_train_bin_edges,
+            spike_train_bin_centers=spike_train_bin_centers,
         )
 
 

@@ -21,6 +21,9 @@ categories: ["face", "object", "out_of_roi"]
 
 # PSTH construction
 bin_size_ms: 10.0
+# Additional fixation-trial spike-train output kept at 1 ms resolution for
+# exact rasters and spike-based cross-correlation analysis.
+spike_train_bin_size_ms: 1.0
 window_pre_s: 1.0
 window_post_s: 1.0
 include_interactive_state: true

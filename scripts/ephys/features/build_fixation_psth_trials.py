@@ -60,6 +60,8 @@ def _print_trial_example(path: Path, *, max_bins: int = 12) -> None:
     row = df.iloc[0]
     counts = np.asarray(row.get("psth_counts"), dtype=float).reshape(-1)
     preview = counts[: max(1, int(max_bins))]
+    spike_train_counts = np.asarray(row.get("spike_train_counts"), dtype=float).reshape(-1)
+    spike_preview = spike_train_counts[: max(1, int(max_bins))]
 
     print("\nExample fixation PSTH trial output:")
     print(f"  file: {path}")
@@ -68,6 +70,7 @@ def _print_trial_example(path: Path, *, max_bins: int = 12) -> None:
         print(
             "  meta: "
             f"bin_size_ms={meta.get('bin_size_ms')}, "
+            f"spike_train_bin_size_ms={meta.get('spike_train_bin_size_ms')}, "
             f"window_pre_s={meta.get('window_pre_s')}, "
             f"window_post_s={meta.get('window_post_s')}"
         )
@@ -82,6 +85,8 @@ def _print_trial_example(path: Path, *, max_bins: int = 12) -> None:
         f"interactive_state={row.get('interactive_state')}"
     )
     print(f"  sample_psth_counts_first_{len(preview)}bins: {preview.tolist()}")
+    if spike_train_counts.size > 0:
+        print(f"  sample_spike_train_counts_first_{len(spike_preview)}bins: {spike_preview.tolist()}")
 
 
 def main() -> None:
@@ -112,6 +117,7 @@ def main() -> None:
         include_interactive_state=cfg.get("include_interactive_state", True),
         interactive_high_label=cfg.get("interactive_high_label", "interactive"),
         bin_size_ms=cfg.get("bin_size_ms", 10.0),
+        spike_train_bin_size_ms=cfg.get("spike_train_bin_size_ms", 1.0),
         window_pre_s=cfg.get("window_pre_s", 1.0),
         window_post_s=cfg.get("window_post_s", 1.0),
         use_parallel=cfg.get("use_parallel", True),

@@ -5,6 +5,10 @@ CLI entrypoints for ephys feature generation.
 Current scripts:
 - `build_fixation_psth_trials.py`
   Builds per-fixation trial PSTH rows for all units in each date/session.
+  Each trial row stores:
+  - `psth_counts`: the configured PSTH counts (10 ms bins by default)
+  - `spike_train_counts`: a higher-resolution spike-train vector
+    (1 ms bins by default for fixation trials)
   Outputs are stored in `processed_data_root` under:
   `date=<date>/session=<session>/psth/fixations.pkl`
   (`fixations.pkl` is intentionally event-specific, not `shared.pkl`).
