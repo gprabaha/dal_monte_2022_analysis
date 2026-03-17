@@ -29,6 +29,7 @@ from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
 from dal_monte_2022_analysis.core.signal.cross_correlation import (
     assert_lag_axis_match as assert_lag_axis_match_shared,
     fft_cross_correlation,
+    normalize_cross_correlation_energy,
     summarize_cross_correlation,
 )
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
