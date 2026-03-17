@@ -76,6 +76,13 @@ _LEGACY_PICKLE_CLASS_MAP: dict[tuple[str, str], tuple[str, str]] = {
         "WidebandChannelData",
     ),
 }
+_LEGACY_BEHAVIORAL_MODULES = {
+    "dal_monte_2022_analysis.data.gaze_data",
+    "dal_monte_2022_analysis.data.behavioral_data",
+}
+_LEGACY_EPHYS_MODULES = {
+    "dal_monte_2022_analysis.data.spike_data",
+}
 
 
 class _LegacyAwareUnpickler(pickle.Unpickler):
@@ -88,10 +95,10 @@ class _LegacyAwareUnpickler(pickle.Unpickler):
             mod = importlib.import_module(target_module)
             return getattr(mod, target_name)
 
-        if module == "dal_monte_2022_analysis.data.gaze_data":
+        if module in _LEGACY_BEHAVIORAL_MODULES:
             mod = importlib.import_module("dal_monte_2022_analysis.data.records.behavioral")
             return getattr(mod, name)
-        if module == "dal_monte_2022_analysis.data.spike_data":
+        if module in _LEGACY_EPHYS_MODULES:
             mod = importlib.import_module("dal_monte_2022_analysis.data.records.ephys")
             return getattr(mod, name)
         return super().find_class(module, name)

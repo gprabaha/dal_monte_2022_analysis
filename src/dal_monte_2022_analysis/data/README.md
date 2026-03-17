@@ -11,7 +11,8 @@ Shared data model and loader/transform modules used by behavioral and ephys pipe
 
 ## Compatibility
 
-- `gaze_data.py` and `spike_data.py` are compatibility shims for historic pickle module paths.
+- `gaze_data.py`, `behavioral_data.py`, and `spike_data.py` are compatibility
+  shims for historic pickle module paths.
 - `migrations/pickle_modules.py` can rewrite stored pickles to canonical modules.
 
 ## Usage Notes

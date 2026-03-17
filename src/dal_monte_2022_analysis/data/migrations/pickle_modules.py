@@ -17,6 +17,7 @@ from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
 
 LEGACY_MODULE_TOKENS = (
     b"dal_monte_2022_analysis.data.gaze_data",
+    b"dal_monte_2022_analysis.data.behavioral_data",
     b"dal_monte_2022_analysis.data.spike_data",
 )
 
