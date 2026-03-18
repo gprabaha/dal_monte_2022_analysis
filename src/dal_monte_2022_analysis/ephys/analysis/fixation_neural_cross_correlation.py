@@ -184,7 +184,7 @@ def iter_fixation_neural_cross_correlation_output_paths(
     rows = scan_analysis_paths(
         cfg,
         output_subdir,
-        filename=_ensure_filename(output_filename),
+        filename=_ensure_filename(output_filename, ".pkl"),
         dates=[str(date)] if date is not None else None,
         sessions=[str(session)] if session is not None else None,
     )
