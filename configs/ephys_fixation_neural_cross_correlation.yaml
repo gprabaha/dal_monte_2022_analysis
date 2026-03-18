@@ -43,7 +43,8 @@ max_lag: null
 
 # Parallel/task controls.
 use_parallel: true
-max_procs: 32
+# null -> use the full CPU allocation detected from Slurm/local runtime.
+max_procs: null
 # Parallelize across sessions (each session computes fixation-neuron pairs serially).
 parallelize_across_sessions: true
 pair_chunk_size: 64
@@ -84,7 +85,7 @@ plot_subplot_ncols: 3
 plot_normalize_traces: false
 plot_normalization_method: max_abs
 plot_use_parallel: true
-plot_max_procs: 32
+plot_max_procs: null
 plot_parallelize_date_plots: true
 plot_parallelize_global_plots: true
 # null -> keep all pair traces

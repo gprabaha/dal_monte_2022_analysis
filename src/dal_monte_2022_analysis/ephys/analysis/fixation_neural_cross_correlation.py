@@ -63,7 +63,7 @@ class FixationNeuralCrossCorrelationSettings:
     xcorr_normalization: str = "energy"
     max_lag: Optional[int] = None
     use_parallel: bool = True
-    max_procs: int = 32
+    max_procs: Optional[int] = None
     parallelize_across_sessions: bool = True
     pair_chunk_size: int = 64
     test_single: bool = False
@@ -132,7 +132,7 @@ def build_fixation_neural_cross_correlation_settings_from_config(
         xcorr_normalization=cfg.get("xcorr_normalization", "energy"),
         max_lag=cfg.get("max_lag"),
         use_parallel=cfg.get("use_parallel", True),
-        max_procs=cfg.get("max_procs", 32),
+        max_procs=cfg.get("max_procs"),
         parallelize_across_sessions=cfg.get("parallelize_across_sessions", True),
         pair_chunk_size=cfg.get("pair_chunk_size", 64),
         test_single=cfg.get("test_single", False),

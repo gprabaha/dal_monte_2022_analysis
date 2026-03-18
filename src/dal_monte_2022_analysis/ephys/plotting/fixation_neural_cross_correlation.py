@@ -93,7 +93,7 @@ class FixationNeuralCrossCorrelationPlotSettings:
     normalization_method: str = "max_abs"
     subplot_ncols: int = 3
     use_parallel: bool = True
-    max_procs: int = 16
+    max_procs: Optional[int] = None
     parallelize_date_plots: bool = True
     parallelize_global_plots: bool = True
     random_seed: int = 13
