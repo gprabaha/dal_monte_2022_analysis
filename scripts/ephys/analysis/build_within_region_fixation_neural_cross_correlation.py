@@ -66,6 +66,16 @@ def main() -> None:
         "[analysis] within-region fixation neural xcorr: "
         f"wrote {summary.get('n_sessions_written', 0)}/{summary.get('n_sessions_total', 0)} session files"
     )
+    if summary.get("n_sessions_skipped", 0):
+        print(
+            "[analysis] within-region skipped sessions: "
+            f"{summary.get('n_sessions_skipped', 0)} "
+            f"(reasons={summary.get('skip_reason_counts', {})})"
+        )
+    if summary.get("session_report_path"):
+        print(f"[analysis] within-region session report: {summary['session_report_path']}")
+    if summary.get("skipped_session_report_path"):
+        print(f"[analysis] within-region skipped-session report: {summary['skipped_session_report_path']}")
 
     if not args.no_show_example:
         paths = iter_fixation_neural_cross_correlation_output_paths(

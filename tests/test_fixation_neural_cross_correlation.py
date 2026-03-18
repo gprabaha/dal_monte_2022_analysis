@@ -11,16 +11,42 @@ import numpy as np
 import pandas as pd
 
 from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation import (
+    CROSS_ANALYSIS_KIND,
     WITHIN_ANALYSIS_KIND,
     FixationNeuralCrossCorrelationSettings,
 )
 from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_helpers import (
+    _build_fixation_neural_cross_correlation_session_result,
     build_fixation_neural_cross_correlations_for_session,
 )
 
 
 class TestFixationNeuralCrossCorrelation(unittest.TestCase):
     """Checks 1 ms-style signal selection and saved lag metadata."""
+
+    def _write_trial_file(self, path: Path, trials_df: pd.DataFrame) -> None:
+        with path.open("wb") as f:
+            pickle.dump(
+                {
+                    "meta": {
+                        "date": "20990101",
+                        "session": "s1",
+                        "window_pre_s": 1.0,
+                        "window_post_s": 1.0,
+                        "spike_train_bin_centers_s_rel": np.asarray(
+                            [-0.75, -0.25, 0.25, 0.75],
+                            dtype=float,
+                        ),
+                        "spike_train_bin_edges_s_rel": np.asarray(
+                            [-1.0, -0.5, 0.0, 0.5, 1.0],
+                            dtype=float,
+                        ),
+                        "spike_train_bin_size_ms": 500.0,
+                    },
+                    "trials": trials_df,
+                },
+                f,
+            )
 
     def test_session_build_uses_windowed_spike_train_counts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -67,28 +93,7 @@ class TestFixationNeuralCrossCorrelation(unittest.TestCase):
                     },
                 ]
             )
-            with trial_path.open("wb") as f:
-                pickle.dump(
-                    {
-                        "meta": {
-                            "date": "20990101",
-                            "session": "s1",
-                            "window_pre_s": 1.0,
-                            "window_post_s": 1.0,
-                            "spike_train_bin_centers_s_rel": np.asarray(
-                                [-0.75, -0.25, 0.25, 0.75],
-                                dtype=float,
-                            ),
-                            "spike_train_bin_edges_s_rel": np.asarray(
-                                [-1.0, -0.5, 0.0, 0.5, 1.0],
-                                dtype=float,
-                            ),
-                            "spike_train_bin_size_ms": 500.0,
-                        },
-                        "trials": trials_df,
-                    },
-                    f,
-                )
+            self._write_trial_file(trial_path, trials_df)
 
             settings = FixationNeuralCrossCorrelationSettings(
                 cfg_path=str(root / "dataset.yaml"),
@@ -167,6 +172,81 @@ class TestFixationNeuralCrossCorrelation(unittest.TestCase):
             pair_row = pair_avg_df.iloc[0]
             self.assertEqual(str(pair_row["condition"]), "face_interactive")
             self.assertEqual(int(pair_row["n_fixations"]), 1)
+
+    def test_cross_region_session_result_reports_missing_partner_units(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            trial_path = root / "fixations_spike_train_1ms.pkl"
+
+            trials_df = pd.DataFrame(
+                [
+                    {
+                        "date": "20990101",
+                        "session": "s1",
+                        "unit_uuid": "u1",
+                        "region": "BLA",
+                        "spike_channel": "ch1",
+                        "fixation_agent": "m1",
+                        "fixation_monkey_name": "m1",
+                        "fixation_category": "face",
+                        "interactive_state": "interactive",
+                        "is_interactive": True,
+                        "fixation_start_idx": 10,
+                        "fixation_stop_idx": 12,
+                        "fixation_start_time_s": 0.0,
+                        "fixation_location": ("face",),
+                        "spike_train_counts": np.asarray([0.0, 1.0, 0.0, 0.0], dtype=float),
+                    },
+                    {
+                        "date": "20990101",
+                        "session": "s1",
+                        "unit_uuid": "u2",
+                        "region": "BLA",
+                        "spike_channel": "ch2",
+                        "fixation_agent": "m1",
+                        "fixation_monkey_name": "m1",
+                        "fixation_category": "face",
+                        "interactive_state": "interactive",
+                        "is_interactive": True,
+                        "fixation_start_idx": 10,
+                        "fixation_stop_idx": 12,
+                        "fixation_start_time_s": 0.0,
+                        "fixation_location": ("face",),
+                        "spike_train_counts": np.asarray([0.0, 0.0, 1.0, 0.0], dtype=float),
+                    },
+                ]
+            )
+            self._write_trial_file(trial_path, trials_df)
+
+            settings = FixationNeuralCrossCorrelationSettings(
+                cfg_path=str(root / "dataset.yaml"),
+                trial_input_modality="psth",
+                trial_input_filename="fixations_spike_train_1ms.pkl",
+                signal_input_column="spike_train_counts",
+                signal_window_ms=(-500.0, 500.0),
+                signal_transform="none",
+                xcorr_normalization="none",
+                max_lag=None,
+                use_parallel=False,
+                anchor_region="BLA",
+                partner_regions=("ACCg", "dmPFC", "OFC"),
+            )
+            result = _build_fixation_neural_cross_correlation_session_result(
+                settings,
+                {"path": trial_path, "date": "20990101", "session": "s1"},
+                analysis_kind=CROSS_ANALYSIS_KIND,
+                show_progress=False,
+            )
+
+            self.assertEqual(str(result["status"]), "skipped")
+            self.assertIsNone(result["data"])
+            row = result["session_report_row"]
+            self.assertEqual(str(row["skip_reason"]), "no_partner_region_units")
+            self.assertEqual(int(row["n_trial_rows"]), 2)
+            self.assertEqual(int(row["n_fixation_groups"]), 1)
+            self.assertEqual(int(row["n_unique_anchor_units"]), 2)
+            self.assertEqual(int(row["n_unique_partner_units"]), 0)
+            self.assertEqual(str(row["regions_present_in_fixation_groups"]), "bla")
 
 
 if __name__ == "__main__":

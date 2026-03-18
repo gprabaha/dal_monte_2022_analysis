@@ -100,6 +100,9 @@ Current scripts:
   Output pickle stores:
   - `cross_correlations` (per-fixation pair traces)
   - `pair_averages` (per-session pair averages by condition)
+  Writes run-level reports beside the session outputs:
+  - `session_report.csv`
+  - `skipped_sessions.csv`
 - `build_fixation_population_pca.py`
   Builds region-level population PCA outputs in a configurable time window
   (default `[-500, 500] ms`):
@@ -126,6 +129,9 @@ Current scripts:
   Output pickle stores:
   - `cross_correlations` (per-fixation pair traces)
   - `pair_averages` (per-session pair averages by condition)
+  Writes run-level reports beside the session outputs:
+  - `session_report.csv`
+  - `skipped_sessions.csv`
 
 Config:
 - `configs/ephys_fixation_psth.yaml`
