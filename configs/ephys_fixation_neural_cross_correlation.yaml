@@ -20,6 +20,20 @@ cross_output_filename: fixations.pkl
 within_pair_average_output_filename: pair_averages.pkl
 cross_pair_average_output_filename: pair_averages.pkl
 
+
+# Date-level pair meta-analysis over saved fixation xcorr outputs.
+# Each date output aggregates fixation-level traces across sessions by
+# neural pair and fixation condition, then tests whether the per-fixation
+# lag-mean is greater than 0.
+pair_meta_within_output_subdir: ephys/psth/fixation_neural_cross_correlation/pair_meta_analysis/within_region
+pair_meta_cross_output_subdir: ephys/psth/fixation_neural_cross_correlation/pair_meta_analysis/cross_region
+pair_meta_within_output_filename: pair_fixation_lag_mean_significance.pkl
+pair_meta_cross_output_filename: pair_fixation_lag_mean_significance.pkl
+pair_meta_within_output_csv_filename: pair_fixation_lag_mean_significance.csv
+pair_meta_cross_output_csv_filename: pair_fixation_lag_mean_significance.csv
+pair_meta_alpha: 0.05
+pair_meta_min_fixations: 2
+
 # Region selection.
 # Cross-region analysis computes anchor_region x partner_regions neuron pairs.
 # Within-region analysis computes nC2 pairs for each included region.

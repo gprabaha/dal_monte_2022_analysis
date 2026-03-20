@@ -103,6 +103,19 @@ Current scripts:
   Writes run-level reports beside the session outputs:
   - `session_report.csv` / `session_report_smoothed.csv`
   - `skipped_sessions.csv` / `skipped_sessions_smoothed.csv`
+
+- `build_within_region_fixation_neural_cross_correlation_pair_meta_analysis.py`
+  Aggregates saved within-region fixation neural xcorr outputs across sessions
+  within each date, grouped by neural pair and fixation condition.
+  Writes one date-level summary per signal source with:
+  - mean cross-correlation trace per pair/condition
+  - one-sided significance test for lag-mean > 0 across fixation instances
+- `build_cross_region_fixation_neural_cross_correlation_pair_meta_analysis.py`
+  Aggregates saved cross-region fixation neural xcorr outputs across sessions
+  within each date, grouped by neural pair and fixation condition.
+  Writes one date-level summary per signal source with:
+  - mean cross-correlation trace per pair/condition
+  - one-sided significance test for lag-mean > 0 across fixation instances
 - `build_fixation_population_pca.py`
   Builds region-level population PCA outputs in a configurable time window
   (default `[-500, 500] ms`):
@@ -243,6 +256,11 @@ Config:
   - `within_output_subdir` / `cross_output_subdir`
   - `within_output_filename` / `cross_output_filename`
   - `within_pair_average_output_filename` / `cross_pair_average_output_filename`
+  - `pair_meta_within_output_subdir` / `pair_meta_cross_output_subdir`
+  - `pair_meta_within_output_filename` / `pair_meta_cross_output_filename`
+  - `pair_meta_within_output_csv_filename` / `pair_meta_cross_output_csv_filename`
+  - `pair_meta_alpha`
+  - `pair_meta_min_fixations`
   - `anchor_region`
   - `partner_regions`
   - `include_regions`
