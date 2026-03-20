@@ -513,6 +513,23 @@ def _infer_fixation_category_from_locations(
     )
 
 
+def _resolve_fixation_category_from_row(
+    row,
+    *,
+    roi_groups: Optional[dict[str, list[str]]] = None,
+) -> Optional[str]:
+    category = _canonical_fixation_category(getattr(row, "fixation_category", None))
+    if category is not None:
+        return category
+
+    fixation_location = _coerce_location_tuple(getattr(row, "fixation_location", None))
+    if not fixation_location:
+        return None
+
+    resolved_roi_groups = roi_groups if roi_groups is not None else _normalize_roi_groups(None)
+    return _infer_fixation_category_from_locations(fixation_location, resolved_roi_groups)
+
+
 def _select_preferred_rows(
     preferred_rows: Sequence[dict],
     fallback_rows: Sequence[dict],
@@ -550,8 +567,9 @@ def _resolve_plot_condition_from_row(
     face_label: str,
     object_label: str,
     interactive_label: str,
+    roi_groups: Optional[dict[str, list[str]]] = None,
 ) -> Optional[str]:
-    category = _canonical_fixation_category(getattr(row, "fixation_category", None))
+    category = _resolve_fixation_category_from_row(row, roi_groups=roi_groups)
     if category is None:
         return None
 
@@ -1260,6 +1278,7 @@ def _build_session_pair_average_dataframe(
     face_label: str,
     object_label: str,
     interactive_label: str,
+    roi_groups: Optional[dict[str, list[str]]] = None,
 ) -> pd.DataFrame:
     if xcorr_df.empty or "cross_correlation" not in xcorr_df.columns:
         return pd.DataFrame()
@@ -1273,6 +1292,7 @@ def _build_session_pair_average_dataframe(
             face_label=face_label,
             object_label=object_label,
             interactive_label=interactive_label,
+            roi_groups=roi_groups,
         )
         if condition is None:
             continue
@@ -1480,6 +1500,7 @@ def _build_fixation_neural_cross_correlation_data_payload(
         face_label='face',
         object_label='object',
         interactive_label='interactive',
+        roi_groups=_normalize_roi_groups(settings.roi_groups),
     )
 
     signal_window_centers_s = np.asarray(signal_window_centers_s, dtype=float).reshape(-1)
@@ -2477,6 +2498,7 @@ def _aggregate_pair_averages_for_plotting(
     date_pair_accum: dict[tuple, list[object]] = {}
     kind_label = "within-region" if kind == WITHIN_ANALYSIS_KIND else "cross-region"
     valid_conditions = set(settings.condition_order)
+    roi_groups = _normalize_roi_groups(getattr(settings, "roi_groups", None))
 
     counts = {
         "files": 0,
@@ -2552,6 +2574,7 @@ def _aggregate_pair_averages_for_plotting(
                     face_label=settings.face_label,
                     object_label=settings.object_label,
                     interactive_label=settings.interactive_label,
+                    roi_groups=roi_groups,
                 )
                 weight = 1.0
             if condition is None:

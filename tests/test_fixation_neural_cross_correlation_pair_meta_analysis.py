@@ -236,6 +236,87 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
             self.assertEqual(int(smooth_row["n_fixations"]), 2)
             self.assertTrue(bool(smooth_row["significant_above_zero"]))
 
+
+    def test_pair_meta_analysis_uses_configured_roi_groups_for_condition_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            processed_root = root / "processed"
+            analysis_root = root / "analysis"
+            processed_root.mkdir(parents=True, exist_ok=True)
+            analysis_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, processed_root=processed_root, analysis_root=analysis_root)
+
+            within_root = analysis_root / "ephys/psth/fixation_neural_cross_correlation/within_region"
+            rows = [
+                {
+                    "date": "20990105",
+                    "session": "s1",
+                    "fixation_category": None,
+                    "fixation_location": ("custom_face_roi",),
+                    "interactive_state": "interactive",
+                    "is_interactive": True,
+                    "region_1": "BLA",
+                    "region_2": "BLA",
+                    "unit_uuid_1": "u1",
+                    "unit_uuid_2": "u2",
+                    "cross_correlation": np.asarray([0.1, 0.2, 0.3], dtype=float),
+                },
+                {
+                    "date": "20990105",
+                    "session": "s1",
+                    "fixation_category": None,
+                    "fixation_location": ("custom_object_roi",),
+                    "interactive_state": "non_interactive",
+                    "is_interactive": False,
+                    "region_1": "BLA",
+                    "region_2": "BLA",
+                    "unit_uuid_1": "u1",
+                    "unit_uuid_2": "u2",
+                    "cross_correlation": np.asarray([0.2, 0.1, 0.0], dtype=float),
+                },
+            ]
+            _write_xcorr_session_file(
+                within_root / "date=20990105" / "session=s1" / "fixations.pkl",
+                analysis_kind="within_region",
+                date="20990105",
+                session="s1",
+                signal_input_column="spike_train_counts",
+                rows=rows,
+            )
+
+            settings = FixationNeuralCrossCorrelationPairMetaAnalysisSettings(
+                cfg_path=str(cfg_path),
+                signal_input_column="spike_train_counts",
+                signal_input_columns=("spike_train_counts",),
+                roi_groups={
+                    "face": ("custom_face_roi",),
+                    "object": ("custom_object_roi",),
+                    "out_of_roi": ("custom_out_of_roi",),
+                },
+                min_fixations=1,
+            )
+            summary = run_within_region_fixation_neural_cross_correlation_pair_meta_analysis(
+                settings,
+                dates=["20990105"],
+                show_progress=False,
+            )
+
+            self.assertEqual(summary["n_date_signal_runs_total"], 1)
+            out_path = (
+                analysis_root
+                / "ephys/psth/fixation_neural_cross_correlation/pair_meta_analysis/within_region"
+                / "date=20990105"
+                / "pair_fixation_lag_mean_significance.pkl"
+            )
+            self.assertTrue(out_path.exists())
+            with out_path.open("rb") as f:
+                obj = pickle.load(f)
+            df = obj["pair_summaries"]
+            self.assertEqual(set(df["condition"].astype(str)), {"face_interactive", "object"})
+            self.assertEqual(int(df.loc[df["condition"].astype(str) == "face_interactive", "n_fixations"].iloc[0]), 1)
+            self.assertEqual(int(df.loc[df["condition"].astype(str) == "object", "n_fixations"].iloc[0]), 1)
+
     def test_cross_region_pair_meta_analysis_uses_date_level_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

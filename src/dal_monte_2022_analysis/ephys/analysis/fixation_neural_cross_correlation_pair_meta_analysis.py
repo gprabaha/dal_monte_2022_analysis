@@ -19,12 +19,14 @@ from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
 )
 from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_helpers import (
     CROSS_ANALYSIS_KIND,
+    DEFAULT_FIXATION_ROI_GROUPS,
     WITHIN_ANALYSIS_KIND,
     _PLOT_ALLOWED_ANALYSIS_KINDS,
     _PLOT_CONDITION_ORDER,
     _assert_lag_axis_match,
     _extract_xcorr_dataframes_and_meta,
     _normalize_region_pair_label,
+    _normalize_roi_groups,
     _resolve_plot_condition_from_row,
     _resolve_signal_input_columns,
     _resolve_signal_output_filename,
@@ -62,6 +64,9 @@ class FixationNeuralCrossCorrelationPairMetaAnalysisSettings:
     face_label: str = "face"
     object_label: str = "object"
     interactive_label: str = "interactive"
+    roi_groups: dict[str, Sequence[str]] = field(
+        default_factory=lambda: {k: tuple(v) for k, v in DEFAULT_FIXATION_ROI_GROUPS.items()},
+    )
     condition_order: Sequence[str] = field(default_factory=lambda: tuple(_PLOT_CONDITION_ORDER))
     alpha: float = 0.05
     min_fixations: int = 2
@@ -149,6 +154,7 @@ def build_fixation_neural_cross_correlation_pair_meta_analysis_settings_from_con
         face_label=cfg.get("pair_meta_face_label", "face"),
         object_label=cfg.get("pair_meta_object_label", "object"),
         interactive_label=cfg.get("pair_meta_interactive_label", "interactive"),
+        roi_groups=cfg.get("roi_groups"),
         condition_order=tuple(str(value) for value in condition_order),
         alpha=float(cfg.get("pair_meta_alpha", 0.05)),
         min_fixations=max(1, int(cfg.get("pair_meta_min_fixations", 2))),
@@ -330,6 +336,7 @@ def _build_date_pair_meta_result(
     used_row_count = 0
     skipped_row_count = 0
     valid_conditions = {str(name) for name in settings.condition_order}
+    roi_groups = _normalize_roi_groups(settings.roi_groups)
 
     for session_row in rows:
         input_paths.append(str(session_row["path"]))
@@ -363,6 +370,7 @@ def _build_date_pair_meta_result(
                 face_label=settings.face_label,
                 object_label=settings.object_label,
                 interactive_label=settings.interactive_label,
+                roi_groups=roi_groups,
             )
             if condition is None or str(condition) not in valid_conditions:
                 skipped_row_count += 1

@@ -266,6 +266,7 @@ def print_fixation_neural_cross_correlation_example(
         f"fixation_id={row.get('fixation_id')}, "
         f"region_1={row.get('region_1')}, unit_1={row.get('unit_uuid_1')}, "
         f"region_2={row.get('region_2')}, unit_2={row.get('unit_uuid_2')}, "
+        f"fixation_category={row.get('fixation_category')}, "
         f"interactive_state={row.get('interactive_state')}, "
         f"fixation_location={row.get('fixation_location')}"
     )
