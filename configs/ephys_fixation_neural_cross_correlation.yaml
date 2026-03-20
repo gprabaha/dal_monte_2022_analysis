@@ -7,7 +7,8 @@ trial_input_filename: fixations_spike_train_1ms.pkl
 # Legacy single-signal selector retained for direct single-column runs.
 signal_input_column: spike_train_counts
 # When multiple signal columns are listed here, raw outputs keep the legacy
-# subdir and each additional signal writes to its own child subdir.
+# filename and each additional signal adds a signal label suffix
+# (for example `_smoothed`) in the same date/session directory.
 signal_input_columns: [spike_train_counts, smoothed_spike_train_counts]
 
 # Outputs (stored under analysis_output_root).

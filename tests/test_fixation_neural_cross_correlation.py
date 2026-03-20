@@ -290,18 +290,16 @@ class TestFixationNeuralCrossCorrelation(unittest.TestCase):
             smooth_xcorr_path = (
                 analysis_root
                 / "ephys/psth/fixation_neural_cross_correlation/within_region"
-                / "smoothed"
                 / "date=20990101"
                 / "session=s1"
-                / "fixations.pkl"
+                / "fixations_smoothed.pkl"
             )
             smooth_pair_avg_path = (
                 analysis_root
                 / "ephys/psth/fixation_neural_cross_correlation/within_region"
-                / "smoothed"
                 / "date=20990101"
                 / "session=s1"
-                / "pair_averages.pkl"
+                / "pair_averages_smoothed.pkl"
             )
 
             self.assertTrue(raw_xcorr_path.exists())

@@ -16,7 +16,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_he
     _PLOT_ALLOWED_ANALYSIS_KINDS,
     _extract_xcorr_dataframes_and_meta,
     _resolve_signal_input_columns,
-    _resolve_signal_output_subdir,
+    _resolve_signal_output_filename,
     _run_fixation_neural_cross_correlation_analysis,
     FixationNeuralCrossCorrelationPlotAggregationSettings,
     build_cross_region_fixation_neural_cross_correlation_plot_payload,
@@ -193,13 +193,14 @@ def iter_fixation_neural_cross_correlation_output_paths(
 ) -> list[Path]:
     """List analysis output files for one cross-correlation analysis kind."""
     cfg = load_config(dataset_cfg_path)
-    resolved_subdir = output_subdir
+    resolved_subdir = str(output_subdir).rstrip("/")
+    resolved_filename = _ensure_filename(output_filename, ".pkl")
     if signal_input_column is not None:
-        resolved_subdir = _resolve_signal_output_subdir(output_subdir, signal_input_column)
+        resolved_filename = _resolve_signal_output_filename(resolved_filename, signal_input_column)
     rows = scan_analysis_paths(
         cfg,
         resolved_subdir,
-        filename=_ensure_filename(output_filename, ".pkl"),
+        filename=resolved_filename,
         dates=[str(date)] if date is not None else None,
         sessions=[str(session)] if session is not None else None,
     )

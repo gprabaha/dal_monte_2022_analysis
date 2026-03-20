@@ -376,12 +376,21 @@ def _signal_output_label(signal_column: str) -> str:
     return normalized or "signal"
 
 
-def _resolve_signal_output_subdir(base_subdir: str, signal_column: str) -> str:
-    base = str(base_subdir).rstrip("/")
+def _resolve_signal_output_suffix(signal_column: str) -> str:
     label = _signal_output_label(signal_column)
     if label == "raw":
-        return base
-    return f"{base}/{label}"
+        return ""
+    return f"_{label}"
+
+
+def _resolve_signal_output_filename(base_filename: str, signal_column: str) -> str:
+    filename = Path(str(base_filename).strip() or "output")
+    suffix = _resolve_signal_output_suffix(signal_column)
+    if not suffix:
+        return filename.name
+    if filename.suffix:
+        return f"{filename.stem}{suffix}{filename.suffix}"
+    return f"{filename.name}{suffix}"
 
 
 def _signal_meta_keys(signal_column: str) -> dict[str, str]:
@@ -1065,13 +1074,13 @@ def _build_session_output_path(
 
     signal_column = str(settings.signal_input_column).strip() or "spike_train_counts"
     if analysis_kind == WITHIN_ANALYSIS_KIND:
-        subdir = _resolve_signal_output_subdir(settings.within_output_subdir, signal_column)
+        subdir = str(settings.within_output_subdir).rstrip("/")
         if output_kind == "xcorr":
             filename = settings.within_output_filename
         else:
             filename = settings.within_pair_average_output_filename
     elif analysis_kind == CROSS_ANALYSIS_KIND:
-        subdir = _resolve_signal_output_subdir(settings.cross_output_subdir, signal_column)
+        subdir = str(settings.cross_output_subdir).rstrip("/")
         if output_kind == "xcorr":
             filename = settings.cross_output_filename
         else:
@@ -1079,6 +1088,7 @@ def _build_session_output_path(
     else:
         raise ValueError(f"Unsupported analysis_kind='{analysis_kind}'.")
 
+    filename = _resolve_signal_output_filename(filename, signal_column)
     output_root = build_analysis_output_dir(cfg, subdir)
     return output_root / f"date={date}" / f"session={session}" / _ensure_filename(filename, ".pkl")
 
@@ -1092,12 +1102,13 @@ def _build_session_report_output_path(
 ) -> Path:
     signal_column = str(settings.signal_input_column).strip() or "spike_train_counts"
     if analysis_kind == WITHIN_ANALYSIS_KIND:
-        subdir = _resolve_signal_output_subdir(settings.within_output_subdir, signal_column)
+        subdir = str(settings.within_output_subdir).rstrip("/")
     elif analysis_kind == CROSS_ANALYSIS_KIND:
-        subdir = _resolve_signal_output_subdir(settings.cross_output_subdir, signal_column)
+        subdir = str(settings.cross_output_subdir).rstrip("/")
     else:
         raise ValueError(f"Unsupported analysis_kind='{analysis_kind}'.")
-    return build_analysis_output_dir(cfg, subdir) / filename
+    resolved_filename = _resolve_signal_output_filename(filename, signal_column)
+    return build_analysis_output_dir(cfg, subdir) / resolved_filename
 
 
 def _write_session_report_csvs(
