@@ -9,6 +9,7 @@ from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
+from scipy.ndimage import gaussian_filter1d
 
 try:
     from dal_monte_2022_analysis.data.records.ephys import EphysUnitContext, UnitSpikeData
@@ -125,16 +126,24 @@ class TestFixationPSTHTrialSpikeTrainStorage(unittest.TestCase):
         self.assertEqual(float(meta["bin_size_ms"]), 10.0)
         self.assertEqual(float(meta["bin_step_ms"]), 10.0)
         self.assertEqual(float(meta["spike_train_bin_size_ms"]), 1.0)
+        self.assertEqual(float(meta["spike_train_smoothing_sigma_bins"]), 2.0)
         self.assertEqual(len(np.asarray(meta["bin_centers_s_rel"], dtype=float)), 3)
         self.assertEqual(len(np.asarray(meta["spike_train_bin_centers_s_rel"], dtype=float)), 30)
 
         trial_row = trial_df.iloc[0]
         psth_counts = np.asarray(trial_row["psth_counts"], dtype=int).reshape(-1)
         spike_train_counts = np.asarray(trial_row["spike_train_counts"], dtype=int).reshape(-1)
+        smoothed_spike_train_counts = np.asarray(trial_row["smoothed_spike_train_counts"], dtype=float).reshape(-1)
 
         self.assertTrue(np.array_equal(psth_counts, np.asarray([2, 2, 2], dtype=int)))
         self.assertEqual(int(spike_train_counts.sum()), 6)
         self.assertEqual(np.flatnonzero(spike_train_counts).tolist(), [0, 9, 10, 19, 20, 29])
+        self.assertTrue(
+            np.allclose(
+                smoothed_spike_train_counts,
+                gaussian_filter1d(spike_train_counts.astype(np.float32), sigma=2.0, mode="nearest"),
+            )
+        )
 
     def test_trial_builder_can_store_spike_train_only_outputs(self) -> None:
         settings = FixationPSTHSettings(
@@ -158,9 +167,11 @@ class TestFixationPSTHTrialSpikeTrainStorage(unittest.TestCase):
         self.assertNotIn("bin_size_ms", meta)
         self.assertNotIn("bin_centers_s_rel", meta)
         self.assertEqual(float(meta["spike_train_bin_size_ms"]), 1.0)
+        self.assertEqual(float(meta["spike_train_smoothing_sigma_bins"]), 2.0)
         self.assertIn("spike_train_bin_centers_s_rel", meta)
         self.assertNotIn("psth_counts", trial_row.index)
         self.assertIn("spike_train_counts", trial_row.index)
+        self.assertIn("smoothed_spike_train_counts", trial_row.index)
 
     def test_trial_builder_supports_overlapping_psth_windows(self) -> None:
         settings = FixationPSTHSettings(

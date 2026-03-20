@@ -3,6 +3,7 @@
 This legacy entrypoint preserves the combined trial file that stores both:
 - `psth_counts` at the configured PSTH bin size
 - `spike_train_counts` at the configured spike-train bin size
+- `smoothed_spike_train_counts` using Gaussian smoothing on the 1 ms train
 
 Newer explicit entrypoints split those signals into separate files.
 """
@@ -55,7 +56,7 @@ TRIAL_BUILD_PROFILES = {
         "store_spike_train_counts": False,
     },
     "spike_train_1ms": {
-        "description": "Build 1 ms fixation-aligned trial spike-train counts.",
+        "description": "Build 1 ms fixation-aligned trial spike-train counts plus a smoothed copy.",
         "trial_output_filename": "fixations_spike_train_1ms.pkl",
         "bin_size_ms": 10.0,
         "bin_step_ms": 10.0,
@@ -114,6 +115,7 @@ def _print_trial_example(path: Path, *, max_bins: int = 12) -> None:
             f"bin_size_ms={meta.get('bin_size_ms')}, "
             f"bin_step_ms={meta.get('bin_step_ms')}, "
             f"spike_train_bin_size_ms={meta.get('spike_train_bin_size_ms')}, "
+            f"spike_train_smoothing_sigma_bins={meta.get('spike_train_smoothing_sigma_bins')}, "
             f"window_pre_s={meta.get('window_pre_s')}, "
             f"window_post_s={meta.get('window_post_s')}"
         )
@@ -135,6 +137,13 @@ def _print_trial_example(path: Path, *, max_bins: int = 12) -> None:
         spike_counts = np.asarray(row.get("spike_train_counts"), dtype=float).reshape(-1)
         spike_preview = spike_counts[: max(1, int(max_bins))]
         print(f"  sample_spike_train_counts_first_{len(spike_preview)}bins: {spike_preview.tolist()}")
+    if "smoothed_spike_train_counts" in row:
+        smoothed = np.asarray(row.get("smoothed_spike_train_counts"), dtype=float).reshape(-1)
+        smoothed_preview = smoothed[: max(1, int(max_bins))]
+        print(
+            f"  sample_smoothed_spike_train_counts_first_{len(smoothed_preview)}bins: "
+            f"{smoothed_preview.tolist()}"
+        )
 
 
 def _build_settings(
@@ -162,6 +171,8 @@ def _build_settings(
     if spike_train_bin_size_ms is None:
         spike_train_bin_size_ms = cfg.get("spike_train_bin_size_ms", 1.0)
 
+    spike_train_smoothing_sigma_bins = cfg.get("spike_train_smoothing_sigma_bins", 2.0)
+
     return FixationPSTHSettings(
         cfg_path=dataset_cfg,
         ephys_cfg_path=ephys_cfg,
@@ -178,6 +189,7 @@ def _build_settings(
         bin_size_ms=bin_size_ms,
         bin_step_ms=bin_step_ms,
         spike_train_bin_size_ms=spike_train_bin_size_ms,
+        spike_train_smoothing_sigma_bins=spike_train_smoothing_sigma_bins,
         store_psth_counts=bool(profile["store_psth_counts"]),
         store_spike_train_counts=bool(profile["store_spike_train_counts"]),
         window_pre_s=cfg.get("window_pre_s", 1.0),

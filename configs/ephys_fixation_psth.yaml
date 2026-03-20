@@ -24,6 +24,9 @@ bin_size_ms: 10.0
 # Additional fixation-trial spike-train output kept at 1 ms resolution for
 # exact rasters and spike-based cross-correlation analysis.
 spike_train_bin_size_ms: 1.0
+# Gaussian smoothing applied to the saved 1 ms spike train. Sigma is expressed
+# in 1 ms bins, so the default of 2.0 corresponds to a 2 ms standard deviation.
+spike_train_smoothing_sigma_bins: 2.0
 window_pre_s: 1.0
 window_post_s: 1.0
 include_interactive_state: true

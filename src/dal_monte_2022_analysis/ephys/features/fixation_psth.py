@@ -77,6 +77,7 @@ class FixationPSTHSettings:
     bin_size_ms: float = 10.0
     bin_step_ms: Optional[float] = None
     spike_train_bin_size_ms: float = 1.0
+    spike_train_smoothing_sigma_bins: float = 2.0
     store_psth_counts: bool = True
     store_spike_train_counts: bool = True
     window_pre_s: float = 1.0
@@ -133,6 +134,12 @@ def _build_average_output_path(cfg: dict, date: str, settings: FixationPSTHAvera
 def _validate_trial_output_settings(settings: FixationPSTHSettings) -> None:
     if not bool(settings.store_psth_counts) and not bool(settings.store_spike_train_counts):
         raise ValueError("At least one of store_psth_counts or store_spike_train_counts must be enabled.")
+    if bool(settings.store_spike_train_counts):
+        sigma = float(settings.spike_train_smoothing_sigma_bins)
+        if not np.isfinite(sigma) or sigma < 0.0:
+            raise ValueError(
+                "spike_train_smoothing_sigma_bins must be >= 0 when spike-train storage is enabled."
+            )
 
 
 def _build_trial_bin_layout(
@@ -220,6 +227,26 @@ def _count_spikes_in_layout(spike_times_rel_s: np.ndarray, layout: TrialBinLayou
     left_idx = np.searchsorted(spike_arr, layout.left_edges_s_rel, side="left")
     right_idx = np.searchsorted(spike_arr, layout.right_edges_s_rel, side="left")
     return right_idx - left_idx
+
+
+def _smooth_spike_train_counts(
+    spike_train_counts: np.ndarray,
+    *,
+    sigma_bins: float,
+) -> np.ndarray:
+    spike_train = np.asarray(spike_train_counts, dtype=np.float32).reshape(-1)
+    if spike_train.size == 0:
+        return spike_train.copy()
+
+    sigma = float(sigma_bins)
+    if not np.isfinite(sigma) or sigma < 0.0:
+        raise ValueError("spike_train_smoothing_sigma_bins must be >= 0.")
+    if sigma == 0.0:
+        return spike_train.copy()
+
+    smoothed = np.empty_like(spike_train, dtype=np.float32)
+    gaussian_filter1d(spike_train, sigma=sigma, mode="nearest", output=smoothed)
+    return smoothed
 
 
 def _iter_interactive_periods(df: Optional[pd.DataFrame]) -> list[tuple[int, int, str]]:
@@ -383,17 +410,21 @@ def _build_session_events(
 _GLOBAL_TRIAL_EVENTS: list[dict] = []
 _GLOBAL_PSTH_BIN_LAYOUT: Optional[TrialBinLayout] = None
 _GLOBAL_SPIKE_TRAIN_BIN_LAYOUT: Optional[TrialBinLayout] = None
+_GLOBAL_SPIKE_TRAIN_SMOOTHING_SIGMA_BINS: float = 2.0
 
 
 def _init_trial_worker(
     events: list[dict],
     psth_bin_layout: Optional[TrialBinLayout],
     spike_train_bin_layout: Optional[TrialBinLayout],
+    spike_train_smoothing_sigma_bins: float,
 ) -> None:
     global _GLOBAL_TRIAL_EVENTS, _GLOBAL_PSTH_BIN_LAYOUT, _GLOBAL_SPIKE_TRAIN_BIN_LAYOUT
+    global _GLOBAL_SPIKE_TRAIN_SMOOTHING_SIGMA_BINS
     _GLOBAL_TRIAL_EVENTS = events
     _GLOBAL_PSTH_BIN_LAYOUT = psth_bin_layout
     _GLOBAL_SPIKE_TRAIN_BIN_LAYOUT = spike_train_bin_layout
+    _GLOBAL_SPIKE_TRAIN_SMOOTHING_SIGMA_BINS = float(spike_train_smoothing_sigma_bins)
 
 
 def _compute_unit_trial_rows(unit_payload: dict) -> list[dict]:
@@ -418,6 +449,10 @@ def _compute_unit_trial_rows(unit_payload: dict) -> list[dict]:
         if _GLOBAL_SPIKE_TRAIN_BIN_LAYOUT is not None:
             spike_train_counts = _count_spikes_in_layout(rel, _GLOBAL_SPIKE_TRAIN_BIN_LAYOUT)
             row["spike_train_counts"] = np.asarray(spike_train_counts, dtype=np.int16)
+            row["smoothed_spike_train_counts"] = _smooth_spike_train_counts(
+                spike_train_counts,
+                sigma_bins=_GLOBAL_SPIKE_TRAIN_SMOOTHING_SIGMA_BINS,
+            )
         rows.append(row)
     return rows
 
@@ -425,18 +460,22 @@ def _compute_unit_trial_rows(unit_payload: dict) -> list[dict]:
 _GLOBAL_FIXATION_EVENTS_BY_DATE: dict[str, list[dict]] = {}
 _GLOBAL_FIXATION_PSTH_BIN_LAYOUT: Optional[TrialBinLayout] = None
 _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_LAYOUT: Optional[TrialBinLayout] = None
+_GLOBAL_FIXATION_SPIKE_TRAIN_SMOOTHING_SIGMA_BINS: float = 2.0
 
 
 def _init_fixation_unit_worker(
     events_by_date: dict[str, list[dict]],
     psth_bin_layout: Optional[TrialBinLayout],
     spike_train_bin_layout: Optional[TrialBinLayout],
+    spike_train_smoothing_sigma_bins: float,
 ) -> None:
     global _GLOBAL_FIXATION_EVENTS_BY_DATE
     global _GLOBAL_FIXATION_PSTH_BIN_LAYOUT, _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_LAYOUT
+    global _GLOBAL_FIXATION_SPIKE_TRAIN_SMOOTHING_SIGMA_BINS
     _GLOBAL_FIXATION_EVENTS_BY_DATE = events_by_date
     _GLOBAL_FIXATION_PSTH_BIN_LAYOUT = psth_bin_layout
     _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_LAYOUT = spike_train_bin_layout
+    _GLOBAL_FIXATION_SPIKE_TRAIN_SMOOTHING_SIGMA_BINS = float(spike_train_smoothing_sigma_bins)
 
 
 def _compute_unit_rows_across_fixation_sessions(
@@ -470,6 +509,10 @@ def _compute_unit_rows_across_fixation_sessions(
             if _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_LAYOUT is not None:
                 spike_train_counts = _count_spikes_in_layout(rel, _GLOBAL_FIXATION_SPIKE_TRAIN_BIN_LAYOUT)
                 row["spike_train_counts"] = np.asarray(spike_train_counts, dtype=np.int16)
+                row["smoothed_spike_train_counts"] = _smooth_spike_train_counts(
+                    spike_train_counts,
+                    sigma_bins=_GLOBAL_FIXATION_SPIKE_TRAIN_SMOOTHING_SIGMA_BINS,
+                )
             session_rows.append(row)
         if session_rows:
             rows_by_session[(session_date, session_name)] = session_rows
@@ -504,13 +547,23 @@ def build_fixation_psth_trials_for_session(
         with Pool(
             processes=n_proc,
             initializer=_init_trial_worker,
-            initargs=(events, psth_bin_layout, spike_train_bin_layout),
+            initargs=(
+                events,
+                psth_bin_layout,
+                spike_train_bin_layout,
+                float(settings.spike_train_smoothing_sigma_bins),
+            ),
         ) as pool:
             for unit_rows in pool.imap_unordered(_compute_unit_trial_rows, payloads):
                 if unit_rows:
                     all_rows.extend(unit_rows)
     else:
-        _init_trial_worker(events, psth_bin_layout, spike_train_bin_layout)
+        _init_trial_worker(
+            events,
+            psth_bin_layout,
+            spike_train_bin_layout,
+            float(settings.spike_train_smoothing_sigma_bins),
+        )
         for payload in payloads:
             unit_rows = _compute_unit_trial_rows(payload)
             if unit_rows:
@@ -585,6 +638,7 @@ def _build_fixation_trial_meta(
                 "spike_train_bin_left_edges_s_rel": spike_train_bin_layout.left_edges_s_rel,
                 "spike_train_bin_right_edges_s_rel": spike_train_bin_layout.right_edges_s_rel,
                 "spike_train_bin_centers_s_rel": spike_train_bin_layout.centers_s_rel,
+                "spike_train_smoothing_sigma_bins": float(settings.spike_train_smoothing_sigma_bins),
             }
         )
     return meta
@@ -732,7 +786,12 @@ def run_fixation_psth_trial_build(
         with Pool(
             processes=n_proc,
             initializer=_init_fixation_unit_worker,
-            initargs=(session_events_by_date, psth_bin_layout, spike_train_bin_layout),
+            initargs=(
+                session_events_by_date,
+                psth_bin_layout,
+                spike_train_bin_layout,
+                float(settings.spike_train_smoothing_sigma_bins),
+            ),
         ) as pool:
             iterator = pool.imap_unordered(_compute_unit_rows_across_fixation_sessions, payloads)
             for unit_date, rows_by_session in tqdm(
@@ -743,7 +802,12 @@ def run_fixation_psth_trial_build(
             ):
                 _accumulate_and_flush(str(unit_date), rows_by_session)
     else:
-        _init_fixation_unit_worker(session_events_by_date, psth_bin_layout, spike_train_bin_layout)
+        _init_fixation_unit_worker(
+            session_events_by_date,
+            psth_bin_layout,
+            spike_train_bin_layout,
+            float(settings.spike_train_smoothing_sigma_bins),
+        )
         for payload in tqdm(payloads, desc="Building fixation PSTH trials", unit="unit"):
             unit_date, rows_by_session = _compute_unit_rows_across_fixation_sessions(payload)
             _accumulate_and_flush(str(unit_date), rows_by_session)
