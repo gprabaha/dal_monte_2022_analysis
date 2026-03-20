@@ -759,6 +759,21 @@ def _fft_cross_correlation(
     return fft_cross_correlation(x, y, max_lag=max_lag, round_to_int=False)
 
 
+def _build_cross_correlation_lag_axis(
+    n_x: int,
+    n_y: int,
+    *,
+    max_lag: Optional[int],
+) -> np.ndarray:
+    if n_x <= 0 or n_y <= 0:
+        return np.array([], dtype=np.int64)
+    lags = np.arange(-(int(n_y) - 1), int(n_x), dtype=np.int64)
+    if max_lag is not None:
+        keep = np.abs(lags) <= int(max(0, int(max_lag)))
+        lags = lags[keep]
+    return lags
+
+
 def _normalize_cross_correlation(
     corr: np.ndarray,
     x: np.ndarray,
@@ -813,15 +828,25 @@ def _compute_pair_xcorr_worker(task: tuple[int, int, int]) -> Optional[dict]:
 
     signal_1 = _apply_signal_transform(unit_1["signal"], _GLOBAL_SIGNAL_TRANSFORM)
     signal_2 = _apply_signal_transform(unit_2["signal"], _GLOBAL_SIGNAL_TRANSFORM)
-    lags, corr = _fft_cross_correlation(signal_1, signal_2, max_lag=_GLOBAL_MAX_LAG)
-    if corr.size == 0:
-        return None
-    corr = _normalize_cross_correlation(
-        corr,
-        signal_1,
-        signal_2,
-        normalization=_GLOBAL_XCORR_NORMALIZATION,
-    )
+    if not np.any(signal_1) or not np.any(signal_2):
+        lags = _build_cross_correlation_lag_axis(
+            signal_1.size,
+            signal_2.size,
+            max_lag=_GLOBAL_MAX_LAG,
+        )
+        if lags.size == 0:
+            return None
+        corr = np.zeros(lags.shape, dtype=np.float64)
+    else:
+        lags, corr = _fft_cross_correlation(signal_1, signal_2, max_lag=_GLOBAL_MAX_LAG)
+        if corr.size == 0:
+            return None
+        corr = _normalize_cross_correlation(
+            corr,
+            signal_1,
+            signal_2,
+            normalization=_GLOBAL_XCORR_NORMALIZATION,
+        )
 
     row = {
         **fixation_meta,
@@ -850,6 +875,276 @@ def _compute_pair_xcorr_worker(task: tuple[int, int, int]) -> Optional[dict]:
     }
     row.update(_summarize_cross_correlation(lags, corr))
     return row
+
+
+def _resolve_signal_specs(
+    trial_df: pd.DataFrame,
+    trial_meta: dict,
+    session_row: dict,
+    *,
+    signal_columns: Sequence[str],
+    signal_window_ms: Optional[tuple[float, float]],
+) -> dict[str, dict[str, Optional[np.ndarray] | Optional[float]]]:
+    specs: dict[str, dict[str, Optional[np.ndarray] | Optional[float]]] = {}
+    for signal_column in signal_columns:
+        if signal_column not in trial_df.columns:
+            raise ValueError(
+                f"Trial file {session_row['path']} is missing required neural xcorr signal column "
+                f"'{signal_column}'."
+            )
+
+        signal_bin_centers_s = _resolve_signal_bin_centers_from_meta(
+            trial_meta,
+            signal_column=signal_column,
+        )
+        if signal_bin_centers_s is None:
+            raise ValueError(
+                f"Trial file {session_row['path']} is missing bin-center metadata for "
+                f"signal column '{signal_column}'."
+            )
+        signal_bin_edges_s = _resolve_signal_bin_edges_from_meta(
+            trial_meta,
+            signal_column=signal_column,
+        )
+        signal_bin_size_ms = _resolve_signal_bin_size_ms_from_meta(
+            trial_meta,
+            signal_column=signal_column,
+            signal_bin_centers_s=signal_bin_centers_s,
+        )
+        signal_bin_mask = _build_signal_window_mask(
+            signal_bin_centers_s,
+            signal_window_ms=signal_window_ms,
+        )
+        if signal_bin_mask.size != signal_bin_centers_s.size or not np.any(signal_bin_mask):
+            raise ValueError(
+                f"Resolved empty neural xcorr signal window for {session_row['path']} "
+                f"and signal column '{signal_column}'."
+            )
+
+        signal_window_centers_s = np.asarray(signal_bin_centers_s, dtype=float)[signal_bin_mask]
+        signal_window_edges_s: Optional[np.ndarray] = None
+        if signal_bin_edges_s is not None and signal_bin_edges_s.size == signal_bin_centers_s.size + 1:
+            selected_idx = np.flatnonzero(signal_bin_mask)
+            if selected_idx.size:
+                start_idx = int(selected_idx[0])
+                stop_idx = int(selected_idx[-1]) + 1
+                signal_window_edges_s = np.asarray(
+                    signal_bin_edges_s[start_idx : stop_idx + 1],
+                    dtype=float,
+                ).reshape(-1)
+
+        specs[str(signal_column)] = {
+            "signal_bin_mask": np.asarray(signal_bin_mask, dtype=bool),
+            "signal_window_centers_s": np.asarray(signal_window_centers_s, dtype=float).reshape(-1),
+            "signal_window_edges_s": signal_window_edges_s,
+            "signal_bin_size_ms": signal_bin_size_ms,
+        }
+    return specs
+
+
+def _extract_masked_signal_from_row(
+    row,
+    *,
+    signal_column: str,
+    signal_bin_mask: Optional[np.ndarray],
+) -> Optional[np.ndarray]:
+    signal = np.asarray(getattr(row, signal_column, []), dtype=np.float64).reshape(-1)
+    if signal.size == 0:
+        return None
+    if signal_bin_mask is not None:
+        if signal.shape != signal_bin_mask.shape:
+            raise ValueError(
+                f"Encountered {signal_column} length {signal.size} that does not match "
+                f"signal window mask length {signal_bin_mask.size}."
+            )
+        signal = signal[np.asarray(signal_bin_mask, dtype=bool)]
+    if signal.size == 0:
+        return None
+    if not np.isfinite(signal).all():
+        signal = np.where(np.isfinite(signal), signal, 0.0)
+    return signal
+
+
+def _collect_fixation_groups_multi_signal(
+    trial_df: pd.DataFrame,
+    *,
+    default_date: str,
+    default_session: str,
+    include_region_keys: Optional[set[str]],
+    roi_groups: dict[str, list[str]],
+    signal_specs: dict[str, dict[str, object]],
+) -> list[dict]:
+    grouped: dict[tuple, dict] = {}
+    order: list[tuple] = []
+
+    signal_columns = tuple(signal_specs)
+    primary_signal_column = signal_columns[0] if signal_columns else None
+
+    for row_index, row in enumerate(trial_df.itertuples(index=False)):
+        signal_map: dict[str, np.ndarray] = {}
+        for signal_column in signal_columns:
+            spec = signal_specs[signal_column]
+            signal = _extract_masked_signal_from_row(
+                row,
+                signal_column=signal_column,
+                signal_bin_mask=spec.get("signal_bin_mask"),
+            )
+            if signal is not None:
+                signal_map[signal_column] = signal
+        if not signal_map:
+            continue
+
+        unit_uuid = _as_optional_str(getattr(row, "unit_uuid", None))
+        if unit_uuid is None:
+            continue
+
+        region_raw = _resolve_region_for_row(row)
+        region_key = _canonical_region_name(region_raw)
+        if region_key is None:
+            continue
+        if include_region_keys is not None and region_key not in include_region_keys:
+            continue
+
+        key, fixation_meta = _build_fixation_key_and_meta(
+            row,
+            row_index,
+            default_date=default_date,
+            default_session=default_session,
+            roi_groups=roi_groups,
+        )
+        if key not in grouped:
+            fixation_meta["fixation_id"] = int(len(order))
+            grouped[key] = {"meta": fixation_meta, "units": {}}
+            order.append(key)
+
+        unit_key = (str(unit_uuid), str(region_key))
+        if unit_key in grouped[key]["units"]:
+            continue
+
+        primary_signal = signal_map.get(primary_signal_column) if primary_signal_column is not None else None
+        if primary_signal is None:
+            primary_signal = next(iter(signal_map.values()))
+
+        grouped[key]["units"][unit_key] = {
+            "unit_uuid": str(unit_uuid),
+            "region": region_raw,
+            "region_key": str(region_key),
+            "spike_channel": _as_optional_str(getattr(row, "spike_channel", None)),
+            "session_name": _as_optional_str(getattr(row, "session_name", None)),
+            "recorded_agent": _as_optional_str(getattr(row, "recorded_agent", None)),
+            "recorded_monkey": _as_optional_str(getattr(row, "recorded_monkey", None)),
+            "area": _as_optional_str(getattr(row, "area", None)),
+            "signal": primary_signal,
+            "signals": signal_map,
+        }
+
+    out: list[dict] = []
+    for key in order:
+        payload = grouped[key]
+        units = list(payload["units"].values())
+        if not units:
+            continue
+        units.sort(key=lambda unit: (unit["region_key"], unit["unit_uuid"]))
+        out.append({"meta": payload["meta"], "units": units})
+    return out
+
+
+_GLOBAL_MULTI_FIXATION_META: list[dict] = []
+_GLOBAL_MULTI_SIGNAL_ENTRIES: list[dict] = []
+_GLOBAL_MULTI_SIGNAL_COLUMNS: tuple[str, ...] = tuple()
+_GLOBAL_MULTI_SIGNAL_TRANSFORM: str = "none"
+_GLOBAL_MULTI_MAX_LAG: Optional[int] = None
+_GLOBAL_MULTI_XCORR_NORMALIZATION: str = "energy"
+
+
+def _init_multi_signal_pair_worker(
+    fixation_meta: list[dict],
+    signal_entries: list[dict],
+    signal_columns: Sequence[str],
+    signal_transform: str,
+    max_lag: Optional[int],
+    xcorr_normalization: str,
+) -> None:
+    global _GLOBAL_MULTI_FIXATION_META, _GLOBAL_MULTI_SIGNAL_ENTRIES
+    global _GLOBAL_MULTI_SIGNAL_COLUMNS, _GLOBAL_MULTI_SIGNAL_TRANSFORM
+    global _GLOBAL_MULTI_MAX_LAG, _GLOBAL_MULTI_XCORR_NORMALIZATION
+    _GLOBAL_MULTI_FIXATION_META = fixation_meta
+    _GLOBAL_MULTI_SIGNAL_ENTRIES = signal_entries
+    _GLOBAL_MULTI_SIGNAL_COLUMNS = tuple(str(value) for value in signal_columns)
+    _GLOBAL_MULTI_SIGNAL_TRANSFORM = signal_transform
+    _GLOBAL_MULTI_MAX_LAG = max_lag
+    _GLOBAL_MULTI_XCORR_NORMALIZATION = _validate_xcorr_normalization(xcorr_normalization)
+
+
+def _compute_pair_multi_signal_xcorr_worker(task: tuple[int, int, int]) -> Optional[dict[str, dict]]:
+    fixation_idx, signal_idx_1, signal_idx_2 = task
+    if signal_idx_1 == signal_idx_2:
+        return None
+
+    fixation_meta = _GLOBAL_MULTI_FIXATION_META[fixation_idx]
+    unit_1 = _GLOBAL_MULTI_SIGNAL_ENTRIES[signal_idx_1]
+    unit_2 = _GLOBAL_MULTI_SIGNAL_ENTRIES[signal_idx_2]
+    signals_1 = dict(unit_1.get("signals", {}))
+    signals_2 = dict(unit_2.get("signals", {}))
+
+    out: dict[str, dict] = {}
+    for signal_column in _GLOBAL_MULTI_SIGNAL_COLUMNS:
+        raw_signal_1 = signals_1.get(signal_column)
+        raw_signal_2 = signals_2.get(signal_column)
+        if raw_signal_1 is None or raw_signal_2 is None:
+            continue
+
+        signal_1 = _apply_signal_transform(raw_signal_1, _GLOBAL_MULTI_SIGNAL_TRANSFORM)
+        signal_2 = _apply_signal_transform(raw_signal_2, _GLOBAL_MULTI_SIGNAL_TRANSFORM)
+        if not np.any(signal_1) or not np.any(signal_2):
+            lags = _build_cross_correlation_lag_axis(
+                signal_1.size,
+                signal_2.size,
+                max_lag=_GLOBAL_MULTI_MAX_LAG,
+            )
+            if lags.size == 0:
+                continue
+            corr = np.zeros(lags.shape, dtype=np.float64)
+        else:
+            lags, corr = _fft_cross_correlation(signal_1, signal_2, max_lag=_GLOBAL_MULTI_MAX_LAG)
+            if corr.size == 0:
+                continue
+            corr = _normalize_cross_correlation(
+                corr,
+                signal_1,
+                signal_2,
+                normalization=_GLOBAL_MULTI_XCORR_NORMALIZATION,
+            )
+
+        row = {
+            **fixation_meta,
+            "unit_uuid_1": unit_1["unit_uuid"],
+            "region_1": unit_1["region"],
+            "spike_channel_1": unit_1["spike_channel"],
+            "session_name_1": unit_1["session_name"],
+            "recorded_agent_1": unit_1["recorded_agent"],
+            "recorded_monkey_1": unit_1["recorded_monkey"],
+            "area_1": unit_1["area"],
+            "unit_uuid_2": unit_2["unit_uuid"],
+            "region_2": unit_2["region"],
+            "spike_channel_2": unit_2["spike_channel"],
+            "session_name_2": unit_2["session_name"],
+            "recorded_agent_2": unit_2["recorded_agent"],
+            "recorded_monkey_2": unit_2["recorded_monkey"],
+            "area_2": unit_2["area"],
+            "cross_correlation": corr.astype(np.float32),
+            "lags": lags,
+            "signal_bins_1": int(signal_1.size),
+            "signal_bins_2": int(signal_2.size),
+            "signal_mean_1": float(np.mean(signal_1)),
+            "signal_mean_2": float(np.mean(signal_2)),
+            "signal_std_1": float(np.std(signal_1)),
+            "signal_std_2": float(np.std(signal_2)),
+        }
+        row.update(_summarize_cross_correlation(lags, corr))
+        out[signal_column] = row
+
+    return out or None
 
 
 def _build_pair_tasks(
@@ -1155,6 +1450,100 @@ def _write_session_report_csvs(
     }
 
 
+
+
+def _build_fixation_neural_cross_correlation_data_payload(
+    settings: FixationNeuralCrossCorrelationSettings,
+    session_row: dict,
+    *,
+    analysis_kind: str,
+    trial_meta: dict,
+    signal_column: str,
+    signal_window_ms: Optional[tuple[float, float]],
+    signal_transform: str,
+    xcorr_normalization: str,
+    max_lag: Optional[int],
+    fixation_groups: Sequence[dict],
+    n_fixations_with_pairs: int,
+    pair_tasks: Sequence[tuple[int, int, int]],
+    lag_axis: np.ndarray,
+    rows: Sequence[dict],
+    signal_bin_size_ms: Optional[float],
+    signal_window_centers_s: np.ndarray,
+    signal_window_edges_s: Optional[np.ndarray],
+) -> dict:
+    result_df = _sort_result_dataframe(pd.DataFrame(list(rows)))
+    pair_averages_df = _build_session_pair_average_dataframe(
+        result_df,
+        analysis_kind=analysis_kind,
+        lags=lag_axis,
+        face_label='face',
+        object_label='object',
+        interactive_label='interactive',
+    )
+
+    signal_window_centers_s = np.asarray(signal_window_centers_s, dtype=float).reshape(-1)
+    meta = {
+        'analysis_kind': analysis_kind,
+        'date': str(session_row['date']),
+        'session': str(session_row['session']),
+        'source_modality': settings.trial_input_modality,
+        'source_filename': _ensure_filename(settings.trial_input_filename, '.pkl'),
+        'signal_input_column': str(signal_column),
+        'signal_window_ms': None if signal_window_ms is None else [float(signal_window_ms[0]), float(signal_window_ms[1])],
+        'signal_transform': signal_transform,
+        'xcorr_normalization': xcorr_normalization,
+        'max_lag': max_lag,
+        'anchor_region': _as_optional_str(settings.anchor_region),
+        'partner_regions': (
+            None if settings.partner_regions is None else [str(v) for v in settings.partner_regions]
+        ),
+        'include_regions': (
+            None if settings.include_regions is None else [str(v) for v in settings.include_regions]
+        ),
+        'n_fixations_total': int(len(fixation_groups)),
+        'n_fixations_with_pairs': int(n_fixations_with_pairs),
+        'n_pairs_requested': int(len(pair_tasks)),
+        'n_pairs_computed': int(len(result_df)),
+        'n_pair_averages': int(len(pair_averages_df)),
+        'lags': np.asarray(lag_axis, dtype=np.int64).reshape(-1),
+        'signal_bin_size_ms': signal_bin_size_ms,
+        'signal_n_bins': int(signal_window_centers_s.size),
+        'signal_bin_centers_s_rel': signal_window_centers_s,
+        'bin_centers_s_rel': signal_window_centers_s,
+    }
+    if signal_window_edges_s is not None:
+        signal_window_edges_s = np.asarray(signal_window_edges_s, dtype=float).reshape(-1)
+        meta['signal_bin_edges_s_rel'] = signal_window_edges_s
+        meta['bin_edges_s_rel'] = signal_window_edges_s
+
+    if signal_bin_size_ms is not None:
+        meta['bin_size_ms'] = float(signal_bin_size_ms)
+    if signal_window_ms is not None:
+        meta['window_pre_s'] = max(0.0, -float(signal_window_ms[0]) / 1000.0)
+        meta['window_post_s'] = max(0.0, float(signal_window_ms[1]) / 1000.0)
+    for key in ('window_pre_s', 'window_post_s'):
+        if key not in meta and key in trial_meta:
+            meta[key] = trial_meta[key]
+    for key in ('bin_size_ms',):
+        if key not in meta and key in trial_meta:
+            meta[key] = trial_meta[key]
+
+    return {
+        'meta': meta,
+        'cross_correlations': result_df,
+        'pair_averages': pair_averages_df,
+    }
+
+
+
+def _build_skipped_session_result(report_row: dict, skip_reason: str) -> dict:
+    row = dict(report_row)
+    row.update(status='skipped', skip_reason=str(skip_reason))
+    return {'status': 'skipped', 'data': None, 'session_report_row': row}
+
+
+
 def _build_fixation_neural_cross_correlation_session_result(
     settings: FixationNeuralCrossCorrelationSettings,
     session_row: dict,
@@ -1166,7 +1555,7 @@ def _build_fixation_neural_cross_correlation_session_result(
     signal_transform = _validate_signal_transform(settings.signal_transform)
     xcorr_normalization = _validate_xcorr_normalization(settings.xcorr_normalization)
     max_lag = None if settings.max_lag is None else int(max(0, int(settings.max_lag)))
-    signal_column = str(settings.signal_input_column).strip() or "spike_train_counts"
+    signal_column = str(settings.signal_input_column).strip() or 'spike_train_counts'
     signal_window_ms = _normalize_signal_window_ms(settings.signal_window_ms)
     report_row = _build_session_report_row_base(
         session_row,
@@ -1177,12 +1566,11 @@ def _build_fixation_neural_cross_correlation_session_result(
         partner_regions=settings.partner_regions,
     )
 
-    obj = load_pickle_path(Path(session_row["path"]))
+    obj = load_pickle_path(Path(session_row['path']))
     trial_df, trial_meta = _extract_trials_df_and_meta(obj)
     report_row.update(_summarize_trial_dataframe_for_report(trial_df, signal_column=signal_column))
     if trial_df.empty:
-        report_row.update(status="skipped", skip_reason="empty_trial_dataframe")
-        return {"status": "skipped", "data": None, "session_report_row": report_row}
+        return _build_skipped_session_result(report_row, 'empty_trial_dataframe')
     if signal_column not in trial_df.columns:
         raise ValueError(
             f"Trial file {session_row['path']} is missing required neural xcorr signal column "
@@ -1232,16 +1620,15 @@ def _build_fixation_neural_cross_correlation_session_result(
     roi_groups = _normalize_roi_groups(settings.roi_groups)
     fixation_groups = _collect_fixation_groups(
         trial_df,
-        default_date=str(session_row["date"]),
-        default_session=str(session_row["session"]),
+        default_date=str(session_row['date']),
+        default_session=str(session_row['session']),
         include_region_keys=include_region_keys,
         roi_groups=roi_groups,
         signal_column=signal_column,
         signal_bin_mask=signal_bin_mask,
     )
     if not fixation_groups:
-        report_row.update(status="skipped", skip_reason="no_fixation_groups_after_filters")
-        return {"status": "skipped", "data": None, "session_report_row": report_row}
+        return _build_skipped_session_result(report_row, 'no_fixation_groups_after_filters')
 
     anchor_region_key = _canonical_region_name(settings.anchor_region)
     partner_region_keys = _normalize_region_keys(settings.partner_regions)
@@ -1266,17 +1653,16 @@ def _build_fixation_neural_cross_correlation_session_result(
     if settings.test_single and pair_tasks:
         pair_tasks = [random.choice(pair_tasks)]
 
-    report_row["n_fixations_with_pairs"] = int(n_fixations_with_pairs)
-    report_row["n_pairs_requested"] = int(len(pair_tasks))
+    report_row['n_fixations_with_pairs'] = int(n_fixations_with_pairs)
+    report_row['n_pairs_requested'] = int(len(pair_tasks))
     if not pair_tasks:
-        report_row.update(
-            status="skipped",
-            skip_reason=_resolve_skip_reason_for_no_pair_tasks(
+        return _build_skipped_session_result(
+            report_row,
+            _resolve_skip_reason_for_no_pair_tasks(
                 analysis_kind=analysis_kind,
                 report_row=report_row,
             ),
         )
-        return {"status": "skipped", "data": None, "session_report_row": report_row}
 
     lag_axis: Optional[np.ndarray] = None
     rows: list[dict] = []
@@ -1300,12 +1686,12 @@ def _build_fixation_neural_cross_correlation_session_result(
                     iterator,
                     total=len(pair_tasks),
                     desc=f"{analysis_kind} xcorr {session_row['date']}-{session_row['session']} ({n_proc} workers)",
-                    unit="pair",
+                    unit='pair',
                 )
             for result in iterator:
                 if result is None:
                     continue
-                lags = np.asarray(result.pop("lags"), dtype=np.int64)
+                lags = np.asarray(result.pop('lags'), dtype=np.int64)
                 if lag_axis is None:
                     lag_axis = lags
                 else:
@@ -1324,13 +1710,13 @@ def _build_fixation_neural_cross_correlation_session_result(
             iterator = tqdm(
                 iterator,
                 desc=f"{analysis_kind} xcorr {session_row['date']}-{session_row['session']}",
-                unit="pair",
+                unit='pair',
             )
         for task in iterator:
             result = _compute_pair_xcorr_worker(task)
             if result is None:
                 continue
-            lags = np.asarray(result.pop("lags"), dtype=np.int64)
+            lags = np.asarray(result.pop('lags'), dtype=np.int64)
             if lag_axis is None:
                 lag_axis = lags
             else:
@@ -1338,75 +1724,34 @@ def _build_fixation_neural_cross_correlation_session_result(
             rows.append(result)
 
     if not rows or lag_axis is None:
-        report_row.update(status="skipped", skip_reason="no_xcorr_rows_computed")
-        return {"status": "skipped", "data": None, "session_report_row": report_row}
+        return _build_skipped_session_result(report_row, 'no_xcorr_rows_computed')
 
-    result_df = _sort_result_dataframe(pd.DataFrame(rows))
-    pair_averages_df = _build_session_pair_average_dataframe(
-        result_df,
+    data = _build_fixation_neural_cross_correlation_data_payload(
+        settings,
+        session_row,
         analysis_kind=analysis_kind,
-        lags=lag_axis,
-        face_label="face",
-        object_label="object",
-        interactive_label="interactive",
+        trial_meta=trial_meta,
+        signal_column=signal_column,
+        signal_window_ms=signal_window_ms,
+        signal_transform=signal_transform,
+        xcorr_normalization=xcorr_normalization,
+        max_lag=max_lag,
+        fixation_groups=fixation_groups,
+        n_fixations_with_pairs=n_fixations_with_pairs,
+        pair_tasks=pair_tasks,
+        lag_axis=lag_axis,
+        rows=rows,
+        signal_bin_size_ms=signal_bin_size_ms,
+        signal_window_centers_s=signal_window_centers_s,
+        signal_window_edges_s=signal_window_edges_s,
     )
-
-    meta = {
-        "analysis_kind": analysis_kind,
-        "date": str(session_row["date"]),
-        "session": str(session_row["session"]),
-        "source_modality": settings.trial_input_modality,
-        "source_filename": _ensure_filename(settings.trial_input_filename, ".pkl"),
-        "signal_input_column": signal_column,
-        "signal_window_ms": None if signal_window_ms is None else [float(signal_window_ms[0]), float(signal_window_ms[1])],
-        "signal_transform": signal_transform,
-        "xcorr_normalization": xcorr_normalization,
-        "max_lag": max_lag,
-        "anchor_region": _as_optional_str(settings.anchor_region),
-        "partner_regions": (
-            None if settings.partner_regions is None else [str(v) for v in settings.partner_regions]
-        ),
-        "include_regions": (
-            None if settings.include_regions is None else [str(v) for v in settings.include_regions]
-        ),
-        "n_fixations_total": int(len(fixation_groups)),
-        "n_fixations_with_pairs": int(n_fixations_with_pairs),
-        "n_pairs_requested": int(len(pair_tasks)),
-        "n_pairs_computed": int(len(result_df)),
-        "n_pair_averages": int(len(pair_averages_df)),
-        "lags": lag_axis,
-        "signal_bin_size_ms": signal_bin_size_ms,
-        "signal_n_bins": int(signal_window_centers_s.size),
-        "signal_bin_centers_s_rel": signal_window_centers_s,
-        "bin_centers_s_rel": signal_window_centers_s,
-    }
-    if signal_window_edges_s is not None:
-        meta["signal_bin_edges_s_rel"] = signal_window_edges_s
-        meta["bin_edges_s_rel"] = signal_window_edges_s
-
-    if signal_bin_size_ms is not None:
-        meta["bin_size_ms"] = float(signal_bin_size_ms)
-    if signal_window_ms is not None:
-        meta["window_pre_s"] = max(0.0, -float(signal_window_ms[0]) / 1000.0)
-        meta["window_post_s"] = max(0.0, float(signal_window_ms[1]) / 1000.0)
-    for key in ("window_pre_s", "window_post_s"):
-        if key not in meta and key in trial_meta:
-            meta[key] = trial_meta[key]
-    for key in ("bin_size_ms",):
-        if key not in meta and key in trial_meta:
-            meta[key] = trial_meta[key]
-
     report_row.update(
-        status="written",
+        status='written',
         skip_reason=None,
-        n_pairs_computed=int(len(result_df)),
+        n_pairs_computed=int(len(data['cross_correlations'])),
     )
-    data = {
-        "meta": meta,
-        "cross_correlations": result_df,
-        "pair_averages": pair_averages_df,
-    }
-    return {"status": "written", "data": data, "session_report_row": report_row}
+    return {'status': 'written', 'data': data, 'session_report_row': report_row}
+
 
 
 def build_fixation_neural_cross_correlations_for_session(
@@ -1423,8 +1768,55 @@ def build_fixation_neural_cross_correlations_for_session(
         analysis_kind=analysis_kind,
         show_progress=show_progress,
     )
-    data = result.get("data")
+    data = result.get('data')
     return data if isinstance(data, dict) else None
+
+
+
+def _save_fixation_neural_cross_correlation_session_data(
+    cfg: dict,
+    settings: FixationNeuralCrossCorrelationSettings,
+    session_row: dict,
+    *,
+    analysis_kind: str,
+    data: dict,
+) -> None:
+    xcorr_out_path = _build_session_output_path(
+        cfg,
+        settings,
+        analysis_kind=analysis_kind,
+        output_kind='xcorr',
+        date=str(session_row['date']),
+        session=str(session_row['session']),
+    )
+    pair_avg_out_path = _build_session_output_path(
+        cfg,
+        settings,
+        analysis_kind=analysis_kind,
+        output_kind='pair_averages',
+        date=str(session_row['date']),
+        session=str(session_row['session']),
+    )
+
+    if xcorr_out_path == pair_avg_out_path:
+        save_pickle_path(data, xcorr_out_path)
+        return
+
+    save_pickle_path(
+        {
+            'meta': data.get('meta', {}),
+            'cross_correlations': data.get('cross_correlations', pd.DataFrame()),
+        },
+        xcorr_out_path,
+    )
+    save_pickle_path(
+        {
+            'meta': data.get('meta', {}),
+            'pair_averages': data.get('pair_averages', pd.DataFrame()),
+        },
+        pair_avg_out_path,
+    )
+
 
 
 def _process_and_save_fixation_neural_cross_correlations_for_session_result(
@@ -1440,47 +1832,20 @@ def _process_and_save_fixation_neural_cross_correlations_for_session_result(
         analysis_kind=analysis_kind,
         show_progress=show_progress,
     )
-    data = session_result.get("data")
+    data = session_result.get('data')
     if not isinstance(data, dict):
         return session_result
 
     cfg = load_config(settings.cfg_path)
-    xcorr_out_path = _build_session_output_path(
+    _save_fixation_neural_cross_correlation_session_data(
         cfg,
         settings,
+        session_row,
         analysis_kind=analysis_kind,
-        output_kind="xcorr",
-        date=str(session_row["date"]),
-        session=str(session_row["session"]),
-    )
-    pair_avg_out_path = _build_session_output_path(
-        cfg,
-        settings,
-        analysis_kind=analysis_kind,
-        output_kind="pair_averages",
-        date=str(session_row["date"]),
-        session=str(session_row["session"]),
-    )
-
-    if xcorr_out_path == pair_avg_out_path:
-        save_pickle_path(data, xcorr_out_path)
-        return session_result
-
-    save_pickle_path(
-        {
-            "meta": data.get("meta", {}),
-            "cross_correlations": data.get("cross_correlations", pd.DataFrame()),
-        },
-        xcorr_out_path,
-    )
-    save_pickle_path(
-        {
-            "meta": data.get("meta", {}),
-            "pair_averages": data.get("pair_averages", pd.DataFrame()),
-        },
-        pair_avg_out_path,
+        data=data,
     )
     return session_result
+
 
 
 def process_and_save_fixation_neural_cross_correlations_for_session(
@@ -1497,8 +1862,286 @@ def process_and_save_fixation_neural_cross_correlations_for_session(
         analysis_kind=analysis_kind,
         show_progress=show_progress,
     )
-    data = session_result.get("data")
+    data = session_result.get('data')
     return data if isinstance(data, dict) else None
+
+
+
+def _build_fixation_neural_cross_correlation_session_results_multi_signal(
+    settings: FixationNeuralCrossCorrelationSettings,
+    session_row: dict,
+    *,
+    analysis_kind: str,
+    show_progress: bool = True,
+) -> dict[str, dict]:
+    signal_columns = _resolve_signal_input_columns(settings)
+    if len(signal_columns) <= 1:
+        signal_column = signal_columns[0]
+        single_settings = replace(
+            settings,
+            signal_input_column=signal_column,
+            signal_input_columns=None,
+        )
+        return {
+            signal_column: _build_fixation_neural_cross_correlation_session_result(
+                single_settings,
+                session_row,
+                analysis_kind=analysis_kind,
+                show_progress=show_progress,
+            )
+        }
+
+    signal_transform = _validate_signal_transform(settings.signal_transform)
+    xcorr_normalization = _validate_xcorr_normalization(settings.xcorr_normalization)
+    max_lag = None if settings.max_lag is None else int(max(0, int(settings.max_lag)))
+    signal_window_ms = _normalize_signal_window_ms(settings.signal_window_ms)
+    report_rows = {
+        signal_column: _build_session_report_row_base(
+            session_row,
+            analysis_kind=analysis_kind,
+            signal_column=signal_column,
+            signal_window_ms=signal_window_ms,
+            anchor_region=settings.anchor_region,
+            partner_regions=settings.partner_regions,
+        )
+        for signal_column in signal_columns
+    }
+
+    obj = load_pickle_path(Path(session_row['path']))
+    trial_df, trial_meta = _extract_trials_df_and_meta(obj)
+    for signal_column in signal_columns:
+        report_rows[signal_column].update(
+            _summarize_trial_dataframe_for_report(trial_df, signal_column=signal_column)
+        )
+    if trial_df.empty:
+        return {
+            signal_column: _build_skipped_session_result(report_rows[signal_column], 'empty_trial_dataframe')
+            for signal_column in signal_columns
+        }
+
+    signal_specs = _resolve_signal_specs(
+        trial_df,
+        trial_meta,
+        session_row,
+        signal_columns=signal_columns,
+        signal_window_ms=signal_window_ms,
+    )
+    include_region_keys = _normalize_region_keys(settings.include_regions)
+    roi_groups = _normalize_roi_groups(settings.roi_groups)
+    fixation_groups = _collect_fixation_groups_multi_signal(
+        trial_df,
+        default_date=str(session_row['date']),
+        default_session=str(session_row['session']),
+        include_region_keys=include_region_keys,
+        roi_groups=roi_groups,
+        signal_specs=signal_specs,
+    )
+    if not fixation_groups:
+        return {
+            signal_column: _build_skipped_session_result(
+                report_rows[signal_column],
+                'no_fixation_groups_after_filters',
+            )
+            for signal_column in signal_columns
+        }
+
+    anchor_region_key = _canonical_region_name(settings.anchor_region)
+    partner_region_keys = _normalize_region_keys(settings.partner_regions)
+    if partner_region_keys is not None and anchor_region_key is not None:
+        partner_region_keys = {key for key in partner_region_keys if key != anchor_region_key}
+    group_summary = _summarize_fixation_groups_for_report(
+        fixation_groups,
+        analysis_kind=analysis_kind,
+        anchor_region_key=anchor_region_key,
+        partner_region_keys=partner_region_keys,
+    )
+    for signal_column in signal_columns:
+        report_rows[signal_column].update(group_summary)
+
+    fixation_meta, signal_entries, pair_tasks, n_fixations_with_pairs = _build_pair_tasks(
+        fixation_groups,
+        analysis_kind=analysis_kind,
+        anchor_region_key=anchor_region_key,
+        partner_region_keys=partner_region_keys,
+    )
+    if settings.test_single and pair_tasks:
+        pair_tasks = [random.choice(pair_tasks)]
+
+    for signal_column in signal_columns:
+        report_rows[signal_column]['n_fixations_with_pairs'] = int(n_fixations_with_pairs)
+        report_rows[signal_column]['n_pairs_requested'] = int(len(pair_tasks))
+    if not pair_tasks:
+        skip_reason = _resolve_skip_reason_for_no_pair_tasks(
+            analysis_kind=analysis_kind,
+            report_row=next(iter(report_rows.values())),
+        )
+        return {
+            signal_column: _build_skipped_session_result(report_rows[signal_column], skip_reason)
+            for signal_column in signal_columns
+        }
+
+    lag_axes: dict[str, np.ndarray] = {}
+    rows_by_signal = {signal_column: [] for signal_column in signal_columns}
+    use_parallel = bool(settings.use_parallel and len(pair_tasks) > 1)
+    if use_parallel:
+        n_proc = get_n_processes(max_procs=settings.max_procs)
+        chunk_size = max(1, int(settings.pair_chunk_size))
+        with Pool(
+            processes=n_proc,
+            initializer=_init_multi_signal_pair_worker,
+            initargs=(
+                fixation_meta,
+                signal_entries,
+                signal_columns,
+                signal_transform,
+                max_lag,
+                xcorr_normalization,
+            ),
+        ) as pool:
+            iterator = pool.imap_unordered(
+                _compute_pair_multi_signal_xcorr_worker,
+                pair_tasks,
+                chunksize=chunk_size,
+            )
+            if show_progress:
+                iterator = tqdm(
+                    iterator,
+                    total=len(pair_tasks),
+                    desc=f"{analysis_kind} xcorr {session_row['date']}-{session_row['session']} ({n_proc} workers)",
+                    unit='pair',
+                )
+            for result_map in iterator:
+                if not result_map:
+                    continue
+                for signal_column, result in result_map.items():
+                    lags = np.asarray(result.pop('lags'), dtype=np.int64)
+                    lag_axis = lag_axes.get(signal_column)
+                    if lag_axis is None:
+                        lag_axes[signal_column] = lags
+                    else:
+                        _assert_lag_axis_match(lag_axis, lags)
+                    rows_by_signal[signal_column].append(result)
+    else:
+        _init_multi_signal_pair_worker(
+            fixation_meta,
+            signal_entries,
+            signal_columns,
+            signal_transform,
+            max_lag,
+            xcorr_normalization,
+        )
+        iterator = pair_tasks
+        if show_progress:
+            iterator = tqdm(
+                iterator,
+                desc=f"{analysis_kind} xcorr {session_row['date']}-{session_row['session']}",
+                unit='pair',
+            )
+        for task in iterator:
+            result_map = _compute_pair_multi_signal_xcorr_worker(task)
+            if not result_map:
+                continue
+            for signal_column, result in result_map.items():
+                lags = np.asarray(result.pop('lags'), dtype=np.int64)
+                lag_axis = lag_axes.get(signal_column)
+                if lag_axis is None:
+                    lag_axes[signal_column] = lags
+                else:
+                    _assert_lag_axis_match(lag_axis, lags)
+                rows_by_signal[signal_column].append(result)
+
+    out: dict[str, dict] = {}
+    for signal_column in signal_columns:
+        report_row = dict(report_rows[signal_column])
+        lag_axis = lag_axes.get(signal_column)
+        rows = rows_by_signal.get(signal_column, [])
+        if not rows or lag_axis is None:
+            out[signal_column] = _build_skipped_session_result(report_row, 'no_xcorr_rows_computed')
+            continue
+
+        signal_spec = signal_specs[signal_column]
+        signal_window_centers_s = np.asarray(
+            signal_spec['signal_window_centers_s'],
+            dtype=float,
+        ).reshape(-1)
+        signal_window_edges_raw = signal_spec.get('signal_window_edges_s')
+        signal_window_edges_s = None
+        if signal_window_edges_raw is not None:
+            signal_window_edges_s = np.asarray(signal_window_edges_raw, dtype=float).reshape(-1)
+        signal_bin_size_value = signal_spec.get('signal_bin_size_ms')
+        signal_bin_size_ms = None if signal_bin_size_value is None else float(signal_bin_size_value)
+
+        signal_settings = replace(
+            settings,
+            signal_input_column=signal_column,
+            signal_input_columns=None,
+        )
+        data = _build_fixation_neural_cross_correlation_data_payload(
+            signal_settings,
+            session_row,
+            analysis_kind=analysis_kind,
+            trial_meta=trial_meta,
+            signal_column=signal_column,
+            signal_window_ms=signal_window_ms,
+            signal_transform=signal_transform,
+            xcorr_normalization=xcorr_normalization,
+            max_lag=max_lag,
+            fixation_groups=fixation_groups,
+            n_fixations_with_pairs=n_fixations_with_pairs,
+            pair_tasks=pair_tasks,
+            lag_axis=lag_axis,
+            rows=rows,
+            signal_bin_size_ms=signal_bin_size_ms,
+            signal_window_centers_s=signal_window_centers_s,
+            signal_window_edges_s=signal_window_edges_s,
+        )
+        report_row.update(
+            status='written',
+            skip_reason=None,
+            n_pairs_computed=int(len(data['cross_correlations'])),
+        )
+        out[signal_column] = {
+            'status': 'written',
+            'data': data,
+            'session_report_row': report_row,
+        }
+
+    return out
+
+
+
+def _process_and_save_fixation_neural_cross_correlations_for_session_results(
+    settings: FixationNeuralCrossCorrelationSettings,
+    session_row: dict,
+    *,
+    analysis_kind: str,
+    show_progress: bool = True,
+) -> dict[str, dict]:
+    session_results = _build_fixation_neural_cross_correlation_session_results_multi_signal(
+        settings,
+        session_row,
+        analysis_kind=analysis_kind,
+        show_progress=show_progress,
+    )
+    cfg = load_config(settings.cfg_path)
+    for signal_column, session_result in session_results.items():
+        data = session_result.get('data')
+        if not isinstance(data, dict):
+            continue
+        signal_settings = replace(
+            settings,
+            signal_input_column=signal_column,
+            signal_input_columns=None,
+        )
+        _save_fixation_neural_cross_correlation_session_data(
+            cfg,
+            signal_settings,
+            session_row,
+            analysis_kind=analysis_kind,
+            data=data,
+        )
+    return session_results
+
 
 
 def _process_and_save_session_worker(
@@ -1516,7 +2159,30 @@ def _process_and_save_session_worker(
         analysis_kind=analysis_kind,
         show_progress=False,
     )
-    return dict(session_result.get("session_report_row", {}))
+    return dict(session_result.get('session_report_row', {}))
+
+
+
+def _process_and_save_session_worker_multi_signal(
+    args: tuple[FixationNeuralCrossCorrelationSettings, dict, str],
+) -> dict[str, dict]:
+    settings, session_row, analysis_kind = args
+    local_settings = replace(
+        settings,
+        use_parallel=False,
+        test_single=False,
+    )
+    session_results = _process_and_save_fixation_neural_cross_correlations_for_session_results(
+        local_settings,
+        session_row,
+        analysis_kind=analysis_kind,
+        show_progress=False,
+    )
+    return {
+        signal_column: dict(session_result.get('session_report_row', {}))
+        for signal_column, session_result in session_results.items()
+    }
+
 
 
 def _run_fixation_neural_cross_correlation_analysis_single_signal(
@@ -1537,20 +2203,20 @@ def _run_fixation_neural_cross_correlation_analysis_single_signal(
     session_rows = scan_processed_paths_for_filename(
         cfg,
         settings.trial_input_modality,
-        filename=_ensure_filename(settings.trial_input_filename, ".pkl"),
+        filename=_ensure_filename(settings.trial_input_filename, '.pkl'),
         dates=dates,
         sessions=sessions,
         agents=(None,),
     )
     if not session_rows:
-        print("No fixation PSTH trial files found for neural cross-correlation analysis.")
+        print('No fixation PSTH trial files found for neural cross-correlation analysis.')
         return {
-            "n_sessions_total": 0,
-            "n_sessions_written": 0,
-            "n_sessions_skipped": 0,
-            "skip_reason_counts": {},
-            "session_report_path": None,
-            "skipped_session_report_path": None,
+            'n_sessions_total': 0,
+            'n_sessions_written': 0,
+            'n_sessions_skipped': 0,
+            'skip_reason_counts': {},
+            'session_report_path': None,
+            'skipped_session_report_path': None,
         }
 
     if settings.test_single and session_rows:
@@ -1571,18 +2237,18 @@ def _run_fixation_neural_cross_correlation_analysis_single_signal(
             for session_report_row in tqdm(
                 iterator,
                 total=len(worker_tasks),
-                desc=f"{analysis_kind} sessions ({n_proc} workers)",
-                unit="session",
+                desc=f'{analysis_kind} sessions ({n_proc} workers)',
+                unit='session',
             ):
                 session_report_rows.append(dict(session_report_row))
-                if str(session_report_row.get("status")) == "written":
+                if str(session_report_row.get('status')) == 'written':
                     n_written += 1
     else:
         local_settings = replace(settings, use_parallel=False)
         for session_row in tqdm(
             session_rows,
-            desc=f"{analysis_kind} sessions",
-            unit="session",
+            desc=f'{analysis_kind} sessions',
+            unit='session',
         ):
             session_result = _process_and_save_fixation_neural_cross_correlations_for_session_result(
                 local_settings,
@@ -1590,9 +2256,9 @@ def _run_fixation_neural_cross_correlation_analysis_single_signal(
                 analysis_kind=analysis_kind,
                 show_progress=True,
             )
-            session_report_row = dict(session_result.get("session_report_row", {}))
+            session_report_row = dict(session_result.get('session_report_row', {}))
             session_report_rows.append(session_report_row)
-            if str(session_report_row.get("status")) == "written":
+            if str(session_report_row.get('status')) == 'written':
                 n_written += 1
 
     report_summary = _write_session_report_csvs(
@@ -1602,10 +2268,151 @@ def _run_fixation_neural_cross_correlation_analysis_single_signal(
         session_report_rows=session_report_rows,
     )
     return {
-        "n_sessions_total": int(len(session_rows)),
-        "n_sessions_written": int(n_written),
+        'n_sessions_total': int(len(session_rows)),
+        'n_sessions_written': int(n_written),
         **report_summary,
     }
+
+
+
+def _run_fixation_neural_cross_correlation_analysis_multi_signal(
+    settings: FixationNeuralCrossCorrelationSettings,
+    *,
+    analysis_kind: str,
+    dates: Optional[Sequence[str]] = None,
+    sessions: Optional[Sequence[str]] = None,
+    use_parallel: Optional[bool] = None,
+    test_single: Optional[bool] = None,
+) -> dict:
+    if use_parallel is not None:
+        settings.use_parallel = bool(use_parallel)
+    if test_single is not None:
+        settings.test_single = bool(test_single)
+
+    signal_columns = _resolve_signal_input_columns(settings)
+    cfg = load_config(settings.cfg_path)
+    session_rows = scan_processed_paths_for_filename(
+        cfg,
+        settings.trial_input_modality,
+        filename=_ensure_filename(settings.trial_input_filename, '.pkl'),
+        dates=dates,
+        sessions=sessions,
+        agents=(None,),
+    )
+    if not session_rows:
+        print('No fixation PSTH trial files found for neural cross-correlation analysis.')
+        empty_signal_summary = {
+            'n_sessions_total': 0,
+            'n_sessions_written': 0,
+            'n_sessions_skipped': 0,
+            'skip_reason_counts': {},
+            'session_report_path': None,
+            'skipped_session_report_path': None,
+        }
+        return {
+            'n_sessions_total': 0,
+            'n_session_signal_runs_total': 0,
+            'n_sessions_written': 0,
+            'n_sessions_skipped': 0,
+            'skip_reason_counts': {},
+            'session_report_path': None,
+            'skipped_session_report_path': None,
+            'signal_input_columns': list(signal_columns),
+            'signal_summaries': {
+                signal_column: dict(empty_signal_summary) for signal_column in signal_columns
+            },
+        }
+
+    if settings.test_single and session_rows:
+        session_rows = [random.choice(session_rows)]
+
+    session_report_rows_by_signal = {
+        signal_column: [] for signal_column in signal_columns
+    }
+    n_written_by_signal = {signal_column: 0 for signal_column in signal_columns}
+    run_session_pool = bool(
+        settings.use_parallel
+        and settings.parallelize_across_sessions
+        and len(session_rows) > 1
+    )
+    if run_session_pool:
+        n_proc = get_n_processes(max_procs=settings.max_procs)
+        worker_tasks = [(settings, row, analysis_kind) for row in session_rows]
+        with Pool(processes=n_proc) as pool:
+            iterator = pool.imap_unordered(_process_and_save_session_worker_multi_signal, worker_tasks, chunksize=1)
+            for session_reports in tqdm(
+                iterator,
+                total=len(worker_tasks),
+                desc=f'{analysis_kind} sessions ({n_proc} workers)',
+                unit='session',
+            ):
+                for signal_column in signal_columns:
+                    session_report_row = dict(session_reports.get(signal_column, {}))
+                    session_report_rows_by_signal[signal_column].append(session_report_row)
+                    if str(session_report_row.get('status')) == 'written':
+                        n_written_by_signal[signal_column] += 1
+    else:
+        local_settings = replace(settings, use_parallel=False)
+        for session_row in tqdm(
+            session_rows,
+            desc=f'{analysis_kind} sessions',
+            unit='session',
+        ):
+            session_results = _process_and_save_fixation_neural_cross_correlations_for_session_results(
+                local_settings,
+                session_row,
+                analysis_kind=analysis_kind,
+                show_progress=True,
+            )
+            for signal_column in signal_columns:
+                session_report_row = dict(
+                    session_results.get(signal_column, {}).get('session_report_row', {})
+                )
+                session_report_rows_by_signal[signal_column].append(session_report_row)
+                if str(session_report_row.get('status')) == 'written':
+                    n_written_by_signal[signal_column] += 1
+
+    signal_summaries: dict[str, dict] = {}
+    skip_reason_counts: dict[str, int] = {}
+    n_session_signal_runs_total = 0
+    n_sessions_written_total = 0
+    n_sessions_skipped_total = 0
+    for signal_column in signal_columns:
+        signal_settings = replace(
+            settings,
+            signal_input_column=signal_column,
+            signal_input_columns=None,
+        )
+        report_summary = _write_session_report_csvs(
+            cfg,
+            signal_settings,
+            analysis_kind=analysis_kind,
+            session_report_rows=session_report_rows_by_signal[signal_column],
+        )
+        signal_summary = {
+            'n_sessions_total': int(len(session_rows)),
+            'n_sessions_written': int(n_written_by_signal[signal_column]),
+            **report_summary,
+        }
+        signal_summaries[signal_column] = signal_summary
+        n_session_signal_runs_total += int(signal_summary.get('n_sessions_total', 0))
+        n_sessions_written_total += int(signal_summary.get('n_sessions_written', 0))
+        n_sessions_skipped_total += int(signal_summary.get('n_sessions_skipped', 0))
+        for reason, count in dict(signal_summary.get('skip_reason_counts', {})).items():
+            skip_reason_counts[str(reason)] = skip_reason_counts.get(str(reason), 0) + int(count)
+
+    return {
+        'n_sessions_total': int(len(session_rows)),
+        'n_session_signal_runs_total': int(n_session_signal_runs_total),
+        'n_sessions_written': int(n_sessions_written_total),
+        'n_sessions_skipped': int(n_sessions_skipped_total),
+        'skip_reason_counts': skip_reason_counts,
+        'session_report_path': None,
+        'skipped_session_report_path': None,
+        'signal_input_columns': list(signal_columns),
+        'signal_summaries': signal_summaries,
+    }
+
 
 
 def _run_fixation_neural_cross_correlation_analysis(
@@ -1618,25 +2425,6 @@ def _run_fixation_neural_cross_correlation_analysis(
     test_single: Optional[bool] = None,
 ) -> dict:
     signal_columns = _resolve_signal_input_columns(settings)
-    requested_test_single = bool(settings.test_single if test_single is None else test_single)
-    shared_dates = dates
-    shared_sessions = sessions
-    per_signal_test_single = test_single
-    if len(signal_columns) > 1 and requested_test_single:
-        cfg = load_config(settings.cfg_path)
-        session_rows = scan_processed_paths_for_filename(
-            cfg,
-            settings.trial_input_modality,
-            filename=_ensure_filename(settings.trial_input_filename, ".pkl"),
-            dates=dates,
-            sessions=sessions,
-            agents=(None,),
-        )
-        if session_rows:
-            chosen_row = random.choice(session_rows)
-            shared_dates = [str(chosen_row["date"])]
-            shared_sessions = [str(chosen_row["session"])]
-            per_signal_test_single = False
     if len(signal_columns) == 1:
         signal_column = signal_columns[0]
         single_settings = replace(
@@ -1647,59 +2435,26 @@ def _run_fixation_neural_cross_correlation_analysis(
         summary = _run_fixation_neural_cross_correlation_analysis_single_signal(
             single_settings,
             analysis_kind=analysis_kind,
-            dates=shared_dates,
-            sessions=shared_sessions,
+            dates=dates,
+            sessions=sessions,
             use_parallel=use_parallel,
-            test_single=per_signal_test_single,
+            test_single=test_single,
         )
         return {
             **summary,
-            "signal_input_columns": [signal_column],
-            "signal_summaries": {signal_column: dict(summary)},
-            "n_session_signal_runs_total": int(summary.get("n_sessions_total", 0)),
+            'signal_input_columns': [signal_column],
+            'signal_summaries': {signal_column: dict(summary)},
+            'n_session_signal_runs_total': int(summary.get('n_sessions_total', 0)),
         }
 
-    signal_summaries: dict[str, dict] = {}
-    skip_reason_counts: dict[str, int] = {}
-    n_session_signal_runs_total = 0
-    n_sessions_written_total = 0
-    n_sessions_skipped_total = 0
-    n_unique_sessions_total: Optional[int] = None
-
-    for signal_column in signal_columns:
-        signal_settings = replace(
-            settings,
-            signal_input_column=signal_column,
-            signal_input_columns=None,
-        )
-        summary = _run_fixation_neural_cross_correlation_analysis_single_signal(
-            signal_settings,
-            analysis_kind=analysis_kind,
-            dates=shared_dates,
-            sessions=shared_sessions,
-            use_parallel=use_parallel,
-            test_single=per_signal_test_single,
-        )
-        signal_summaries[signal_column] = dict(summary)
-        if n_unique_sessions_total is None:
-            n_unique_sessions_total = int(summary.get("n_sessions_total", 0))
-        n_session_signal_runs_total += int(summary.get("n_sessions_total", 0))
-        n_sessions_written_total += int(summary.get("n_sessions_written", 0))
-        n_sessions_skipped_total += int(summary.get("n_sessions_skipped", 0))
-        for reason, count in dict(summary.get("skip_reason_counts", {})).items():
-            skip_reason_counts[str(reason)] = skip_reason_counts.get(str(reason), 0) + int(count)
-
-    return {
-        "n_sessions_total": int(0 if n_unique_sessions_total is None else n_unique_sessions_total),
-        "n_session_signal_runs_total": int(n_session_signal_runs_total),
-        "n_sessions_written": int(n_sessions_written_total),
-        "n_sessions_skipped": int(n_sessions_skipped_total),
-        "skip_reason_counts": skip_reason_counts,
-        "session_report_path": None,
-        "skipped_session_report_path": None,
-        "signal_input_columns": list(signal_columns),
-        "signal_summaries": signal_summaries,
-    }
+    return _run_fixation_neural_cross_correlation_analysis_multi_signal(
+        settings,
+        analysis_kind=analysis_kind,
+        dates=dates,
+        sessions=sessions,
+        use_parallel=use_parallel,
+        test_single=test_single,
+    )
 
 def _aggregate_pair_averages_for_plotting(
     settings: FixationNeuralCrossCorrelationPlotAggregationSettings,

@@ -6,10 +6,12 @@ import pickle
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pandas as pd
 
+from dal_monte_2022_analysis.ephys.analysis import fixation_neural_cross_correlation_helpers as xcorr_helpers
 from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation import (
     CROSS_ANALYSIS_KIND,
     WITHIN_ANALYSIS_KIND,
@@ -191,6 +193,80 @@ class TestFixationNeuralCrossCorrelation(unittest.TestCase):
             self.assertEqual(str(pair_row["condition"]), "face_interactive")
             self.assertEqual(int(pair_row["n_fixations"]), 1)
 
+
+    def test_session_build_returns_zero_xcorr_when_any_signal_is_all_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            trial_path = root / "fixations_spike_train_1ms.pkl"
+
+            trials_df = pd.DataFrame(
+                [
+                    {
+                        "date": "20990101",
+                        "session": "s1",
+                        "unit_uuid": "u1",
+                        "region": "BLA",
+                        "spike_channel": "ch1",
+                        "fixation_agent": "m1",
+                        "fixation_monkey_name": "m1",
+                        "fixation_category": "face",
+                        "interactive_state": "interactive",
+                        "is_interactive": True,
+                        "fixation_start_idx": 10,
+                        "fixation_stop_idx": 12,
+                        "fixation_start_time_s": 0.0,
+                        "fixation_location": ("face",),
+                        "spike_train_counts": np.asarray([0.0, 0.0, 0.0, 0.0], dtype=float),
+                    },
+                    {
+                        "date": "20990101",
+                        "session": "s1",
+                        "unit_uuid": "u2",
+                        "region": "BLA",
+                        "spike_channel": "ch2",
+                        "fixation_agent": "m1",
+                        "fixation_monkey_name": "m1",
+                        "fixation_category": "face",
+                        "interactive_state": "interactive",
+                        "is_interactive": True,
+                        "fixation_start_idx": 10,
+                        "fixation_stop_idx": 12,
+                        "fixation_start_time_s": 0.0,
+                        "fixation_location": ("face",),
+                        "spike_train_counts": np.asarray([0.0, 1.0, 0.0, 0.0], dtype=float),
+                    },
+                ]
+            )
+            self._write_trial_file(trial_path, trials_df)
+
+            settings = FixationNeuralCrossCorrelationSettings(
+                cfg_path=str(root / "dataset.yaml"),
+                trial_input_modality="psth",
+                trial_input_filename="fixations_spike_train_1ms.pkl",
+                signal_input_column="spike_train_counts",
+                signal_window_ms=(-500.0, 500.0),
+                signal_transform="none",
+                xcorr_normalization="energy",
+                max_lag=1,
+                use_parallel=False,
+            )
+            out = build_fixation_neural_cross_correlations_for_session(
+                settings,
+                {"path": trial_path, "date": "20990101", "session": "s1"},
+                analysis_kind=WITHIN_ANALYSIS_KIND,
+                show_progress=False,
+            )
+
+            self.assertIsInstance(out, dict)
+            assert out is not None
+            row = out["cross_correlations"].iloc[0]
+            self.assertTrue(
+                np.allclose(
+                    np.asarray(row["cross_correlation"], dtype=float),
+                    np.zeros(3, dtype=float),
+                )
+            )
+
     def test_run_within_region_writes_raw_and_smoothed_signal_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
@@ -259,16 +335,27 @@ class TestFixationNeuralCrossCorrelation(unittest.TestCase):
                 max_lag=1,
                 use_parallel=False,
             )
-            summary = run_within_region_fixation_neural_cross_correlation(
-                settings,
-                dates=["20990101"],
-                sessions=["s1"],
-                use_parallel=False,
-            )
+            with mock.patch.object(
+                xcorr_helpers,
+                "load_pickle_path",
+                wraps=xcorr_helpers.load_pickle_path,
+            ) as mock_load_pickle, mock.patch.object(
+                xcorr_helpers,
+                "_build_pair_tasks",
+                wraps=xcorr_helpers._build_pair_tasks,
+            ) as mock_build_pair_tasks:
+                summary = run_within_region_fixation_neural_cross_correlation(
+                    settings,
+                    dates=["20990101"],
+                    sessions=["s1"],
+                    use_parallel=False,
+                )
 
             signal_summaries = summary["signal_summaries"]
             self.assertEqual(summary["n_sessions_total"], 1)
             self.assertEqual(summary["n_session_signal_runs_total"], 2)
+            self.assertEqual(mock_load_pickle.call_count, 1)
+            self.assertEqual(mock_build_pair_tasks.call_count, 1)
             self.assertEqual(set(signal_summaries), {"spike_train_counts", "smoothed_spike_train_counts"})
             self.assertEqual(int(signal_summaries["spike_train_counts"]["n_sessions_written"]), 1)
             self.assertEqual(int(signal_summaries["smoothed_spike_train_counts"]["n_sessions_written"]), 1)
