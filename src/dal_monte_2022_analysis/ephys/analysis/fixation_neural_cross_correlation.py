@@ -15,6 +15,8 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_he
     WITHIN_ANALYSIS_KIND,
     _PLOT_ALLOWED_ANALYSIS_KINDS,
     _extract_xcorr_dataframes_and_meta,
+    _resolve_signal_input_columns,
+    _resolve_signal_output_subdir,
     _run_fixation_neural_cross_correlation_analysis,
     FixationNeuralCrossCorrelationPlotAggregationSettings,
     build_cross_region_fixation_neural_cross_correlation_plot_payload,
@@ -46,6 +48,7 @@ class FixationNeuralCrossCorrelationSettings:
     trial_input_modality: str = "psth"
     trial_input_filename: str = "fixations_spike_train_1ms.pkl"
     signal_input_column: str = "spike_train_counts"
+    signal_input_columns: Optional[Sequence[str]] = None
     signal_window_ms: Optional[tuple[float, float]] = (-500.0, 500.0)
     within_output_subdir: str = "ephys/psth/fixation_neural_cross_correlation/within_region"
     cross_output_subdir: str = "ephys/psth/fixation_neural_cross_correlation/cross_region"
@@ -75,6 +78,13 @@ def coerce_nonempty_str_list(values) -> Optional[list[str]]:
         return None
     out = [str(value).strip() for value in values if str(value).strip()]
     return out or None
+
+
+def resolve_fixation_neural_cross_correlation_signal_columns(
+    settings: FixationNeuralCrossCorrelationSettings,
+) -> tuple[str, ...]:
+    """Resolve the configured neural xcorr signal columns in run order."""
+    return _resolve_signal_input_columns(settings)
 
 
 def build_fixation_neural_cross_correlation_settings_from_config(
@@ -111,6 +121,7 @@ def build_fixation_neural_cross_correlation_settings_from_config(
         trial_input_modality=cfg.get("trial_input_modality", "psth"),
         trial_input_filename=cfg.get("trial_input_filename", "fixations_spike_train_1ms.pkl"),
         signal_input_column=cfg.get("signal_input_column", "spike_train_counts"),
+        signal_input_columns=cfg.get("signal_input_columns"),
         signal_window_ms=cfg.get("signal_window_ms", (-500.0, 500.0)),
         within_output_subdir=cfg.get(
             "within_output_subdir",
@@ -176,14 +187,18 @@ def iter_fixation_neural_cross_correlation_output_paths(
     dataset_cfg_path: str,
     output_subdir: str,
     output_filename: str,
+    signal_input_column: Optional[str] = None,
     date: Optional[str] = None,
     session: Optional[str] = None,
 ) -> list[Path]:
     """List analysis output files for one cross-correlation analysis kind."""
     cfg = load_config(dataset_cfg_path)
+    resolved_subdir = output_subdir
+    if signal_input_column is not None:
+        resolved_subdir = _resolve_signal_output_subdir(output_subdir, signal_input_column)
     rows = scan_analysis_paths(
         cfg,
-        output_subdir,
+        resolved_subdir,
         filename=_ensure_filename(output_filename, ".pkl"),
         dates=[str(date)] if date is not None else None,
         sessions=[str(session)] if session is not None else None,

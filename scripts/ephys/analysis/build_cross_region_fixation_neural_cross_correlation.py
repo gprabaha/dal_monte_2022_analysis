@@ -8,6 +8,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation im
     coerce_nonempty_str_list,
     iter_fixation_neural_cross_correlation_output_paths,
     print_fixation_neural_cross_correlation_example,
+    resolve_fixation_neural_cross_correlation_signal_columns,
     run_cross_region_fixation_neural_cross_correlation,
 )
 
@@ -61,42 +62,57 @@ def main() -> None:
         xcorr_normalization=args.xcorr_normalization,
     )
 
+    signal_columns = resolve_fixation_neural_cross_correlation_signal_columns(settings)
     summary = run_cross_region_fixation_neural_cross_correlation(
         settings,
         dates=[args.date] if args.date else None,
         sessions=[args.session] if args.session else None,
     )
-    print(
-        "[analysis] cross-region fixation neural xcorr: "
-        f"wrote {summary.get('n_sessions_written', 0)}/{summary.get('n_sessions_total', 0)} session files"
-    )
-    if summary.get("n_sessions_skipped", 0):
+    signal_summaries = summary.get("signal_summaries", {})
+    for signal_column in signal_columns:
+        signal_summary = signal_summaries.get(signal_column, summary)
         print(
-            "[analysis] cross-region skipped sessions: "
-            f"{summary.get('n_sessions_skipped', 0)} "
-            f"(reasons={summary.get('skip_reason_counts', {})})"
+            "[analysis] cross-region fixation neural xcorr ["
+            f"{signal_column}]: wrote "
+            f"{signal_summary.get('n_sessions_written', 0)}/{signal_summary.get('n_sessions_total', 0)} session files"
         )
-    if summary.get("session_report_path"):
-        print(f"[analysis] cross-region session report: {summary['session_report_path']}")
-    if summary.get("skipped_session_report_path"):
-        print(f"[analysis] cross-region skipped-session report: {summary['skipped_session_report_path']}")
+        if signal_summary.get("n_sessions_skipped", 0):
+            print(
+                "[analysis] cross-region skipped sessions ["
+                f"{signal_column}]: "
+                f"{signal_summary.get('n_sessions_skipped', 0)} "
+                f"(reasons={signal_summary.get('skip_reason_counts', {})})"
+            )
+        if signal_summary.get("session_report_path"):
+            print(
+                "[analysis] cross-region session report ["
+                f"{signal_column}]: {signal_summary['session_report_path']}"
+            )
+        if signal_summary.get("skipped_session_report_path"):
+            print(
+                "[analysis] cross-region skipped-session report ["
+                f"{signal_column}]: {signal_summary['skipped_session_report_path']}"
+            )
 
     if not args.no_show_example:
-        paths = iter_fixation_neural_cross_correlation_output_paths(
-            dataset_cfg_path=args.dataset_cfg,
-            output_subdir=settings.cross_output_subdir,
-            output_filename=settings.cross_output_filename,
-            date=args.date,
-            session=args.session,
-        )
-        if not paths:
-            print("\n[example] No cross-region output files found to preview.")
-            return
-        print_fixation_neural_cross_correlation_example(
-            paths[0],
-            analysis_kind=CROSS_ANALYSIS_KIND,
-            max_lags=args.example_max_lags,
-        )
+        for signal_column in signal_columns:
+            paths = iter_fixation_neural_cross_correlation_output_paths(
+                dataset_cfg_path=args.dataset_cfg,
+                output_subdir=settings.cross_output_subdir,
+                output_filename=settings.cross_output_filename,
+                signal_input_column=signal_column,
+                date=args.date,
+                session=args.session,
+            )
+            if not paths:
+                print(f"\n[example] No cross-region output files found to preview for {signal_column}.")
+                continue
+            print(f"\n[example] cross-region signal={signal_column}")
+            print_fixation_neural_cross_correlation_example(
+                paths[0],
+                analysis_kind=CROSS_ANALYSIS_KIND,
+                max_lags=args.example_max_lags,
+            )
 
 
 if __name__ == "__main__":

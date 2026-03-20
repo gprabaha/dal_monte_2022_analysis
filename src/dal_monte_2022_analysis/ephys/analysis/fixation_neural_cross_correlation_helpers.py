@@ -343,9 +343,50 @@ def _normalize_signal_window_ms(raw: object) -> Optional[tuple[float, float]]:
     return float(start_ms), float(stop_ms)
 
 
-def _signal_meta_keys(signal_column: str) -> dict[str, str]:
+def _resolve_signal_input_columns(
+    settings: FixationNeuralCrossCorrelationSettings,
+) -> tuple[str, ...]:
+    raw_values = settings.signal_input_columns
+    if raw_values is None:
+        raw_values = (settings.signal_input_column,)
+    elif isinstance(raw_values, str):
+        raw_values = (raw_values,)
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for value in raw_values:
+        token = str(value).strip()
+        if token and token not in seen:
+            seen.add(token)
+            out.append(token)
+
+    if not out:
+        fallback = str(settings.signal_input_column).strip() or "spike_train_counts"
+        out.append(fallback)
+    return tuple(out)
+
+
+def _signal_output_label(signal_column: str) -> str:
     token = str(signal_column).strip()
     if token == "spike_train_counts":
+        return "raw"
+    if token == "smoothed_spike_train_counts":
+        return "smoothed"
+    normalized = re.sub(r"[^a-z0-9]+", "_", token.lower()).strip("_")
+    return normalized or "signal"
+
+
+def _resolve_signal_output_subdir(base_subdir: str, signal_column: str) -> str:
+    base = str(base_subdir).rstrip("/")
+    label = _signal_output_label(signal_column)
+    if label == "raw":
+        return base
+    return f"{base}/{label}"
+
+
+def _signal_meta_keys(signal_column: str) -> dict[str, str]:
+    token = str(signal_column).strip()
+    if token in {"spike_train_counts", "smoothed_spike_train_counts"}:
         prefix = "spike_train_"
         return {
             "centers": f"{prefix}bin_centers_s_rel",
@@ -1022,14 +1063,15 @@ def _build_session_output_path(
     if output_kind not in {"xcorr", "pair_averages"}:
         raise ValueError("output_kind must be one of: xcorr, pair_averages.")
 
+    signal_column = str(settings.signal_input_column).strip() or "spike_train_counts"
     if analysis_kind == WITHIN_ANALYSIS_KIND:
-        subdir = settings.within_output_subdir
+        subdir = _resolve_signal_output_subdir(settings.within_output_subdir, signal_column)
         if output_kind == "xcorr":
             filename = settings.within_output_filename
         else:
             filename = settings.within_pair_average_output_filename
     elif analysis_kind == CROSS_ANALYSIS_KIND:
-        subdir = settings.cross_output_subdir
+        subdir = _resolve_signal_output_subdir(settings.cross_output_subdir, signal_column)
         if output_kind == "xcorr":
             filename = settings.cross_output_filename
         else:
@@ -1048,10 +1090,11 @@ def _build_session_report_output_path(
     analysis_kind: str,
     filename: str,
 ) -> Path:
+    signal_column = str(settings.signal_input_column).strip() or "spike_train_counts"
     if analysis_kind == WITHIN_ANALYSIS_KIND:
-        subdir = settings.within_output_subdir
+        subdir = _resolve_signal_output_subdir(settings.within_output_subdir, signal_column)
     elif analysis_kind == CROSS_ANALYSIS_KIND:
-        subdir = settings.cross_output_subdir
+        subdir = _resolve_signal_output_subdir(settings.cross_output_subdir, signal_column)
     else:
         raise ValueError(f"Unsupported analysis_kind='{analysis_kind}'.")
     return build_analysis_output_dir(cfg, subdir) / filename
@@ -1465,7 +1508,7 @@ def _process_and_save_session_worker(
     return dict(session_result.get("session_report_row", {}))
 
 
-def _run_fixation_neural_cross_correlation_analysis(
+def _run_fixation_neural_cross_correlation_analysis_single_signal(
     settings: FixationNeuralCrossCorrelationSettings,
     *,
     analysis_kind: str,
@@ -1553,6 +1596,99 @@ def _run_fixation_neural_cross_correlation_analysis(
         **report_summary,
     }
 
+
+def _run_fixation_neural_cross_correlation_analysis(
+    settings: FixationNeuralCrossCorrelationSettings,
+    *,
+    analysis_kind: str,
+    dates: Optional[Sequence[str]] = None,
+    sessions: Optional[Sequence[str]] = None,
+    use_parallel: Optional[bool] = None,
+    test_single: Optional[bool] = None,
+) -> dict:
+    signal_columns = _resolve_signal_input_columns(settings)
+    requested_test_single = bool(settings.test_single if test_single is None else test_single)
+    shared_dates = dates
+    shared_sessions = sessions
+    per_signal_test_single = test_single
+    if len(signal_columns) > 1 and requested_test_single:
+        cfg = load_config(settings.cfg_path)
+        session_rows = scan_processed_paths_for_filename(
+            cfg,
+            settings.trial_input_modality,
+            filename=_ensure_filename(settings.trial_input_filename, ".pkl"),
+            dates=dates,
+            sessions=sessions,
+            agents=(None,),
+        )
+        if session_rows:
+            chosen_row = random.choice(session_rows)
+            shared_dates = [str(chosen_row["date"])]
+            shared_sessions = [str(chosen_row["session"])]
+            per_signal_test_single = False
+    if len(signal_columns) == 1:
+        signal_column = signal_columns[0]
+        single_settings = replace(
+            settings,
+            signal_input_column=signal_column,
+            signal_input_columns=None,
+        )
+        summary = _run_fixation_neural_cross_correlation_analysis_single_signal(
+            single_settings,
+            analysis_kind=analysis_kind,
+            dates=shared_dates,
+            sessions=shared_sessions,
+            use_parallel=use_parallel,
+            test_single=per_signal_test_single,
+        )
+        return {
+            **summary,
+            "signal_input_columns": [signal_column],
+            "signal_summaries": {signal_column: dict(summary)},
+            "n_session_signal_runs_total": int(summary.get("n_sessions_total", 0)),
+        }
+
+    signal_summaries: dict[str, dict] = {}
+    skip_reason_counts: dict[str, int] = {}
+    n_session_signal_runs_total = 0
+    n_sessions_written_total = 0
+    n_sessions_skipped_total = 0
+    n_unique_sessions_total: Optional[int] = None
+
+    for signal_column in signal_columns:
+        signal_settings = replace(
+            settings,
+            signal_input_column=signal_column,
+            signal_input_columns=None,
+        )
+        summary = _run_fixation_neural_cross_correlation_analysis_single_signal(
+            signal_settings,
+            analysis_kind=analysis_kind,
+            dates=shared_dates,
+            sessions=shared_sessions,
+            use_parallel=use_parallel,
+            test_single=per_signal_test_single,
+        )
+        signal_summaries[signal_column] = dict(summary)
+        if n_unique_sessions_total is None:
+            n_unique_sessions_total = int(summary.get("n_sessions_total", 0))
+        n_session_signal_runs_total += int(summary.get("n_sessions_total", 0))
+        n_sessions_written_total += int(summary.get("n_sessions_written", 0))
+        n_sessions_skipped_total += int(summary.get("n_sessions_skipped", 0))
+        for reason, count in dict(summary.get("skip_reason_counts", {})).items():
+            skip_reason_counts[str(reason)] = skip_reason_counts.get(str(reason), 0) + int(count)
+
+    return {
+        "n_sessions_total": int(0 if n_unique_sessions_total is None else n_unique_sessions_total),
+        "n_session_signal_runs_total": int(n_session_signal_runs_total),
+        "n_sessions_written": int(n_sessions_written_total),
+        "n_sessions_skipped": int(n_sessions_skipped_total),
+        "skip_reason_counts": skip_reason_counts,
+        "session_report_path": None,
+        "skipped_session_report_path": None,
+        "signal_input_columns": list(signal_columns),
+        "signal_summaries": signal_summaries,
+    }
 
 def _aggregate_pair_averages_for_plotting(
     settings: FixationNeuralCrossCorrelationPlotAggregationSettings,

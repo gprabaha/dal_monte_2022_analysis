@@ -4,7 +4,11 @@
 # Input fixation PSTH trials (stored under processed_data_root).
 trial_input_modality: psth
 trial_input_filename: fixations_spike_train_1ms.pkl
+# Legacy single-signal selector retained for direct single-column runs.
 signal_input_column: spike_train_counts
+# When multiple signal columns are listed here, raw outputs keep the legacy
+# subdir and each additional signal writes to its own child subdir.
+signal_input_columns: [spike_train_counts, smoothed_spike_train_counts]
 
 # Outputs (stored under analysis_output_root).
 # Within-region and cross-region analyses are written separately.
