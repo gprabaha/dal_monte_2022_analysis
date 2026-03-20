@@ -53,7 +53,7 @@ roi_groups:
 # signal window is applied to the source trial signal before xcorr.
 signal_window_ms: [-500.0, 500.0]
 # signal_transform options: none | demean | zscore
-signal_transform: zscore
+signal_transform: none
 # xcorr_normalization options: none | energy
 # `energy` scales each pair trace by ||x||*||y|| during xcorr computation.
 xcorr_normalization: energy

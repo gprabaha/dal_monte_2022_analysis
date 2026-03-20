@@ -62,7 +62,7 @@ class FixationNeuralCrossCorrelationSettings:
     roi_groups: dict[str, Sequence[str]] = field(
         default_factory=lambda: {k: tuple(v) for k, v in DEFAULT_FIXATION_ROI_GROUPS.items()},
     )
-    signal_transform: str = "zscore"
+    signal_transform: str = "none"
     xcorr_normalization: str = "energy"
     max_lag: Optional[int] = None
     use_parallel: bool = True
@@ -139,7 +139,7 @@ def build_fixation_neural_cross_correlation_settings_from_config(
         partner_regions=cfg.get("partner_regions", ("ACCg", "dmPFC", "OFC")),
         include_regions=cfg.get("include_regions"),
         roi_groups=cfg.get("roi_groups"),
-        signal_transform=cfg.get("signal_transform", "zscore"),
+        signal_transform=cfg.get("signal_transform", "none"),
         xcorr_normalization=cfg.get("xcorr_normalization", "energy"),
         max_lag=cfg.get("max_lag"),
         use_parallel=cfg.get("use_parallel", True),
