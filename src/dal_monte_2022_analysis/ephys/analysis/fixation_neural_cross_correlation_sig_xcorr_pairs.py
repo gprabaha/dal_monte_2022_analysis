@@ -899,7 +899,7 @@ def iter_fixation_neural_cross_correlation_pair_meta_analysis_output_paths(
 def build_fixation_neural_cross_correlation_sig_xcorr_pair_group_summary_table(
     output_paths: Sequence[str | Path],
 ) -> pd.DataFrame:
-    """Concatenate per-date group summary counts from saved sig-pair outputs."""
+    """Build one collapsed summary row per signal/group label across all loaded dates."""
     frames: list[pd.DataFrame] = []
     condition_order: Sequence[str] = tuple(_PLOT_CONDITION_ORDER)
 
@@ -923,8 +923,6 @@ def build_fixation_neural_cross_correlation_sig_xcorr_pair_group_summary_table(
             continue
 
         work = group_summaries.copy()
-        if "date" not in work.columns and meta.get("date") is not None:
-            work["date"] = str(meta.get("date"))
         if meta.get("signal_input_column") is not None:
             work["signal_input_column"] = str(meta.get("signal_input_column"))
         if meta.get("signal_variant") is not None:
@@ -935,24 +933,46 @@ def build_fixation_neural_cross_correlation_sig_xcorr_pair_group_summary_table(
         return pd.DataFrame()
 
     out = pd.concat(frames, axis=0, ignore_index=True, sort=False)
-    out = _sort_group_summary_dataframe(out, condition_order=condition_order)
-    ordered = [
+    count_cols = [
         col
         for col in (
-            "signal_variant",
-            "signal_input_column",
-            "date",
-            "group_label",
-            "region_1",
-            "region_2",
             "n_total_pairs",
             *[_group_summary_count_column(condition) for condition in condition_order],
             "n_sig_any_condition_pairs",
         )
         if col in out.columns
     ]
-    remaining = [col for col in out.columns if col not in ordered]
-    return out.loc[:, ordered + remaining]
+    group_cols = [
+        col
+        for col in ("signal_variant", "signal_input_column", "group_label")
+        if col in out.columns
+    ]
+    if not group_cols:
+        return pd.DataFrame(columns=count_cols)
+
+    work = out.loc[:, group_cols + count_cols].copy()
+    for col in count_cols:
+        work[col] = pd.to_numeric(work[col], errors="coerce").fillna(0).astype(np.int64)
+
+    collapsed = work.groupby(group_cols, dropna=False, as_index=False)[count_cols].sum()
+    sort_cols = [col for col in ("signal_variant", "signal_input_column", "group_label") if col in collapsed.columns]
+    if sort_cols:
+        collapsed = collapsed.sort_values(sort_cols).reset_index(drop=True)
+
+    ordered = [
+        col
+        for col in (
+            "signal_variant",
+            "signal_input_column",
+            "group_label",
+            "n_total_pairs",
+            *[_group_summary_count_column(condition) for condition in condition_order],
+            "n_sig_any_condition_pairs",
+        )
+        if col in collapsed.columns
+    ]
+    remaining = [col for col in collapsed.columns if col not in ordered]
+    return collapsed.loc[:, ordered + remaining]
 
 
 

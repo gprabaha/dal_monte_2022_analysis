@@ -7,6 +7,7 @@ import pandas as pd
 from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_sig_xcorr_pairs import (
     build_fixation_neural_cross_correlation_sig_xcorr_pair_group_summary_table,
     build_fixation_neural_cross_correlation_sig_xcorr_pairs_settings_from_config,
+    iter_fixation_neural_cross_correlation_sig_xcorr_pairs_output_paths,
     resolve_fixation_neural_cross_correlation_sig_xcorr_pairs_signal_columns,
     run_within_region_fixation_neural_cross_correlation_sig_xcorr_pairs,
 )
@@ -50,6 +51,7 @@ def main() -> None:
     )
     parser.add_argument("--date", default=None)
     parser.add_argument("--session", default=None)
+    parser.add_argument("--print-only", action="store_true")
     parser.add_argument("--no-show-table", "--no-show-example", dest="no_show_table", action="store_true")
     args = parser.parse_args()
 
@@ -58,16 +60,45 @@ def main() -> None:
         ephys_fixation_neural_cross_correlation_cfg_path=args.ephys_fixation_neural_cross_correlation_cfg,
     )
     signal_columns = resolve_fixation_neural_cross_correlation_sig_xcorr_pairs_signal_columns(settings)
-    summary = run_within_region_fixation_neural_cross_correlation_sig_xcorr_pairs(
-        settings,
-        dates=[args.date] if args.date else None,
-        sessions=[args.session] if args.session else None,
-    )
+    if args.print_only and args.session:
+        parser.error("--session cannot be used with --print-only because sig-pair outputs are stored per date.")
 
-    signal_summaries = summary.get("signal_summaries", {})
+    if args.print_only:
+        signal_summaries = {}
+        for signal_column in signal_columns:
+            output_paths = iter_fixation_neural_cross_correlation_sig_xcorr_pairs_output_paths(
+                dataset_cfg_path=args.dataset_cfg,
+                output_subdir=settings.within_output_subdir,
+                output_filename=settings.within_output_filename,
+                signal_input_column=signal_column,
+                date=args.date,
+            )
+            signal_summaries[signal_column] = {
+                "signal_variant": signal_column,
+                "output_paths": [str(path) for path in output_paths],
+                "n_dates_written": int(len(output_paths)),
+                "n_dates_total": int(len(output_paths)),
+                "n_session_files_total": 0,
+                "n_summary_rows_total": 0,
+                "n_group_summary_rows_total": 0,
+            }
+    else:
+        summary = run_within_region_fixation_neural_cross_correlation_sig_xcorr_pairs(
+            settings,
+            dates=[args.date] if args.date else None,
+            sessions=[args.session] if args.session else None,
+        )
+        signal_summaries = summary.get("signal_summaries", {})
+
     for idx, signal_column in enumerate(signal_columns):
         signal_summary = signal_summaries.get(signal_column, {})
-        _print_analysis_summary(signal_column, signal_summary)
+        if args.print_only:
+            print(
+                "[analysis] within-region sig xcorr pairs "
+                f"[{signal_column}]: loaded {signal_summary.get('n_dates_written', 0)} existing date files"
+            )
+        else:
+            _print_analysis_summary(signal_column, signal_summary)
         if not args.no_show_table:
             _print_group_summary_table(signal_column, signal_summary)
         if idx != len(signal_columns) - 1:

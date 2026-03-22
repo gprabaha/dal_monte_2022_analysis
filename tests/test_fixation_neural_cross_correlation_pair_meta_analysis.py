@@ -261,6 +261,9 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
                 set(combined_group_df["signal_input_column"].astype(str)),
                 {"spike_train_counts", "smoothed_spike_train_counts"},
             )
+            self.assertNotIn("date", combined_group_df.columns)
+            self.assertNotIn("region_1", combined_group_df.columns)
+            self.assertNotIn("region_2", combined_group_df.columns)
             self.assertTrue((combined_group_df["n_total_pairs"].astype(int) == 1).all())
             self.assertTrue((combined_group_df["n_sig_face_interactive_pairs"].astype(int) == 1).all())
             self.assertTrue((combined_group_df["n_sig_any_condition_pairs"].astype(int) == 1).all())
@@ -457,6 +460,17 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
                     ),
                 ],
             )
+            collapsed_group_df = build_fixation_neural_cross_correlation_sig_xcorr_pair_group_summary_table(
+                signal_summary["output_paths"]
+            )
+            self.assertEqual(len(collapsed_group_df), 1)
+            self.assertEqual(str(collapsed_group_df.iloc[0]["group_label"]), "BLA")
+            self.assertEqual(int(collapsed_group_df.iloc[0]["n_total_pairs"]), 2)
+            self.assertEqual(int(collapsed_group_df.iloc[0]["n_sig_face_interactive_pairs"]), 2)
+            self.assertEqual(int(collapsed_group_df.iloc[0]["n_sig_any_condition_pairs"]), 2)
+            self.assertNotIn("date", collapsed_group_df.columns)
+            self.assertNotIn("region_1", collapsed_group_df.columns)
+            self.assertNotIn("region_2", collapsed_group_df.columns)
 
 
     def test_cross_region_sig_xcorr_pairs_use_date_level_outputs(self) -> None:
