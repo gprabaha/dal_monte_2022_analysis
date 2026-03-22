@@ -20,6 +20,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_pa
 )
 from dal_monte_2022_analysis.ephys.plotting.fixation_neural_cross_correlation_pair_condition_means import (
     FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
+    _fit_decay_models_for_side,
     build_fixation_neural_cross_correlation_pair_condition_mean_plot_payload,
 )
 
@@ -267,6 +268,40 @@ class TestFixationNeuralCrossCorrelationPairConditionMeans(unittest.TestCase):
                     np.asarray([3.0, 4.0, 5.0], dtype=float),
                 )
             )
+
+    def test_fit_decay_models_for_side_prefers_exponential_for_curved_trace(self) -> None:
+        x_axis = np.arange(-20.0, 21.0, 1.0, dtype=float)
+        values = 0.2 + (1.8 * np.exp(-0.12 * np.abs(x_axis)))
+        settings = FixationNeuralCrossCorrelationPairConditionMeanPlotSettings(
+            cfg_path="unused",
+            plotting_cfg_path="",
+        )
+
+        negative_fit = _fit_decay_models_for_side(
+            settings,
+            x_axis=x_axis,
+            values=values,
+            side="negative",
+        )
+        positive_fit = _fit_decay_models_for_side(
+            settings,
+            x_axis=x_axis,
+            values=values,
+            side="positive",
+        )
+
+        self.assertIsNotNone(negative_fit["exponential"]["r_squared"])
+        self.assertIsNotNone(positive_fit["exponential"]["r_squared"])
+        self.assertGreaterEqual(
+            float(negative_fit["exponential"]["r_squared"]),
+            float(negative_fit["linear"]["r_squared"]),
+        )
+        self.assertGreaterEqual(
+            float(positive_fit["exponential"]["r_squared"]),
+            float(positive_fit["linear"]["r_squared"]),
+        )
+        self.assertIn(str(negative_fit["selection"]), {"exponential", "both"})
+        self.assertIn(str(positive_fit["selection"]), {"exponential", "both"})
 
     def test_plot_payload_builds_separate_raw_and_smoothed_group_stats(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

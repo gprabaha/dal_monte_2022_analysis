@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
+from scipy.optimize import curve_fit
 from scipy.stats import ttest_rel
 
 from dal_monte_2022_analysis.config.load import load_config
@@ -86,8 +87,14 @@ class FixationNeuralCrossCorrelationPairConditionMeanPlotSettings:
     between_condition_marker_size: float = 5.0
     between_condition_marker_alpha: float = 0.95
     mean_lag_annotation_fontsize: float = 8.0
+    fit_annotation_fontsize: float = 7.0
     plot_lag_half_window_ms: float = 100.0
     lag_tick_step_ms: float = 50.0
+    fit_r2_good_threshold: float = 0.8
+    fit_min_points_per_side: int = 5
+    fit_linear_linewidth: float = 1.3
+    fit_exponential_linewidth: float = 1.5
+    fit_line_alpha: float = 0.9
     use_parallel: bool = True
     max_procs: Optional[int] = None
     lag_test_min_lags_for_parallel: int = 256
@@ -310,6 +317,173 @@ def _format_mean_lag_annotation(
             p_label = f"{float(row.p_value):.3g}"
         suffix = " *" if bool(getattr(row, "significant", False)) else ""
         lines.append(f"{left} vs {right}: p={p_label}{suffix}")
+    return "\n".join(lines)
+
+
+def _linear_decay_model(distance: np.ndarray, slope: float, intercept: float) -> np.ndarray:
+    return (np.asarray(distance, dtype=np.float64) * float(slope)) + float(intercept)
+
+
+def _exponential_decay_model(distance: np.ndarray, amplitude: float, rate: float, baseline: float) -> np.ndarray:
+    return float(baseline) + (float(amplitude) * np.exp(-float(rate) * np.asarray(distance, dtype=np.float64)))
+
+
+def _compute_r_squared(observed: np.ndarray, predicted: np.ndarray) -> Optional[float]:
+    y = np.asarray(observed, dtype=np.float64).reshape(-1)
+    y_hat = np.asarray(predicted, dtype=np.float64).reshape(-1)
+    valid = np.isfinite(y) & np.isfinite(y_hat)
+    y = y[valid]
+    y_hat = y_hat[valid]
+    if y.size < 2:
+        return None
+    residual = y - y_hat
+    ss_res = float(np.sum(residual * residual))
+    centered = y - float(np.mean(y))
+    ss_tot = float(np.sum(centered * centered))
+    if np.isclose(ss_tot, 0.0):
+        return 1.0 if np.allclose(y, y_hat) else 0.0
+    return float(1.0 - (ss_res / ss_tot))
+
+
+def _fit_linear_decay_segment(distance: np.ndarray, values: np.ndarray) -> dict[str, object]:
+    x = np.asarray(distance, dtype=np.float64).reshape(-1)
+    y = np.asarray(values, dtype=np.float64).reshape(-1)
+    valid = np.isfinite(x) & np.isfinite(y)
+    x = x[valid]
+    y = y[valid]
+    if x.size < 2:
+        return {"predicted": None, "r_squared": None, "params": None}
+    slope, intercept = np.polyfit(x, y, deg=1)
+    predicted = _linear_decay_model(x, slope, intercept)
+    return {
+        "predicted": predicted.astype(np.float64),
+        "r_squared": _compute_r_squared(y, predicted),
+        "params": (float(slope), float(intercept)),
+    }
+
+
+def _fit_exponential_decay_segment(distance: np.ndarray, values: np.ndarray) -> dict[str, object]:
+    x = np.asarray(distance, dtype=np.float64).reshape(-1)
+    y = np.asarray(values, dtype=np.float64).reshape(-1)
+    valid = np.isfinite(x) & np.isfinite(y)
+    x = x[valid]
+    y = y[valid]
+    if x.size < 3:
+        return {"predicted": None, "r_squared": None, "params": None}
+    amplitude0 = float(y[0] - y[-1])
+    baseline0 = float(y[-1])
+    max_x = float(np.max(np.abs(x))) if x.size else 1.0
+    rate0 = 1.0 / max(max_x, 1.0)
+    try:
+        params, _ = curve_fit(
+            _exponential_decay_model,
+            x,
+            y,
+            p0=(amplitude0, rate0, baseline0),
+            bounds=([-np.inf, 0.0, -np.inf], [np.inf, np.inf, np.inf]),
+            maxfev=20000,
+        )
+    except Exception:
+        return {"predicted": None, "r_squared": None, "params": None}
+    predicted = _exponential_decay_model(x, *params)
+    return {
+        "predicted": np.asarray(predicted, dtype=np.float64),
+        "r_squared": _compute_r_squared(y, predicted),
+        "params": tuple(float(value) for value in params),
+    }
+
+
+def _fit_decay_models_for_side(
+    settings: FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
+    *,
+    x_axis: np.ndarray,
+    values: np.ndarray,
+    side: str,
+) -> dict[str, object]:
+    x = np.asarray(x_axis, dtype=np.float64).reshape(-1)
+    y = np.asarray(values, dtype=np.float64).reshape(-1)
+    if side == "negative":
+        side_mask = x < 0.0
+    elif side == "positive":
+        side_mask = x > 0.0
+    else:
+        raise ValueError(f"Unsupported fit side '{side}'.")
+    x_side = x[side_mask]
+    y_side = y[side_mask]
+    if x_side.size < int(max(2, settings.fit_min_points_per_side)):
+        return {
+            "side": side,
+            "x_axis": x_side,
+            "linear": {"predicted": None, "r_squared": None, "params": None, "good": False},
+            "exponential": {"predicted": None, "r_squared": None, "params": None, "good": False},
+            "selection": "none",
+        }
+
+    distance = np.abs(x_side)
+    linear = _fit_linear_decay_segment(distance, y_side)
+    exponential = _fit_exponential_decay_segment(distance, y_side)
+    linear_r2 = linear.get("r_squared")
+    exp_r2 = exponential.get("r_squared")
+    linear_good = linear_r2 is not None and float(linear_r2) >= float(settings.fit_r2_good_threshold)
+    exp_good = exp_r2 is not None and float(exp_r2) >= float(settings.fit_r2_good_threshold)
+    linear["good"] = bool(linear_good)
+    exponential["good"] = bool(exp_good)
+    if linear_good and exp_good:
+        selection = "both"
+    elif linear_good:
+        selection = "linear"
+    elif exp_good:
+        selection = "exponential"
+    else:
+        selection = "none"
+
+    linear_pred = linear.get("predicted")
+    if linear_pred is not None:
+        slope, intercept = linear.get("params") or (0.0, 0.0)
+        linear["predicted"] = _linear_decay_model(distance, slope, intercept).astype(np.float64)
+    exp_pred = exponential.get("predicted")
+    if exp_pred is not None:
+        amplitude, rate, baseline = exponential.get("params") or (0.0, 0.0, 0.0)
+        exponential["predicted"] = _exponential_decay_model(distance, amplitude, rate, baseline).astype(np.float64)
+
+    return {
+        "side": side,
+        "x_axis": x_side.astype(np.float64),
+        "linear": linear,
+        "exponential": exponential,
+        "selection": selection,
+    }
+
+
+def _format_fit_choice(model_result: dict[str, object]) -> str:
+    selection = str(model_result.get("selection", "none"))
+    linear_r2 = model_result.get("linear", {}).get("r_squared")
+    exp_r2 = model_result.get("exponential", {}).get("r_squared")
+    if selection == "linear":
+        return f"lin({float(linear_r2):.2f})" if linear_r2 is not None else "lin"
+    if selection == "exponential":
+        return f"exp({float(exp_r2):.2f})" if exp_r2 is not None else "exp"
+    if selection == "both":
+        lin_label = f"{float(linear_r2):.2f}" if linear_r2 is not None else "n/a"
+        exp_label = f"{float(exp_r2):.2f}" if exp_r2 is not None else "n/a"
+        return f"both(l={lin_label},e={exp_label})"
+    return "none"
+
+
+def _format_fit_annotation(
+    settings: FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
+    fit_map: dict[str, dict[str, dict[str, object]]],
+) -> str:
+    if not fit_map:
+        return ""
+    lines: list[str] = []
+    for condition in settings.condition_order:
+        condition = str(condition)
+        side_map = fit_map.get(condition) or {}
+        negative = _format_fit_choice(side_map.get("negative") or {})
+        positive = _format_fit_choice(side_map.get("positive") or {})
+        short = settings.condition_short_labels.get(condition, condition)
+        lines.append(f"{short}: - {negative} | + {positive}")
     return "\n".join(lines)
 
 
@@ -632,6 +806,7 @@ def _plot_result(
     output_path: Path,
     cfg_figsize: Optional[Sequence[float]],
     cfg_dpi: Optional[int],
+    include_curve_fits: bool,
 ) -> None:
     group_plot_map = result.get("group_plot_map", {}) or {}
     if not group_plot_map:
@@ -680,6 +855,7 @@ def _plot_result(
     plot_axes = list(np.ravel(axes))
 
     for axis, (group_label, traces_by_condition) in zip(plot_axes, group_items):
+        fit_map: dict[str, dict[str, dict[str, object]]] = {}
         for condition in settings.condition_order:
             condition = str(condition)
             traces = [
@@ -714,6 +890,47 @@ def _plot_result(
                 linewidth=float(settings.mean_trace_linewidth),
                 zorder=2,
             )
+            if include_curve_fits and x_label == "Lag (ms)":
+                negative_fit = _fit_decay_models_for_side(
+                    settings,
+                    x_axis=plot_x_axis,
+                    values=mean_trace,
+                    side="negative",
+                )
+                positive_fit = _fit_decay_models_for_side(
+                    settings,
+                    x_axis=plot_x_axis,
+                    values=mean_trace,
+                    side="positive",
+                )
+                fit_map[condition] = {"negative": negative_fit, "positive": positive_fit}
+                for fit_result in (negative_fit, positive_fit):
+                    if str(fit_result.get("selection", "none")) in ("linear", "both"):
+                        predicted = fit_result.get("linear", {}).get("predicted")
+                        fit_x = np.asarray(fit_result.get("x_axis", []), dtype=np.float64).reshape(-1)
+                        if predicted is not None and fit_x.size:
+                            axis.plot(
+                                fit_x,
+                                np.asarray(predicted, dtype=np.float64),
+                                color=color,
+                                linestyle="--",
+                                linewidth=float(settings.fit_linear_linewidth),
+                                alpha=float(settings.fit_line_alpha),
+                                zorder=3,
+                            )
+                    if str(fit_result.get("selection", "none")) in ("exponential", "both"):
+                        predicted = fit_result.get("exponential", {}).get("predicted")
+                        fit_x = np.asarray(fit_result.get("x_axis", []), dtype=np.float64).reshape(-1)
+                        if predicted is not None and fit_x.size:
+                            axis.plot(
+                                fit_x,
+                                np.asarray(predicted, dtype=np.float64),
+                                color=color,
+                                linestyle=":",
+                                linewidth=float(settings.fit_exponential_linewidth),
+                                alpha=float(settings.fit_line_alpha),
+                                zorder=3,
+                            )
 
         mean_rows = (
             mean_lag_df.loc[mean_lag_df["group_label"].astype(str) == str(group_label)].copy()
@@ -730,6 +947,19 @@ def _plot_result(
                 ha="left",
                 va="top",
                 fontsize=float(settings.mean_lag_annotation_fontsize),
+                color="#222222",
+                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 2.5},
+            )
+        fit_annotation = _format_fit_annotation(settings, fit_map) if include_curve_fits else ""
+        if fit_annotation:
+            axis.text(
+                0.98,
+                0.98,
+                fit_annotation,
+                transform=axis.transAxes,
+                ha="right",
+                va="top",
+                fontsize=float(settings.fit_annotation_fontsize),
                 color="#222222",
                 bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 2.5},
             )
@@ -756,6 +986,27 @@ def _plot_result(
         )
         for condition in settings.condition_order
     ]
+    if include_curve_fits:
+        legend_handles.extend(
+            [
+                Line2D(
+                    [0],
+                    [0],
+                    color="#444444",
+                    linestyle="--",
+                    linewidth=float(settings.fit_linear_linewidth),
+                    label="Linear fit",
+                ),
+                Line2D(
+                    [0],
+                    [0],
+                    color="#444444",
+                    linestyle=":",
+                    linewidth=float(settings.fit_exponential_linewidth),
+                    label="Exponential fit",
+                ),
+            ]
+        )
     fig.legend(
         handles=legend_handles,
         loc="upper center",
@@ -826,6 +1077,7 @@ def _plot_single_subset(
             output_path=output_path,
             cfg_figsize=cfg_figsize,
             cfg_dpi=cfg_dpi,
+            include_curve_fits=not is_per_day,
         )
         figure_outputs.append(str(output_path))
         mean_lag_stat_outputs.append(str(mean_lag_path))
