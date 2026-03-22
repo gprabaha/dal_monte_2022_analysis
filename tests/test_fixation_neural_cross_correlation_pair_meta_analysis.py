@@ -1,4 +1,4 @@
-"""Regression tests for fixation neural xcorr pair meta-analysis outputs."""
+"""Regression tests for fixation neural xcorr sig-pair outputs."""
 
 from __future__ import annotations
 
@@ -10,10 +10,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_pair_meta_analysis import (
-    FixationNeuralCrossCorrelationPairMetaAnalysisSettings,
-    run_cross_region_fixation_neural_cross_correlation_pair_meta_analysis,
-    run_within_region_fixation_neural_cross_correlation_pair_meta_analysis,
+from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_sig_xcorr_pairs import (
+    FixationNeuralCrossCorrelationSigXcorrPairsSettings,
+    build_fixation_neural_cross_correlation_sig_xcorr_pair_group_summary_table,
+    run_cross_region_fixation_neural_cross_correlation_sig_xcorr_pairs,
+    run_within_region_fixation_neural_cross_correlation_sig_xcorr_pairs,
 )
 
 
@@ -61,7 +62,7 @@ def _write_xcorr_session_file(
 
 
 class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
-    def test_within_region_pair_meta_analysis_aggregates_raw_and_smoothed(self) -> None:
+    def test_within_region_sig_xcorr_pairs_aggregates_raw_and_smoothed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             processed_root = root / "processed"
@@ -174,13 +175,13 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
                 rows=smooth_rows_s2,
             )
 
-            settings = FixationNeuralCrossCorrelationPairMetaAnalysisSettings(
+            settings = FixationNeuralCrossCorrelationSigXcorrPairsSettings(
                 cfg_path=str(cfg_path),
                 signal_input_column="spike_train_counts",
                 signal_input_columns=("spike_train_counts", "smoothed_spike_train_counts"),
                 min_fixations=2,
             )
-            summary = run_within_region_fixation_neural_cross_correlation_pair_meta_analysis(
+            summary = run_within_region_fixation_neural_cross_correlation_sig_xcorr_pairs(
                 settings,
                 dates=["20990101"],
                 show_progress=False,
@@ -190,6 +191,8 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
             self.assertEqual(summary["n_date_signal_runs_total"], 2)
             self.assertEqual(int(signal_summaries["spike_train_counts"]["n_dates_written"]), 1)
             self.assertEqual(int(signal_summaries["smoothed_spike_train_counts"]["n_dates_written"]), 1)
+            self.assertEqual(len(signal_summaries["spike_train_counts"]["group_summary_csv_output_paths"]), 1)
+            self.assertEqual(len(signal_summaries["smoothed_spike_train_counts"]["group_summary_csv_output_paths"]), 1)
 
             raw_out = (
                 analysis_root
@@ -205,10 +208,14 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
             )
             raw_csv = raw_out.with_suffix(".csv")
             smooth_csv = smooth_out.with_suffix(".csv")
+            raw_group_csv = raw_csv.with_name(f"{raw_csv.stem}_group_summary.csv")
+            smooth_group_csv = smooth_csv.with_name(f"{smooth_csv.stem}_group_summary.csv")
             self.assertTrue(raw_out.exists())
             self.assertTrue(smooth_out.exists())
             self.assertTrue(raw_csv.exists())
             self.assertTrue(smooth_csv.exists())
+            self.assertTrue(raw_group_csv.exists())
+            self.assertTrue(smooth_group_csv.exists())
 
             with raw_out.open("rb") as f:
                 raw_obj = pickle.load(f)
@@ -224,20 +231,40 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
             smooth_row = smooth_df.iloc[0]
             self.assertEqual(str(raw_row["condition"]), "face_interactive")
             self.assertEqual(int(raw_row["n_fixations"]), 3)
-            self.assertEqual(int(raw_row["n_sessions"]), 2)
             self.assertTrue(bool(raw_row["significant_above_zero"]))
-            self.assertTrue(
-                np.allclose(
-                    np.asarray(raw_row["mean_cross_correlation"], dtype=float),
-                    np.asarray([0.2, 0.4, 0.6], dtype=float),
-                )
-            )
-            self.assertEqual(str(smooth_row["signal_input_column"]), "smoothed_spike_train_counts")
+            self.assertAlmostEqual(float(raw_row["mean_cross_correlation_across_lags"]), 0.4)
+            self.assertNotIn("mean_cross_correlation", raw_df.columns)
+            self.assertNotIn("n_sessions", raw_df.columns)
+            self.assertNotIn("sessions", raw_df.columns)
+            self.assertNotIn("signal_input_column", raw_df.columns)
+            self.assertEqual(str(raw_obj["meta"]["signal_input_column"]), "spike_train_counts")
+            self.assertEqual(str(raw_obj["meta"]["signal_variant"]), "raw")
+
             self.assertEqual(int(smooth_row["n_fixations"]), 2)
             self.assertTrue(bool(smooth_row["significant_above_zero"]))
+            self.assertAlmostEqual(float(smooth_row["mean_cross_correlation_across_lags"]), 0.65)
+            self.assertEqual(str(smooth_obj["meta"]["signal_input_column"]), "smoothed_spike_train_counts")
+            self.assertEqual(str(smooth_obj["meta"]["signal_variant"]), "smoothed")
 
+            raw_group_df = raw_obj["group_summaries"]
+            self.assertEqual(len(raw_group_df), 1)
+            self.assertEqual(int(raw_group_df.iloc[0]["n_total_pairs"]), 1)
+            self.assertEqual(int(raw_group_df.iloc[0]["n_sig_face_interactive_pairs"]), 1)
+            self.assertEqual(int(raw_group_df.iloc[0]["n_sig_any_condition_pairs"]), 1)
 
-    def test_pair_meta_analysis_uses_configured_roi_groups_for_condition_labels(self) -> None:
+            combined_group_df = build_fixation_neural_cross_correlation_sig_xcorr_pair_group_summary_table(
+                [raw_out, smooth_out]
+            )
+            self.assertEqual(set(combined_group_df["signal_variant"].astype(str)), {"raw", "smoothed"})
+            self.assertEqual(
+                set(combined_group_df["signal_input_column"].astype(str)),
+                {"spike_train_counts", "smoothed_spike_train_counts"},
+            )
+            self.assertTrue((combined_group_df["n_total_pairs"].astype(int) == 1).all())
+            self.assertTrue((combined_group_df["n_sig_face_interactive_pairs"].astype(int) == 1).all())
+            self.assertTrue((combined_group_df["n_sig_any_condition_pairs"].astype(int) == 1).all())
+
+    def test_sig_xcorr_pairs_use_configured_roi_groups_for_condition_labels(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             processed_root = root / "processed"
@@ -285,7 +312,7 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
                 rows=rows,
             )
 
-            settings = FixationNeuralCrossCorrelationPairMetaAnalysisSettings(
+            settings = FixationNeuralCrossCorrelationSigXcorrPairsSettings(
                 cfg_path=str(cfg_path),
                 signal_input_column="spike_train_counts",
                 signal_input_columns=("spike_train_counts",),
@@ -296,7 +323,7 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
                 },
                 min_fixations=1,
             )
-            summary = run_within_region_fixation_neural_cross_correlation_pair_meta_analysis(
+            summary = run_within_region_fixation_neural_cross_correlation_sig_xcorr_pairs(
                 settings,
                 dates=["20990105"],
                 show_progress=False,
@@ -317,7 +344,7 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
             self.assertEqual(int(df.loc[df["condition"].astype(str) == "face_interactive", "n_fixations"].iloc[0]), 1)
             self.assertEqual(int(df.loc[df["condition"].astype(str) == "object", "n_fixations"].iloc[0]), 1)
 
-    def test_cross_region_pair_meta_analysis_uses_date_level_outputs(self) -> None:
+    def test_cross_region_sig_xcorr_pairs_use_date_level_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             processed_root = root / "processed"
@@ -373,13 +400,13 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
                 rows=rows_s2,
             )
 
-            settings = FixationNeuralCrossCorrelationPairMetaAnalysisSettings(
+            settings = FixationNeuralCrossCorrelationSigXcorrPairsSettings(
                 cfg_path=str(cfg_path),
                 signal_input_column="spike_train_counts",
                 signal_input_columns=("spike_train_counts",),
                 min_fixations=2,
             )
-            summary = run_cross_region_fixation_neural_cross_correlation_pair_meta_analysis(
+            summary = run_cross_region_fixation_neural_cross_correlation_sig_xcorr_pairs(
                 settings,
                 dates=["20990102"],
                 show_progress=False,
@@ -402,6 +429,21 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
             self.assertEqual(str(row["condition"]), "object")
             self.assertEqual(int(row["n_fixations"]), 2)
             self.assertFalse(bool(row["significant_above_zero"]))
+            self.assertNotIn("mean_cross_correlation", df.columns)
+            self.assertNotIn("n_sessions", df.columns)
+            self.assertNotIn("sessions", df.columns)
+
+            group_df = obj["group_summaries"]
+            self.assertEqual(len(group_df), 1)
+            self.assertEqual(str(group_df.iloc[0]["group_label"]), "BLA__ACCg")
+            self.assertEqual(int(group_df.iloc[0]["n_total_pairs"]), 1)
+            self.assertEqual(int(group_df.iloc[0]["n_sig_object_pairs"]), 0)
+            self.assertEqual(int(group_df.iloc[0]["n_sig_any_condition_pairs"]), 0)
+
+            combined_group_df = build_fixation_neural_cross_correlation_sig_xcorr_pair_group_summary_table([out_path])
+            self.assertEqual(len(combined_group_df), 1)
+            self.assertEqual(str(combined_group_df.iloc[0]["signal_variant"]), "raw")
+            self.assertEqual(str(combined_group_df.iloc[0]["signal_input_column"]), "spike_train_counts")
 
 
 if __name__ == "__main__":

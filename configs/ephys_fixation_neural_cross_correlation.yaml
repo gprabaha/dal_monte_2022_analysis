@@ -21,10 +21,11 @@ within_pair_average_output_filename: pair_averages.pkl
 cross_pair_average_output_filename: pair_averages.pkl
 
 
-# Date-level pair meta-analysis over saved fixation xcorr outputs.
+# Date-level sig-xcorr-pair analysis over saved fixation xcorr outputs.
 # Each date output aggregates fixation-level traces across sessions by
 # neural pair and fixation condition, then tests whether the per-fixation
-# lag-mean is greater than 0.
+# lag-mean is greater than 0. Separate raw and smoothed outputs are written
+# to separate files, and each date also gets a compact group summary table.
 pair_meta_within_output_subdir: ephys/psth/fixation_neural_cross_correlation/pair_meta_analysis/within_region
 pair_meta_cross_output_subdir: ephys/psth/fixation_neural_cross_correlation/pair_meta_analysis/cross_region
 pair_meta_within_output_filename: pair_fixation_lag_mean_significance.pkl

@@ -104,18 +104,22 @@ Current scripts:
   - `session_report.csv` / `session_report_smoothed.csv`
   - `skipped_sessions.csv` / `skipped_sessions_smoothed.csv`
 
-- `build_within_region_fixation_neural_cross_correlation_pair_meta_analysis.py`
+- `build_within_region_fixation_neural_cross_correlation_sig_xcorr_pairs.py`
   Aggregates saved within-region fixation neural xcorr outputs across sessions
   within each date, grouped by neural pair and fixation condition.
-  Writes one date-level summary per signal source with:
-  - mean cross-correlation trace per pair/condition
-  - one-sided significance test for lag-mean > 0 across fixation instances
-- `build_cross_region_fixation_neural_cross_correlation_pair_meta_analysis.py`
+  Writes separate raw and smoothed date-level sig-pair outputs with:
+  - one row per date / pair / fixation condition
+  - `n_fixations` and lag-mean significance stats (`> 0` one-sided test)
+  - one companion region summary table counting total pairs, condition-selective pairs,
+    and pairs significant for any fixation condition
+- `build_cross_region_fixation_neural_cross_correlation_sig_xcorr_pairs.py`
   Aggregates saved cross-region fixation neural xcorr outputs across sessions
   within each date, grouped by neural pair and fixation condition.
-  Writes one date-level summary per signal source with:
-  - mean cross-correlation trace per pair/condition
-  - one-sided significance test for lag-mean > 0 across fixation instances
+  Writes separate raw and smoothed date-level sig-pair outputs with:
+  - one row per date / pair / fixation condition
+  - `n_fixations` and lag-mean significance stats (`> 0` one-sided test)
+  - one companion region-pair summary table counting total pairs, condition-selective pairs,
+    and pairs significant for any fixation condition
 - `build_fixation_population_pca.py`
   Builds region-level population PCA outputs in a configurable time window
   (default `[-500, 500] ms`):
