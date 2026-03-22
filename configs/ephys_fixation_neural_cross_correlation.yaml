@@ -37,6 +37,19 @@ pair_meta_min_fixations: 2
 pair_meta_use_parallel: true
 pair_meta_parallelize_across_dates: true
 
+
+# Date-level pair-condition mean aggregation over saved session pair-average outputs.
+# Each date output pools pair-average traces across sessions by neural pair and
+# fixation condition, weighting each session trace by its contributing fixation count.
+pair_condition_mean_within_output_subdir: ephys/psth/fixation_neural_cross_correlation/pair_condition_means/within_region
+pair_condition_mean_cross_output_subdir: ephys/psth/fixation_neural_cross_correlation/pair_condition_means/cross_region
+pair_condition_mean_within_output_filename: pair_condition_means.pkl
+pair_condition_mean_cross_output_filename: pair_condition_means.pkl
+pair_condition_mean_within_output_csv_filename: pair_condition_means.csv
+pair_condition_mean_cross_output_csv_filename: pair_condition_means.csv
+pair_condition_mean_use_parallel: true
+pair_condition_mean_parallelize_across_dates: true
+
 # Region selection.
 # Cross-region analysis computes anchor_region x partner_regions neuron pairs.
 # Within-region analysis computes nC2 pairs for each included region.
@@ -115,3 +128,29 @@ plot_max_pair_traces_per_plot: null
 # Optional vector-size control for PDF outputs. null -> keep full lag resolution.
 plot_max_points_per_pdf_trace: null
 plot_random_seed: 13
+
+
+# Pair-condition mean comparison plots and saved condition-comparison statistics.
+# One figure/stat bundle is written per analysis kind and signal variant.
+pair_condition_mean_plot_output_subdir: ephys/psth/fixation_neural_cross_correlation/pair_condition_mean_plots
+pair_condition_mean_plot_output_extension: pdf
+pair_condition_mean_plot_output_dpi: 220
+pair_condition_mean_plot_figsize: [16.0, 4.6]
+pair_condition_mean_plot_condition_short_labels:
+  face_interactive: FI
+  face_non_interactive: FNI
+  object: OBJ
+pair_condition_mean_plot_significance_alpha: 0.05
+pair_condition_mean_plot_mean_lag_significance_correction: bonferroni
+pair_condition_mean_plot_per_lag_significance_correction: bonferroni
+pair_condition_mean_plot_min_pairs_for_significance: 3
+pair_condition_mean_plot_mean_trace_linewidth: 2.2
+pair_condition_mean_plot_sem_alpha: 0.12
+pair_condition_mean_plot_between_condition_marker_size: 5.0
+pair_condition_mean_plot_between_condition_marker_alpha: 0.95
+pair_condition_mean_plot_annotation_fontsize: 8.0
+pair_condition_mean_plot_use_parallel: true
+pair_condition_mean_plot_max_procs: null
+pair_condition_mean_plot_lag_test_min_lags_for_parallel: 256
+pair_condition_mean_plot_lag_test_chunk_size: 256
+

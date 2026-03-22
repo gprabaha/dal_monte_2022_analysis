@@ -11,6 +11,12 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation im
     run_cross_region_fixation_neural_cross_correlation,
     run_within_region_fixation_neural_cross_correlation,
 )
+from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_pair_condition_means import (
+    FixationNeuralCrossCorrelationPairConditionMeanSettings,
+    build_fixation_neural_cross_correlation_pair_condition_mean_settings_from_config,
+    run_cross_region_fixation_neural_cross_correlation_pair_condition_means,
+    run_within_region_fixation_neural_cross_correlation_pair_condition_means,
+)
 from dal_monte_2022_analysis.ephys.analysis.fixation_selectivity import (
     FixationPSTHSelectivitySettings,
     run_fixation_selectivity_analysis,
@@ -52,4 +58,8 @@ __all__ = [
     "build_fixation_neural_cross_correlation_plot_payload",
     "build_within_region_fixation_neural_cross_correlation_plot_payload",
     "build_cross_region_fixation_neural_cross_correlation_plot_payload",
+    "FixationNeuralCrossCorrelationPairConditionMeanSettings",
+    "build_fixation_neural_cross_correlation_pair_condition_mean_settings_from_config",
+    "run_within_region_fixation_neural_cross_correlation_pair_condition_means",
+    "run_cross_region_fixation_neural_cross_correlation_pair_condition_means",
 ]
