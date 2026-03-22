@@ -206,14 +206,11 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
     _print_outputs("figures", list(result.get("figure_outputs", [])))
     _print_outputs("mean-lag stats", list(result.get("mean_lag_stat_outputs", [])))
 
-    results_by_subset = result.get("results_by_subset") or {}
-    subset_labels = list(result.get("subset_labels") or results_by_subset.keys())
-    for subset_index, subset_label in enumerate(subset_labels):
-        subset_results = results_by_subset.get(subset_label, {}) or {}
-        for idx, key in enumerate(sorted(subset_results.keys())):
-            _print_mean_lag_table(str(subset_label), key, subset_results[key])
-            if idx != len(subset_results) - 1 or subset_index != len(subset_labels) - 1:
-                print()
+    primary_subset_label = str(result.get("subset_label") or "all_dates")
+    for idx, key in enumerate(sorted(result.get("results", {}).keys())):
+        _print_mean_lag_table(primary_subset_label, key, result["results"][key])
+        if idx != len(result.get("results", {})) - 1:
+            print()
 
 
 def main() -> None:

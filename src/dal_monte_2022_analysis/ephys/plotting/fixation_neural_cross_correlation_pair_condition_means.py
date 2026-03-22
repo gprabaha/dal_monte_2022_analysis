@@ -322,8 +322,13 @@ def _build_output_paths(
     signal_column: str,
     subset_label: str,
     ext: str,
+    is_per_day: bool = False,
 ) -> tuple[Path, Path, Path]:
-    root = build_analysis_output_dir(cfg, settings.output_subdir) / analysis_kind
+    root = build_analysis_output_dir(cfg, settings.output_subdir)
+    if is_per_day:
+        root = root / "per_day" / analysis_kind
+    else:
+        root = root / analysis_kind
     figure_filename = _resolve_signal_output_filename(
         f"{subset_label}__pair_condition_mean_xcorr.{ext}",
         signal_column,
@@ -634,6 +639,25 @@ def _plot_result(
     x_axis = np.asarray(result.get("x_axis", []), dtype=np.float64).reshape(-1)
     if x_axis.size <= 0:
         return
+    x_label = str(result.get("x_label") or "Lag")
+    half_window_ms = float(max(1.0, settings.plot_lag_half_window_ms))
+    tick_step_ms = float(max(1.0, settings.lag_tick_step_ms))
+    if x_label == "Lag (ms)":
+        plot_mask = np.isfinite(x_axis) & (x_axis >= -half_window_ms) & (x_axis <= half_window_ms)
+        if not np.any(plot_mask):
+            plot_mask = np.ones(x_axis.shape, dtype=bool)
+        plot_x_axis = x_axis[plot_mask]
+        tick_values = np.arange(
+            -half_window_ms,
+            half_window_ms + (0.5 * tick_step_ms),
+            tick_step_ms,
+            dtype=np.float64,
+        )
+    else:
+        plot_mask = np.ones(x_axis.shape, dtype=bool)
+        plot_x_axis = x_axis
+        tick_values = None
+
     mean_lag_df = result.get("mean_lag_comparisons")
     mean_lag_df = mean_lag_df if isinstance(mean_lag_df, pd.DataFrame) else pd.DataFrame()
 
@@ -658,10 +682,16 @@ def _plot_result(
     for axis, (group_label, traces_by_condition) in zip(plot_axes, group_items):
         for condition in settings.condition_order:
             condition = str(condition)
-            traces = [np.asarray(trace, dtype=np.float64) for trace in traces_by_condition.get(condition, [])]
+            traces = [
+                np.asarray(trace, dtype=np.float64).reshape(-1)
+                for trace in traces_by_condition.get(condition, [])
+                if np.asarray(trace, dtype=np.float64).reshape(-1).shape == x_axis.shape
+            ]
             if not traces:
                 continue
-            stacked = np.vstack(traces)
+            stacked = np.vstack([trace[plot_mask] for trace in traces])
+            if stacked.size <= 0 or stacked.shape[1] <= 0:
+                continue
             mean_trace = np.nanmean(stacked, axis=0)
             if stacked.shape[0] >= 2:
                 sem_trace = np.nanstd(stacked, axis=0, ddof=1) / np.sqrt(float(stacked.shape[0]))
@@ -669,7 +699,7 @@ def _plot_result(
                 sem_trace = np.zeros_like(mean_trace)
             color = settings.condition_colors.get(condition, "#333333")
             axis.fill_between(
-                x_axis,
+                plot_x_axis,
                 mean_trace - sem_trace,
                 mean_trace + sem_trace,
                 color=color,
@@ -678,7 +708,7 @@ def _plot_result(
                 zorder=1,
             )
             axis.plot(
-                x_axis,
+                plot_x_axis,
                 mean_trace,
                 color=color,
                 linewidth=float(settings.mean_trace_linewidth),
@@ -706,18 +736,10 @@ def _plot_result(
 
         axis.axhline(0.0, color="#666666", linestyle="--", linewidth=0.8, alpha=0.7, zorder=0)
         axis.set_title(str(group_label))
-        axis.set_xlabel(str(result.get("x_label") or "Lag"))
+        axis.set_xlabel(x_label)
         axis.set_ylabel("Cross-correlation")
         axis.tick_params(axis="x", which="both", labelbottom=True)
-        if str(result.get("x_label") or "") == "Lag (ms)":
-            half_window_ms = float(max(1.0, settings.plot_lag_half_window_ms))
-            tick_step_ms = float(max(1.0, settings.lag_tick_step_ms))
-            tick_values = np.arange(
-                -half_window_ms,
-                half_window_ms + (0.5 * tick_step_ms),
-                tick_step_ms,
-                dtype=np.float64,
-            )
+        if x_label == "Lag (ms)":
             axis.set_xlim(-half_window_ms, half_window_ms)
             axis.set_xticks(tick_values)
             axis.set_xticklabels([f"{int(round(value))}" for value in tick_values])
@@ -767,6 +789,8 @@ def _plot_single_subset(
     analysis_kinds: Optional[Sequence[str]],
     cfg_figsize: Optional[Sequence[float]],
     cfg_dpi: Optional[int],
+    output_ext: str,
+    is_per_day: bool,
 ) -> dict[str, object]:
     payload = build_fixation_neural_cross_correlation_pair_condition_mean_plot_payload(
         settings,
@@ -775,7 +799,7 @@ def _plot_single_subset(
     )
     cfg = payload["cfg"]
     subset_label = str(payload.get("subset_label") or "all_dates")
-    ext = _ensure_ext(settings.output_extension, fallback="pdf")
+    ext = _ensure_ext(output_ext, fallback="pdf")
 
     figure_outputs: list[str] = []
     mean_lag_stat_outputs: list[str] = []
@@ -790,6 +814,7 @@ def _plot_single_subset(
             signal_column=signal_column,
             subset_label=subset_label,
             ext=ext,
+            is_per_day=is_per_day,
         )
         output_path.parent.mkdir(parents=True, exist_ok=True)
         mean_lag_path.parent.mkdir(parents=True, exist_ok=True)
@@ -861,12 +886,15 @@ def plot_fixation_neural_cross_correlation_pair_condition_mean_summaries(
     subset_labels: list[str] = []
 
     for subset_dates in subset_dates_list:
+        is_per_day = subset_dates is not None and len(subset_dates) == 1
         subset_result = _plot_single_subset(
             settings,
             dates=subset_dates,
             analysis_kinds=selected_kinds,
             cfg_figsize=cfg_figsize,
             cfg_dpi=cfg_dpi,
+            output_ext=("png" if is_per_day else str(settings.output_extension)),
+            is_per_day=is_per_day,
         )
         subset_label = str(subset_result.get("subset_label") or _build_subset_label(subset_dates))
         results_by_subset[subset_label] = subset_result.get("results", {}) or {}
