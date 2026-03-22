@@ -13,6 +13,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_he
 )
 from dal_monte_2022_analysis.ephys.plotting.fixation_neural_cross_correlation_pair_condition_means import (
     FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
+    build_pair_condition_mean_fit_summary,
     plot_fixation_neural_cross_correlation_pair_condition_mean_summaries,
 )
 
@@ -25,28 +26,32 @@ def _as_float2(values):
     return [float(values[0]), float(values[1])]
 
 
-def _print_mean_lag_table(subset_label: str, result_key: tuple[str, str], result: dict[str, object]) -> None:
+def _print_fit_table(
+    settings: FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
+    subset_label: str,
+    result_key: tuple[str, str],
+    result: dict[str, object],
+) -> None:
     analysis_kind, signal_column = result_key
     signal_variant = str(result.get("signal_variant", signal_column))
-    mean_lag_df = result.get("mean_lag_comparisons")
-    mean_lag_df = mean_lag_df if isinstance(mean_lag_df, pd.DataFrame) else pd.DataFrame()
-    if mean_lag_df.empty:
-        print(f"[table] {subset_label} | {analysis_kind} pair-condition means [{signal_variant} / {signal_column}]: no mean-lag comparison rows")
+    fit_df = build_pair_condition_mean_fit_summary(settings, result=result)
+    if fit_df.empty:
+        print(f"[fit] {subset_label} | {analysis_kind} pair-condition means [{signal_variant} / {signal_column}]: no fit rows")
         return
-    display_df = mean_lag_df.loc[:, [
+    display_df = fit_df.loc[:, [
         col for col in (
             "group_label",
-            "condition_a",
-            "condition_b",
+            "condition",
             "n_pairs",
-            "mean_condition_a",
-            "mean_condition_b",
-            "mean_difference",
-            "p_value",
-            "significant",
-        ) if col in mean_lag_df.columns
+            "negative_fit_label",
+            "negative_linear_r2",
+            "negative_exponential_r2",
+            "positive_fit_label",
+            "positive_linear_r2",
+            "positive_exponential_r2",
+        ) if col in fit_df.columns
     ]].copy()
-    print(f"[table] {subset_label} | {analysis_kind} pair-condition means [{signal_variant} / {signal_column}]")
+    print(f"[fit] {subset_label} | {analysis_kind} pair-condition means [{signal_variant} / {signal_column}]")
     with pd.option_context("display.max_rows", None, "display.max_columns", None, "display.width", 2000):
         print(display_df.to_string(index=False))
 
@@ -219,7 +224,7 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
 
     primary_subset_label = str(result.get("subset_label") or "all_dates")
     for idx, key in enumerate(sorted(result.get("results", {}).keys())):
-        _print_mean_lag_table(primary_subset_label, key, result["results"][key])
+        _print_fit_table(settings, primary_subset_label, key, result["results"][key])
         if idx != len(result.get("results", {})) - 1:
             print()
 

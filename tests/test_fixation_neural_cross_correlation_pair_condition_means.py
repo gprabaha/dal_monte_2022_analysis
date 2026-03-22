@@ -22,6 +22,7 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_neural_cross_correlation_pa
     FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
     _fit_decay_models_for_side,
     build_fixation_neural_cross_correlation_pair_condition_mean_plot_payload,
+    build_pair_condition_mean_fit_summary,
 )
 
 
@@ -396,6 +397,10 @@ class TestFixationNeuralCrossCorrelationPairConditionMeans(unittest.TestCase):
             })
 
             raw_result = payload["results"][(WITHIN_ANALYSIS_KIND, "spike_train_counts")]
+            fit_df = build_pair_condition_mean_fit_summary(settings, result=raw_result)
+            self.assertEqual(len(fit_df), 3)
+            self.assertEqual(set(fit_df["condition"].astype(str)), {"face_interactive", "face_non_interactive", "object"})
+            self.assertTrue((fit_df["n_pairs"].astype(int) == 4).all())
             smooth_result = payload["results"][(WITHIN_ANALYSIS_KIND, "smoothed_spike_train_counts")]
             self.assertEqual(str(raw_result["signal_variant"]), "raw")
             self.assertEqual(str(smooth_result["signal_variant"]), "smoothed")

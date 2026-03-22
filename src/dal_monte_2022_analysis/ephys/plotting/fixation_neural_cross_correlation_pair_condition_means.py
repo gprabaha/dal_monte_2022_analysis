@@ -487,6 +487,74 @@ def _format_fit_annotation(
     return "\n".join(lines)
 
 
+def build_pair_condition_mean_fit_summary(
+    settings: FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
+    *,
+    result: dict[str, object],
+) -> pd.DataFrame:
+    group_plot_map = result.get("group_plot_map", {}) or {}
+    if not group_plot_map:
+        return pd.DataFrame()
+    x_axis = np.asarray(result.get("x_axis", []), dtype=np.float64).reshape(-1)
+    if x_axis.size <= 0:
+        return pd.DataFrame()
+
+    x_label = str(result.get("x_label") or "Lag")
+    if x_label == "Lag (ms)":
+        half_window_ms = float(max(1.0, settings.plot_lag_half_window_ms))
+        plot_mask = np.isfinite(x_axis) & (x_axis >= -half_window_ms) & (x_axis <= half_window_ms)
+        if not np.any(plot_mask):
+            plot_mask = np.ones(x_axis.shape, dtype=bool)
+        plot_x_axis = x_axis[plot_mask]
+    else:
+        plot_mask = np.ones(x_axis.shape, dtype=bool)
+        plot_x_axis = x_axis
+
+    rows: list[dict[str, object]] = []
+    for group_label, traces_by_condition in sorted(group_plot_map.items(), key=lambda item: item[0]):
+        for condition in settings.condition_order:
+            condition = str(condition)
+            traces = [
+                np.asarray(trace, dtype=np.float64).reshape(-1)
+                for trace in traces_by_condition.get(condition, [])
+                if np.asarray(trace, dtype=np.float64).reshape(-1).shape == x_axis.shape
+            ]
+            if not traces:
+                continue
+            stacked = np.vstack([trace[plot_mask] for trace in traces])
+            if stacked.size <= 0 or stacked.shape[1] <= 0:
+                continue
+            mean_trace = np.nanmean(stacked, axis=0)
+            negative_fit = _fit_decay_models_for_side(
+                settings,
+                x_axis=plot_x_axis,
+                values=mean_trace,
+                side="negative",
+            )
+            positive_fit = _fit_decay_models_for_side(
+                settings,
+                x_axis=plot_x_axis,
+                values=mean_trace,
+                side="positive",
+            )
+            rows.append(
+                {
+                    "group_label": str(group_label),
+                    "condition": condition,
+                    "n_pairs": int(stacked.shape[0]),
+                    "negative_fit": str(negative_fit.get("selection", "none")),
+                    "negative_fit_label": _format_fit_choice(negative_fit),
+                    "negative_linear_r2": negative_fit.get("linear", {}).get("r_squared"),
+                    "negative_exponential_r2": negative_fit.get("exponential", {}).get("r_squared"),
+                    "positive_fit": str(positive_fit.get("selection", "none")),
+                    "positive_fit_label": _format_fit_choice(positive_fit),
+                    "positive_linear_r2": positive_fit.get("linear", {}).get("r_squared"),
+                    "positive_exponential_r2": positive_fit.get("exponential", {}).get("r_squared"),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
 
 def _build_output_paths(
     cfg: dict,
@@ -806,7 +874,6 @@ def _plot_result(
     output_path: Path,
     cfg_figsize: Optional[Sequence[float]],
     cfg_dpi: Optional[int],
-    include_curve_fits: bool,
 ) -> None:
     group_plot_map = result.get("group_plot_map", {}) or {}
     if not group_plot_map:
@@ -855,7 +922,6 @@ def _plot_result(
     plot_axes = list(np.ravel(axes))
 
     for axis, (group_label, traces_by_condition) in zip(plot_axes, group_items):
-        fit_map: dict[str, dict[str, dict[str, object]]] = {}
         for condition in settings.condition_order:
             condition = str(condition)
             traces = [
@@ -890,47 +956,6 @@ def _plot_result(
                 linewidth=float(settings.mean_trace_linewidth),
                 zorder=2,
             )
-            if include_curve_fits and x_label == "Lag (ms)":
-                negative_fit = _fit_decay_models_for_side(
-                    settings,
-                    x_axis=plot_x_axis,
-                    values=mean_trace,
-                    side="negative",
-                )
-                positive_fit = _fit_decay_models_for_side(
-                    settings,
-                    x_axis=plot_x_axis,
-                    values=mean_trace,
-                    side="positive",
-                )
-                fit_map[condition] = {"negative": negative_fit, "positive": positive_fit}
-                for fit_result in (negative_fit, positive_fit):
-                    if str(fit_result.get("selection", "none")) in ("linear", "both"):
-                        predicted = fit_result.get("linear", {}).get("predicted")
-                        fit_x = np.asarray(fit_result.get("x_axis", []), dtype=np.float64).reshape(-1)
-                        if predicted is not None and fit_x.size:
-                            axis.plot(
-                                fit_x,
-                                np.asarray(predicted, dtype=np.float64),
-                                color=color,
-                                linestyle="--",
-                                linewidth=float(settings.fit_linear_linewidth),
-                                alpha=float(settings.fit_line_alpha),
-                                zorder=3,
-                            )
-                    if str(fit_result.get("selection", "none")) in ("exponential", "both"):
-                        predicted = fit_result.get("exponential", {}).get("predicted")
-                        fit_x = np.asarray(fit_result.get("x_axis", []), dtype=np.float64).reshape(-1)
-                        if predicted is not None and fit_x.size:
-                            axis.plot(
-                                fit_x,
-                                np.asarray(predicted, dtype=np.float64),
-                                color=color,
-                                linestyle=":",
-                                linewidth=float(settings.fit_exponential_linewidth),
-                                alpha=float(settings.fit_line_alpha),
-                                zorder=3,
-                            )
 
         mean_rows = (
             mean_lag_df.loc[mean_lag_df["group_label"].astype(str) == str(group_label)].copy()
@@ -950,20 +975,6 @@ def _plot_result(
                 color="#222222",
                 bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 2.5},
             )
-        fit_annotation = _format_fit_annotation(settings, fit_map) if include_curve_fits else ""
-        if fit_annotation:
-            axis.text(
-                0.98,
-                0.98,
-                fit_annotation,
-                transform=axis.transAxes,
-                ha="right",
-                va="top",
-                fontsize=float(settings.fit_annotation_fontsize),
-                color="#222222",
-                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 2.5},
-            )
-
         axis.set_title(str(group_label))
         axis.set_xlabel(x_label)
         axis.set_ylabel("Cross-correlation")
@@ -986,27 +997,6 @@ def _plot_result(
         )
         for condition in settings.condition_order
     ]
-    if include_curve_fits:
-        legend_handles.extend(
-            [
-                Line2D(
-                    [0],
-                    [0],
-                    color="#444444",
-                    linestyle="--",
-                    linewidth=float(settings.fit_linear_linewidth),
-                    label="Linear fit",
-                ),
-                Line2D(
-                    [0],
-                    [0],
-                    color="#444444",
-                    linestyle=":",
-                    linewidth=float(settings.fit_exponential_linewidth),
-                    label="Exponential fit",
-                ),
-            ]
-        )
     fig.legend(
         handles=legend_handles,
         loc="upper center",
@@ -1077,7 +1067,6 @@ def _plot_single_subset(
             output_path=output_path,
             cfg_figsize=cfg_figsize,
             cfg_dpi=cfg_dpi,
-            include_curve_fits=not is_per_day,
         )
         figure_outputs.append(str(output_path))
         mean_lag_stat_outputs.append(str(mean_lag_path))
