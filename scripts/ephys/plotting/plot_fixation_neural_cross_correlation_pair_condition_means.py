@@ -2,6 +2,8 @@
 
 import argparse
 
+from pathlib import Path
+
 import pandas as pd
 
 from dal_monte_2022_analysis.config.load import load_config
@@ -53,9 +55,18 @@ def _print_outputs(label: str, paths: list[str]) -> None:
     if not paths:
         print(f"[plot] {label}: none")
         return
-    print(f"[plot] {label} ({len(paths)}):")
-    for path in paths:
-        print(f"  {path}")
+    path_objs = [Path(path) for path in paths]
+    pooled = [path for path in path_objs if "per_day" not in path.parts]
+    per_day = [path for path in path_objs if "per_day" in path.parts]
+    if pooled:
+        print(f"[plot] {label} ({len(pooled)} pooled):")
+        for path in pooled:
+            print(f"  {path}")
+    else:
+        print(f"[plot] {label} pooled: none")
+    if per_day:
+        per_day_roots = sorted({str(path.parent) for path in per_day})
+        print(f"[plot] {label} per-day: {len(per_day)} file(s) under {', '.join(per_day_roots)}")
 
 
 def run_plot_cli(*, default_analysis_kind: str = "both") -> None:

@@ -674,7 +674,7 @@ def _plot_result(
         figsize=figsize,
         squeeze=False,
         sharex=True,
-        sharey=True,
+        sharey=False,
         facecolor="white",
     )
     plot_axes = list(np.ravel(axes))
@@ -734,7 +734,6 @@ def _plot_result(
                 bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 2.5},
             )
 
-        axis.axhline(0.0, color="#666666", linestyle="--", linewidth=0.8, alpha=0.7, zorder=0)
         axis.set_title(str(group_label))
         axis.set_xlabel(x_label)
         axis.set_ylabel("Cross-correlation")
