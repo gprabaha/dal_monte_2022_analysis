@@ -2653,7 +2653,7 @@ def _build_plot_x_axis(
         return np.array([], dtype=float), "Lag"
     if bin_size_ms is None:
         return np.asarray(lags, dtype=float), "Lag (bins)"
-    return np.asarray(lags, dtype=float) * float(bin_size_ms) / 1000.0, "Lag (s)"
+    return np.asarray(lags, dtype=float) * float(bin_size_ms), "Lag (ms)"
 
 
 def _normalize_plot_analysis_kinds(
