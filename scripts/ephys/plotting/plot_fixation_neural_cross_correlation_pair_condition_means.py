@@ -23,13 +23,13 @@ def _as_float2(values):
     return [float(values[0]), float(values[1])]
 
 
-def _print_mean_lag_table(result_key: tuple[str, str], result: dict[str, object]) -> None:
+def _print_mean_lag_table(subset_label: str, result_key: tuple[str, str], result: dict[str, object]) -> None:
     analysis_kind, signal_column = result_key
     signal_variant = str(result.get("signal_variant", signal_column))
     mean_lag_df = result.get("mean_lag_comparisons")
     mean_lag_df = mean_lag_df if isinstance(mean_lag_df, pd.DataFrame) else pd.DataFrame()
     if mean_lag_df.empty:
-        print(f"[table] {analysis_kind} pair-condition means [{signal_variant} / {signal_column}]: no mean-lag comparison rows")
+        print(f"[table] {subset_label} | {analysis_kind} pair-condition means [{signal_variant} / {signal_column}]: no mean-lag comparison rows")
         return
     display_df = mean_lag_df.loc[:, [
         col for col in (
@@ -44,7 +44,7 @@ def _print_mean_lag_table(result_key: tuple[str, str], result: dict[str, object]
             "significant",
         ) if col in mean_lag_df.columns
     ]].copy()
-    print(f"[table] {analysis_kind} pair-condition means [{signal_variant} / {signal_column}]")
+    print(f"[table] {subset_label} | {analysis_kind} pair-condition means [{signal_variant} / {signal_column}]")
     with pd.option_context("display.max_rows", None, "display.max_columns", None, "display.width", 2000):
         print(display_df.to_string(index=False))
 
@@ -76,6 +76,7 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
     parser.add_argument("--output-dpi", type=int, default=None)
     parser.add_argument("--figsize", nargs=2, type=float, default=None)
     parser.add_argument("--no-parallel", action="store_true")
+    parser.add_argument("--no-per-day", action="store_true")
     parser.add_argument(
         "--analysis-kind",
         choices=["both", "within", "cross"],
@@ -161,8 +162,8 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
             cfg.get("plot_between_condition_marker_alpha", 0.95),
         ),
         mean_lag_annotation_fontsize=cfg.get("pair_condition_mean_plot_annotation_fontsize", 8.0),
-        plot_lag_half_window_ms=cfg.get("pair_condition_mean_plot_lag_half_window_ms", 20.0),
-        lag_tick_step_ms=cfg.get("pair_condition_mean_plot_lag_tick_step_ms", 10.0),
+        plot_lag_half_window_ms=cfg.get("pair_condition_mean_plot_lag_half_window_ms", 100.0),
+        lag_tick_step_ms=cfg.get("pair_condition_mean_plot_lag_tick_step_ms", 50.0),
         use_parallel=cfg.get(
             "pair_condition_mean_plot_use_parallel",
             cfg.get("plot_use_parallel", True),
@@ -194,22 +195,25 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
         settings,
         dates=args.date,
         analysis_kinds=analysis_kinds,
+        include_per_day_when_dates_unspecified=(args.date is None and not args.no_per_day),
     )
 
     print(
         "[plot] pair-condition means: "
         f"wrote {len(result.get('figure_outputs', []))} figure(s), "
-        f"{len(result.get('mean_lag_stat_outputs', []))} mean-lag table(s), "
-        f"{len(result.get('per_lag_stat_outputs', []))} per-lag stats pickle(s)"
+        f"{len(result.get('mean_lag_stat_outputs', []))} mean-lag table(s)"
     )
     _print_outputs("figures", list(result.get("figure_outputs", [])))
     _print_outputs("mean-lag stats", list(result.get("mean_lag_stat_outputs", [])))
-    _print_outputs("per-lag stats", list(result.get("per_lag_stat_outputs", [])))
 
-    for idx, key in enumerate(sorted(result.get("results", {}).keys())):
-        _print_mean_lag_table(key, result["results"][key])
-        if idx != len(result.get("results", {})) - 1:
-            print()
+    results_by_subset = result.get("results_by_subset") or {}
+    subset_labels = list(result.get("subset_labels") or results_by_subset.keys())
+    for subset_index, subset_label in enumerate(subset_labels):
+        subset_results = results_by_subset.get(subset_label, {}) or {}
+        for idx, key in enumerate(sorted(subset_results.keys())):
+            _print_mean_lag_table(str(subset_label), key, subset_results[key])
+            if idx != len(subset_results) - 1 or subset_index != len(subset_labels) - 1:
+                print()
 
 
 def main() -> None:

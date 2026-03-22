@@ -17,7 +17,6 @@ from matplotlib.lines import Line2D
 from scipy.stats import ttest_rel
 
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.core.stats.hypothesis import paired_ttest_per_lag
 from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_helpers import (
     CROSS_ANALYSIS_KIND,
     WITHIN_ANALYSIS_KIND,
@@ -35,11 +34,7 @@ from dal_monte_2022_analysis.ephys.plotting.common import (
     ensure_ext as _ensure_ext_shared,
     resolve_figsize,
 )
-from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
-from dal_monte_2022_analysis.runtime.io.processed_data import (
-    load_pickle_path,
-    save_pickle_path,
-)
+from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
@@ -91,8 +86,8 @@ class FixationNeuralCrossCorrelationPairConditionMeanPlotSettings:
     between_condition_marker_size: float = 5.0
     between_condition_marker_alpha: float = 0.95
     mean_lag_annotation_fontsize: float = 8.0
-    plot_lag_half_window_ms: float = 20.0
-    lag_tick_step_ms: float = 10.0
+    plot_lag_half_window_ms: float = 100.0
+    lag_tick_step_ms: float = 50.0
     use_parallel: bool = True
     max_procs: Optional[int] = None
     lag_test_min_lags_for_parallel: int = 256
@@ -269,6 +264,55 @@ def _build_subset_label(dates: Optional[Sequence[str]]) -> str:
     return f"n_dates={len(normalized)}"
 
 
+def _extract_date_from_output_path(path: Path) -> Optional[str]:
+    for part in path.parts:
+        if part.startswith("date=") and len(part) > 5:
+            return str(part.split("=", 1)[1])
+    return None
+
+
+def _discover_available_dates(
+    settings: FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
+    *,
+    analysis_kinds: Sequence[str],
+    signal_columns: Sequence[str],
+) -> tuple[str, ...]:
+    dates: set[str] = set()
+    for analysis_kind in analysis_kinds:
+        input_subdir, input_filename = _resolve_pair_condition_plot_paths(settings, analysis_kind=analysis_kind)
+        for signal_column in signal_columns:
+            for path in iter_fixation_neural_cross_correlation_pair_condition_mean_output_paths(
+                dataset_cfg_path=settings.cfg_path,
+                output_subdir=input_subdir,
+                output_filename=input_filename,
+                signal_input_column=signal_column,
+                date=None,
+            ):
+                date = _extract_date_from_output_path(path)
+                if date:
+                    dates.add(str(date))
+    return tuple(sorted(dates))
+
+
+def _format_mean_lag_annotation(
+    settings: FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
+    mean_rows: pd.DataFrame,
+) -> str:
+    if mean_rows.empty:
+        return ""
+    lines: list[str] = []
+    for row in mean_rows.itertuples(index=False):
+        left = settings.condition_short_labels.get(str(row.condition_a), str(row.condition_a))
+        right = settings.condition_short_labels.get(str(row.condition_b), str(row.condition_b))
+        if getattr(row, "p_value", None) is None or not np.isfinite(float(row.p_value)):
+            p_label = "n/a"
+        else:
+            p_label = f"{float(row.p_value):.3g}"
+        suffix = " *" if bool(getattr(row, "significant", False)) else ""
+        lines.append(f"{left} vs {right}: p={p_label}{suffix}")
+    return "\n".join(lines)
+
+
 
 def _build_output_paths(
     cfg: dict,
@@ -393,7 +437,8 @@ def _compute_group_pair_condition_comparisons(
     group_label: str,
     pair_condition_map: dict[tuple[str, str, str, str, str], dict[str, np.ndarray]],
     n_lag_workers: Optional[int],
-) -> tuple[dict[str, list[np.ndarray]], list[dict[str, object]], list[dict[str, object]]]:
+) -> tuple[dict[str, list[np.ndarray]], list[dict[str, object]], pd.DataFrame]:
+    del n_lag_workers
     traces_by_condition: dict[str, list[np.ndarray]] = {str(name): [] for name in settings.condition_order}
     pair_ids_by_condition: dict[str, dict[tuple[str, str, str, str, str], np.ndarray]] = {
         str(name): {} for name in settings.condition_order
@@ -409,11 +454,8 @@ def _compute_group_pair_condition_comparisons(
             pair_ids_by_condition[condition][pair_id] = arr
 
     mean_lag_rows: list[dict[str, object]] = []
-    per_lag_rows: list[dict[str, object]] = []
     pairwise_keys = list(combinations([str(name) for name in settings.condition_order], 2))
     mean_lag_pvals = np.full(len(pairwise_keys), np.nan, dtype=np.float64)
-    raw_lag_pvals: list[np.ndarray] = []
-    paired_mats: list[tuple[np.ndarray, np.ndarray]] = []
 
     for idx, (condition_a, condition_b) in enumerate(pairwise_keys):
         common_pair_ids = sorted(
@@ -450,27 +492,6 @@ def _compute_group_pair_condition_comparisons(
             }
         )
 
-        if (
-            paired_a.ndim != 2
-            or paired_b.ndim != 2
-            or paired_a.shape != paired_b.shape
-            or paired_a.shape[0] < int(max(2, settings.min_pairs_for_significance))
-        ):
-            raw_lag_pvals.append(np.full(paired_a.shape[1] if paired_a.ndim == 2 else 0, np.nan, dtype=np.float64))
-            paired_mats.append((paired_a, paired_b))
-            continue
-
-        lag_p = paired_ttest_per_lag(
-            paired_a,
-            paired_b,
-            parallel=bool(settings.use_parallel),
-            workers=n_lag_workers,
-            min_lags_for_parallel=int(max(1, settings.lag_test_min_lags_for_parallel)),
-            chunk_size=int(max(1, settings.lag_test_chunk_size)),
-        )
-        raw_lag_pvals.append(np.asarray(lag_p, dtype=np.float64).reshape(-1))
-        paired_mats.append((paired_a, paired_b))
-
     mean_sig = _apply_pvalue_correction(
         mean_lag_pvals,
         alpha=float(settings.significance_alpha),
@@ -479,39 +500,7 @@ def _compute_group_pair_condition_comparisons(
     for idx, is_sig in enumerate(np.asarray(mean_sig, dtype=bool).reshape(-1)):
         mean_lag_rows[idx]["significant"] = bool(is_sig)
 
-    if raw_lag_pvals:
-        max_lags = max((arr.size for arr in raw_lag_pvals), default=0)
-    else:
-        max_lags = 0
-    lag_p_mat = np.full((len(raw_lag_pvals), max_lags), np.nan, dtype=np.float64)
-    for idx, arr in enumerate(raw_lag_pvals):
-        lag_p_mat[idx, : arr.size] = arr
-    lag_sig_mat = _apply_pvalue_correction(
-        lag_p_mat,
-        alpha=float(settings.significance_alpha),
-        correction=_resolve_significance_correction(settings.per_lag_significance_correction),
-    ) if lag_p_mat.size else np.zeros_like(lag_p_mat, dtype=bool)
-
-    for idx, (condition_a, condition_b) in enumerate(pairwise_keys):
-        paired_a, paired_b = paired_mats[idx]
-        mean_diff_trace = (
-            np.nanmean(paired_a - paired_b, axis=0).astype(np.float32)
-            if paired_a.ndim == 2 and paired_a.size and paired_b.ndim == 2 and paired_b.size
-            else np.asarray([], dtype=np.float32)
-        )
-        per_lag_rows.append(
-            {
-                "group_label": str(group_label),
-                "condition_a": condition_a,
-                "condition_b": condition_b,
-                "n_pairs": int(mean_lag_rows[idx]["n_pairs"]),
-                "p_values": lag_p_mat[idx, :].astype(np.float32),
-                "significant_mask": np.asarray(lag_sig_mat[idx, :], dtype=bool),
-                "mean_difference_trace": mean_diff_trace,
-            }
-        )
-
-    return traces_by_condition, mean_lag_rows, per_lag_rows
+    return traces_by_condition, mean_lag_rows, pd.DataFrame()
 
 
 
@@ -539,7 +528,6 @@ def build_fixation_neural_cross_correlation_pair_condition_mean_plot_payload(
         )
     )
     subset_label = _build_subset_label(dates)
-    n_lag_workers = get_n_processes(max_procs=settings.max_procs) if settings.use_parallel else None
     results: dict[tuple[str, str], dict[str, object]] = {}
 
     for analysis_kind in selected_kinds:
@@ -572,7 +560,7 @@ def build_fixation_neural_cross_correlation_pair_condition_mean_plot_payload(
                     settings,
                     group_label=group_label,
                     pair_condition_map=pair_condition_map,
-                    n_lag_workers=n_lag_workers,
+                    n_lag_workers=None,
                 )
                 group_plot_map[group_label] = traces_by_condition
                 mean_lag_rows.extend(group_mean_rows)
@@ -648,8 +636,6 @@ def _plot_result(
         return
     mean_lag_df = result.get("mean_lag_comparisons")
     mean_lag_df = mean_lag_df if isinstance(mean_lag_df, pd.DataFrame) else pd.DataFrame()
-    per_lag_df = result.get("per_lag_comparisons")
-    per_lag_df = per_lag_df if isinstance(per_lag_df, pd.DataFrame) else pd.DataFrame()
 
     group_items = sorted(group_plot_map.items(), key=lambda item: item[0])
     figsize, dpi = _resolve_figsize_and_dpi(
@@ -659,24 +645,17 @@ def _plot_result(
         n_groups=len(group_items),
     )
     fig, axes = plt.subplots(
-        2,
+        1,
         len(group_items),
         figsize=figsize,
         squeeze=False,
         sharex=True,
         sharey=True,
         facecolor="white",
-        gridspec_kw={"height_ratios": [1.0, 0.2]},
     )
-    plot_axes = list(np.ravel(axes[0, :]))
-    legend_axes = list(np.ravel(axes[1, :]))
-    for legend_axis in legend_axes:
-        legend_axis.axis("off")
+    plot_axes = list(np.ravel(axes))
 
-    marker_map = _build_between_condition_marker_map(settings.condition_order)
     for axis, (group_label, traces_by_condition) in zip(plot_axes, group_items):
-        mean_sig_lines: list[str] = []
-        lag_sig_rows = per_lag_df.loc[per_lag_df["group_label"].astype(str) == str(group_label)].copy() if not per_lag_df.empty else pd.DataFrame()
         for condition in settings.condition_order:
             condition = str(condition)
             traces = [np.asarray(trace, dtype=np.float64) for trace in traces_by_condition.get(condition, [])]
@@ -706,54 +685,23 @@ def _plot_result(
                 zorder=2,
             )
 
-        if not mean_lag_df.empty:
-            mean_rows = mean_lag_df.loc[mean_lag_df["group_label"].astype(str) == str(group_label)].copy()
-            for row in mean_rows.itertuples(index=False):
-                if bool(getattr(row, "significant", False)):
-                    left = settings.condition_short_labels.get(str(row.condition_a), str(row.condition_a))
-                    right = settings.condition_short_labels.get(str(row.condition_b), str(row.condition_b))
-                    mean_sig_lines.append(f"{left} vs {right}")
-
-        sig_pair_rows = []
-        if not lag_sig_rows.empty:
-            for row in lag_sig_rows.itertuples(index=False):
-                sig_mask = np.asarray(getattr(row, "significant_mask", []), dtype=bool).reshape(-1)
-                if sig_mask.any():
-                    sig_pair_rows.append((row.condition_a, row.condition_b, sig_mask))
-        if sig_pair_rows:
-            y_min, y_max = axis.get_ylim()
-            span = float(y_max - y_min) if np.isfinite(y_max - y_min) and (y_max > y_min) else 1.0
-            top_pad = 0.08 * span * float(len(sig_pair_rows))
-            axis.set_ylim(y_min, y_max + top_pad)
-            y_min2, y_max2 = axis.get_ylim()
-            span2 = float(y_max2 - y_min2) if np.isfinite(y_max2 - y_min2) and (y_max2 > y_min2) else 1.0
-            for idx, (condition_a, condition_b, sig_mask) in enumerate(sig_pair_rows):
-                marker = marker_map.get((str(condition_a), str(condition_b)), "|")
-                x_marks = x_axis[sig_mask[: x_axis.size]]
-                if x_marks.size == 0:
-                    continue
-                y_level = y_max2 - ((idx + 1) * 0.04 * span2)
-                axis.plot(
-                    x_marks,
-                    np.full(x_marks.shape, y_level, dtype=np.float64),
-                    linestyle="None",
-                    marker=marker,
-                    color="#111111",
-                    alpha=float(settings.between_condition_marker_alpha),
-                    markersize=float(settings.between_condition_marker_size),
-                    zorder=3,
-                )
-
-        if mean_sig_lines:
+        mean_rows = (
+            mean_lag_df.loc[mean_lag_df["group_label"].astype(str) == str(group_label)].copy()
+            if not mean_lag_df.empty
+            else pd.DataFrame()
+        )
+        annotation = _format_mean_lag_annotation(settings, mean_rows)
+        if annotation:
             axis.text(
                 0.02,
                 0.98,
-                "Mean-lag sig: " + ", ".join(mean_sig_lines),
+                annotation,
                 transform=axis.transAxes,
                 ha="left",
                 va="top",
                 fontsize=float(settings.mean_lag_annotation_fontsize),
                 color="#222222",
+                bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 2.5},
             )
 
         axis.axhline(0.0, color="#666666", linestyle="--", linewidth=0.8, alpha=0.7, zorder=0)
@@ -787,37 +735,23 @@ def _plot_result(
         )
         for condition in settings.condition_order
     ]
-    for pair_key in combinations([str(name) for name in settings.condition_order], 2):
-        left = settings.condition_labels.get(pair_key[0], pair_key[0])
-        right = settings.condition_labels.get(pair_key[1], pair_key[1])
-        legend_handles.append(
-            Line2D(
-                [0],
-                [0],
-                color="#111111",
-                marker=marker_map.get(pair_key, "|"),
-                linestyle="None",
-                markersize=float(settings.between_condition_marker_size),
-                alpha=float(settings.between_condition_marker_alpha),
-                label=(
-                    f"{left} vs {right} "
-                    f"(lag p < {float(settings.significance_alpha):g}, "
-                    f"{_resolve_significance_correction(settings.per_lag_significance_correction)})"
-                ),
-            )
-        )
-    legend_anchor = legend_axes[len(legend_axes) // 2]
-    legend_anchor.legend(handles=legend_handles, loc="center", ncol=1, frameon=False)
+    fig.legend(
+        handles=legend_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.94),
+        ncol=max(1, len(legend_handles)),
+        frameon=False,
+    )
 
     fig.suptitle(
         f"{result.get('subset_label')} | {result.get('analysis_kind')} | {result.get('signal_variant')}",
-        y=0.98,
+        y=0.985,
     )
-    fig.subplots_adjust(left=0.06, right=0.995, top=0.88, bottom=0.08, wspace=0.24, hspace=0.18)
+    fig.subplots_adjust(left=0.06, right=0.995, top=0.82, bottom=0.16, wspace=0.24)
     save_figure(
         fig,
         output_path,
-        ext=str(output_path.suffix).lstrip("."),
+        ext=str(output_path.suffix).lstrip('.'),
         dpi=dpi,
         facecolor="white",
         transparent=False,
@@ -826,21 +760,14 @@ def _plot_result(
 
 
 
-def plot_fixation_neural_cross_correlation_pair_condition_mean_summaries(
+def _plot_single_subset(
     settings: FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
     *,
-    dates: Optional[Sequence[str]] = None,
-    analysis_kinds: Optional[Sequence[str]] = None,
+    dates: Optional[Sequence[str]],
+    analysis_kinds: Optional[Sequence[str]],
+    cfg_figsize: Optional[Sequence[float]],
+    cfg_dpi: Optional[int],
 ) -> dict[str, object]:
-    """Compute pair-condition comparison stats and generate summary plots."""
-    plot_cfg = None
-    cfg_figsize = None
-    cfg_dpi = None
-    if settings.plotting_cfg_path and Path(settings.plotting_cfg_path).exists():
-        plot_cfg = load_config(settings.plotting_cfg_path)
-        apply_plotting_config(plot_cfg)
-        cfg_figsize, cfg_dpi = resolve_figsize(plot_cfg)
-
     payload = build_fixation_neural_cross_correlation_pair_condition_mean_plot_payload(
         settings,
         dates=dates,
@@ -852,12 +779,11 @@ def plot_fixation_neural_cross_correlation_pair_condition_mean_summaries(
 
     figure_outputs: list[str] = []
     mean_lag_stat_outputs: list[str] = []
-    per_lag_stat_outputs: list[str] = []
 
     for key in sorted(payload["results"].keys()):
         result = payload["results"][key]
         analysis_kind, signal_column = key
-        output_path, mean_lag_path, per_lag_path = _build_output_paths(
+        output_path, mean_lag_path, _ = _build_output_paths(
             cfg,
             settings,
             analysis_kind=analysis_kind,
@@ -870,31 +796,6 @@ def plot_fixation_neural_cross_correlation_pair_condition_mean_summaries(
         mean_lag_df = result.get("mean_lag_comparisons")
         mean_lag_df = mean_lag_df if isinstance(mean_lag_df, pd.DataFrame) else pd.DataFrame()
         mean_lag_df.to_csv(mean_lag_path, index=False)
-        save_pickle_path(
-            {
-                "meta": {
-                    "analysis_kind": analysis_kind,
-                    "signal_input_column": str(result.get("signal_input_column")),
-                    "signal_variant": str(result.get("signal_variant")),
-                    "subset_label": subset_label,
-                    "condition_order": [str(name) for name in settings.condition_order],
-                    "significance_alpha": float(settings.significance_alpha),
-                    "mean_lag_significance_correction": _resolve_significance_correction(
-                        settings.mean_lag_significance_correction
-                    ),
-                    "per_lag_significance_correction": _resolve_significance_correction(
-                        settings.per_lag_significance_correction
-                    ),
-                    "loaded_paths": result.get("loaded_paths") or [],
-                    "counts": result.get("counts") or {},
-                    "lags": result.get("lags"),
-                    "bin_size_ms": result.get("bin_size_ms"),
-                },
-                "mean_lag_comparisons": mean_lag_df,
-                "per_lag_comparisons": result.get("per_lag_comparisons"),
-            },
-            per_lag_path,
-        )
         _plot_result(
             settings,
             result=result,
@@ -904,15 +805,85 @@ def plot_fixation_neural_cross_correlation_pair_condition_mean_summaries(
         )
         figure_outputs.append(str(output_path))
         mean_lag_stat_outputs.append(str(mean_lag_path))
-        per_lag_stat_outputs.append(str(per_lag_path))
 
     return {
         "figure_outputs": figure_outputs,
         "mean_lag_stat_outputs": mean_lag_stat_outputs,
-        "per_lag_stat_outputs": per_lag_stat_outputs,
+        "per_lag_stat_outputs": [],
         "results": payload["results"],
         "analysis_kinds": payload.get("analysis_kinds"),
         "subset_label": subset_label,
+    }
+
+
+
+def plot_fixation_neural_cross_correlation_pair_condition_mean_summaries(
+    settings: FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
+    *,
+    dates: Optional[Sequence[str]] = None,
+    analysis_kinds: Optional[Sequence[str]] = None,
+    include_per_day_when_dates_unspecified: bool = True,
+) -> dict[str, object]:
+    """Compute pair-condition mean stats and generate summary plots."""
+    cfg_figsize = None
+    cfg_dpi = None
+    if settings.plotting_cfg_path and Path(settings.plotting_cfg_path).exists():
+        plot_cfg = load_config(settings.plotting_cfg_path)
+        apply_plotting_config(plot_cfg)
+        cfg_figsize, cfg_dpi = resolve_figsize(plot_cfg)
+
+    selected_kinds = tuple(analysis_kinds) if analysis_kinds is not None else tuple(_PLOT_ALLOWED_ANALYSIS_KINDS)
+    signal_columns = tuple(
+        str(value)
+        for value in (
+            settings.signal_input_columns
+            if settings.signal_input_columns is not None
+            else (settings.signal_input_column,)
+        )
+    )
+
+    subset_dates_list: list[Optional[Sequence[str]]] = []
+    if dates is not None:
+        subset_dates_list.append(tuple(str(value) for value in dates if str(value)))
+    else:
+        subset_dates_list.append(None)
+        if include_per_day_when_dates_unspecified:
+            for date in _discover_available_dates(
+                settings,
+                analysis_kinds=selected_kinds,
+                signal_columns=signal_columns,
+            ):
+                subset_dates_list.append((str(date),))
+
+    figure_outputs: list[str] = []
+    mean_lag_stat_outputs: list[str] = []
+    results_by_subset: dict[str, dict[tuple[str, str], dict[str, object]]] = {}
+    subset_labels: list[str] = []
+
+    for subset_dates in subset_dates_list:
+        subset_result = _plot_single_subset(
+            settings,
+            dates=subset_dates,
+            analysis_kinds=selected_kinds,
+            cfg_figsize=cfg_figsize,
+            cfg_dpi=cfg_dpi,
+        )
+        subset_label = str(subset_result.get("subset_label") or _build_subset_label(subset_dates))
+        results_by_subset[subset_label] = subset_result.get("results", {}) or {}
+        subset_labels.append(subset_label)
+        figure_outputs.extend(list(subset_result.get("figure_outputs", [])))
+        mean_lag_stat_outputs.extend(list(subset_result.get("mean_lag_stat_outputs", [])))
+
+    primary_subset = subset_labels[0] if subset_labels else _build_subset_label(dates)
+    return {
+        "figure_outputs": figure_outputs,
+        "mean_lag_stat_outputs": mean_lag_stat_outputs,
+        "per_lag_stat_outputs": [],
+        "results": results_by_subset.get(primary_subset, {}),
+        "results_by_subset": results_by_subset,
+        "analysis_kinds": selected_kinds,
+        "subset_label": primary_subset,
+        "subset_labels": subset_labels,
     }
 
 

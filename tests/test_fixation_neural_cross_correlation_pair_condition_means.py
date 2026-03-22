@@ -370,12 +370,9 @@ class TestFixationNeuralCrossCorrelationPairConditionMeans(unittest.TestCase):
             raw_mean_lag = raw_result["mean_lag_comparisons"]
             raw_per_lag = raw_result["per_lag_comparisons"]
             self.assertEqual(len(raw_mean_lag), 3)
-            self.assertEqual(len(raw_per_lag), 3)
+            self.assertTrue(raw_per_lag.empty)
             self.assertTrue((raw_mean_lag["n_pairs"].astype(int) == 4).all())
             self.assertTrue(raw_mean_lag["significant"].astype(bool).any())
-            self.assertTrue(
-                raw_per_lag["significant_mask"].map(lambda mask: np.asarray(mask, dtype=bool).any()).any()
-            )
 
 
 if __name__ == "__main__":
