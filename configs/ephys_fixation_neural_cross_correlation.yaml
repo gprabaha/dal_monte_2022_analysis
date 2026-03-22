@@ -149,6 +149,8 @@ pair_condition_mean_plot_sem_alpha: 0.12
 pair_condition_mean_plot_between_condition_marker_size: 5.0
 pair_condition_mean_plot_between_condition_marker_alpha: 0.95
 pair_condition_mean_plot_annotation_fontsize: 8.0
+pair_condition_mean_plot_lag_half_window_ms: 20.0
+pair_condition_mean_plot_lag_tick_step_ms: 10.0
 pair_condition_mean_plot_use_parallel: true
 pair_condition_mean_plot_max_procs: null
 pair_condition_mean_plot_lag_test_min_lags_for_parallel: 256

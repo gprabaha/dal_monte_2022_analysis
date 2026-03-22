@@ -161,6 +161,8 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
             cfg.get("plot_between_condition_marker_alpha", 0.95),
         ),
         mean_lag_annotation_fontsize=cfg.get("pair_condition_mean_plot_annotation_fontsize", 8.0),
+        plot_lag_half_window_ms=cfg.get("pair_condition_mean_plot_lag_half_window_ms", 20.0),
+        lag_tick_step_ms=cfg.get("pair_condition_mean_plot_lag_tick_step_ms", 10.0),
         use_parallel=cfg.get(
             "pair_condition_mean_plot_use_parallel",
             cfg.get("plot_use_parallel", True),

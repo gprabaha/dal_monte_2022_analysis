@@ -14,7 +14,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
-from matplotlib.ticker import MultipleLocator
 from scipy.stats import ttest_rel
 
 from dal_monte_2022_analysis.config.load import load_config
@@ -92,7 +91,8 @@ class FixationNeuralCrossCorrelationPairConditionMeanPlotSettings:
     between_condition_marker_size: float = 5.0
     between_condition_marker_alpha: float = 0.95
     mean_lag_annotation_fontsize: float = 8.0
-    lag_tick_step_ms: float = 20.0
+    plot_lag_half_window_ms: float = 20.0
+    lag_tick_step_ms: float = 10.0
     use_parallel: bool = True
     max_procs: Optional[int] = None
     lag_test_min_lags_for_parallel: int = 256
@@ -762,8 +762,17 @@ def _plot_result(
         axis.set_ylabel("Cross-correlation")
         axis.tick_params(axis="x", which="both", labelbottom=True)
         if str(result.get("x_label") or "") == "Lag (ms)":
+            half_window_ms = float(max(1.0, settings.plot_lag_half_window_ms))
             tick_step_ms = float(max(1.0, settings.lag_tick_step_ms))
-            axis.xaxis.set_major_locator(MultipleLocator(tick_step_ms))
+            tick_values = np.arange(
+                -half_window_ms,
+                half_window_ms + (0.5 * tick_step_ms),
+                tick_step_ms,
+                dtype=np.float64,
+            )
+            axis.set_xlim(-half_window_ms, half_window_ms)
+            axis.set_xticks(tick_values)
+            axis.set_xticklabels([f"{int(round(value))}" for value in tick_values])
 
     for axis in plot_axes[len(group_items):]:
         axis.set_visible(False)
