@@ -15,14 +15,12 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_neural_cross_correlation_pa
 )
 
 
-
 def _as_float2(values):
     if values is None:
         return None
     if len(values) != 2:
         return None
     return [float(values[0]), float(values[1])]
-
 
 
 def _print_mean_lag_table(result_key: tuple[str, str], result: dict[str, object]) -> None:
@@ -51,8 +49,16 @@ def _print_mean_lag_table(result_key: tuple[str, str], result: dict[str, object]
         print(display_df.to_string(index=False))
 
 
+def _print_outputs(label: str, paths: list[str]) -> None:
+    if not paths:
+        print(f"[plot] {label}: none")
+        return
+    print(f"[plot] {label} ({len(paths)}):")
+    for path in paths:
+        print(f"  {path}")
 
-def main() -> None:
+
+def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
     parser = argparse.ArgumentParser(
         description="Plot pair-condition mean neural xcorr summaries across groups and fixation conditions.",
     )
@@ -73,7 +79,7 @@ def main() -> None:
     parser.add_argument(
         "--analysis-kind",
         choices=["both", "within", "cross"],
-        default="both",
+        default=str(default_analysis_kind),
     )
     args = parser.parse_args()
 
@@ -194,17 +200,18 @@ def main() -> None:
         f"{len(result.get('mean_lag_stat_outputs', []))} mean-lag table(s), "
         f"{len(result.get('per_lag_stat_outputs', []))} per-lag stats pickle(s)"
     )
-    if result.get("figure_outputs"):
-        print(f"[plot] first figure: {result['figure_outputs'][0]}")
-    if result.get("mean_lag_stat_outputs"):
-        print(f"[plot] first mean-lag stats table: {result['mean_lag_stat_outputs'][0]}")
-    if result.get("per_lag_stat_outputs"):
-        print(f"[plot] first per-lag stats pickle: {result['per_lag_stat_outputs'][0]}")
+    _print_outputs("figures", list(result.get("figure_outputs", [])))
+    _print_outputs("mean-lag stats", list(result.get("mean_lag_stat_outputs", [])))
+    _print_outputs("per-lag stats", list(result.get("per_lag_stat_outputs", [])))
 
     for idx, key in enumerate(sorted(result.get("results", {}).keys())):
         _print_mean_lag_table(key, result["results"][key])
         if idx != len(result.get("results", {})) - 1:
             print()
+
+
+def main() -> None:
+    run_plot_cli(default_analysis_kind="both")
 
 
 if __name__ == "__main__":
