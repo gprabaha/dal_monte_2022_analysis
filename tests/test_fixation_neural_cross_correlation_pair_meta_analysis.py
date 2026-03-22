@@ -398,7 +398,6 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
                 signal_input_columns=("spike_train_counts",),
                 min_fixations=2,
                 use_parallel=True,
-                max_procs=8,
                 parallelize_across_dates=True,
             )
 

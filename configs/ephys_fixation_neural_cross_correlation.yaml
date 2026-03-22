@@ -36,7 +36,6 @@ pair_meta_alpha: 0.05
 pair_meta_min_fixations: 2
 pair_meta_use_parallel: true
 pair_meta_parallelize_across_dates: true
-pair_meta_max_procs: null
 
 # Region selection.
 # Cross-region analysis computes anchor_region x partner_regions neuron pairs.

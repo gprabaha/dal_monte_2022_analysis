@@ -267,7 +267,6 @@ Config:
   - `pair_meta_min_fixations`
   - `pair_meta_use_parallel`
   - `pair_meta_parallelize_across_dates`
-  - `pair_meta_max_procs`
   - `anchor_region`
   - `partner_regions`
   - `include_regions`

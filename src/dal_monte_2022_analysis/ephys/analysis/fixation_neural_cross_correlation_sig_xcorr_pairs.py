@@ -73,7 +73,6 @@ class FixationNeuralCrossCorrelationPairMetaAnalysisSettings:
     alpha: float = 0.05
     min_fixations: int = 2
     use_parallel: bool = True
-    max_procs: Optional[int] = None
     parallelize_across_dates: bool = True
 
 
@@ -164,7 +163,6 @@ def build_fixation_neural_cross_correlation_pair_meta_analysis_settings_from_con
         alpha=float(cfg.get("pair_meta_alpha", 0.05)),
         min_fixations=max(1, int(cfg.get("pair_meta_min_fixations", 2))),
         use_parallel=cfg.get("pair_meta_use_parallel", cfg.get("use_parallel", True)),
-        max_procs=cfg.get("pair_meta_max_procs", cfg.get("max_procs")),
         parallelize_across_dates=cfg.get("pair_meta_parallelize_across_dates", True),
     )
 
@@ -761,7 +759,7 @@ def _run_fixation_neural_cross_correlation_pair_meta_analysis(
         date_pool_n_procs = 1
 
         if run_date_pool:
-            date_pool_n_procs = get_n_processes(max_procs=settings.max_procs)
+            date_pool_n_procs = get_n_processes(max_procs=None)
             worker_tasks = [
                 (cfg, settings, analysis_kind, str(date), str(signal_column), date_rows)
                 for date, date_rows in date_items
