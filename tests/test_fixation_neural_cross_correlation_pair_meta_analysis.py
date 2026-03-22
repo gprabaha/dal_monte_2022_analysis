@@ -6,6 +6,7 @@ import pickle
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -343,6 +344,121 @@ class TestFixationNeuralCrossCorrelationPairMetaAnalysis(unittest.TestCase):
             self.assertEqual(set(df["condition"].astype(str)), {"face_interactive", "object"})
             self.assertEqual(int(df.loc[df["condition"].astype(str) == "face_interactive", "n_fixations"].iloc[0]), 1)
             self.assertEqual(int(df.loc[df["condition"].astype(str) == "object", "n_fixations"].iloc[0]), 1)
+
+    def test_sig_xcorr_pairs_can_parallelize_across_dates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            processed_root = root / "processed"
+            analysis_root = root / "analysis"
+            processed_root.mkdir(parents=True, exist_ok=True)
+            analysis_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, processed_root=processed_root, analysis_root=analysis_root)
+
+            within_root = analysis_root / "ephys/psth/fixation_neural_cross_correlation/within_region"
+            for date in ("20990103", "20990104"):
+                rows = [
+                    {
+                        "date": date,
+                        "session": "s1",
+                        "fixation_category": "face",
+                        "interactive_state": "interactive",
+                        "is_interactive": True,
+                        "region_1": "BLA",
+                        "region_2": "BLA",
+                        "unit_uuid_1": "u1",
+                        "unit_uuid_2": "u2",
+                        "cross_correlation": np.asarray([0.1, 0.2, 0.3], dtype=float),
+                    },
+                    {
+                        "date": date,
+                        "session": "s1",
+                        "fixation_category": "face",
+                        "interactive_state": "interactive",
+                        "is_interactive": True,
+                        "region_1": "BLA",
+                        "region_2": "BLA",
+                        "unit_uuid_1": "u1",
+                        "unit_uuid_2": "u2",
+                        "cross_correlation": np.asarray([0.2, 0.3, 0.4], dtype=float),
+                    },
+                ]
+                _write_xcorr_session_file(
+                    within_root / f"date={date}" / "session=s1" / "fixations.pkl",
+                    analysis_kind="within_region",
+                    date=date,
+                    session="s1",
+                    signal_input_column="spike_train_counts",
+                    rows=rows,
+                )
+
+            settings = FixationNeuralCrossCorrelationSigXcorrPairsSettings(
+                cfg_path=str(cfg_path),
+                signal_input_column="spike_train_counts",
+                signal_input_columns=("spike_train_counts",),
+                min_fixations=2,
+                use_parallel=True,
+                max_procs=8,
+                parallelize_across_dates=True,
+            )
+
+            pool_state: dict[str, object] = {}
+
+            class FakePool:
+                def __init__(self, processes: int):
+                    pool_state["processes"] = int(processes)
+
+                def __enter__(self):
+                    return self
+
+                def __exit__(self, exc_type, exc, tb) -> bool:
+                    return False
+
+                def imap_unordered(self, func, iterable, chunksize: int = 1):
+                    tasks = list(iterable)
+                    pool_state["tasks"] = tasks
+                    pool_state["chunksize"] = int(chunksize)
+                    for task in reversed(tasks):
+                        yield func(task)
+
+            with patch(
+                "dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_sig_xcorr_pairs.Pool",
+                FakePool,
+            ), patch(
+                "dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_sig_xcorr_pairs.get_n_processes",
+                return_value=2,
+            ):
+                summary = run_within_region_fixation_neural_cross_correlation_sig_xcorr_pairs(
+                    settings,
+                    show_progress=False,
+                )
+
+            signal_summary = summary["signal_summaries"]["spike_train_counts"]
+            self.assertEqual(int(pool_state["processes"]), 2)
+            self.assertEqual(int(pool_state["chunksize"]), 1)
+            self.assertEqual(len(pool_state["tasks"]), 2)
+            self.assertTrue(bool(signal_summary["parallelized_across_dates"]))
+            self.assertEqual(int(signal_summary["date_pool_n_procs"]), 2)
+            self.assertEqual(int(signal_summary["n_dates_written"]), 2)
+            self.assertEqual(int(summary["n_date_signal_runs_total"]), 2)
+            self.assertEqual(
+                signal_summary["output_paths"],
+                [
+                    str(
+                        analysis_root
+                        / "ephys/psth/fixation_neural_cross_correlation/pair_meta_analysis/within_region"
+                        / "date=20990103"
+                        / "pair_fixation_lag_mean_significance.pkl"
+                    ),
+                    str(
+                        analysis_root
+                        / "ephys/psth/fixation_neural_cross_correlation/pair_meta_analysis/within_region"
+                        / "date=20990104"
+                        / "pair_fixation_lag_mean_significance.pkl"
+                    ),
+                ],
+            )
+
 
     def test_cross_region_sig_xcorr_pairs_use_date_level_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

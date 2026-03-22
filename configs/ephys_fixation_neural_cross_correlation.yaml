@@ -34,6 +34,9 @@ pair_meta_within_output_csv_filename: pair_fixation_lag_mean_significance.csv
 pair_meta_cross_output_csv_filename: pair_fixation_lag_mean_significance.csv
 pair_meta_alpha: 0.05
 pair_meta_min_fixations: 2
+pair_meta_use_parallel: true
+pair_meta_parallelize_across_dates: true
+pair_meta_max_procs: null
 
 # Region selection.
 # Cross-region analysis computes anchor_region x partner_regions neuron pairs.

@@ -265,6 +265,9 @@ Config:
   - `pair_meta_within_output_csv_filename` / `pair_meta_cross_output_csv_filename`
   - `pair_meta_alpha`
   - `pair_meta_min_fixations`
+  - `pair_meta_use_parallel`
+  - `pair_meta_parallelize_across_dates`
+  - `pair_meta_max_procs`
   - `anchor_region`
   - `partner_regions`
   - `include_regions`

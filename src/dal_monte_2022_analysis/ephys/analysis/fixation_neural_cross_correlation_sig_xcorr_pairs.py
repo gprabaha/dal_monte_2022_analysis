@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from multiprocessing import Pool
 from pathlib import Path
 from typing import Optional, Sequence
 import warnings
@@ -33,6 +34,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_he
     _signal_output_label,
     _summarize_cross_correlation,
 )
+from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.runtime.io.analysis_index import (
     scan_analysis_date_paths,
     scan_analysis_paths,
@@ -70,6 +72,9 @@ class FixationNeuralCrossCorrelationPairMetaAnalysisSettings:
     condition_order: Sequence[str] = field(default_factory=lambda: tuple(_PLOT_CONDITION_ORDER))
     alpha: float = 0.05
     min_fixations: int = 2
+    use_parallel: bool = True
+    max_procs: Optional[int] = None
+    parallelize_across_dates: bool = True
 
 
 def resolve_fixation_neural_cross_correlation_pair_meta_analysis_signal_columns(
@@ -158,6 +163,9 @@ def build_fixation_neural_cross_correlation_pair_meta_analysis_settings_from_con
         condition_order=tuple(str(value) for value in condition_order),
         alpha=float(cfg.get("pair_meta_alpha", 0.05)),
         min_fixations=max(1, int(cfg.get("pair_meta_min_fixations", 2))),
+        use_parallel=cfg.get("pair_meta_use_parallel", cfg.get("use_parallel", True)),
+        max_procs=cfg.get("pair_meta_max_procs", cfg.get("max_procs")),
+        parallelize_across_dates=cfg.get("pair_meta_parallelize_across_dates", True),
     )
 
 
@@ -639,6 +647,69 @@ def _build_pair_meta_output_paths(
     )
 
 
+def _build_and_save_date_pair_meta_result(
+    cfg: dict,
+    settings: FixationNeuralCrossCorrelationPairMetaAnalysisSettings,
+    *,
+    analysis_kind: str,
+    date: str,
+    signal_column: str,
+    rows: Sequence[dict],
+) -> dict[str, object]:
+    result = _build_date_pair_meta_result(
+        settings,
+        analysis_kind=analysis_kind,
+        date=str(date),
+        signal_column=str(signal_column),
+        rows=rows,
+    )
+    out_pkl, out_csv = _build_pair_meta_output_paths(
+        cfg,
+        settings,
+        analysis_kind=analysis_kind,
+        date=str(date),
+        signal_column=str(signal_column),
+    )
+    out_pkl.parent.mkdir(parents=True, exist_ok=True)
+    save_pickle_path(result, out_pkl)
+    pair_summaries = result.get("pair_summaries")
+    csv_df = pair_summaries if isinstance(pair_summaries, pd.DataFrame) else pd.DataFrame()
+    csv_df.to_csv(out_csv, index=False)
+    group_summaries = result.get("group_summaries")
+    group_csv_df = group_summaries if isinstance(group_summaries, pd.DataFrame) else pd.DataFrame()
+    group_out_csv = out_csv.with_name(f"{out_csv.stem}_group_summary.csv")
+    group_csv_df.to_csv(group_out_csv, index=False)
+    return {
+        "date": str(date),
+        "output_path": str(out_pkl),
+        "csv_output_path": str(out_csv),
+        "group_summary_csv_output_path": str(group_out_csv),
+        "n_summary_rows": int(len(csv_df)),
+        "n_group_summary_rows": int(len(group_csv_df)),
+    }
+
+
+def _build_and_save_date_pair_meta_result_worker(
+    task: tuple[
+        dict,
+        FixationNeuralCrossCorrelationPairMetaAnalysisSettings,
+        str,
+        str,
+        str,
+        Sequence[dict],
+    ],
+) -> dict[str, object]:
+    cfg, settings, analysis_kind, date, signal_column, rows = task
+    return _build_and_save_date_pair_meta_result(
+        cfg,
+        settings,
+        analysis_kind=analysis_kind,
+        date=str(date),
+        signal_column=str(signal_column),
+        rows=rows,
+    )
+
+
 def _run_fixation_neural_cross_correlation_pair_meta_analysis(
     settings: FixationNeuralCrossCorrelationPairMetaAnalysisSettings,
     *,
@@ -680,44 +751,64 @@ def _run_fixation_neural_cross_correlation_pair_meta_analysis(
         group_summary_csv_output_paths: list[str] = []
         n_summary_rows_total = 0
         n_group_summary_rows_total = 0
-        iterator = sorted(date_to_rows.items())
-        if show_progress and iterator:
-            iterator = tqdm(
-                iterator,
-                desc=f"{analysis_kind} sig xcorr pairs {signal_column}",
-                unit="date",
-            )
+        date_results: list[dict[str, object]] = []
+        date_items = sorted(date_to_rows.items())
+        run_date_pool = bool(
+            settings.use_parallel
+            and settings.parallelize_across_dates
+            and len(date_items) > 1
+        )
+        date_pool_n_procs = 1
 
-        for date, date_rows in iterator:
-            result = _build_date_pair_meta_result(
-                settings,
-                analysis_kind=analysis_kind,
-                date=str(date),
-                signal_column=str(signal_column),
-                rows=date_rows,
-            )
-            out_pkl, out_csv = _build_pair_meta_output_paths(
-                cfg,
-                settings,
-                analysis_kind=analysis_kind,
-                date=str(date),
-                signal_column=str(signal_column),
-            )
-            out_pkl.parent.mkdir(parents=True, exist_ok=True)
-            save_pickle_path(result, out_pkl)
-            pair_summaries = result.get("pair_summaries")
-            csv_df = pair_summaries if isinstance(pair_summaries, pd.DataFrame) else pd.DataFrame()
-            csv_df.to_csv(out_csv, index=False)
-            group_summaries = result.get("group_summaries")
-            group_csv_df = group_summaries if isinstance(group_summaries, pd.DataFrame) else pd.DataFrame()
-            group_out_csv = out_csv.with_name(f"{out_csv.stem}_group_summary.csv")
-            group_csv_df.to_csv(group_out_csv, index=False)
-            output_paths.append(str(out_pkl))
-            csv_output_paths.append(str(out_csv))
-            group_summary_csv_output_paths.append(str(group_out_csv))
-            n_summary_rows_total += int(len(pair_summaries)) if isinstance(pair_summaries, pd.DataFrame) else 0
-            n_group_summary_rows_total += int(len(group_csv_df))
-            n_date_signal_runs_total += 1
+        if run_date_pool:
+            date_pool_n_procs = get_n_processes(max_procs=settings.max_procs)
+            worker_tasks = [
+                (cfg, settings, analysis_kind, str(date), str(signal_column), date_rows)
+                for date, date_rows in date_items
+            ]
+            with Pool(processes=date_pool_n_procs) as pool:
+                iterator = pool.imap_unordered(
+                    _build_and_save_date_pair_meta_result_worker,
+                    worker_tasks,
+                    chunksize=1,
+                )
+                if show_progress:
+                    iterator = tqdm(
+                        iterator,
+                        total=len(worker_tasks),
+                        desc=f"{analysis_kind} sig xcorr pairs {signal_column} ({date_pool_n_procs} workers)",
+                        unit="date",
+                    )
+                for date_result in iterator:
+                    date_results.append(dict(date_result))
+        else:
+            iterator = date_items
+            if show_progress and date_items:
+                iterator = tqdm(
+                    iterator,
+                    desc=f"{analysis_kind} sig xcorr pairs {signal_column}",
+                    unit="date",
+                )
+            for date, date_rows in iterator:
+                date_results.append(
+                    _build_and_save_date_pair_meta_result(
+                        cfg,
+                        settings,
+                        analysis_kind=analysis_kind,
+                        date=str(date),
+                        signal_column=str(signal_column),
+                        rows=date_rows,
+                    )
+                )
+
+        date_results = sorted(date_results, key=lambda row: str(row.get("date", "")))
+        for date_result in date_results:
+            output_paths.append(str(date_result.get("output_path")))
+            csv_output_paths.append(str(date_result.get("csv_output_path")))
+            group_summary_csv_output_paths.append(str(date_result.get("group_summary_csv_output_path")))
+            n_summary_rows_total += int(date_result.get("n_summary_rows", 0))
+            n_group_summary_rows_total += int(date_result.get("n_group_summary_rows", 0))
+        n_date_signal_runs_total += int(len(date_results))
 
         resolved_output_filename = _resolve_signal_output_filename(output_filename, signal_column)
         resolved_output_csv_filename = _resolve_signal_output_filename(output_csv_filename, signal_column)
@@ -733,6 +824,8 @@ def _run_fixation_neural_cross_correlation_pair_meta_analysis(
             "n_dates_written": int(len(output_paths)),
             "n_summary_rows_total": int(n_summary_rows_total),
             "n_group_summary_rows_total": int(n_group_summary_rows_total),
+            "parallelized_across_dates": bool(run_date_pool),
+            "date_pool_n_procs": int(date_pool_n_procs),
             "output_paths": output_paths,
             "csv_output_paths": csv_output_paths,
             "group_summary_csv_output_paths": group_summary_csv_output_paths,
