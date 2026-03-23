@@ -10,7 +10,7 @@ import matplotlib as mpl
 
 mpl.use("Agg")
 import matplotlib.pyplot as plt
-from matplotlib.collections import PolyCollection
+from matplotlib.collections import LineCollection, PolyCollection
 import numpy as np
 import pandas as pd
 from pandas.errors import EmptyDataError
@@ -348,12 +348,23 @@ def plot_fixation_psth_variability_violins(
             cut=0.0,
             linewidth=0.8,
             width=violin_width,
+            saturation=1.0,
         )
         for body in [artist for artist in ax.collections if isinstance(artist, PolyCollection)]:
             body.set_edgecolor("#222222")
             body.set_linewidth(0.65)
-            body.set_alpha(0.72)
+            body.set_alpha(1.0)
+            body.set_clip_on(False)
+            body.set_clip_path(None)
             body.set_rasterized(False)
+        for line_artist in [artist for artist in ax.collections if isinstance(artist, LineCollection)]:
+            line_artist.set_clip_on(False)
+            line_artist.set_clip_path(None)
+            line_artist.set_rasterized(False)
+        for line_artist in ax.lines:
+            line_artist.set_clip_on(False)
+            line_artist.set_clip_path(None)
+            line_artist.set_rasterized(False)
 
         ax.set_xticks(np.arange(len(condition_order)))
         ax.set_xticklabels(
