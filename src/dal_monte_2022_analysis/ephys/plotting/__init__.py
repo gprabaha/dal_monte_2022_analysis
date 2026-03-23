@@ -53,6 +53,10 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_population_pca import (
     plot_fixation_population_pca_pairwise_geometry_violins,
     plot_fixation_population_pca_trajectories,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_psth_variability import (
+    FixationPSTHVariabilityPlotSettings,
+    plot_fixation_psth_variability_violins,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_roi_vs_period_factorial import (
     FixationROIVsPeriodFactorialPlotSettings,
     plot_fixation_roi_vs_period_axis_geometry,
@@ -93,6 +97,8 @@ __all__ = [
     "plot_fixation_population_pca_explained_variance_bars",
     "plot_fixation_population_pca_explained_variance_cumulative",
     "plot_fixation_population_pca_pairwise_geometry_violins",
+    "FixationPSTHVariabilityPlotSettings",
+    "plot_fixation_psth_variability_violins",
     "FixationROIVsPeriodFactorialPlotSettings",
     "plot_fixation_roi_vs_period_axis_violin",
     "plot_fixation_roi_vs_period_cross_region_graph",

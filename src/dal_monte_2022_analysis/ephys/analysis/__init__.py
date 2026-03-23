@@ -33,6 +33,10 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_population_pca import (
     FixationPopulationPCASettings,
     run_fixation_population_pca_analysis,
 )
+from dal_monte_2022_analysis.ephys.analysis.fixation_psth_variability import (
+    FixationPSTHVariabilitySettings,
+    run_fixation_psth_variability_analysis,
+)
 from dal_monte_2022_analysis.ephys.analysis.fixation_roi_vs_period_factorial import (
     FixationROIVsPeriodFactorialSettings,
     run_fixation_roi_vs_period_factorial_analysis,
@@ -47,6 +51,8 @@ __all__ = [
     "run_fixation_three_way_region_comparison",
     "FixationPopulationPCASettings",
     "run_fixation_population_pca_analysis",
+    "FixationPSTHVariabilitySettings",
+    "run_fixation_psth_variability_analysis",
     "FixationROIVsPeriodFactorialSettings",
     "run_fixation_roi_vs_period_factorial_analysis",
     "WITHIN_ANALYSIS_KIND",
