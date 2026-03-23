@@ -31,6 +31,7 @@ _ALLOWED_PVALUE_CORRECTIONS: frozenset[str] = frozenset(
     {"none", "bonferroni", "holm", "bh", "fdr_bh"}
 )
 _SUMMARY_META_COLUMNS: tuple[str, ...] = ("date", "unit_uuid", "unit_key", "region")
+_CV_MEAN_EPSILON: float = 1e-12
 
 
 @dataclass
@@ -68,8 +69,27 @@ def _variability_column(condition: str) -> str:
     return f"{str(condition).strip()}_variability"
 
 
+def _cv_column(condition: str) -> str:
+    return f"{str(condition).strip()}_cv"
+
+
+def _metric_condition_columns(
+    settings: FixationPSTHVariabilitySettings,
+) -> dict[str, dict[str, str]]:
+    return {
+        "sd": {
+            str(condition): _variability_column(str(condition))
+            for condition in settings.conditions
+        },
+        "cv": {str(condition): _cv_column(str(condition)) for condition in settings.conditions},
+    }
+
+
 def _summary_columns(settings: FixationPSTHVariabilitySettings) -> list[str]:
-    return [*_SUMMARY_META_COLUMNS, *[_variability_column(condition) for condition in settings.conditions]]
+    out = list(_SUMMARY_META_COLUMNS)
+    for condition in settings.conditions:
+        out.extend([_variability_column(condition), _cv_column(condition)])
+    return out
 
 
 def _empty_unit_summary_df(settings: FixationPSTHVariabilitySettings) -> pd.DataFrame:
@@ -81,6 +101,7 @@ def _empty_within_region_stats_df() -> pd.DataFrame:
         columns=[
             "region",
             "n_units_region_total",
+            "metric_key",
             "condition_a",
             "condition_b",
             "condition_pair",
@@ -607,6 +628,12 @@ def _build_unit_variability_summary(
         if finite.size == 0:
             continue
         variability = float(np.std(finite, ddof=1)) if finite.size > 1 else 0.0
+        mean_fr = float(np.mean(finite))
+        cv = (
+            float(variability / mean_fr)
+            if np.isfinite(mean_fr) and mean_fr > float(_CV_MEAN_EPSILON)
+            else np.nan
+        )
         rows.append(
             {
                 "date": str(getattr(row, "date", "")),
@@ -615,6 +642,7 @@ def _build_unit_variability_summary(
                 "region": str(getattr(row, "region", "unknown")),
                 "condition": str(getattr(row, "condition", "")),
                 "fr_variability": variability,
+                "fr_cv": cv,
             }
         )
 
@@ -633,8 +661,17 @@ def _build_unit_variability_summary(
         values="fr_variability",
         aggfunc="mean",
     )
-    wide_df = wide_df.rename(columns={condition: _variability_column(condition) for condition in settings.conditions})
-    out_df = metadata_df.join(wide_df, how="left").reset_index()
+    wide_df = wide_df.rename(
+        columns={condition: _variability_column(condition) for condition in settings.conditions}
+    )
+    cv_wide_df = long_df.pivot_table(
+        index="unit_key",
+        columns="condition",
+        values="fr_cv",
+        aggfunc="mean",
+    )
+    cv_wide_df = cv_wide_df.rename(columns={condition: _cv_column(condition) for condition in settings.conditions})
+    out_df = metadata_df.join(wide_df, how="left").join(cv_wide_df, how="left").reset_index()
     for column in out_columns:
         if column not in out_df.columns:
             out_df[column] = np.nan
@@ -653,36 +690,49 @@ def _build_within_region_stats(
 
     rows: list[dict] = []
     condition_order = [str(condition) for condition in settings.conditions if str(condition).strip()]
-    condition_columns = {condition: _variability_column(condition) for condition in condition_order}
+    metric_condition_columns = _metric_condition_columns(settings)
     for region, grp in summary_df.groupby("region", dropna=False, sort=False):
         n_units_region = int(grp["unit_key"].astype(str).nunique())
-        available_conditions = [
-            condition
-            for condition in condition_order
-            if condition_columns[condition] in grp.columns
-            and np.isfinite(pd.to_numeric(grp[condition_columns[condition]], errors="coerce").to_numpy(dtype=float)).any()
-        ]
-        if len(available_conditions) < 2:
-            continue
-        for condition_a, condition_b in combinations(available_conditions, 2):
-            arr_a = pd.to_numeric(grp[condition_columns[condition_a]], errors="coerce").to_numpy(dtype=float)
-            arr_b = pd.to_numeric(grp[condition_columns[condition_b]], errors="coerce").to_numpy(dtype=float)
-            stat, p_value, n_paired = _safe_ttest_rel(arr_a, arr_b)
-            if n_paired < int(max(settings.min_paired_units_per_region, 2)):
+        for metric_key, condition_columns in metric_condition_columns.items():
+            available_conditions = [
+                condition
+                for condition in condition_order
+                if condition_columns[condition] in grp.columns
+                and np.isfinite(
+                    pd.to_numeric(
+                        grp[condition_columns[condition]],
+                        errors="coerce",
+                    ).to_numpy(dtype=float)
+                ).any()
+            ]
+            if len(available_conditions) < 2:
                 continue
-            rows.append(
-                {
-                    "region": str(region),
-                    "n_units_region_total": int(n_units_region),
-                    "condition_a": str(condition_a),
-                    "condition_b": str(condition_b),
-                    "condition_pair": f"{condition_a}__vs__{condition_b}",
-                    "test_name": "paired_ttest",
-                    "n_units_paired": int(n_paired),
-                    "statistic": stat,
-                    "p_value": p_value,
-                }
-            )
+            for condition_a, condition_b in combinations(available_conditions, 2):
+                arr_a = pd.to_numeric(
+                    grp[condition_columns[condition_a]],
+                    errors="coerce",
+                ).to_numpy(dtype=float)
+                arr_b = pd.to_numeric(
+                    grp[condition_columns[condition_b]],
+                    errors="coerce",
+                ).to_numpy(dtype=float)
+                stat, p_value, n_paired = _safe_ttest_rel(arr_a, arr_b)
+                if n_paired < int(max(settings.min_paired_units_per_region, 2)):
+                    continue
+                rows.append(
+                    {
+                        "region": str(region),
+                        "n_units_region_total": int(n_units_region),
+                        "metric_key": str(metric_key),
+                        "condition_a": str(condition_a),
+                        "condition_b": str(condition_b),
+                        "condition_pair": f"{condition_a}__vs__{condition_b}",
+                        "test_name": "paired_ttest",
+                        "n_units_paired": int(n_paired),
+                        "statistic": stat,
+                        "p_value": p_value,
+                    }
+                )
 
     if not rows:
         return _empty_within_region_stats_df()
@@ -694,7 +744,7 @@ def _build_within_region_stats(
         p_col="p_value",
         out_col="p_value_adjusted",
         method=correction,
-        group_cols=("region",),
+        group_cols=("region", "metric_key"),
     )
     out_df["pvalue_correction"] = str(correction)
     out_df["alpha"] = float(settings.alpha)
@@ -702,7 +752,7 @@ def _build_within_region_stats(
         pd.to_numeric(out_df["p_value_adjusted"], errors="coerce").to_numpy(dtype=float)
         < float(settings.alpha)
     )
-    out_df = out_df.sort_values(["region", "condition_a", "condition_b"]).reset_index(drop=True)
+    out_df = out_df.sort_values(["region", "metric_key", "condition_a", "condition_b"]).reset_index(drop=True)
     return out_df.loc[:, list(_empty_within_region_stats_df().columns)]
 
 
@@ -727,6 +777,7 @@ def run_fixation_psth_variability_analysis(
     within_region_stats_df.to_csv(within_region_stats_path, index=False)
 
     correction = _normalize_pvalue_correction(settings.pvalue_correction)
+    metric_condition_columns = _metric_condition_columns(settings)
     result = {
         "unit_summary": unit_summary_df,
         "within_region_stats": within_region_stats_df,
@@ -736,9 +787,23 @@ def run_fixation_psth_variability_analysis(
                 str(condition): _variability_column(str(condition))
                 for condition in settings.conditions
             },
+            "cv_columns": {
+                str(condition): _cv_column(str(condition))
+                for condition in settings.conditions
+            },
+            "metric_columns": {
+                str(metric_key): {
+                    str(condition): str(column)
+                    for condition, column in condition_columns.items()
+                }
+                for metric_key, condition_columns in metric_condition_columns.items()
+            },
             "variability_metric_name": str(settings.variability_metric_name),
             "variability_metric_label": str(settings.variability_metric_label),
             "variability_metric_unit": str(settings.variability_metric_unit),
+            "cv_metric_name": "coefficient_of_variation_over_time_bins",
+            "cv_metric_label": "Coefficient of Variation",
+            "cv_metric_unit": "unitless",
             "variability_window_start_ms": (
                 None if settings.variability_window_start_ms is None else float(settings.variability_window_start_ms)
             ),

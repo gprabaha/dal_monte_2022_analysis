@@ -43,6 +43,11 @@ DEFAULT_CONDITION_COLORS: dict[str, str] = {
     "face_non_interactive": "#97ca3d",
     "object": "#754c29",
 }
+DEFAULT_METRIC_ORDER: tuple[str, ...] = ("sd", "cv")
+DEFAULT_METRIC_Y_LABELS: dict[str, str] = {
+    "sd": "SD of Mean FR (Hz)",
+    "cv": "Coefficient of Variation",
+}
 
 
 @dataclass
@@ -62,6 +67,7 @@ class FixationPSTHVariabilityPlotSettings:
     condition_order: tuple[str, ...] = field(default_factory=lambda: tuple(DEFAULT_CONDITION_ORDER))
     condition_labels: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_CONDITION_LABELS))
     condition_colors: dict[str, str] = field(default_factory=lambda: dict(DEFAULT_CONDITION_COLORS))
+    metric_key: str = "sd"
     y_label: str = "SD of Mean FR (Hz)"
     figure_width_in: float = 8.6
     figure_height_in: float = 3.2
@@ -81,14 +87,34 @@ def _variability_column(condition: str) -> str:
     return f"{str(condition).strip()}_variability"
 
 
+def _cv_column(condition: str) -> str:
+    return f"{str(condition).strip()}_cv"
+
+
+def _normalize_metric_key(value: object) -> str:
+    token = str(value).strip().lower()
+    aliases = {
+        "variability": "sd",
+        "std": "sd",
+        "stdev": "sd",
+        "standard_deviation": "sd",
+        "coefficient_of_variation": "cv",
+        "coeff_of_var": "cv",
+    }
+    return aliases.get(token, token or "sd")
+
+
 def _empty_plot_summary_df() -> pd.DataFrame:
-    return pd.DataFrame(columns=["region", "unit_key", "condition", "fr_variability", "region_norm"])
+    return pd.DataFrame(
+        columns=["region", "unit_key", "condition", "metric_key", "fr_variability", "region_norm"]
+    )
 
 
 def _empty_within_region_stats_df() -> pd.DataFrame:
     return pd.DataFrame(
         columns=[
             "region",
+            "metric_key",
             "condition_a",
             "condition_b",
             "p_value_adjusted",
@@ -160,16 +186,18 @@ def _coerce_summary_to_long(
 
     long_required = {"region", "unit_key", "condition", "fr_variability"}
     if long_required.issubset(raw_df.columns):
-        df = raw_df.loc[:, ["region", "unit_key", "condition", "fr_variability"]].copy()
+        cols = ["region", "unit_key", "condition", "fr_variability"]
+        if "metric_key" in raw_df.columns:
+            cols.append("metric_key")
+        df = raw_df.loc[:, cols].copy()
+        if "metric_key" not in df.columns:
+            df["metric_key"] = "sd"
     else:
         ordered_conditions = list(dict.fromkeys([*settings.condition_order, *DEFAULT_CONDITION_ORDER]))
-        variability_columns = {
-            _variability_column(condition): str(condition)
-            for condition in ordered_conditions
+        metric_columns = {
+            "sd": {_variability_column(condition): str(condition) for condition in ordered_conditions},
+            "cv": {_cv_column(condition): str(condition) for condition in ordered_conditions},
         }
-        present_variability_columns = [
-            column for column in variability_columns if column in raw_df.columns
-        ]
         if "unit_key" not in raw_df.columns and {"date", "unit_uuid"}.issubset(raw_df.columns):
             raw_df = raw_df.copy()
             raw_df["unit_key"] = (
@@ -179,17 +207,37 @@ def _coerce_summary_to_long(
             )
         required_base = {"region", "unit_key"}
         missing_base = sorted(required_base - set(raw_df.columns))
-        if present_variability_columns and not missing_base:
-            df = raw_df.melt(
-                id_vars=[column for column in raw_df.columns if column not in set(present_variability_columns)],
-                value_vars=present_variability_columns,
+        if missing_base:
+            expected_wide = ", ".join(
+                sorted({column for columns in metric_columns.values() for column in columns})
+            )
+            raise ValueError(
+                "Fixation PSTH variability summary CSV missing required columns. "
+                "Expected either long-format columns {region, unit_key, condition, fr_variability} "
+                f"or wide-format columns including region, unit_key, and one or more of: {expected_wide}"
+            )
+        long_chunks: list[pd.DataFrame] = []
+        for metric_key, columns_by_name in metric_columns.items():
+            present_columns = [column for column in columns_by_name if column in raw_df.columns]
+            if not present_columns:
+                continue
+            df_chunk = raw_df.melt(
+                id_vars=[column for column in raw_df.columns if column not in set(present_columns)],
+                value_vars=present_columns,
                 var_name="condition_column",
                 value_name="fr_variability",
             )
-            df["condition"] = df["condition_column"].map(variability_columns)
-            df = df.loc[:, ["region", "unit_key", "condition", "fr_variability"]].copy()
+            df_chunk["condition"] = df_chunk["condition_column"].map(columns_by_name)
+            df_chunk["metric_key"] = str(metric_key)
+            long_chunks.append(
+                df_chunk.loc[:, ["region", "unit_key", "condition", "metric_key", "fr_variability"]].copy()
+            )
+        if long_chunks:
+            df = pd.concat(long_chunks, axis=0, ignore_index=True)
         else:
-            expected_wide = ", ".join(sorted(variability_columns))
+            expected_wide = ", ".join(
+                sorted({column for columns in metric_columns.values() for column in columns})
+            )
             raise ValueError(
                 "Fixation PSTH variability summary CSV missing required columns. "
                 "Expected either long-format columns {region, unit_key, condition, fr_variability} "
@@ -201,9 +249,10 @@ def _coerce_summary_to_long(
     df["region"] = df["region"].astype(str).map(str.strip)
     df["unit_key"] = df["unit_key"].astype(str).map(str.strip)
     df["condition"] = df["condition"].astype(str).map(str.strip)
+    df["metric_key"] = df["metric_key"].map(_normalize_metric_key)
     df["fr_variability"] = pd.to_numeric(df["fr_variability"], errors="coerce")
     df["region_norm"] = df["region"].map(_normalize_region_token)
-    return df.loc[:, ["region", "unit_key", "condition", "fr_variability", "region_norm"]]
+    return df.loc[:, ["region", "unit_key", "condition", "metric_key", "fr_variability", "region_norm"]]
 
 
 def _load_unit_summary_df(settings: FixationPSTHVariabilityPlotSettings) -> pd.DataFrame:
@@ -241,6 +290,10 @@ def _load_within_region_stats_df(settings: FixationPSTHVariabilityPlotSettings) 
     df["region_norm"] = df["region"].map(_normalize_region_token)
     df["condition_a"] = df["condition_a"].astype(str).map(str.strip)
     df["condition_b"] = df["condition_b"].astype(str).map(str.strip)
+    if "metric_key" in df.columns:
+        df["metric_key"] = df["metric_key"].map(_normalize_metric_key)
+    else:
+        df["metric_key"] = "sd"
     df["p_value_adjusted"] = pd.to_numeric(df["p_value_adjusted"], errors="coerce")
     if "significant_adjusted" in df.columns:
         df["significant_adjusted"] = df["significant_adjusted"].map(bool)
@@ -275,6 +328,9 @@ def plot_fixation_psth_variability_violins(
 
     summary_df = _load_unit_summary_df(settings)
     stats_df = _load_within_region_stats_df(settings)
+    metric_key = _normalize_metric_key(settings.metric_key)
+    summary_df = summary_df.loc[summary_df["metric_key"].astype(str) == metric_key].copy()
+    stats_df = stats_df.loc[stats_df["metric_key"].astype(str) == metric_key].copy()
     if summary_df.empty:
         print("[plot] no fixation PSTH variability rows available for plotting")
         return None
@@ -395,6 +451,7 @@ def plot_fixation_psth_variability_violins(
         region_stats = (
             stats_df.loc[
                 (stats_df["region_norm"] == region_norm)
+                & (stats_df["metric_key"].astype(str) == metric_key)
                 & (stats_df["condition_a"].astype(str).isin(set(condition_order)))
                 & (stats_df["condition_b"].astype(str).isin(set(condition_order)))
                 & (stats_df["significant_adjusted"].map(bool))
@@ -436,6 +493,7 @@ def plot_fixation_psth_variability_violins(
 
     return {
         "output_path": str(out_path),
+        "metric_key": str(metric_key),
         "region_order": list(region_order),
         "condition_order": list(condition_order),
         "region_summaries": region_summaries,

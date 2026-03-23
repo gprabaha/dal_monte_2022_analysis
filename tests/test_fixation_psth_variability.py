@@ -146,18 +146,25 @@ class TestFixationPSTHVariabilityAnalysis(unittest.TestCase):
                 "unit_key",
                 "region",
                 "face_interactive_variability",
+                "face_interactive_cv",
                 "face_non_interactive_variability",
+                "face_non_interactive_cv",
                 "object_variability",
+                "object_cv",
             }
             self.assertTrue(expected_columns.issubset(set(unit_df.columns)))
 
             row = unit_df.loc[unit_df["unit_uuid"].astype(str) == "u1"].iloc[0]
             self.assertAlmostEqual(float(row["face_interactive_variability"]), 1.0, places=6)
+            self.assertAlmostEqual(float(row["face_interactive_cv"]), 0.1, places=6)
             self.assertAlmostEqual(float(row["face_non_interactive_variability"]), 2.0, places=6)
+            self.assertAlmostEqual(float(row["face_non_interactive_cv"]), 2.0 / 12.0, places=6)
             self.assertAlmostEqual(float(row["object_variability"]), 5.0, places=6)
+            self.assertAlmostEqual(float(row["object_cv"]), 5.0 / 8.0, places=6)
 
             bla_pair = stats_df.loc[
                 (stats_df["region"].astype(str) == "BLA")
+                & (stats_df["metric_key"].astype(str) == "sd")
                 & (stats_df["condition_a"].astype(str) == "face_interactive")
                 & (stats_df["condition_b"].astype(str) == "object")
             ].iloc[0]
@@ -267,8 +274,11 @@ class TestFixationPSTHVariabilityAnalysis(unittest.TestCase):
             self.assertEqual(len(unit_df), 1)
             row = unit_df.iloc[0]
             self.assertAlmostEqual(float(row["face_interactive_variability"]), 1.0, places=6)
+            self.assertAlmostEqual(float(row["face_interactive_cv"]), 0.1, places=6)
             self.assertAlmostEqual(float(row["face_non_interactive_variability"]), 2.0, places=6)
+            self.assertAlmostEqual(float(row["face_non_interactive_cv"]), 2.0 / 12.0, places=6)
             self.assertAlmostEqual(float(row["object_variability"]), 4.6, places=6)
+            self.assertAlmostEqual(float(row["object_cv"]), 4.6 / 8.0, places=6)
             self.assertTrue(result["within_region_stats"].empty)
 
     def test_empty_outputs_write_header_only_csvs(self) -> None:
@@ -299,6 +309,8 @@ class TestFixationPSTHVariabilityAnalysis(unittest.TestCase):
             self.assertTrue(saved_unit_df.empty)
             self.assertTrue(saved_stats_df.empty)
             self.assertIn("face_interactive_variability", saved_unit_df.columns)
+            self.assertIn("face_interactive_cv", saved_unit_df.columns)
+            self.assertIn("metric_key", saved_stats_df.columns)
             self.assertIn("p_value_adjusted", saved_stats_df.columns)
 
 
@@ -332,21 +344,26 @@ class TestFixationPSTHVariabilityPlot(unittest.TestCase):
                             "unit_key": f"20990101|{region}|u{idx}",
                             "region": region,
                             "face_interactive_variability": base + 0.05 * idx,
+                            "face_interactive_cv": 0.10 + 0.01 * idx,
                             "face_non_interactive_variability": base + 0.45 + 0.05 * idx,
+                            "face_non_interactive_cv": 0.18 + 0.01 * idx,
                             "object_variability": base + 0.90 + 0.05 * idx,
+                            "object_cv": 0.30 + 0.01 * idx,
                         }
                     )
             stats_rows = []
             for region in ("BLA", "ACCg", "dmPFC", "OFC"):
-                stats_rows.append(
-                    {
-                        "region": region,
-                        "condition_a": "face_interactive",
-                        "condition_b": "object",
-                        "p_value_adjusted": 0.01,
-                        "significant_adjusted": True,
-                    }
-                )
+                for metric_key in ("sd", "cv"):
+                    stats_rows.append(
+                        {
+                            "region": region,
+                            "metric_key": metric_key,
+                            "condition_a": "face_interactive",
+                            "condition_b": "object",
+                            "p_value_adjusted": 0.01,
+                            "significant_adjusted": True,
+                        }
+                    )
 
             pd.DataFrame(summary_rows).to_csv(in_root / "unit_condition_variability.csv", index=False)
             pd.DataFrame(stats_rows).to_csv(
@@ -354,20 +371,37 @@ class TestFixationPSTHVariabilityPlot(unittest.TestCase):
                 index=False,
             )
 
-            settings = FixationPSTHVariabilityPlotSettings(
+            settings_sd = FixationPSTHVariabilityPlotSettings(
                 cfg_path=str(cfg_path),
                 input_subdir="ephys/psth/fixation_psth_variability",
                 output_subdir="ephys/psth/fixation_psth_variability/plots",
-                output_filename="variability_test",
+                output_filename="variability_test_sd",
                 output_extension="png",
                 output_dpi=110,
+                metric_key="sd",
             )
-            out = plot_fixation_psth_variability_violins(settings)
-            self.assertIsNotNone(out)
-            assert out is not None
-            self.assertTrue(Path(out["output_path"]).exists())
-            self.assertEqual(len(out["region_order"]), 4)
-            self.assertEqual(len(out["condition_order"]), 3)
+            settings_cv = FixationPSTHVariabilityPlotSettings(
+                cfg_path=str(cfg_path),
+                input_subdir="ephys/psth/fixation_psth_variability",
+                output_subdir="ephys/psth/fixation_psth_variability/plots",
+                output_filename="variability_test_cv",
+                output_extension="png",
+                output_dpi=110,
+                metric_key="cv",
+                y_label="Coefficient of Variation",
+            )
+            out_sd = plot_fixation_psth_variability_violins(settings_sd)
+            out_cv = plot_fixation_psth_variability_violins(settings_cv)
+            self.assertIsNotNone(out_sd)
+            self.assertIsNotNone(out_cv)
+            assert out_sd is not None
+            assert out_cv is not None
+            self.assertEqual(out_sd["metric_key"], "sd")
+            self.assertEqual(out_cv["metric_key"], "cv")
+            self.assertTrue(Path(out_sd["output_path"]).exists())
+            self.assertTrue(Path(out_cv["output_path"]).exists())
+            self.assertEqual(len(out_sd["region_order"]), 4)
+            self.assertEqual(len(out_sd["condition_order"]), 3)
 
 
 if __name__ == "__main__":

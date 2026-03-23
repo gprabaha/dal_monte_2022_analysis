@@ -338,6 +338,10 @@ variability_plot_condition_labels:
   face_interactive: Int Face
   face_non_interactive: Non-Int Face
   object: Object
+variability_plot_metric_order: [sd, cv]
+variability_plot_metric_y_labels:
+  sd: SD of Mean FR (Hz)
+  cv: Coefficient of Variation
 variability_plot_y_label: SD of Mean FR (Hz)
 variability_plot_figure_width_in: 8.6
 variability_plot_figure_height_in: 3.2

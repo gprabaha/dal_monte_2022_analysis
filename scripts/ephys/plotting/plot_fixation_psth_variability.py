@@ -14,6 +14,8 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_psth_variability import (
     DEFAULT_CONDITION_COLORS,
     DEFAULT_CONDITION_LABELS,
     DEFAULT_CONDITION_ORDER,
+    DEFAULT_METRIC_ORDER,
+    DEFAULT_METRIC_Y_LABELS,
     DEFAULT_REGION_ORDER,
     FixationPSTHVariabilityPlotSettings,
     plot_fixation_psth_variability_violins,
@@ -47,6 +49,13 @@ def _normalize_label_map(raw) -> dict[str, str]:
     return out
 
 
+def _metric_output_filename(base: str, metric_key: str, total_metrics: int) -> str:
+    token = str(base).strip() or "fixation_psth_variability_violin"
+    if int(total_metrics) <= 1:
+        return token
+    return f"{token}_{str(metric_key).strip()}"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Plot region-wise violins of condition-specific fixation PSTH variability.",
@@ -69,6 +78,11 @@ def main() -> None:
     )
     if not region_order:
         region_order = list(DEFAULT_REGION_ORDER)
+    metric_order = _normalize_str_list(
+        cfg.get("variability_plot_metric_order", list(DEFAULT_METRIC_ORDER))
+    )
+    if not metric_order:
+        metric_order = list(DEFAULT_METRIC_ORDER)
 
     condition_labels = dict(DEFAULT_CONDITION_LABELS)
     condition_labels.update(_normalize_label_map(cfg.get("variability_plot_condition_labels", {})))
@@ -81,41 +95,52 @@ def main() -> None:
             )
         )
     )
-
-    settings = FixationPSTHVariabilityPlotSettings(
-        cfg_path=args.dataset_cfg,
-        plotting_cfg_path=args.plotting_cfg,
-        input_subdir=cfg.get("variability_plot_input_subdir", cfg.get("variability_output_subdir", "ephys/psth/fixation_psth_variability")),
-        unit_summary_filename=cfg.get("variability_plot_unit_summary_filename", cfg.get("variability_unit_summary_filename", "unit_condition_variability.csv")),
-        within_region_stats_filename=cfg.get("variability_plot_within_region_stats_filename", cfg.get("variability_within_region_stats_filename", "within_region_condition_variability_stats.csv")),
-        output_subdir=cfg.get("variability_plot_output_subdir", "ephys/psth/fixation_psth_variability/plots"),
-        output_filename=cfg.get("variability_plot_output_filename", "fixation_psth_variability_violin"),
-        output_extension=(
-            str(args.output_extension).strip()
-            if args.output_extension is not None
-            else str(cfg.get("variability_plot_output_extension", "pdf"))
-        ),
-        output_dpi=cfg.get("variability_plot_output_dpi", 220),
-        region_order=tuple(region_order),
-        condition_order=tuple(condition_order),
-        condition_labels=condition_labels,
-        condition_colors=condition_colors,
-        y_label=str(cfg.get("variability_plot_y_label", "SD of Mean FR (Hz)")),
-        figure_width_in=float(cfg.get("variability_plot_figure_width_in", 8.6)),
-        figure_height_in=float(cfg.get("variability_plot_figure_height_in", 3.2)),
-        left_margin=float(cfg.get("variability_plot_left_margin", 0.06)),
-        right_margin=float(cfg.get("variability_plot_right_margin", 0.995)),
-        top_margin=float(cfg.get("variability_plot_top_margin", 0.83)),
-        bottom_margin=float(cfg.get("variability_plot_bottom_margin", 0.22)),
-        wspace=float(cfg.get("variability_plot_wspace", 0.28)),
-        min_units_per_region=int(cfg.get("variability_plot_min_units_per_region", 1)),
+    metric_y_labels = dict(DEFAULT_METRIC_Y_LABELS)
+    metric_y_labels["sd"] = str(cfg.get("variability_plot_y_label", metric_y_labels["sd"]))
+    metric_y_labels.update(_normalize_label_map(cfg.get("variability_plot_metric_y_labels", {})))
+    output_filename_base = str(
+        cfg.get("variability_plot_output_filename", "fixation_psth_variability_violin")
     )
 
-    out = plot_fixation_psth_variability_violins(settings, regions=args.region)
-    if out is None:
-        print("[plot] no fixation PSTH variability figure was generated")
-        return
-    print(f"[plot] wrote fixation PSTH variability figure: {out['output_path']}")
+    any_written = False
+    for metric_key in metric_order:
+        settings = FixationPSTHVariabilityPlotSettings(
+            cfg_path=args.dataset_cfg,
+            plotting_cfg_path=args.plotting_cfg,
+            input_subdir=cfg.get("variability_plot_input_subdir", cfg.get("variability_output_subdir", "ephys/psth/fixation_psth_variability")),
+            unit_summary_filename=cfg.get("variability_plot_unit_summary_filename", cfg.get("variability_unit_summary_filename", "unit_condition_variability.csv")),
+            within_region_stats_filename=cfg.get("variability_plot_within_region_stats_filename", cfg.get("variability_within_region_stats_filename", "within_region_condition_variability_stats.csv")),
+            output_subdir=cfg.get("variability_plot_output_subdir", "ephys/psth/fixation_psth_variability/plots"),
+            output_filename=_metric_output_filename(output_filename_base, metric_key, len(metric_order)),
+            output_extension=(
+                str(args.output_extension).strip()
+                if args.output_extension is not None
+                else str(cfg.get("variability_plot_output_extension", "pdf"))
+            ),
+            output_dpi=cfg.get("variability_plot_output_dpi", 220),
+            region_order=tuple(region_order),
+            condition_order=tuple(condition_order),
+            condition_labels=condition_labels,
+            condition_colors=condition_colors,
+            metric_key=str(metric_key),
+            y_label=str(metric_y_labels.get(str(metric_key), DEFAULT_METRIC_Y_LABELS.get(str(metric_key), "Value"))),
+            figure_width_in=float(cfg.get("variability_plot_figure_width_in", 8.6)),
+            figure_height_in=float(cfg.get("variability_plot_figure_height_in", 3.2)),
+            left_margin=float(cfg.get("variability_plot_left_margin", 0.06)),
+            right_margin=float(cfg.get("variability_plot_right_margin", 0.995)),
+            top_margin=float(cfg.get("variability_plot_top_margin", 0.83)),
+            bottom_margin=float(cfg.get("variability_plot_bottom_margin", 0.22)),
+            wspace=float(cfg.get("variability_plot_wspace", 0.28)),
+            min_units_per_region=int(cfg.get("variability_plot_min_units_per_region", 1)),
+        )
+
+        out = plot_fixation_psth_variability_violins(settings, regions=args.region)
+        if out is None:
+            continue
+        any_written = True
+        print(f"[plot] wrote fixation PSTH variability {out['metric_key']} figure: {out['output_path']}")
+    if not any_written:
+        print("[plot] no fixation PSTH variability figures were generated")
 
 
 if __name__ == "__main__":
