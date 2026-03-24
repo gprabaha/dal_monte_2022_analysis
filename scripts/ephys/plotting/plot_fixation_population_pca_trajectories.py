@@ -32,7 +32,7 @@ def _normalize_condition_colors(raw) -> dict[str, str]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Plot top-3 PC trajectories for fixation population PCA outputs.",
+        description="Plot top-3 PC trajectories with per-region fixation-type variance side panels.",
     )
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
     parser.add_argument("--plotting-cfg", default="configs/plotting.yaml")
@@ -67,6 +67,17 @@ def main() -> None:
         trajectory_axis_anchor=str(cfg.get("population_pca_plot_trajectory_axis_anchor", "back_corner")),
         trajectory_axis_arrow_length_frac=float(
             cfg.get("population_pca_plot_trajectory_axis_arrow_length_frac", 0.10)
+        ),
+        trajectory_show_length_inset=bool(
+            cfg.get("population_pca_plot_trajectory_show_length_inset", False)
+        ),
+        trajectory_show_total_variance_panel=bool(
+            cfg.get("population_pca_plot_trajectory_show_total_variance_panel", True)
+        ),
+        trajectory_total_variance_n_pcs=(
+            int(cfg["population_pca_plot_trajectory_total_variance_n_pcs"])
+            if cfg.get("population_pca_plot_trajectory_total_variance_n_pcs") is not None
+            else None
         ),
         condition_colors=_normalize_condition_colors(
             cfg.get("population_pca_plot_condition_colors", cfg.get("plot_condition_colors", {})),

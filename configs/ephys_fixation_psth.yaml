@@ -302,6 +302,9 @@ population_pca_plot_trajectory_grid_alpha: 0.28
 population_pca_plot_trajectory_hide_standard_axes: false
 population_pca_plot_trajectory_axis_anchor: back_corner
 population_pca_plot_trajectory_axis_arrow_length_frac: 0.10
+population_pca_plot_trajectory_show_length_inset: false
+population_pca_plot_trajectory_show_total_variance_panel: true
+population_pca_plot_trajectory_total_variance_n_pcs: 20
 population_pca_plot_max_components: 20
 population_pca_plot_condition_colors:
   face_interactive: "#b64198"
