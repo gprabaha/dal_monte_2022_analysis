@@ -298,6 +298,8 @@ population_pca_plot_trajectory_n_pcs: 3
 population_pca_plot_trajectory_n_columns: 4
 population_pca_plot_trajectory_view_elev: 22.0
 population_pca_plot_trajectory_view_azim: -58.0
+population_pca_plot_trajectory_region_view_azim_offsets:
+  accg: 20.0
 population_pca_plot_trajectory_grid_alpha: 0.28
 population_pca_plot_trajectory_hide_standard_axes: false
 population_pca_plot_trajectory_axis_anchor: back_corner

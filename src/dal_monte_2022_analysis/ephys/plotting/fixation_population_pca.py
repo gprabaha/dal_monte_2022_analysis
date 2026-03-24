@@ -15,7 +15,7 @@ from matplotlib.colors import to_rgb
 from matplotlib.lines import Line2D
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path as MplPath
-from matplotlib.ticker import LinearLocator, MaxNLocator
+from matplotlib.ticker import FormatStrFormatter, LinearLocator, MaxNLocator
 import numpy as np
 import pandas as pd
 try:
@@ -98,6 +98,7 @@ class FixationPopulationPCAPlotSettings:
     trajectory_letter_height_frac: float = 0.2
     trajectory_view_elev: float = 22.0
     trajectory_view_azim: float = -58.0
+    trajectory_region_view_azim_offsets: dict[str, float] = field(default_factory=dict)
     trajectory_grid_alpha: float = 0.28
     trajectory_hide_standard_axes: bool = False
     trajectory_axis_anchor: str = "back_corner"
@@ -421,61 +422,17 @@ def _resolve_total_variance_n_pcs(
     return max(1, n_pcs)
 
 
-def _trajectory_condition_variance_fractions_from_concat_fit(
-    projection_pc_by_time: np.ndarray,
-    sample_conditions: np.ndarray,
-    *,
-    cond_order: Sequence[str],
-    n_pcs: int,
-) -> dict[str, float]:
-    projection = np.asarray(projection_pc_by_time, dtype=float)
-    conditions = np.asarray(sample_conditions, dtype=object).reshape(-1)
-    if projection.ndim != 2 or projection.size == 0 or conditions.size != projection.shape[1]:
-        return {}
-    n_use = min(max(1, int(n_pcs)), int(projection.shape[0]))
-    if n_use <= 0:
-        return {}
-    top_scores = np.asarray(projection[:n_use, :], dtype=float)
-    energy_by_condition: dict[str, float] = {}
-    total_energy = 0.0
-    for condition in cond_order:
-        mask = conditions.astype(str) == str(condition)
-        if not np.any(mask):
-            continue
-        values = top_scores[:, mask]
-        finite = values[np.isfinite(values)]
-        if finite.size == 0:
-            continue
-        energy = float(np.sum(np.square(finite)))
-        if energy <= 0.0:
-            continue
-        energy_by_condition[str(condition)] = energy
-        total_energy += energy
-    if total_energy <= 0.0:
-        return {}
-    return {
-        str(condition): float(energy_by_condition[str(condition)] / total_energy)
-        for condition in cond_order
-        if str(condition) in energy_by_condition
-    }
-
-
-def _trajectory_total_variance(
-    scores_pc_by_time: np.ndarray,
-    *,
-    n_pcs: int,
+def _trajectory_view_azim_for_region(
+    region: object,
+    settings: FixationPopulationPCAPlotSettings,
 ) -> float:
-    scores = np.asarray(scores_pc_by_time, dtype=float)
-    if scores.ndim != 2 or scores.size == 0 or scores.shape[1] <= 1:
-        return float("nan")
-    n_use = min(max(1, int(n_pcs)), int(scores.shape[0]))
-    if n_use <= 0:
-        return float("nan")
-    variances = np.var(scores[:n_use, :], axis=1, ddof=1)
-    finite = variances[np.isfinite(variances)]
-    if finite.size == 0:
-        return float("nan")
-    return float(np.sum(np.maximum(finite, 0.0)))
+    token = _normalize_region_token(region)
+    offset = settings.trajectory_region_view_azim_offsets.get(token, 0.0)
+    try:
+        offset_value = float(offset)
+    except Exception:
+        offset_value = 0.0
+    return float(settings.trajectory_view_azim) + offset_value
 
 
 def _draw_trajectory_total_variance_panel(
@@ -515,6 +472,7 @@ def _draw_trajectory_total_variance_panel(
     ax.tick_params(axis="x", pad=0.25, length=0.0)
     ax.tick_params(axis="y", labelsize=4.1, pad=0.35, length=1.1, labelleft=True)
     ax.yaxis.set_major_locator(MaxNLocator(nbins=2, min_n_ticks=2))
+    ax.yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
     ax.set_title("Frac", fontsize=4.7, pad=0.9)
     if show_ylabel:
         ax.set_ylabel("Frac", fontsize=4.5, labelpad=0.65)
@@ -685,6 +643,8 @@ def _extract_cross_condition_explained_variance_df(result_obj: dict) -> pd.DataF
         return pd.DataFrame()
     out = out.copy()
     out["region"] = out["region"].astype(str)
+    if "fit_scope" in out.columns:
+        out["fit_scope"] = out["fit_scope"].astype(str)
     out["fit_condition"] = out["fit_condition"].astype(str)
     out["eval_condition"] = out["eval_condition"].astype(str)
     out["n_components"] = pd.to_numeric(out["n_components"], errors="coerce")
@@ -692,6 +652,18 @@ def _extract_cross_condition_explained_variance_df(result_obj: dict) -> pd.DataF
         out["explained_variance_fraction"],
         errors="coerce",
     )
+    if "projected_variance" in out.columns:
+        out["projected_variance"] = pd.to_numeric(out["projected_variance"], errors="coerce")
+    if "projected_variance_cumulative" in out.columns:
+        out["projected_variance_cumulative"] = pd.to_numeric(
+            out["projected_variance_cumulative"],
+            errors="coerce",
+        )
+    if "projected_variance_total" in out.columns:
+        out["projected_variance_total"] = pd.to_numeric(
+            out["projected_variance_total"],
+            errors="coerce",
+        )
     if "explained_variance_per_pc_fraction" in out.columns:
         out["explained_variance_per_pc_fraction"] = pd.to_numeric(
             out["explained_variance_per_pc_fraction"],
@@ -753,6 +725,47 @@ def _extract_cross_condition_explained_variance_df(result_obj: dict) -> pd.DataF
                 cumulative[i] = running
         out.loc[idx, "explained_variance_cumulative_fraction"] = cumulative
     return out
+
+
+def _condition_total_variance_fractions_from_explained_df(
+    explained_df: pd.DataFrame,
+    *,
+    region: object,
+    fit_condition: object,
+    cond_order: Sequence[str],
+    n_pcs: int,
+) -> dict[str, float]:
+    if explained_df.empty or "projected_variance" not in explained_df.columns:
+        return {}
+    n_use = max(1, int(n_pcs))
+    sub = explained_df.loc[
+        (explained_df["region"] == str(region))
+        & (explained_df["fit_condition"] == str(fit_condition))
+        & (explained_df["n_components"] >= 1)
+        & (explained_df["n_components"] <= n_use)
+    ].copy()
+    if sub.empty:
+        return {}
+    totals: dict[str, float] = {}
+    for condition in cond_order:
+        cond_sub = sub.loc[sub["eval_condition"] == str(condition)].copy()
+        if cond_sub.empty:
+            continue
+        values = np.asarray(cond_sub["projected_variance"], dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            continue
+        total = float(np.sum(np.maximum(values, 0.0)))
+        if total > 0.0:
+            totals[str(condition)] = total
+    denom = float(np.sum(list(totals.values()), dtype=float)) if totals else 0.0
+    if denom <= 0.0:
+        return {}
+    return {
+        str(condition): float(totals[str(condition)] / denom)
+        for condition in cond_order
+        if str(condition) in totals
+    }
 
 
 def _add_compound_bar_patch(
@@ -861,6 +874,7 @@ def plot_fixation_population_pca_trajectories(
 
     color_map = _resolve_condition_colors(settings)
     cond_order = [cond for cond in settings.conditions if cond in color_map]
+    explained_df = _extract_cross_condition_explained_variance_df(result_obj)
     marker_indices_cache: dict[str, list[int]] = {}
     marker_specs = _trajectory_marker_specs()
     region_plot_data: dict[str, dict[str, object]] = {}
@@ -888,33 +902,13 @@ def plot_fixation_population_pca_trajectories(
                 continue
             condition_scores_pc_by_time[str(condition)] = scores
 
-        concat_projection = np.asarray(
-            payload.get("concatenated_projection_pc_by_time", np.asarray([], dtype=float)),
-            dtype=float,
-        )
-        concat_sample_conditions = np.asarray(
-            payload.get("concatenated_projection_sample_conditions", np.asarray([], dtype=object)),
-            dtype=object,
-        )
-        total_variances = _trajectory_condition_variance_fractions_from_concat_fit(
-            concat_projection,
-            concat_sample_conditions,
+        total_variances = _condition_total_variance_fractions_from_explained_df(
+            explained_df,
+            region=str(region),
+            fit_condition="concatenated",
             cond_order=cond_order,
             n_pcs=variance_n_pcs,
         )
-        if not total_variances:
-            fallback_total_variances: dict[str, float] = {}
-            fallback_total = 0.0
-            for condition, scores in condition_scores_pc_by_time.items():
-                total_var = _trajectory_total_variance(scores, n_pcs=variance_n_pcs)
-                if np.isfinite(total_var) and float(total_var) > 0.0:
-                    fallback_total_variances[str(condition)] = float(total_var)
-                    fallback_total += float(total_var)
-            if fallback_total > 0.0:
-                total_variances = {
-                    str(condition): float(value / fallback_total)
-                    for condition, value in fallback_total_variances.items()
-                }
 
         region_plot_data[str(region)] = {
             "bin_centers_s": bin_centers_s,
@@ -1013,7 +1007,7 @@ def plot_fixation_population_pca_trajectories(
         _apply_axis_limits_3d(ax, all_xyz)
         ax.view_init(
             elev=float(settings.trajectory_view_elev),
-            azim=float(settings.trajectory_view_azim),
+            azim=_trajectory_view_azim_for_region(region, settings),
         )
         ax.grid(True, linewidth=0.35, alpha=float(settings.trajectory_grid_alpha))
         if bool(settings.trajectory_hide_standard_axes):
@@ -1026,6 +1020,9 @@ def plot_fixation_population_pca_trajectories(
             ax.xaxis.set_major_locator(LinearLocator(3))
             ax.yaxis.set_major_locator(LinearLocator(3))
             ax.zaxis.set_major_locator(LinearLocator(3))
+            ax.xaxis.set_major_formatter(FormatStrFormatter("%.1f"))
+            ax.yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
+            ax.zaxis.set_major_formatter(FormatStrFormatter("%.1f"))
             ax.tick_params(axis="both", which="major", labelsize=6, pad=0.5)
             ax.tick_params(axis="z", which="major", labelsize=6, pad=0.5)
         if bool(settings.trajectory_show_length_inset) and not show_variance_panel:

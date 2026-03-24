@@ -30,6 +30,19 @@ def _normalize_condition_colors(raw) -> dict[str, str]:
     return out
 
 
+def _normalize_float_map(raw) -> dict[str, float]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, float] = {}
+    for key, value in raw.items():
+        token = str(key).strip().lower()
+        try:
+            out[token] = float(value)
+        except Exception:
+            continue
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Plot top-3 PC trajectories with per-region fixation-type variance side panels.",
@@ -62,6 +75,9 @@ def main() -> None:
         trajectory_n_columns=int(cfg.get("population_pca_plot_trajectory_n_columns", 4)),
         trajectory_view_elev=float(cfg.get("population_pca_plot_trajectory_view_elev", 22.0)),
         trajectory_view_azim=float(cfg.get("population_pca_plot_trajectory_view_azim", -58.0)),
+        trajectory_region_view_azim_offsets=_normalize_float_map(
+            cfg.get("population_pca_plot_trajectory_region_view_azim_offsets", {})
+        ),
         trajectory_grid_alpha=float(cfg.get("population_pca_plot_trajectory_grid_alpha", 0.28)),
         trajectory_hide_standard_axes=bool(cfg.get("population_pca_plot_trajectory_hide_standard_axes", True)),
         trajectory_axis_anchor=str(cfg.get("population_pca_plot_trajectory_axis_anchor", "back_corner")),
