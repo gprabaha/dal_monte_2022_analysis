@@ -15,7 +15,7 @@ from matplotlib.colors import to_rgb
 from matplotlib.lines import Line2D
 from matplotlib.patches import PathPatch
 from matplotlib.path import Path as MplPath
-from matplotlib.ticker import MaxNLocator
+from matplotlib.ticker import LinearLocator, MaxNLocator
 import numpy as np
 import pandas as pd
 try:
@@ -421,6 +421,45 @@ def _resolve_total_variance_n_pcs(
     return max(1, n_pcs)
 
 
+def _trajectory_condition_variance_fractions_from_concat_fit(
+    projection_pc_by_time: np.ndarray,
+    sample_conditions: np.ndarray,
+    *,
+    cond_order: Sequence[str],
+    n_pcs: int,
+) -> dict[str, float]:
+    projection = np.asarray(projection_pc_by_time, dtype=float)
+    conditions = np.asarray(sample_conditions, dtype=object).reshape(-1)
+    if projection.ndim != 2 or projection.size == 0 or conditions.size != projection.shape[1]:
+        return {}
+    n_use = min(max(1, int(n_pcs)), int(projection.shape[0]))
+    if n_use <= 0:
+        return {}
+    top_scores = np.asarray(projection[:n_use, :], dtype=float)
+    energy_by_condition: dict[str, float] = {}
+    total_energy = 0.0
+    for condition in cond_order:
+        mask = conditions.astype(str) == str(condition)
+        if not np.any(mask):
+            continue
+        values = top_scores[:, mask]
+        finite = values[np.isfinite(values)]
+        if finite.size == 0:
+            continue
+        energy = float(np.sum(np.square(finite)))
+        if energy <= 0.0:
+            continue
+        energy_by_condition[str(condition)] = energy
+        total_energy += energy
+    if total_energy <= 0.0:
+        return {}
+    return {
+        str(condition): float(energy_by_condition[str(condition)] / total_energy)
+        for condition in cond_order
+        if str(condition) in energy_by_condition
+    }
+
+
 def _trajectory_total_variance(
     scores_pc_by_time: np.ndarray,
     *,
@@ -445,7 +484,6 @@ def _draw_trajectory_total_variance_panel(
     cond_order: Sequence[str],
     total_variances: dict[str, float],
     color_map: dict[str, str],
-    n_pcs: int,
     y_max: float,
     show_ylabel: bool,
 ) -> None:
@@ -460,10 +498,10 @@ def _draw_trajectory_total_variance_panel(
         ax.bar(
             x[finite],
             y[finite],
-            width=0.58,
+            width=0.52,
             color=[colors[idx] for idx in np.flatnonzero(finite)],
             edgecolor="black",
-            linewidth=0.45,
+            linewidth=0.4,
             alpha=0.95,
         )
 
@@ -472,14 +510,14 @@ def _draw_trajectory_total_variance_panel(
     ax.set_xticks(x)
     ax.set_xticklabels(
         [_short_condition_label(condition) for condition in cond_order],
-        fontsize=4.4,
+        fontsize=4.0,
     )
-    ax.tick_params(axis="x", pad=0.3, length=0.0)
-    ax.tick_params(axis="y", labelsize=4.5, pad=0.4, length=1.3, labelleft=True)
+    ax.tick_params(axis="x", pad=0.25, length=0.0)
+    ax.tick_params(axis="y", labelsize=4.1, pad=0.35, length=1.1, labelleft=True)
     ax.yaxis.set_major_locator(MaxNLocator(nbins=2, min_n_ticks=2))
-    ax.set_title("Var", fontsize=5.1, pad=1.2)
+    ax.set_title("Frac", fontsize=4.7, pad=0.9)
     if show_ylabel:
-        ax.set_ylabel("Var", fontsize=4.9, labelpad=0.8)
+        ax.set_ylabel("Frac", fontsize=4.5, labelpad=0.65)
     else:
         ax.set_ylabel("")
     ax.grid(axis="y", linewidth=0.25, alpha=0.22)
@@ -806,9 +844,9 @@ def plot_fixation_population_pca_trajectories(
     variance_n_pcs = _resolve_total_variance_n_pcs(settings)
     n_cols = max(1, int(settings.trajectory_n_columns))
     n_rows = int(np.ceil(len(region_order) / float(n_cols)))
-    fig_w = float(settings.trajectory_letter_width_in) * (1.12 if show_variance_panel else 1.0)
+    fig_w = float(settings.trajectory_letter_width_in) * (0.96 if show_variance_panel else 1.0)
     base_fig_h = float(8.5 * settings.trajectory_letter_height_frac * max(1, n_rows))
-    fig_h = max(base_fig_h, 2.95 if show_variance_panel else 0.0)
+    fig_h = max(base_fig_h, 2.30 if show_variance_panel else 0.0)
     fig = plt.figure(figsize=(fig_w, fig_h), dpi=settings.output_dpi)
     outer_gs = fig.add_gridspec(
         n_rows,
@@ -817,7 +855,7 @@ def plot_fixation_population_pca_trajectories(
         right=0.995,
         top=0.80,
         bottom=0.07,
-        wspace=0.10 if show_variance_panel else 0.02,
+        wspace=0.11 if show_variance_panel else 0.02,
         hspace=0.18,
     )
 
@@ -826,7 +864,6 @@ def plot_fixation_population_pca_trajectories(
     marker_indices_cache: dict[str, list[int]] = {}
     marker_specs = _trajectory_marker_specs()
     region_plot_data: dict[str, dict[str, object]] = {}
-    global_xyz_all_regions: list[np.ndarray] = []
 
     for region in region_order:
         payload = region_payloads.get(region, {})
@@ -844,18 +881,40 @@ def plot_fixation_population_pca_trajectories(
         marker_indices_cache[str(region)] = marker_indices
 
         condition_scores_pc_by_time: dict[str, np.ndarray] = {}
-        total_variances: dict[str, float] = {}
         for condition in cond_order:
             raw_scores = raw_scores_map.get(condition, np.asarray([], dtype=float))
             scores = _coerce_scores_pc_by_time(raw_scores, n_time_bins=bin_centers_s.size)
             if scores.size == 0:
                 continue
             condition_scores_pc_by_time[str(condition)] = scores
-            if scores.shape[0] >= int(settings.trajectory_n_pcs) and scores.shape[1] >= 2:
-                global_xyz_all_regions.append(np.asarray(scores[:3, :], dtype=float).T)
-            total_var = _trajectory_total_variance(scores, n_pcs=variance_n_pcs)
-            if np.isfinite(total_var):
-                total_variances[str(condition)] = float(total_var)
+
+        concat_projection = np.asarray(
+            payload.get("concatenated_projection_pc_by_time", np.asarray([], dtype=float)),
+            dtype=float,
+        )
+        concat_sample_conditions = np.asarray(
+            payload.get("concatenated_projection_sample_conditions", np.asarray([], dtype=object)),
+            dtype=object,
+        )
+        total_variances = _trajectory_condition_variance_fractions_from_concat_fit(
+            concat_projection,
+            concat_sample_conditions,
+            cond_order=cond_order,
+            n_pcs=variance_n_pcs,
+        )
+        if not total_variances:
+            fallback_total_variances: dict[str, float] = {}
+            fallback_total = 0.0
+            for condition, scores in condition_scores_pc_by_time.items():
+                total_var = _trajectory_total_variance(scores, n_pcs=variance_n_pcs)
+                if np.isfinite(total_var) and float(total_var) > 0.0:
+                    fallback_total_variances[str(condition)] = float(total_var)
+                    fallback_total += float(total_var)
+            if fallback_total > 0.0:
+                total_variances = {
+                    str(condition): float(value / fallback_total)
+                    for condition, value in fallback_total_variances.items()
+                }
 
         region_plot_data[str(region)] = {
             "bin_centers_s": bin_centers_s,
@@ -869,13 +928,15 @@ def plot_fixation_population_pca_trajectories(
         col_idx = idx % n_cols
         if show_variance_panel:
             inner_gs = outer_gs[row_idx, col_idx].subgridspec(
-                1,
+                4,
                 2,
-                width_ratios=(4.6, 0.78),
-                wspace=0.16,
+                width_ratios=(3.32, 0.48),
+                height_ratios=(0.7, 1.0, 1.0, 0.7),
+                wspace=0.42,
+                hspace=0.0,
             )
-            ax = fig.add_subplot(inner_gs[0, 0], projection="3d")
-            ax_var = fig.add_subplot(inner_gs[0, 1])
+            ax = fig.add_subplot(inner_gs[:, 0], projection="3d")
+            ax_var = fig.add_subplot(inner_gs[1:3, 1])
         else:
             ax = fig.add_subplot(outer_gs[row_idx, col_idx], projection="3d")
             ax_var = None
@@ -949,7 +1010,7 @@ def plot_fixation_population_pca_trajectories(
                     alpha=0.98,
                 )
 
-        _apply_axis_limits_3d(ax, global_xyz_all_regions if global_xyz_all_regions else all_xyz)
+        _apply_axis_limits_3d(ax, all_xyz)
         ax.view_init(
             elev=float(settings.trajectory_view_elev),
             azim=float(settings.trajectory_view_azim),
@@ -957,15 +1018,14 @@ def plot_fixation_population_pca_trajectories(
         ax.grid(True, linewidth=0.35, alpha=float(settings.trajectory_grid_alpha))
         if bool(settings.trajectory_hide_standard_axes):
             _hide_trajectory_axes(ax)
-            _draw_trajectory_axis_arrows(
-                ax,
-                all_points=global_xyz_all_regions if global_xyz_all_regions else all_xyz,
-                settings=settings,
-            )
+            _draw_trajectory_axis_arrows(ax, all_points=all_xyz, settings=settings)
         else:
             ax.set_xlabel("PC1", labelpad=-4, fontsize=7)
             ax.set_ylabel("PC2", labelpad=-4, fontsize=7)
             ax.set_zlabel("PC3", labelpad=-3, fontsize=7)
+            ax.xaxis.set_major_locator(LinearLocator(3))
+            ax.yaxis.set_major_locator(LinearLocator(3))
+            ax.zaxis.set_major_locator(LinearLocator(3))
             ax.tick_params(axis="both", which="major", labelsize=6, pad=0.5)
             ax.tick_params(axis="z", which="major", labelsize=6, pad=0.5)
         if bool(settings.trajectory_show_length_inset) and not show_variance_panel:
@@ -983,7 +1043,6 @@ def plot_fixation_population_pca_trajectories(
                 cond_order=cond_order,
                 total_variances=total_variances,
                 color_map=color_map,
-                n_pcs=variance_n_pcs,
                 y_max=_rowwise_upper_limit(list(total_variances.values()), floor=0.02),
                 show_ylabel=(col_idx == 0),
             )
