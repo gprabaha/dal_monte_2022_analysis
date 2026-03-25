@@ -366,7 +366,7 @@ fano_factor_region_summary_filename: region_fano_factor_summary.csv
 fano_factor_output_pickle_filename: results.pkl
 fano_factor_selectivity_input_subdir: ephys/psth/fixation_psth_selectivity
 fano_factor_selectivity_unit_summary_filename: unit_selectivity.csv
-fano_factor_region_summary_unit_subset: any_selective_unit
+fano_factor_region_summary_unit_subset: all_units
 fano_factor_min_trials_per_condition: 2
 fano_factor_variance_ddof: 1
 fano_factor_mean_epsilon: 1.0e-12
