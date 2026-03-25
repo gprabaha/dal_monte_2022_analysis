@@ -43,9 +43,9 @@ _CONDITION_LABELS = {
     "object": "Object",
 }
 _CONDITION_COLORS = {
-    "face_interactive": "#d62728",
-    "face_non_interactive": "#1f77b4",
-    "object": "#2ca02c",
+    "face_interactive": "#b64198",
+    "face_non_interactive": "#97ca3d",
+    "object": "#754c29",
 }
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _PLOT_MODES = ("mean",)

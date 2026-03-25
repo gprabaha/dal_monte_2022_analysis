@@ -51,9 +51,9 @@ _CONDITION_SHORT_LABELS = {
     "object": "OBJ",
 }
 _CONDITION_COLORS = {
-    "face_interactive": "#d62728",
-    "face_non_interactive": "#1f77b4",
-    "object": "#2ca02c",
+    "face_interactive": "#b64198",
+    "face_non_interactive": "#97ca3d",
+    "object": "#754c29",
 }
 _SIGNIFICANCE_CORRECTIONS = ("none", "bonferroni", "holm", "fdr_bh")
 
@@ -74,6 +74,8 @@ class FixationNeuralCrossCorrelationPairConditionMeanPlotSettings:
     output_extension: str = "pdf"
     output_dpi: Optional[int] = 220
     figsize: Optional[Sequence[float]] = None
+    within_figsize: Optional[Sequence[float]] = None
+    cross_figsize: Optional[Sequence[float]] = None
     condition_order: Sequence[str] = field(default_factory=lambda: tuple(_PLOT_CONDITION_ORDER))
     condition_labels: dict[str, str] = field(default_factory=lambda: dict(_CONDITION_LABELS))
     condition_short_labels: dict[str, str] = field(default_factory=lambda: dict(_CONDITION_SHORT_LABELS))
@@ -853,11 +855,17 @@ def _build_between_condition_marker_map(
 def _resolve_figsize_and_dpi(
     settings: FixationNeuralCrossCorrelationPairConditionMeanPlotSettings,
     *,
+    analysis_kind: str,
     cfg_figsize: Optional[Sequence[float]],
     cfg_dpi: Optional[int],
     n_groups: int,
 ) -> tuple[list[float], Optional[int]]:
-    figsize = list(settings.figsize) if settings.figsize is not None else None
+    if analysis_kind == CROSS_ANALYSIS_KIND and settings.cross_figsize is not None:
+        figsize = list(settings.cross_figsize)
+    elif analysis_kind == WITHIN_ANALYSIS_KIND and settings.within_figsize is not None:
+        figsize = list(settings.within_figsize)
+    else:
+        figsize = list(settings.figsize) if settings.figsize is not None else None
     dpi = settings.output_dpi if settings.output_dpi is not None else cfg_dpi
     if figsize is None:
         figsize = list(cfg_figsize) if cfg_figsize is not None else [max(4.0, 4.2 * max(1, n_groups)), 4.6]
@@ -906,6 +914,7 @@ def _plot_result(
     group_items = sorted(group_plot_map.items(), key=lambda item: item[0])
     figsize, dpi = _resolve_figsize_and_dpi(
         settings,
+        analysis_kind=str(result.get("analysis_kind") or ""),
         cfg_figsize=cfg_figsize,
         cfg_dpi=cfg_dpi,
         n_groups=len(group_items),

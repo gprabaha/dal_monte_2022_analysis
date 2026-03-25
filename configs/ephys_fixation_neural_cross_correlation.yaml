@@ -101,9 +101,9 @@ plot_condition_labels:
   face_non_interactive: Face (non-interactive)
   object: Object
 plot_condition_colors:
-  face_interactive: "#d62728"
-  face_non_interactive: "#1f77b4"
-  object: "#2ca02c"
+  face_interactive: "#b64198"
+  face_non_interactive: "#97ca3d"
+  object: "#754c29"
 plot_pair_trace_alpha: 0.12
 plot_pair_trace_linewidth: 0.75
 plot_mean_trace_linewidth: 2.2
@@ -136,6 +136,7 @@ pair_condition_mean_plot_output_subdir: ephys/psth/fixation_neural_cross_correla
 pair_condition_mean_plot_output_extension: pdf
 pair_condition_mean_plot_output_dpi: 220
 pair_condition_mean_plot_figsize: [16.0, 4.6]
+pair_condition_mean_plot_cross_figsize: [6.4, 4.6]
 pair_condition_mean_plot_condition_short_labels:
   face_interactive: FI
   face_non_interactive: FNI
@@ -155,4 +156,3 @@ pair_condition_mean_plot_use_parallel: true
 pair_condition_mean_plot_max_procs: null
 pair_condition_mean_plot_lag_test_min_lags_for_parallel: 256
 pair_condition_mean_plot_lag_test_chunk_size: 256
-

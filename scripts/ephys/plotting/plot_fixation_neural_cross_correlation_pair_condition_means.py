@@ -123,6 +123,14 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
         output_extension=cfg.get("pair_condition_mean_plot_output_extension", "pdf"),
         output_dpi=cfg.get("pair_condition_mean_plot_output_dpi", 220),
         figsize=cfg.get("pair_condition_mean_plot_figsize"),
+        within_figsize=cfg.get(
+            "pair_condition_mean_plot_within_figsize",
+            cfg.get("pair_condition_mean_plot_figsize"),
+        ),
+        cross_figsize=cfg.get(
+            "pair_condition_mean_plot_cross_figsize",
+            cfg.get("pair_condition_mean_plot_figsize"),
+        ),
         condition_order=cfg.get(
             "plot_condition_order",
             ("face_interactive", "face_non_interactive", "object"),
@@ -146,9 +154,9 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
         condition_colors=cfg.get(
             "plot_condition_colors",
             {
-                "face_interactive": "#d62728",
-                "face_non_interactive": "#1f77b4",
-                "object": "#2ca02c",
+                "face_interactive": "#b64198",
+                "face_non_interactive": "#97ca3d",
+                "object": "#754c29",
             },
         ),
         significance_alpha=cfg.get(

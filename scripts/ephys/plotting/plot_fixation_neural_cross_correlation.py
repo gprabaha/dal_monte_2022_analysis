@@ -117,9 +117,9 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
         condition_colors=cfg.get(
             "plot_condition_colors",
             {
-                "face_interactive": "#d62728",
-                "face_non_interactive": "#1f77b4",
-                "object": "#2ca02c",
+                "face_interactive": "#b64198",
+                "face_non_interactive": "#97ca3d",
+                "object": "#754c29",
             },
         ),
         pair_trace_alpha=cfg.get("plot_pair_trace_alpha", 0.12),
