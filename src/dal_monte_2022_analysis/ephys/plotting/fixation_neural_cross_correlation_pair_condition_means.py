@@ -11,6 +11,7 @@ import matplotlib as mpl
 
 mpl.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
@@ -886,6 +887,8 @@ def _plot_result(
     group_plot_map = result.get("group_plot_map", {}) or {}
     if not group_plot_map:
         return
+    analysis_kind = str(result.get("analysis_kind") or "")
+    is_cross_region = analysis_kind == CROSS_ANALYSIS_KIND
     x_axis = np.asarray(result.get("x_axis", []), dtype=np.float64).reshape(-1)
     if x_axis.size <= 0:
         return
@@ -914,11 +917,17 @@ def _plot_result(
     group_items = sorted(group_plot_map.items(), key=lambda item: item[0])
     figsize, dpi = _resolve_figsize_and_dpi(
         settings,
-        analysis_kind=str(result.get("analysis_kind") or ""),
+        analysis_kind=analysis_kind,
         cfg_figsize=cfg_figsize,
         cfg_dpi=cfg_dpi,
         n_groups=len(group_items),
     )
+    title_fontsize = 8.5 if is_cross_region else 10.0
+    axis_label_fontsize = 8.0 if is_cross_region else 9.0
+    tick_label_fontsize = 7.0 if is_cross_region else 8.0
+    legend_fontsize = 8.0 if is_cross_region else 9.0
+    suptitle_fontsize = 8.5 if is_cross_region else 10.0
+    annotation_fontsize = min(float(settings.mean_lag_annotation_fontsize), 6.5) if is_cross_region else float(settings.mean_lag_annotation_fontsize)
     fig, axes = plt.subplots(
         1,
         len(group_items),
@@ -930,7 +939,7 @@ def _plot_result(
     )
     plot_axes = list(np.ravel(axes))
 
-    for axis, (group_label, traces_by_condition) in zip(plot_axes, group_items):
+    for plot_idx, (axis, (group_label, traces_by_condition)) in enumerate(zip(plot_axes, group_items)):
         for condition in settings.condition_order:
             condition = str(condition)
             traces = [
@@ -980,14 +989,22 @@ def _plot_result(
                 transform=axis.transAxes,
                 ha="left",
                 va="top",
-                fontsize=float(settings.mean_lag_annotation_fontsize),
+                fontsize=annotation_fontsize,
                 color="#222222",
                 bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.75, "pad": 2.5},
             )
-        axis.set_title(str(group_label))
-        axis.set_xlabel(x_label)
-        axis.set_ylabel("Cross-correlation")
-        axis.tick_params(axis="x", which="both", labelbottom=True)
+        axis.set_title(str(group_label), fontsize=title_fontsize)
+        axis.set_xlabel(x_label, fontsize=axis_label_fontsize)
+        axis.set_ylabel("Cross-correlation" if (not is_cross_region or plot_idx == 0) else "", fontsize=axis_label_fontsize)
+        axis.tick_params(axis="x", which="both", labelbottom=True, labelsize=tick_label_fontsize)
+        axis.tick_params(axis="y", which="both", labelsize=tick_label_fontsize)
+        axis.yaxis.set_major_locator(mticker.MaxNLocator(nbins=4))
+        if is_cross_region:
+            sci_formatter = mticker.ScalarFormatter(useMathText=True)
+            sci_formatter.set_scientific(True)
+            sci_formatter.set_powerlimits((0, 0))
+            axis.yaxis.set_major_formatter(sci_formatter)
+            axis.yaxis.get_offset_text().set_fontsize(max(6.0, tick_label_fontsize - 0.5))
         if x_label == "Lag (ms)":
             axis.set_xlim(-half_window_ms, half_window_ms)
             axis.set_xticks(tick_values)
@@ -1009,16 +1026,21 @@ def _plot_result(
     fig.legend(
         handles=legend_handles,
         loc="upper center",
-        bbox_to_anchor=(0.5, 0.94),
+        bbox_to_anchor=(0.5, 0.93 if is_cross_region else 0.94),
         ncol=max(1, len(legend_handles)),
         frameon=False,
+        fontsize=legend_fontsize,
     )
 
     fig.suptitle(
-        f"{result.get('subset_label')} | {result.get('analysis_kind')} | {result.get('signal_variant')}",
-        y=0.985,
+        f"{result.get('subset_label')} | {analysis_kind} | {result.get('signal_variant')}",
+        y=0.975 if is_cross_region else 0.985,
+        fontsize=suptitle_fontsize,
     )
-    fig.subplots_adjust(left=0.06, right=0.995, top=0.82, bottom=0.16, wspace=0.24)
+    if is_cross_region:
+        fig.subplots_adjust(left=0.10, right=0.995, top=0.79, bottom=0.18, wspace=0.46)
+    else:
+        fig.subplots_adjust(left=0.06, right=0.995, top=0.82, bottom=0.16, wspace=0.24)
     save_figure(
         fig,
         output_path,

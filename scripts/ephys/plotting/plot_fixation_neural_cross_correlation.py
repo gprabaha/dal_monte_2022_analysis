@@ -104,7 +104,7 @@ def run_plot_cli(*, default_analysis_kind: str = "both") -> None:
         interactive_label=cfg.get("interactive_high_label", "interactive"),
         condition_order=cfg.get(
             "plot_condition_order",
-            ("face_interactive", "face_non_interactive", "object"),
+            ("object", "face_non_interactive", "face_interactive"),
         ),
         condition_labels=cfg.get(
             "plot_condition_labels",

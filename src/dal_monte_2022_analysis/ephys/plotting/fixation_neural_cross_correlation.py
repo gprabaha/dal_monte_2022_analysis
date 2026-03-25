@@ -36,7 +36,7 @@ from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 
-_CONDITION_ORDER = ("face_interactive", "face_non_interactive", "object")
+_CONDITION_ORDER = ("object", "face_non_interactive", "face_interactive")
 _CONDITION_LABELS = {
     "face_interactive": "Face (interactive)",
     "face_non_interactive": "Face (non-interactive)",
