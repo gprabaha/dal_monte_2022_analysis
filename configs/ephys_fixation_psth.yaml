@@ -357,6 +357,59 @@ variability_plot_bottom_margin: 0.22
 variability_plot_wspace: 0.28
 variability_plot_min_units_per_region: 1
 
+# Trial-level Fano factor of 10 ms fixation PSTHs across trials.
+fano_factor_trial_input_modality: psth
+fano_factor_trial_input_filename: fixations_psth_10ms.pkl
+fano_factor_output_subdir: ephys/psth/fixation_psth_fano_factor
+fano_factor_unit_timeseries_filename: unit_fano_factor_timeseries.csv
+fano_factor_region_summary_filename: region_fano_factor_summary.csv
+fano_factor_output_pickle_filename: results.pkl
+fano_factor_selectivity_input_subdir: ephys/psth/fixation_psth_selectivity
+fano_factor_selectivity_unit_summary_filename: unit_selectivity.csv
+fano_factor_region_summary_unit_subset: any_selective_unit
+fano_factor_min_trials_per_condition: 2
+fano_factor_variance_ddof: 1
+fano_factor_mean_epsilon: 1.0e-12
+
+fano_factor_plot_input_subdir: ephys/psth/fixation_psth_fano_factor
+fano_factor_plot_region_summary_filename: region_fano_factor_summary.csv
+fano_factor_plot_output_subdir: ephys/psth/fixation_psth_fano_factor/plots
+fano_factor_plot_output_filename: fixation_psth_fano_factor_by_region
+fano_factor_plot_output_extension: pdf
+fano_factor_plot_output_dpi: 220
+fano_factor_plot_region_order: [bla, accg, dmpfc, ofc]
+fano_factor_plot_region_labels:
+  bla: BLA
+  accg: ACC
+  dmpfc: dmPFC
+  ofc: OFC
+fano_factor_plot_condition_order: [object, face_non_interactive, face_interactive]
+fano_factor_plot_condition_labels:
+  face_interactive: Int Face
+  face_non_interactive: Non-Int Face
+  object: Object
+fano_factor_plot_condition_colors:
+  face_interactive: "#b64198"
+  face_non_interactive: "#97ca3d"
+  object: "#754c29"
+fano_factor_plot_subplot_ncols: 4
+fano_factor_plot_figure_width_in: 8.25
+fano_factor_plot_figure_height_in: 2.6
+fano_factor_plot_left_margin: 0.06
+fano_factor_plot_right_margin: 0.995
+fano_factor_plot_top_margin: 0.80
+fano_factor_plot_bottom_margin: 0.22
+fano_factor_plot_wspace: 0.22
+fano_factor_plot_hspace: 0.26
+fano_factor_plot_line_width: 1.8
+fano_factor_plot_shade_alpha: 0.18
+fano_factor_plot_min_units_per_condition: 1
+fano_factor_plot_show_zero_line: true
+fano_factor_plot_show_unity_line: true
+fano_factor_plot_time_window_ms: [-500.0, 500.0]
+fano_factor_plot_x_label: Time from fixation onset (ms)
+fano_factor_plot_y_label: Fano Factor
+
 # Preference-index heatmap plotting.
 # Default footprint for combined 3x4 output: letter width x <= 2/5 letter height.
 selective_index_plot_output_subdir: ephys/fixation_preference_index/plots
