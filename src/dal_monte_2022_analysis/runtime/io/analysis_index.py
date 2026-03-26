@@ -6,6 +6,13 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 
+def build_analysis_output_dir(cfg: dict, subdir: str) -> Path:
+    """Build the canonical analysis-output directory for one analysis subfolder."""
+    root_value = cfg["analysis_output_root"] if "analysis_output_root" in cfg else cfg["processed_data_root"]
+    root = Path(root_value)
+    return root / str(subdir).strip().rstrip("/")
+
+
 def scan_analysis_paths(
     cfg: dict,
     subdir: str,
@@ -15,7 +22,7 @@ def scan_analysis_paths(
     sessions: Optional[Sequence[str]] = None,
 ) -> list[dict]:
     """Scan analysis output tree for date/session-partitioned files."""
-    root = Path(cfg["analysis_output_root"]) / subdir
+    root = build_analysis_output_dir(cfg, subdir)
     pattern = root / "date=*" / "session=*" / Path(str(filename)).name
 
     date_filter = None if dates is None else {str(val) for val in dates}
@@ -49,7 +56,7 @@ def scan_analysis_date_paths(
     dates: Optional[Sequence[str]] = None,
 ) -> list[dict]:
     """Scan analysis output tree for date-partitioned files."""
-    root = Path(cfg["analysis_output_root"]) / subdir
+    root = build_analysis_output_dir(cfg, subdir)
     pattern = root / "date=*" / Path(str(filename)).name
     date_filter = None if dates is None else {str(val) for val in dates}
 

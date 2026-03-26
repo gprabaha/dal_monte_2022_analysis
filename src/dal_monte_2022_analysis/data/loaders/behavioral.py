@@ -21,14 +21,12 @@ from dal_monte_2022_analysis.data.records.behavioral import (
     ROIRectsData,
 )
 from dal_monte_2022_analysis.runtime.io.processed_data import (
+    list_processed_modalities,
     load_pickle_path,
     scan_processed_paths,
 )
 from dal_monte_2022_analysis.data.transforms.annotate import (
     load_pair_context_table_from_cfg,
-)
-from dal_monte_2022_analysis.utils.paths import (
-    list_processed_modalities,
 )
 
 

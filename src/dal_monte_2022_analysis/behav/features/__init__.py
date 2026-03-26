@@ -1,6 +1,6 @@
 """Behavioral feature extraction modules and feature-product loaders."""
 
-from dal_monte_2022_analysis.behav.features.load import (
+from dal_monte_2022_analysis.data.loaders.features import (
     FeatureItem,
     group_feature_items,
     index_feature_data,

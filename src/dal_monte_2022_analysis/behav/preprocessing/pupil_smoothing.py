@@ -18,7 +18,9 @@ from dal_monte_2022_analysis.core.behav.pupil_smoothing import (
     resolve_sigma as _resolve_sigma,
 )
 from dal_monte_2022_analysis.data.records.behavioral import PupilSizeData, RecordingContext
-from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.data.loaders.behavioral import (
+    index_behavioral_processed_data_from_cfg,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     build_processed_pickle_path,
     load_pickle_path,
@@ -139,7 +141,7 @@ def build_pupil_smoothing_tasks(
 ) -> list[tuple[PupilSmoothingSettings, dict, str]]:
     """Build smoothing tasks from processed pupil files."""
     cfg = load_config(settings.cfg_path)
-    index_df = index_processed_dataset(cfg, settings.input_pupil_modality)
+    index_df = index_behavioral_processed_data_from_cfg(cfg, settings.input_pupil_modality)
     rows = index_df.to_dict(orient="records")
 
     agent_filter = None

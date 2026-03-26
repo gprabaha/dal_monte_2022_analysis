@@ -10,7 +10,9 @@ import pandas as pd
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.data.loaders.behavioral import (
+    index_behavioral_processed_data_from_cfg,
+)
 from dal_monte_2022_analysis.core.contracts import validate_gaze_event_frame
 from dal_monte_2022_analysis.core.behav.fixation_detection import detect_fixations_and_saccades
 from dal_monte_2022_analysis.runtime.io.processed_data import (
@@ -294,7 +296,7 @@ def build_tasks(
         List of task tuples.
     """
     cfg = load_config(settings.cfg_path)
-    index_df = index_processed_dataset(cfg, settings.input_modality)
+    index_df = index_behavioral_processed_data_from_cfg(cfg, settings.input_modality)
     rows = index_df.to_dict(orient="records")
     tasks: List[Tuple[GazeEventDetectionSettings, dict, str]] = []
     for row in rows:

@@ -15,7 +15,9 @@ from dal_monte_2022_analysis.core.behav.feature_primitives import (
     find_contiguous_periods,
 )
 from dal_monte_2022_analysis.data.records.behavioral import JointFixationDensityData
-from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.data.loaders.behavioral import (
+    index_behavioral_processed_data_from_cfg,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     save_processed_pickle,
@@ -113,7 +115,7 @@ def build_tasks(
 ) -> list[tuple[InteractivePeriodsSettings, dict, object]]:
     """Build tasks from joint face fixation density files."""
     cfg = load_config(settings.cfg_path)
-    index_df = index_processed_dataset(cfg, settings.input_modality)
+    index_df = index_behavioral_processed_data_from_cfg(cfg, settings.input_modality)
     rows = index_df.to_dict(orient="records")
 
     tasks: list[tuple[InteractivePeriodsSettings, dict, object]] = []

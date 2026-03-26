@@ -21,7 +21,9 @@ from dal_monte_2022_analysis.ephys.features.common import (
     ensure_pkl_filename as _ensure_pkl_filename,
     units_to_payloads as _units_to_payloads,
 )
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 from dal_monte_2022_analysis.runtime.io.processed_data import (
+    build_processed_out_dir,
     build_processed_pickle_path,
     load_pickle_path,
     save_pickle_path,
@@ -29,10 +31,6 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     scan_processed_paths_for_filename,
 )
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import (
-    build_analysis_output_dir,
-    build_processed_out_dir,
-)
 from dal_monte_2022_analysis.core.behav.roi_groups import (
     DEFAULT_FIXATION_ROI_GROUPS as DEFAULT_SHARED_FIXATION_ROI_GROUPS,
     categorize_locations,

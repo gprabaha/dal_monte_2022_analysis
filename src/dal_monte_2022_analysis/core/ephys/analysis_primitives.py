@@ -7,8 +7,6 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from dal_monte_2022_analysis.utils.filenames import ensure_filename
-
 
 def as_optional_str(value: object) -> Optional[str]:
     """Normalize optional values to stripped strings or None."""

@@ -14,10 +14,12 @@ from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.data.records.behavioral import FixationBinaryVectorsData
-from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
-from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.processed_data import (
+    index_agent_paths,
+    load_pickle_path,
+)
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
 
 
 EPS = 1e-12
@@ -152,23 +154,6 @@ def _normalize_optional_filter(values: Optional[Sequence[str]]) -> Optional[set[
     return {str(v) for v in values}
 
 
-def _index_agent_paths(cfg: dict, modality: str) -> tuple[dict, dict]:
-    """Index m1/m2 paths by (date, session)."""
-    index_df = index_processed_dataset(cfg, modality)
-    rows = index_df.to_dict(orient="records")
-
-    m1_paths: dict[tuple[str, str], object] = {}
-    m2_paths: dict[tuple[str, str], object] = {}
-    for row in rows:
-        key = (row["date"], row["session"])
-        if row.get("agent") == "m1":
-            m1_paths[key] = row["path"]
-        elif row.get("agent") == "m2":
-            m2_paths[key] = row["path"]
-
-    return m1_paths, m2_paths
-
-
 def _to_bool(vec: np.ndarray) -> np.ndarray:
     """Convert vector to 1D bool array."""
     out = np.asarray(vec).astype(bool, copy=False)
@@ -187,7 +172,7 @@ def _build_session_sequences(
     settings: FaceFixationHSMMSettings,
 ) -> list[SessionSequence]:
     """Load per-session joint observation sequences from fixation binary vectors."""
-    m1_paths, m2_paths = _index_agent_paths(cfg, settings.input_modality)
+    m1_paths, m2_paths = index_agent_paths(cfg, settings.input_modality)
     shared_keys = sorted(set(m1_paths).intersection(m2_paths))
     if not shared_keys:
         raise RuntimeError(

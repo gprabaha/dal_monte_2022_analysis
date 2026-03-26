@@ -19,7 +19,9 @@ from dal_monte_2022_analysis.runtime.hpc.jobs import (
     submit_dsq_array_job,
     track_job_completion,
 )
-from dal_monte_2022_analysis.utils.paths import normalize_fix_cross_correlation_time_scope
+from dal_monte_2022_analysis.core.behav.analysis_filenames import (
+    normalize_fix_cross_correlation_time_scope,
+)
 
 
 def build_fix_cross_correlation_settings_from_config(

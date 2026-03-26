@@ -16,7 +16,9 @@ from dal_monte_2022_analysis.data.records.behavioral import (
     FixationDensityVectorsData,
     RecordingContext,
 )
-from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.data.loaders.behavioral import (
+    index_behavioral_processed_data_from_cfg,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     build_processed_pickle_path,
     load_pickle_path,
@@ -154,7 +156,7 @@ def _compute_global_face_kernel_parameters(
 ) -> tuple[int, float, float, dict]:
     """Compute one shared kernel from m1/m2 face fixation stats across sessions."""
     cfg = load_config(settings.cfg_path)
-    fix_index_df = index_processed_dataset(cfg, settings.fixations_modality)
+    fix_index_df = index_behavioral_processed_data_from_cfg(cfg, settings.fixations_modality)
     fix_rows = fix_index_df.to_dict(orient="records")
 
     required_agents = ("m1", "m2")
@@ -346,7 +348,7 @@ def build_tasks(
 ) -> list[tuple[FixationDensitySettings, dict, str]]:
     """Build (settings, row, agent) tasks from fixation binary vector files."""
     cfg = load_config(settings.cfg_path)
-    index_df = index_processed_dataset(cfg, settings.fixation_vectors_modality)
+    index_df = index_behavioral_processed_data_from_cfg(cfg, settings.fixation_vectors_modality)
     rows = index_df.to_dict(orient="records")
 
     agents_filter = None

@@ -7,9 +7,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from dal_monte_2022_analysis.core.behav.analysis_filenames import (
+    build_fix_cross_correlation_output_filename,
+)
 from dal_monte_2022_analysis.core.stats.hypothesis import paired_ttest_per_lag
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
-from dal_monte_2022_analysis.utils.paths import build_fix_cross_correlation_output_filename
 
 
 def load_lags_for_scope(

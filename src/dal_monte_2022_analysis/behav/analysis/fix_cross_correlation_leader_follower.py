@@ -16,14 +16,12 @@ from dal_monte_2022_analysis.behav.analysis.fix_cross_correlation_leader_followe
 )
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.core.behav.analysis_filenames import (
+    normalize_fix_cross_correlation_time_scope,
     resolve_fix_cross_correlation_filename,
 )
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 from dal_monte_2022_analysis.utils.filenames import (
     resolve_filename_override,
-)
-from dal_monte_2022_analysis.utils.paths import (
-    build_analysis_output_dir,
-    normalize_fix_cross_correlation_time_scope,
 )
 
 

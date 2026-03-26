@@ -8,7 +8,9 @@ from dal_monte_2022_analysis.behav.analysis.fix_cross_correlation_leader_followe
     FixCrossCorrLeaderFollowerSettings,
 )
 from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.utils.paths import normalize_fix_cross_correlation_time_scope
+from dal_monte_2022_analysis.core.behav.analysis_filenames import (
+    normalize_fix_cross_correlation_time_scope,
+)
 
 
 def _default_leader_follower_filenames(tag: str) -> dict[str, str]:

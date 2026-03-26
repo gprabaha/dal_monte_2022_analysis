@@ -18,15 +18,13 @@ from dal_monte_2022_analysis.behav.analysis.fix_cross_correlation_helpers import
 )
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.core.behav.analysis_filenames import (
+    normalize_fix_cross_correlation_time_scope,
     resolve_fix_cross_correlation_filename,
 )
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     index_agent_paths as _index_agent_paths,
     index_shared_paths as _index_shared_paths,
-)
-from dal_monte_2022_analysis.utils.paths import (
-    build_analysis_output_dir,
-    normalize_fix_cross_correlation_time_scope,
 )
 
 

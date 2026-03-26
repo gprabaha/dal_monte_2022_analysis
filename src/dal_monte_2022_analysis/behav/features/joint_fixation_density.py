@@ -18,7 +18,9 @@ from dal_monte_2022_analysis.data.records.behavioral import (
     JointFixationDensityData,
     RecordingContext,
 )
-from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_processed_dataset
+from dal_monte_2022_analysis.data.loaders.behavioral import (
+    index_behavioral_processed_data_from_cfg,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     save_processed_pickle,
@@ -114,7 +116,7 @@ def build_tasks(
 ) -> list[tuple[JointFixationDensitySettings, dict, object, object]]:
     """Build tasks that include m1/m2 fixation density paths for each session."""
     cfg = load_config(settings.cfg_path)
-    index_df = index_processed_dataset(cfg, settings.input_modality)
+    index_df = index_behavioral_processed_data_from_cfg(cfg, settings.input_modality)
     rows = index_df.to_dict(orient="records")
 
     grouped: dict[tuple[str, str], dict[str, object]] = {}

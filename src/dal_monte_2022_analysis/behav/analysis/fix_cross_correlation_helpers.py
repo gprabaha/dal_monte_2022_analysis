@@ -20,6 +20,7 @@ from dal_monte_2022_analysis.core.behav.analysis_primitives import (
     extract_monkey_name as _extract_monkey_name,
 )
 from dal_monte_2022_analysis.core.behav.analysis_filenames import (
+    normalize_fix_cross_correlation_time_scope,
     resolve_fix_cross_correlation_filename,
 )
 from dal_monte_2022_analysis.core.signal.cross_correlation import (
@@ -33,11 +34,8 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     index_agent_paths as _index_agent_paths,
     index_shared_paths as _index_shared_paths,
 )
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import (
-    build_analysis_output_dir,
-    normalize_fix_cross_correlation_time_scope,
-)
 
 if TYPE_CHECKING:
     from dal_monte_2022_analysis.behav.analysis.fix_cross_correlation import (
@@ -1300,4 +1298,3 @@ def _print_output_sanity_summary(
             print(f"[fix-xcorr] lags preview: head={preview_left} tail={preview_right}")
 
     print("[fix-xcorr] -----------------------------------------------\n")
-

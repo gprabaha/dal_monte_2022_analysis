@@ -2,31 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Optional
-
 import numpy as np
-import pandas as pd
-
-
-def as_optional_str(value: object) -> Optional[str]:
-    """Normalize optional values to stripped strings or None."""
-    if value is None:
-        return None
-    try:
-        if pd.isna(value):
-            return None
-    except Exception:
-        pass
-    text = str(value).strip()
-    return text or None
+from dal_monte_2022_analysis.core.ephys.analysis_primitives import as_optional_str
+from dal_monte_2022_analysis.utils.filenames import ensure_filename
 
 
 def ensure_pkl_filename(filename: str) -> str:
     """Return filename with `.pkl` suffix."""
-    name = str(filename).strip()
-    if not name:
-        raise ValueError("Output filename cannot be empty.")
-    return name if name.endswith(".pkl") else f"{name}.pkl"
+    return ensure_filename(filename, ".pkl")
 
 
 def build_symmetric_bin_edges(
@@ -65,4 +48,3 @@ def units_to_payloads(units) -> list[dict]:
             }
         )
     return payloads
-

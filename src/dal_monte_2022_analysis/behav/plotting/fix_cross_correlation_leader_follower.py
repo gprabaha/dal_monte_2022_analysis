@@ -9,6 +9,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from dal_monte_2022_analysis.core.behav.analysis_filenames import (
+    normalize_fix_cross_correlation_time_scope,
+)
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.common import apply_plotting_config, resolve_figsize
 from dal_monte_2022_analysis.behav.plotting.cross_correlation_common import (
@@ -22,11 +25,8 @@ from dal_monte_2022_analysis.behav.plotting.cross_correlation_common import (
     significance_mask_per_lag,
     scope_y_bounds,
 )
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
-from dal_monte_2022_analysis.utils.paths import (
-    build_analysis_output_dir,
-    normalize_fix_cross_correlation_time_scope,
-)
 
 _VALID_LEADER_BASES = ("session", "date", "pair")
 

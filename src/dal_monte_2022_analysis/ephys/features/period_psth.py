@@ -21,15 +21,13 @@ from dal_monte_2022_analysis.ephys.features.common import (
     units_to_payloads as _units_to_payloads,
 )
 from dal_monte_2022_analysis.runtime.io.processed_data import (
+    build_processed_out_dir,
     build_processed_pickle_path,
     load_pickle_path,
     save_pickle_path,
     scan_processed_paths,
 )
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import (
-    build_processed_out_dir,
-)
 
 
 @dataclass
