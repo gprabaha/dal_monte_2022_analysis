@@ -25,8 +25,10 @@ def save_figure(
 ) -> Path:
     """Persist a matplotlib figure, creating parent directories as needed."""
     path = Path(out_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
     fmt = normalize_extension(ext if ext is not None else path.suffix, fallback="png")
+    if path.suffix.lower().lstrip(".") != fmt:
+        path = path.with_suffix(f".{fmt}")
+    path.parent.mkdir(parents=True, exist_ok=True)
 
     save_kwargs = {
         "format": fmt,

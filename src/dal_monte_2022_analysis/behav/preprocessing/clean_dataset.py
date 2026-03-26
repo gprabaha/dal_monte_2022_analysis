@@ -1,17 +1,15 @@
 """Clean previously extracted data by pruning timelines and interpolating gaps."""
 
-from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.config.load import load_config, resolve_dataset_cfg_path
 from dal_monte_2022_analysis.core.behav.session_cleaning import prune_and_interpolate_session
-from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_dataset
+from dal_monte_2022_analysis.data.loaders.behavioral import (
+    index_behavioral_processed_data_from_cfg,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import (
-    build_processed_pickle_path,
-    load_pickle_path,
-    save_pickle_path,
+    load_processed_pickle,
+    save_processed_variant_pickle,
 )
 from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
-from dal_monte_2022_analysis.utils.paths import (
-    build_processed_output_path,
-)
 
 
 def _clean_row(args):
@@ -25,26 +23,26 @@ def _clean_row(args):
     """
     row, cfg, agents, output_suffix, window_size, max_nans = args
 
-    timeline_path = build_processed_pickle_path(cfg, row, "neural_timeline", None)
-    if not timeline_path.exists():
+    try:
+        timeline = load_processed_pickle(cfg, row, "neural_timeline", None)
+    except FileNotFoundError:
         return 0
 
     positions_by_agent = {}
     pupils_by_agent = {}
 
     for agent in agents:
-        pos_path = build_processed_pickle_path(cfg, row, "gaze_position", agent)
-        pupil_path = build_processed_pickle_path(cfg, row, "pupil_size", agent)
-
-        if pos_path.exists():
-            positions_by_agent[agent] = load_pickle_path(pos_path)
-        if pupil_path.exists():
-            pupils_by_agent[agent] = load_pickle_path(pupil_path)
+        try:
+            positions_by_agent[agent] = load_processed_pickle(cfg, row, "gaze_position", agent)
+        except FileNotFoundError:
+            pass
+        try:
+            pupils_by_agent[agent] = load_processed_pickle(cfg, row, "pupil_size", agent)
+        except FileNotFoundError:
+            pass
 
     if not positions_by_agent or not pupils_by_agent:
         return 0
-
-    timeline = load_pickle_path(timeline_path)
 
     cleaned_timeline, cleaned_positions, cleaned_pupils = prune_and_interpolate_session(
         timeline,
@@ -57,34 +55,34 @@ def _clean_row(args):
     if cleaned_timeline is None:
         return 0
 
-    out_timeline = build_processed_output_path(
+    save_processed_variant_pickle(
+        cleaned_timeline,
         cfg,
         row,
         "neural_timeline",
         None,
         output_suffix=output_suffix,
     )
-    save_pickle_path(cleaned_timeline, out_timeline)
 
     for agent, pos in cleaned_positions.items():
-        out_pos = build_processed_output_path(
+        save_processed_variant_pickle(
+            pos,
             cfg,
             row,
             "gaze_position",
             agent,
             output_suffix=output_suffix,
         )
-        save_pickle_path(pos, out_pos)
 
     for agent, pupil in cleaned_pupils.items():
-        out_pupil = build_processed_output_path(
+        save_processed_variant_pickle(
+            pupil,
             cfg,
             row,
             "pupil_size",
             agent,
             output_suffix=output_suffix,
         )
-        save_pickle_path(pupil, out_pupil)
 
     return 1
 
@@ -107,10 +105,10 @@ def clean_dataset(
     Returns:
         None. Outputs are written to disk.
     """
-    cfg = load_config(cfg_path)
-    index = index_dataset(cfg, "neural_timeline")
-
-    rows = index.to_dict(orient="records")
+    dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
+    cfg = load_config(dataset_cfg_path)
+    index = index_behavioral_processed_data_from_cfg(cfg, "neural_timeline", agents=[None])
+    rows = index[["date", "session"]].drop_duplicates().to_dict(orient="records")
     agents = cfg["agents"]
 
     worker_args = [

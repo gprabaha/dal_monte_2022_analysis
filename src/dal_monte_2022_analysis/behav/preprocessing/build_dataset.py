@@ -1,13 +1,13 @@
 """Dataset construction utilities that run extractors and persist results."""
 
-import pickle
-
-from dal_monte_2022_analysis.config.load import load_config
-from dal_monte_2022_analysis.behav.preprocessing.index_dataset import index_dataset
+from dal_monte_2022_analysis.config.load import load_config, resolve_dataset_cfg_path
 from dal_monte_2022_analysis.behav.preprocessing.load_mat import load_mat_from_path
+from dal_monte_2022_analysis.data.loaders.behavioral import (
+    index_behavioral_source_data_from_cfg,
+)
 from dal_monte_2022_analysis.data.records.behavioral import RecordingContext
 from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
-from dal_monte_2022_analysis.utils.paths import build_processed_out_dir
+from dal_monte_2022_analysis.runtime.io.processed_data import save_processed_pickle
 
 
 def _extract_and_save_row_data(args):
@@ -43,14 +43,7 @@ def _extract_and_save_row_data(args):
         if data_obj is None:
             continue
 
-        out_dir = build_processed_out_dir(cfg, row, modality)
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        suffix = f"agent={agent}" if agent else "shared"
-        out_file = out_dir / f"{suffix}.pkl"
-
-        with open(out_file, "wb") as f:
-            pickle.dump(data_obj, f)
+        save_processed_pickle(data_obj, cfg, row, modality, agent)
 
     return 1
 
@@ -74,8 +67,9 @@ def build_agent_dataset(
     Returns:
         None. Outputs are written to disk.
     """
-    cfg = load_config(cfg_path)
-    index = index_dataset(cfg, modality)
+    dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
+    cfg = load_config(dataset_cfg_path)
+    index = index_behavioral_source_data_from_cfg(cfg, modality)
 
     out_root = cfg["processed_data_root"]
     out_root.mkdir(parents=True, exist_ok=True)

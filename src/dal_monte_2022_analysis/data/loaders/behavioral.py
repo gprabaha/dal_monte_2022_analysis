@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Iterable, Optional, Sequence
 
 import numpy as np
@@ -22,6 +23,9 @@ from dal_monte_2022_analysis.data.records.behavioral import (
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     scan_processed_paths,
+)
+from dal_monte_2022_analysis.data.transforms.annotate import (
+    load_pair_context_table_from_cfg,
 )
 from dal_monte_2022_analysis.utils.paths import (
     list_processed_modalities,
@@ -47,6 +51,128 @@ class BehavioralDataItem:
     modality: str
     path: Path
     data: object
+
+
+def _sort_behavioral_index(df: pd.DataFrame, *, modality: str) -> pd.DataFrame:
+    if df.empty:
+        return df
+
+    sort_dates = pd.to_datetime(df["date"], format="%m%d%Y", errors="coerce")
+    if sort_dates.isna().any():
+        bad_vals = df.loc[sort_dates.isna(), "date"].head(5).tolist()
+        raise RuntimeError(
+            f"Could not parse MMDDYYYY dates while indexing '{modality}'; "
+            f"examples: {bad_vals}"
+        )
+
+    out = df.copy()
+    out["_sort_date"] = sort_dates
+    if "agent" in out.columns:
+        out["_agent_sort"] = out["agent"].fillna("")
+        out = out.sort_values(["_sort_date", "session", "_agent_sort"]).drop(columns=["_sort_date", "_agent_sort"])
+    else:
+        out = out.sort_values(["_sort_date", "session"]).drop(columns=["_sort_date"])
+    return out.reset_index(drop=True)
+
+
+def index_behavioral_source_data_from_cfg(
+    cfg: dict,
+    modality: str,
+    *,
+    dates: Optional[Sequence[str]] = None,
+    sessions: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    """Index raw behavioral source files for one configured modality."""
+    modality_cfg = cfg.get("modalities", {}).get(modality)
+    if modality_cfg is None:
+        raise KeyError(f"Behavioral modality '{modality}' is not defined in dataset config.")
+
+    root = Path(cfg["raw_data_root"]) / str(modality_cfg["folder"])
+    pattern = re.compile(str(modality_cfg["file_pattern"]))
+
+    rows: list[dict] = []
+    for mat_file in root.glob("*.mat"):
+        match = pattern.match(mat_file.name)
+        if not match:
+            continue
+
+        date_str = str(match["date"]).strip()
+        if len(date_str) == 7 and date_str.isdigit():
+            date_str = date_str.zfill(8)
+
+        rows.append(
+            {
+                "date": date_str,
+                "session": str(match["session"]).strip(),
+                "path": mat_file,
+            }
+        )
+
+    if not rows:
+        raise RuntimeError(f"No files found for modality '{modality}'")
+
+    index_df = pd.DataFrame(rows)
+    pair_df = load_pair_context_table_from_cfg(cfg)[["date", "monkey_name_m1", "monkey_name_m2"]]
+    index_df = index_df.merge(pair_df, on="date", how="inner")
+
+    if dates is not None:
+        include_dates = {str(date) for date in dates}
+        index_df = index_df[index_df["date"].astype(str).isin(include_dates)]
+    if sessions is not None:
+        include_sessions = {str(session) for session in sessions}
+        index_df = index_df[index_df["session"].astype(str).isin(include_sessions)]
+
+    if index_df.empty:
+        raise RuntimeError(
+            f"No files left for modality '{modality}' after applying pair-context or row filters."
+        )
+
+    return _sort_behavioral_index(index_df, modality=modality)
+
+
+def index_behavioral_source_data(
+    modality: str,
+    *,
+    cfg_path: str = "configs/project.yaml",
+    dates: Optional[Sequence[str]] = None,
+    sessions: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    """Index raw behavioral source files for one configured modality."""
+    dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
+    cfg = load_config(dataset_cfg_path)
+    return index_behavioral_source_data_from_cfg(
+        cfg,
+        modality,
+        dates=dates,
+        sessions=sessions,
+    )
+
+
+def index_behavioral_processed_data_from_cfg(
+    cfg: dict,
+    modality: str,
+    *,
+    dates: Optional[Sequence[str]] = None,
+    sessions: Optional[Sequence[str]] = None,
+    agents: Optional[Sequence[Optional[str]]] = None,
+    raise_on_missing: bool = True,
+) -> pd.DataFrame:
+    """Index processed behavioral artifacts for one modality."""
+    rows = scan_processed_paths(
+        cfg,
+        modality,
+        dates=dates,
+        sessions=sessions,
+        agents=agents,
+    )
+    if not rows:
+        if raise_on_missing:
+            raise RuntimeError(f"No processed files found for modality '{modality}'")
+        return pd.DataFrame(columns=["date", "session", "agent", "path"])
+
+    df = pd.DataFrame(rows)
+    df = _sort_behavioral_index(df, modality=modality)
+    return df[["date", "session", "agent", "path"]]
 
 
 def _validate_behavioral_modality(modality: str, allowed: set[str]) -> str:
@@ -92,21 +218,23 @@ def index_behavioral_data(
     cfg = load_config(dataset_cfg_path)
     modalities = _resolve_behavioral_modalities(cfg, modality)
 
-    rows: list[dict] = []
+    frames: list[pd.DataFrame] = []
     for mod in modalities:
-        for row in scan_processed_paths(
+        mod_df = index_behavioral_processed_data_from_cfg(
             cfg,
             mod,
             dates=dates,
             sessions=sessions,
             agents=agents,
-        ):
-            row["modality"] = mod
-            rows.append(row)
+            raise_on_missing=False,
+        )
+        if mod_df.empty:
+            continue
+        frames.append(mod_df.assign(modality=mod))
 
-    if not rows:
+    if not frames:
         return pd.DataFrame(columns=["date", "session", "agent", "modality", "path"])
-    df = pd.DataFrame(rows)
+    df = pd.concat(frames, ignore_index=True)
     return df[["date", "session", "agent", "modality", "path"]]
 
 
@@ -205,7 +333,14 @@ def load_behavioral_data_objects(
     dataset_cfg_path = resolve_dataset_cfg_path(cfg_path)
     cfg = load_config(dataset_cfg_path)
     mod = _resolve_behavioral_modalities(cfg, modality)[0]
-    rows = scan_processed_paths(cfg, mod, dates=dates, sessions=sessions, agents=agents)
+    index_df = index_behavioral_processed_data_from_cfg(
+        cfg,
+        mod,
+        dates=dates,
+        sessions=sessions,
+        agents=agents,
+    )
+    rows = index_df.to_dict(orient="records")
     return [
         BehavioralDataItem(
             date=row["date"],
@@ -275,6 +410,9 @@ __all__ = [
     "BehavioralDataItem",
     "group_behavioral_items",
     "index_behavioral_data",
+    "index_behavioral_processed_data_from_cfg",
+    "index_behavioral_source_data",
+    "index_behavioral_source_data_from_cfg",
     "load_behavioral_data_dataframe",
     "load_behavioral_data_objects",
 ]

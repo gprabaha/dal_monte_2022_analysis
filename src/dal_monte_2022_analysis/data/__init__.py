@@ -4,6 +4,7 @@ from dal_monte_2022_analysis.data.transforms.annotate import (
     annotate_ephys_dates_with_pair_context,
     annotate_with_pair_context,
     load_pair_context_table,
+    load_pair_context_table_from_cfg,
 )
 from dal_monte_2022_analysis.data.records.behavioral import (
     BehaviorRunContext,
@@ -26,6 +27,9 @@ from dal_monte_2022_analysis.data.loaders.behavioral import (
     BehavioralDataItem,
     group_behavioral_items,
     index_behavioral_data,
+    index_behavioral_processed_data_from_cfg,
+    index_behavioral_source_data,
+    index_behavioral_source_data_from_cfg,
     load_behavioral_data_dataframe,
     load_behavioral_data_objects,
 )
@@ -50,12 +54,16 @@ __all__ = [
     "WidebandChannelData",
     "BehavioralDataItem",
     "index_behavioral_data",
+    "index_behavioral_processed_data_from_cfg",
+    "index_behavioral_source_data",
+    "index_behavioral_source_data_from_cfg",
     "load_behavioral_data_objects",
     "load_behavioral_data_dataframe",
     "group_behavioral_items",
     "load_ephys_unit_dataframe",
     "load_ephys_units",
     "load_pair_context_table",
+    "load_pair_context_table_from_cfg",
     "annotate_with_pair_context",
     "annotate_ephys_dates_with_pair_context",
 ]

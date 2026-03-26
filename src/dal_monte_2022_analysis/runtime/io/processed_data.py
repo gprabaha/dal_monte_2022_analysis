@@ -12,6 +12,7 @@ from typing import Any, Optional, Sequence
 from dal_monte_2022_analysis.utils.io import load_pickle, save_pickle
 from dal_monte_2022_analysis.utils.paths import (
     build_processed_data_path,
+    build_processed_output_path,
     scan_processed_data_paths,
 )
 
@@ -56,6 +57,44 @@ def save_processed_pickle(
 
 def save_pickle_path(obj: Any, path: str | Path) -> None:
     """Save one pickle object to an explicit path."""
+    save_pickle(obj, path)
+
+
+def build_processed_variant_pickle_path(
+    cfg: dict,
+    row: dict,
+    modality: str,
+    agent: Optional[str],
+    *,
+    output_suffix: str,
+) -> Path:
+    """Build the canonical processed pickle path for a suffixed output modality."""
+    return build_processed_output_path(
+        cfg,
+        row,
+        modality,
+        agent,
+        output_suffix=output_suffix,
+    )
+
+
+def save_processed_variant_pickle(
+    obj: Any,
+    cfg: dict,
+    row: dict,
+    modality: str,
+    agent: Optional[str],
+    *,
+    output_suffix: str,
+) -> None:
+    """Save one processed artifact pickle under a suffixed output modality."""
+    path = build_processed_variant_pickle_path(
+        cfg,
+        row,
+        modality,
+        agent,
+        output_suffix=output_suffix,
+    )
     save_pickle(obj, path)
 
 
