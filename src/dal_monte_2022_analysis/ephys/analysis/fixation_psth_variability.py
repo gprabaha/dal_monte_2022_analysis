@@ -8,7 +8,6 @@ from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
-from scipy.stats import ttest_rel
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
@@ -17,18 +16,20 @@ from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
     ensure_filename as _ensure_filename,
     resolve_bin_centers_from_meta as _resolve_bin_centers_from_meta,
 )
+from dal_monte_2022_analysis.core.stats import (
+    apply_adjusted_pvalues,
+    normalize_pvalue_correction,
+    safe_paired_ttest,
+)
 from dal_monte_2022_analysis.runtime.io.analysis_index import scan_analysis_date_paths
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path, save_pickle_path
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 DEFAULT_CONDITIONS: tuple[str, ...] = (
     "face_interactive",
     "face_non_interactive",
     "object",
-)
-_ALLOWED_PVALUE_CORRECTIONS: frozenset[str] = frozenset(
-    {"none", "bonferroni", "holm", "bh", "fdr_bh"}
 )
 _SUMMARY_META_COLUMNS: tuple[str, ...] = ("date", "unit_uuid", "unit_key", "region")
 _CV_MEAN_EPSILON: float = 1e-12
@@ -517,94 +518,6 @@ def _resolve_variability_window_mask(
     return mask
 
 
-def _normalize_pvalue_correction(method: object) -> str:
-    token = str(method).strip().lower()
-    aliases = {
-        "fdr": "fdr_bh",
-        "benjamini_hochberg": "fdr_bh",
-        "benjamini-hochberg": "fdr_bh",
-        "bh": "fdr_bh",
-    }
-    resolved = aliases.get(token, token)
-    if resolved not in _ALLOWED_PVALUE_CORRECTIONS:
-        raise ValueError(
-            f"Unsupported p-value correction '{method}'. "
-            f"Expected one of: {sorted(_ALLOWED_PVALUE_CORRECTIONS)}"
-        )
-    return resolved
-
-
-def _adjust_pvalues(p_values: Sequence[float], method: str) -> np.ndarray:
-    resolved = _normalize_pvalue_correction(method)
-    vec = np.asarray(p_values, dtype=float).reshape(-1)
-    out = np.full(vec.shape, np.nan, dtype=float)
-    finite = np.isfinite(vec)
-    if not np.any(finite):
-        return out
-    vals = vec[finite]
-    m = int(vals.size)
-    if resolved == "none":
-        out[finite] = vals
-        return out
-    if resolved == "bonferroni":
-        out[finite] = np.minimum(vals * float(m), 1.0)
-        return out
-
-    order = np.argsort(vals)
-    ranked = vals[order]
-    if resolved == "holm":
-        holm_ranked = (m - np.arange(m, dtype=float)) * ranked
-        holm_ranked = np.maximum.accumulate(holm_ranked)
-        holm_ranked = np.clip(holm_ranked, 0.0, 1.0)
-        adjusted = np.empty(m, dtype=float)
-        adjusted[order] = holm_ranked
-        out[finite] = adjusted
-        return out
-
-    bh_ranked = ranked * (float(m) / np.arange(1.0, float(m) + 1.0))
-    bh_ranked = np.minimum.accumulate(bh_ranked[::-1])[::-1]
-    bh_ranked = np.clip(bh_ranked, 0.0, 1.0)
-    adjusted = np.empty(m, dtype=float)
-    adjusted[order] = bh_ranked
-    out[finite] = adjusted
-    return out
-
-
-def _apply_adjusted_pvalues(
-    df: pd.DataFrame,
-    *,
-    p_col: str,
-    out_col: str,
-    method: str,
-    group_cols: Optional[Sequence[str]] = None,
-) -> pd.DataFrame:
-    out = df.copy()
-    out[out_col] = np.nan
-    if out.empty or p_col not in out.columns:
-        return out
-    if group_cols is None or len(group_cols) == 0:
-        out[out_col] = _adjust_pvalues(out[p_col].to_numpy(dtype=float), method)
-        return out
-    for _, idx in out.groupby(list(group_cols), dropna=False).groups.items():
-        out.loc[idx, out_col] = _adjust_pvalues(
-            out.loc[idx, p_col].to_numpy(dtype=float),
-            method,
-        )
-    return out
-
-
-def _safe_ttest_rel(a: np.ndarray, b: np.ndarray) -> tuple[float, float, int]:
-    x = np.asarray(a, dtype=float).reshape(-1)
-    y = np.asarray(b, dtype=float).reshape(-1)
-    mask = np.isfinite(x) & np.isfinite(y)
-    x = x[mask]
-    y = y[mask]
-    if x.size < 2 or y.size < 2:
-        return np.nan, np.nan, int(mask.sum())
-    stat, p_value = ttest_rel(x, y, nan_policy="omit")
-    return float(stat), float(p_value), int(x.size)
-
-
 def _build_unit_variability_summary(
     avg_df: pd.DataFrame,
     *,
@@ -716,7 +629,7 @@ def _build_within_region_stats(
                     grp[condition_columns[condition_b]],
                     errors="coerce",
                 ).to_numpy(dtype=float)
-                stat, p_value, n_paired = _safe_ttest_rel(arr_a, arr_b)
+                stat, p_value, n_paired = safe_paired_ttest(arr_a, arr_b)
                 if n_paired < int(max(settings.min_paired_units_per_region, 2)):
                     continue
                 rows.append(
@@ -738,8 +651,8 @@ def _build_within_region_stats(
         return _empty_within_region_stats_df()
 
     out_df = pd.DataFrame(rows)
-    correction = _normalize_pvalue_correction(settings.pvalue_correction)
-    out_df = _apply_adjusted_pvalues(
+    correction = normalize_pvalue_correction(settings.pvalue_correction)
+    out_df = apply_adjusted_pvalues(
         out_df,
         p_col="p_value",
         out_col="p_value_adjusted",
@@ -776,7 +689,7 @@ def run_fixation_psth_variability_analysis(
     unit_summary_df.to_csv(unit_summary_path, index=False)
     within_region_stats_df.to_csv(within_region_stats_path, index=False)
 
-    correction = _normalize_pvalue_correction(settings.pvalue_correction)
+    correction = normalize_pvalue_correction(settings.pvalue_correction)
     metric_condition_columns = _metric_condition_columns(settings)
     result = {
         "unit_summary": unit_summary_df,

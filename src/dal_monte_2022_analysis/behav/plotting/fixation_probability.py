@@ -16,7 +16,7 @@ from matplotlib.collections import PolyCollection
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.core.stats.hypothesis import two_sample_pvalues
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     format_p_value,

@@ -8,6 +8,11 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from scipy import stats
 
+from dal_monte_2022_analysis.core.stats.tests import (
+    safe_mannwhitneyu,
+    safe_welch_ttest,
+)
+
 
 def two_sample_pvalues(a: np.ndarray, b: np.ndarray) -> dict[str, float]:
     """Compute t-test, ranksum, and KS p-values for two samples."""
@@ -18,12 +23,13 @@ def two_sample_pvalues(a: np.ndarray, b: np.ndarray) -> dict[str, float]:
     if x.size < 2 or y.size < 2:
         return {"ttest": np.nan, "ranksum": np.nan, "ks": np.nan}
 
-    ttest_res = stats.ttest_ind(x, y, equal_var=False)
+    _, ttest_p = safe_welch_ttest(x, y)
+    _, ranksum_p = safe_mannwhitneyu(x, y)
     ranksum_res = stats.ranksums(x, y)
     ks_res = stats.ks_2samp(x, y)
     return {
-        "ttest": float(ttest_res.pvalue),
-        "ranksum": float(ranksum_res.pvalue),
+        "ttest": float(ttest_p),
+        "ranksum": float(ranksum_p if np.isfinite(ranksum_p) else ranksum_res.pvalue),
         "ks": float(ks_res.pvalue),
     }
 

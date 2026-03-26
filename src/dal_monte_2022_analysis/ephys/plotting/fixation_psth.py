@@ -15,7 +15,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
-from scipy.stats import mannwhitneyu, ttest_ind
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
@@ -23,6 +22,10 @@ from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
     as_bool as _as_bool,
     extract_trials_df_and_meta as _extract_trials_df_and_meta_shared,
     resolve_bin_centers_from_meta as _resolve_bin_centers_from_meta_shared,
+)
+from dal_monte_2022_analysis.core.stats import (
+    mannwhitneyu_pvalues_per_column,
+    welch_ttest,
 )
 from dal_monte_2022_analysis.ephys.plotting.common import (
     counts_to_spike_times as _counts_to_spike_times_shared,
@@ -43,7 +46,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.runtime.io.analysis_index import scan_analysis_date_paths
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 DEFAULT_CONDITION_COLORS = {
@@ -881,16 +884,10 @@ def _pair_significance_masks(
             continue
 
         if str(settings.significance_test).lower() == "welch_ttest":
-            _, p_vals = ttest_ind(mat_a, mat_b, axis=0, equal_var=False, nan_policy="omit")
+            _, p_vals = welch_ttest(mat_a, mat_b, axis=0)
             p_vals = np.asarray(p_vals, dtype=float).reshape(-1)
         elif str(settings.significance_test).lower() == "mannwhitney":
-            p_vals = np.full(n_bins, np.nan, dtype=float)
-            for idx in range(n_bins):
-                try:
-                    _, p = mannwhitneyu(mat_a[:, idx], mat_b[:, idx], alternative="two-sided")
-                    p_vals[idx] = float(p)
-                except Exception:
-                    p_vals[idx] = np.nan
+            p_vals = mannwhitneyu_pvalues_per_column(mat_a, mat_b)
         else:
             raise ValueError(
                 f"Unsupported significance_test '{settings.significance_test}'. "

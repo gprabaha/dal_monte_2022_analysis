@@ -28,9 +28,7 @@ from dal_monte_2022_analysis.runtime.io.plot_output import (
     save_figure,
 )
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import (
-    build_analysis_output_dir,
-)
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 @dataclass

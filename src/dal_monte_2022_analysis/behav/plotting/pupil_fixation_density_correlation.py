@@ -10,15 +10,20 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.collections import PolyCollection
-from scipy.stats import ttest_1samp, ttest_ind, ttest_rel
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
     resolve_figsize,
 )
+from dal_monte_2022_analysis.core.stats import (
+    one_sided_pvalue_from_ttest,
+    safe_one_sample_ttest,
+    safe_paired_ttest,
+    safe_welch_ttest,
+)
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 @dataclass
@@ -194,12 +199,9 @@ def _pairwise_significant_comparisons(
             paired = pivot[[left_source, right_source]].replace([np.inf, -np.inf], np.nan).dropna()
             if len(paired) < 2:
                 continue
-            p_value = float(
-                ttest_rel(
-                    paired[left_source].to_numpy(dtype=float),
-                    paired[right_source].to_numpy(dtype=float),
-                    nan_policy="omit",
-                ).pvalue
+            _, p_value, _ = safe_paired_ttest(
+                paired[left_source].to_numpy(dtype=float),
+                paired[right_source].to_numpy(dtype=float),
             )
         else:
             left = _finite_array(
@@ -210,7 +212,7 @@ def _pairwise_significant_comparisons(
             )
             if left.size < 2 or right.size < 2:
                 continue
-            p_value = float(ttest_ind(left, right, equal_var=False, nan_policy="omit").pvalue)
+            _, p_value = safe_welch_ttest(left, right)
 
         if not np.isfinite(p_value) or p_value >= float(alpha):
             continue
@@ -241,16 +243,11 @@ def _one_sample_positive_stars(
     if not np.isfinite(mean_val) or mean_val <= 0.0:
         return ""
 
-    t_res = ttest_1samp(arr, popmean=0.0, nan_policy="omit")
-    p_two = float(t_res.pvalue)
-    t_stat = float(t_res.statistic)
+    t_stat, p_two, _ = safe_one_sample_ttest(arr, popmean=0.0)
     if not np.isfinite(p_two) or not np.isfinite(t_stat):
         return ""
 
-    if t_stat > 0:
-        p_one = 0.5 * p_two
-    else:
-        p_one = 1.0 - 0.5 * p_two
+    p_one = float(one_sided_pvalue_from_ttest(t_stat, p_two, alternative="greater"))
     if p_one >= float(alpha):
         return ""
     return _stars_for_pvalue(p_one)

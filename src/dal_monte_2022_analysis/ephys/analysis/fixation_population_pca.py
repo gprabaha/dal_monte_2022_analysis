@@ -9,7 +9,6 @@ from typing import Optional, Sequence
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
-from scipy.stats import ttest_rel
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
@@ -19,6 +18,11 @@ from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
     extract_trials_df_and_meta as _extract_trials_df_and_meta,
     resolve_bin_centers_from_meta as _resolve_bin_centers_from_meta,
 )
+from dal_monte_2022_analysis.core.stats import (
+    apply_adjusted_pvalues,
+    normalize_pvalue_correction,
+    safe_paired_ttest,
+)
 from dal_monte_2022_analysis.data.transforms.annotate import load_pair_context_table
 from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 from dal_monte_2022_analysis.runtime.io.analysis_index import scan_analysis_date_paths
@@ -27,16 +31,13 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     save_pickle_path,
     scan_processed_paths_for_filename,
 )
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 DEFAULT_POPULATION_PCA_CONDITIONS: tuple[str, ...] = (
     "face_interactive",
     "face_non_interactive",
     "object",
-)
-_ALLOWED_PVALUE_CORRECTIONS: frozenset[str] = frozenset(
-    {"none", "bonferroni", "holm", "bh", "fdr_bh"}
 )
 
 
@@ -859,94 +860,6 @@ def _condition_pair_token(condition_a: str, condition_b: str) -> str:
     return f"{str(condition_a)}__vs__{str(condition_b)}"
 
 
-def _normalize_pvalue_correction(method: object) -> str:
-    token = str(method).strip().lower()
-    aliases = {
-        "fdr": "fdr_bh",
-        "benjamini_hochberg": "fdr_bh",
-        "benjamini-hochberg": "fdr_bh",
-        "bh": "fdr_bh",
-    }
-    resolved = aliases.get(token, token)
-    if resolved not in _ALLOWED_PVALUE_CORRECTIONS:
-        raise ValueError(
-            f"Unsupported p-value correction '{method}'. "
-            f"Expected one of: {sorted(_ALLOWED_PVALUE_CORRECTIONS)}"
-        )
-    return resolved
-
-
-def _adjust_pvalues(p_values: Sequence[float], method: str) -> np.ndarray:
-    resolved = _normalize_pvalue_correction(method)
-    vec = np.asarray(p_values, dtype=float).reshape(-1)
-    out = np.full(vec.shape, np.nan, dtype=float)
-    finite = np.isfinite(vec)
-    if not np.any(finite):
-        return out
-    vals = vec[finite]
-    m = int(vals.size)
-    if resolved == "none":
-        out[finite] = vals
-        return out
-    if resolved == "bonferroni":
-        out[finite] = np.minimum(vals * float(m), 1.0)
-        return out
-
-    order = np.argsort(vals)
-    ranked = vals[order]
-    if resolved == "holm":
-        holm_ranked = (m - np.arange(m, dtype=float)) * ranked
-        holm_ranked = np.maximum.accumulate(holm_ranked)
-        holm_ranked = np.clip(holm_ranked, 0.0, 1.0)
-        adjusted = np.empty(m, dtype=float)
-        adjusted[order] = holm_ranked
-        out[finite] = adjusted
-        return out
-
-    bh_ranked = ranked * (float(m) / np.arange(1.0, float(m) + 1.0))
-    bh_ranked = np.minimum.accumulate(bh_ranked[::-1])[::-1]
-    bh_ranked = np.clip(bh_ranked, 0.0, 1.0)
-    adjusted = np.empty(m, dtype=float)
-    adjusted[order] = bh_ranked
-    out[finite] = adjusted
-    return out
-
-
-def _apply_adjusted_pvalues(
-    df: pd.DataFrame,
-    *,
-    p_col: str,
-    out_col: str,
-    method: str,
-    group_cols: Optional[Sequence[str]] = None,
-) -> pd.DataFrame:
-    out = df.copy()
-    out[out_col] = np.nan
-    if out.empty or p_col not in out.columns:
-        return out
-    if group_cols is None or len(group_cols) == 0:
-        out[out_col] = _adjust_pvalues(out[p_col].to_numpy(dtype=float), method)
-        return out
-    for _, idx in out.groupby(list(group_cols), dropna=False).groups.items():
-        out.loc[idx, out_col] = _adjust_pvalues(
-            out.loc[idx, p_col].to_numpy(dtype=float),
-            method,
-        )
-    return out
-
-
-def _safe_ttest_rel(a: np.ndarray, b: np.ndarray) -> tuple[float, float, int]:
-    x = np.asarray(a, dtype=float).reshape(-1)
-    y = np.asarray(b, dtype=float).reshape(-1)
-    mask = np.isfinite(x) & np.isfinite(y)
-    x = x[mask]
-    y = y[mask]
-    if x.size < 2 or y.size < 2:
-        return np.nan, np.nan, int(mask.sum())
-    stat, p_value = ttest_rel(x, y, nan_policy="omit")
-    return float(stat), float(p_value), int(x.size)
-
-
 def _resolve_angle_unit(settings: FixationPopulationPCASettings) -> str:
     token = str(settings.geometry_angle_unit).strip().lower()
     aliases = {
@@ -1174,7 +1087,7 @@ def _build_pairwise_geometry_stat_tables(
                 continue
             arr_a = pivot[pair_a].to_numpy(dtype=float)
             arr_b = pivot[pair_b].to_numpy(dtype=float)
-            stat, p_value, n_paired = _safe_ttest_rel(arr_a, arr_b)
+            stat, p_value, n_paired = safe_paired_ttest(arr_a, arr_b)
             if n_paired < 2:
                 continue
             valid_mask = np.isfinite(arr_a) & np.isfinite(arr_b)
@@ -1202,8 +1115,8 @@ def _build_pairwise_geometry_stat_tables(
             )
     within_df = pd.DataFrame(within_rows)
     if not within_df.empty:
-        correction = _normalize_pvalue_correction(settings.geometry_pvalue_correction)
-        within_df = _apply_adjusted_pvalues(
+        correction = normalize_pvalue_correction(settings.geometry_pvalue_correction)
+        within_df = apply_adjusted_pvalues(
             within_df,
             p_col="p_value",
             out_col="p_value_adjusted",
@@ -1238,7 +1151,7 @@ def _build_pairwise_geometry_stat_tables(
                 continue
             arr_a = pivot[region_a].to_numpy(dtype=float)
             arr_b = pivot[region_b].to_numpy(dtype=float)
-            stat, p_value, n_paired = _safe_ttest_rel(arr_a, arr_b)
+            stat, p_value, n_paired = safe_paired_ttest(arr_a, arr_b)
             if n_paired < 2:
                 continue
             valid_mask = np.isfinite(arr_a) & np.isfinite(arr_b)
@@ -1266,8 +1179,8 @@ def _build_pairwise_geometry_stat_tables(
             )
     cross_df = pd.DataFrame(cross_rows)
     if not cross_df.empty:
-        correction = _normalize_pvalue_correction(settings.geometry_pvalue_correction)
-        cross_df = _apply_adjusted_pvalues(
+        correction = normalize_pvalue_correction(settings.geometry_pvalue_correction)
+        cross_df = apply_adjusted_pvalues(
             cross_df,
             p_col="p_value",
             out_col="p_value_adjusted",
@@ -2206,7 +2119,7 @@ def run_fixation_population_pca_analysis(
             ),
             "geometry_angle_unit": _resolve_angle_unit(settings),
             "geometry_alpha": float(settings.geometry_alpha),
-            "geometry_pvalue_correction": _normalize_pvalue_correction(
+            "geometry_pvalue_correction": normalize_pvalue_correction(
                 settings.geometry_pvalue_correction
             ),
             "n_regions_input": int(len(region_names)),

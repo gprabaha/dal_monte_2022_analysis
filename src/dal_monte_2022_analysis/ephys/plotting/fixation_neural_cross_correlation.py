@@ -15,10 +15,15 @@ mpl.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.lines import Line2D
-from scipy.stats import ttest_1samp, ttest_ind
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.core.stats import (
+    normalize_pvalue_correction,
+    one_sample_ttest_greater,
+    reject_nulls,
+    welch_ttest,
+)
 from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation import (
     CROSS_ANALYSIS_KIND,
     WITHIN_ANALYSIS_KIND,
@@ -33,7 +38,7 @@ from dal_monte_2022_analysis.ephys.plotting.common import (
 )
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 _CONDITION_ORDER = ("object", "face_non_interactive", "face_interactive")
@@ -50,7 +55,6 @@ _CONDITION_COLORS = {
 _SLUG_RE = re.compile(r"[^A-Za-z0-9._-]+")
 _PLOT_MODES = ("mean",)
 _PLOT_NORMALIZATION_METHODS = ("none", "max_abs", "zscore")
-_SIGNIFICANCE_CORRECTIONS = ("none", "bonferroni", "holm", "fdr_bh")
 
 
 @dataclass
@@ -171,16 +175,6 @@ def _resolve_normalization_method(settings: FixationNeuralCrossCorrelationPlotSe
     return token
 
 
-def _resolve_significance_correction(settings: FixationNeuralCrossCorrelationPlotSettings) -> str:
-    token = str(settings.significance_correction).strip().lower()
-    if token not in _SIGNIFICANCE_CORRECTIONS:
-        allowed = ", ".join(_SIGNIFICANCE_CORRECTIONS)
-        raise ValueError(
-            f"Unsupported significance_correction='{settings.significance_correction}'. Expected: {allowed}.",
-        )
-    return token
-
-
 def _normalize_trace(trace: np.ndarray, method: str) -> np.ndarray:
     vec = np.asarray(trace, dtype=np.float64).reshape(-1)
     if vec.size == 0:
@@ -236,72 +230,6 @@ def _pick_pair_traces(
     return [traces[int(idx)] for idx in picked]
 
 
-def _apply_pvalue_correction(
-    p_vals: np.ndarray,
-    *,
-    alpha: float,
-    correction: str,
-) -> np.ndarray:
-    vec = np.asarray(p_vals, dtype=np.float64).reshape(-1)
-    sig = np.zeros(vec.shape, dtype=bool)
-    finite = np.isfinite(vec)
-    if not finite.any():
-        return sig.reshape(np.asarray(p_vals).shape)
-
-    if correction == "none":
-        sig = finite & (vec < float(alpha))
-        return sig.reshape(np.asarray(p_vals).shape)
-
-    if correction == "bonferroni":
-        m = int(np.sum(finite))
-        if m <= 0:
-            return sig.reshape(np.asarray(p_vals).shape)
-        sig = finite & (vec < (float(alpha) / float(m)))
-        return sig.reshape(np.asarray(p_vals).shape)
-
-    if correction == "holm":
-        idx = np.flatnonzero(finite)
-        vals = vec[idx]
-        order = np.argsort(vals)
-        ranked = vals[order]
-        m = int(ranked.size)
-        if m <= 0:
-            return sig.reshape(np.asarray(p_vals).shape)
-        reject = np.zeros(m, dtype=bool)
-        for i, p in enumerate(ranked):
-            threshold = float(alpha) / float(m - i)
-            if p <= threshold:
-                reject[i] = True
-            else:
-                break
-        if np.any(reject):
-            max_i = int(np.max(np.flatnonzero(reject)))
-            keep_sorted = np.zeros(m, dtype=bool)
-            keep_sorted[: max_i + 1] = True
-            keep_original = np.zeros(m, dtype=bool)
-            keep_original[order] = keep_sorted
-            sig[idx] = keep_original
-        return sig.reshape(np.asarray(p_vals).shape)
-
-    # Benjamini-Hochberg FDR correction applied over lag bins.
-    if correction == "fdr_bh":
-        idx = np.flatnonzero(finite)
-        vals = vec[idx]
-        order = np.argsort(vals)
-        ranked = vals[order]
-        m = int(ranked.size)
-        if m <= 0:
-            return sig.reshape(np.asarray(p_vals).shape)
-        thresholds = float(alpha) * (np.arange(1, m + 1, dtype=np.float64) / float(m))
-        passed = ranked <= thresholds
-        if np.any(passed):
-            cutoff = ranked[int(np.max(np.flatnonzero(passed)))]
-            sig[idx] = vals <= cutoff
-        return sig.reshape(np.asarray(p_vals).shape)
-
-    raise ValueError(f"Unsupported p-value correction method '{correction}'.")
-
-
 def _compute_vs_zero_significance_mask(
     stacked: np.ndarray,
     *,
@@ -311,12 +239,8 @@ def _compute_vs_zero_significance_mask(
     mat = np.asarray(stacked, dtype=np.float64)
     if mat.ndim != 2 or mat.shape[0] < int(max(2, min_samples)):
         return np.zeros(mat.shape[-1] if mat.ndim == 2 else 0, dtype=bool)
-    res = ttest_1samp(mat, popmean=0.0, axis=0, nan_policy="omit")
-    stat = np.asarray(res.statistic, dtype=np.float64)
-    p_two = np.asarray(res.pvalue, dtype=np.float64)
+    _, p_one = one_sample_ttest_greater(mat, popmean=0.0, axis=0)
     mean_vec = np.nanmean(mat, axis=0)
-    # one-sided (greater than 0) from two-sided p-value and t-sign
-    p_one = np.where(stat > 0.0, p_two / 2.0, 1.0 - (p_two / 2.0))
     return np.isfinite(mean_vec) & (mean_vec > 0.0) & np.isfinite(p_one) & (p_one < float(alpha))
 
 
@@ -354,19 +278,15 @@ def _compute_between_condition_significance_masks(
             or mat_b.shape[1] != n_lags
         ):
             continue
-        res = ttest_ind(mat_a, mat_b, axis=0, equal_var=False, nan_policy="omit")
-        p_vals = np.asarray(res.pvalue, dtype=np.float64).reshape(-1)
+        _, p_vals = welch_ttest(mat_a, mat_b, axis=0)
+        p_vals = np.asarray(p_vals, dtype=np.float64).reshape(-1)
         if p_vals.shape[0] == n_lags:
             p_mat[row_idx, :] = p_vals
 
     sig_mat = np.zeros((len(pair_keys), n_lags), dtype=bool)
     for lag_idx in range(n_lags):
         p_vec = p_mat[:, lag_idx]
-        sig_vec = _apply_pvalue_correction(
-            p_vec,
-            alpha=float(alpha),
-            correction=str(correction),
-        )
+        sig_vec = reject_nulls(p_vec, alpha=float(alpha), method=str(correction))
         sig_mat[:, lag_idx] = np.asarray(sig_vec, dtype=bool).reshape(-1)
 
     return {pair_key: sig_mat[row_idx, :] for row_idx, pair_key in enumerate(pair_keys)}
@@ -446,7 +366,7 @@ def _plot_group_grid_figure(
 
     is_pdf = str(output_path.suffix).lower() == ".pdf"
     max_points = settings.max_points_per_pdf_trace if is_pdf else None
-    sig_correction = _resolve_significance_correction(settings)
+    sig_correction = normalize_pvalue_correction(settings.significance_correction)
     between_marker_map = _build_between_condition_marker_map(settings.condition_order)
 
     for axis_idx, axis in enumerate(axes_flat):

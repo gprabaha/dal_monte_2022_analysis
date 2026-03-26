@@ -24,7 +24,7 @@ from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.plotting.common import apply_plotting_config, resolve_figsize
 from dal_monte_2022_analysis.runtime.io.plot_output import normalize_extension, save_figure
 from dal_monte_2022_analysis.utils.filenames import ensure_filename
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 DEFAULT_REGION_ORDER: tuple[str, ...] = ("BLA", "ACCg", "dmPFC", "OFC")

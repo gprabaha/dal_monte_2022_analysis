@@ -10,7 +10,6 @@ import warnings
 
 import numpy as np
 import pandas as pd
-from scipy.stats import ttest_1samp
 from tqdm import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config
@@ -18,6 +17,7 @@ from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
     as_optional_str as _as_optional_str,
     ensure_filename as _ensure_filename,
 )
+from dal_monte_2022_analysis.core.stats import safe_one_sample_ttest_greater
 from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_helpers import (
     CROSS_ANALYSIS_KIND,
     DEFAULT_FIXATION_ROI_GROUPS,
@@ -43,7 +43,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     save_pickle_path,
 )
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 @dataclass
@@ -286,15 +286,8 @@ def _compute_lag_mean_significance(
             t_stat = 0.0
             p_value = 1.0
     else:
-        res = ttest_1samp(arr, popmean=0.0, nan_policy="omit")
-        t_stat = float(np.asarray(res.statistic, dtype=np.float64).reshape(()))
-        p_two = float(np.asarray(res.pvalue, dtype=np.float64).reshape(()))
-        if not np.isfinite(t_stat) or not np.isfinite(p_two):
-            p_value = None
-        elif t_stat > 0.0:
-            p_value = p_two / 2.0
-        else:
-            p_value = 1.0 - (p_two / 2.0)
+        t_stat, p_one, _ = safe_one_sample_ttest_greater(arr, popmean=0.0)
+        p_value = float(p_one) if np.isfinite(p_one) else None
 
     significant = bool(
         mean_value is not None

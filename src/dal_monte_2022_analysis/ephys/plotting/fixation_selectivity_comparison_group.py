@@ -26,7 +26,7 @@ from dal_monte_2022_analysis.runtime.io.plot_output import (
     save_figure,
 )
 from dal_monte_2022_analysis.utils.filenames import ensure_filename
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 DEFAULT_INTERACTIVE_STATE_MATCHED_PAIR_ORDER: tuple[str, ...] = (

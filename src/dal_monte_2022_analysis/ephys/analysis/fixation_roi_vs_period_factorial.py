@@ -13,7 +13,6 @@ from scipy.ndimage import gaussian_filter1d
 from scipy.stats import (
     fisher_exact,
     t,
-    ttest_ind,
 )
 
 from dal_monte_2022_analysis.config.load import load_config
@@ -24,13 +23,19 @@ from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
     extract_trials_df_and_meta as _extract_trials_df_and_meta,
     resolve_bin_centers_from_meta as _resolve_bin_centers_from_meta,
 )
+from dal_monte_2022_analysis.core.stats import (
+    adjust_pvalues,
+    apply_adjusted_pvalues,
+    normalize_pvalue_correction,
+    safe_welch_ttest,
+)
 from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     save_pickle_path,
     scan_processed_paths_for_filename,
 )
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 DEFAULT_FACTORIAL_WINDOWS_MS: dict[str, tuple[float, float]] = {
@@ -58,7 +63,6 @@ UNIT_WINDOW_MEAN_FR_COLUMNS: tuple[str, ...] = (
     "mean_fr_object_interactive_hz",
     "mean_fr_object_non_interactive_hz",
 )
-_ALLOWED_PVALUE_CORRECTIONS = {"none", "bonferroni", "holm", "fdr_bh"}
 _ALLOWED_UNIT_SIGNIFICANCE_MODE = {"raw", "within_unit_corrected"}
 _ALLOWED_PARALLELIZATION_SCOPE = {"date", "unit"}
 _ALLOWED_AXIS_COMPARISON_MODE = {
@@ -183,69 +187,6 @@ def _normalize_significance_windows(
             f"requested={requested}, available={available}"
         )
     return tuple(out)
-
-
-def _adjust_pvalues(p_values: Sequence[float], method: str) -> np.ndarray:
-    if method not in _ALLOWED_PVALUE_CORRECTIONS:
-        raise ValueError(
-            f"Unsupported p-value correction '{method}'. "
-            f"Expected one of: {sorted(_ALLOWED_PVALUE_CORRECTIONS)}"
-        )
-    vec = np.asarray(p_values, dtype=float).reshape(-1)
-    out = np.full(vec.shape, np.nan, dtype=float)
-    finite = np.isfinite(vec)
-    if not np.any(finite):
-        return out
-    vals = vec[finite]
-    m = int(vals.size)
-
-    if method == "none":
-        out[finite] = vals
-        return out
-    if method == "bonferroni":
-        out[finite] = np.minimum(vals * float(m), 1.0)
-        return out
-
-    order = np.argsort(vals)
-    ranked = vals[order]
-    if method == "holm":
-        holm_ranked = (m - np.arange(m, dtype=float)) * ranked
-        holm_ranked = np.maximum.accumulate(holm_ranked)
-        holm_ranked = np.clip(holm_ranked, 0.0, 1.0)
-        adjusted = np.empty(m, dtype=float)
-        adjusted[order] = holm_ranked
-        out[finite] = adjusted
-        return out
-
-    # Benjamini-Hochberg FDR
-    bh_ranked = ranked * (float(m) / np.arange(1.0, float(m) + 1.0))
-    bh_ranked = np.minimum.accumulate(bh_ranked[::-1])[::-1]
-    bh_ranked = np.clip(bh_ranked, 0.0, 1.0)
-    adjusted = np.empty(m, dtype=float)
-    adjusted[order] = bh_ranked
-    out[finite] = adjusted
-    return out
-
-
-def _apply_adjusted_pvalues(
-    df: pd.DataFrame,
-    *,
-    p_col: str,
-    out_col: str,
-    method: str,
-    group_cols: Optional[Sequence[str]] = None,
-) -> pd.DataFrame:
-    out = df.copy()
-    out[out_col] = np.nan
-    if out.empty or p_col not in out.columns:
-        return out
-    if group_cols is None or len(group_cols) == 0:
-        out[out_col] = _adjust_pvalues(out[p_col].to_numpy(dtype=float), method)
-        return out
-    for _, idx in out.groupby(list(group_cols), dropna=False).groups.items():
-        pvals = out.loc[idx, p_col].to_numpy(dtype=float)
-        out.loc[idx, out_col] = _adjust_pvalues(pvals, method)
-    return out
 
 
 def _resolve_unit_significance_mode(mode: str) -> str:
@@ -697,17 +638,6 @@ def _append_normalized_cell_mean_axis_rows(
     return out
 
 
-def _safe_ttest_ind(a: np.ndarray, b: np.ndarray) -> tuple[float, float]:
-    x = np.asarray(a, dtype=float).reshape(-1)
-    y = np.asarray(b, dtype=float).reshape(-1)
-    x = x[np.isfinite(x)]
-    y = y[np.isfinite(y)]
-    if x.size < 2 or y.size < 2:
-        return np.nan, np.nan
-    stat, p_value = ttest_ind(x, y, equal_var=False, nan_policy="omit")
-    return float(stat), float(p_value)
-
-
 def _unit_worker(args):
     unit_key, df_unit, bin_centers_s, settings = args
 
@@ -1046,7 +976,7 @@ def _build_region_fraction_tables(
             )
     pairwise_df = pd.DataFrame(pair_rows)
     if not pairwise_df.empty:
-        pairwise_df = _apply_adjusted_pvalues(
+        pairwise_df = apply_adjusted_pvalues(
             pairwise_df,
             p_col="p_value",
             out_col="p_value_adjusted",
@@ -1553,7 +1483,7 @@ def _build_region_axis_tables(
         for region_a, region_b in combinations(regions, 2):
             arr_a = by_region_vals[region_a]
             arr_b = by_region_vals[region_b]
-            stat, p_value = _safe_ttest_ind(arr_a, arr_b)
+            stat, p_value = safe_welch_ttest(arr_a, arr_b)
             pairwise_rows.append(
                 {
                     "axis_comparison_mode": str(mode),
@@ -1577,7 +1507,7 @@ def _build_region_axis_tables(
             )
     pairwise_df = pd.DataFrame(pairwise_rows)
     if not pairwise_df.empty:
-        pairwise_df = _apply_adjusted_pvalues(
+        pairwise_df = apply_adjusted_pvalues(
             pairwise_df,
             p_col="p_value",
             out_col="p_value_adjusted",
@@ -1609,7 +1539,7 @@ def _build_region_axis_tables(
                 continue
             arr_a = pair_mat[axis_a].to_numpy(dtype=float)
             arr_b = pair_mat[axis_b].to_numpy(dtype=float)
-            stat, p_value = _safe_ttest_ind(arr_a, arr_b)
+            stat, p_value = safe_welch_ttest(arr_a, arr_b)
             within_rows.append(
                 {
                     "axis_comparison_mode": str(mode),
@@ -1632,7 +1562,7 @@ def _build_region_axis_tables(
             )
     within_df = pd.DataFrame(within_rows)
     if not within_df.empty:
-        within_df = _apply_adjusted_pvalues(
+        within_df = apply_adjusted_pvalues(
             within_df,
             p_col="p_value",
             out_col="p_value_adjusted",
@@ -1786,7 +1716,7 @@ def run_fixation_roi_vs_period_factorial_analysis(
             set(str(name) for name in significance_windows)
         )
         # Optional per-window correction across terms (kept for auditability).
-        unit_term_df = _apply_adjusted_pvalues(
+        unit_term_df = apply_adjusted_pvalues(
             unit_term_df,
             p_col="p_value",
             out_col="p_value_within_unit_window_adjusted",
@@ -1806,7 +1736,7 @@ def run_fixation_roi_vs_period_factorial_analysis(
             if not np.any(counts_mask):
                 continue
             pvals = unit_term_df.loc[idx_list, "p_value"].to_numpy(dtype=float).reshape(-1)
-            adj_selected = _adjust_pvalues(
+            adj_selected = adjust_pvalues(
                 pvals[counts_mask],
                 settings.pvalue_correction,
             )
@@ -1846,7 +1776,7 @@ def run_fixation_roi_vs_period_factorial_analysis(
             if not np.any(counts_mask):
                 continue
             pvals = unit_axis_df.loc[idx_list, "p_value"].to_numpy(dtype=float).reshape(-1)
-            adj_selected = _adjust_pvalues(
+            adj_selected = adjust_pvalues(
                 pvals[counts_mask],
                 settings.pvalue_correction,
             )
@@ -1941,7 +1871,7 @@ def run_fixation_roi_vs_period_factorial_analysis(
             "min_trials_per_cell": int(settings.min_trials_per_cell),
             "min_units_per_region": int(settings.min_units_per_region),
             "alpha": float(settings.alpha),
-            "pvalue_correction": str(settings.pvalue_correction),
+            "pvalue_correction": normalize_pvalue_correction(settings.pvalue_correction),
             "unit_significance_mode": str(settings.unit_significance_mode),
             "axis_comparison_mode": str(settings.axis_comparison_mode),
             "axis_magnitude_source": str(CELL_MEAN_AXIS_SOURCE),

@@ -21,7 +21,7 @@ from dal_monte_2022_analysis.runtime.io.processed_data import (
     scan_processed_paths_for_filename,
 )
 from dal_monte_2022_analysis.utils.filenames import ensure_filename
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 DEFAULT_CONDITIONS: tuple[str, ...] = (

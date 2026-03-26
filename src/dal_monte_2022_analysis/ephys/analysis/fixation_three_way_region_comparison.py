@@ -11,9 +11,15 @@ import numpy as np
 import pandas as pd
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.core.stats import (
+    adjust_pvalues,
+    normalize_pvalue_correction,
+    permutation_label_statistic_test,
+    permutation_mean_difference_test,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import save_pickle_path
 from dal_monte_2022_analysis.utils.filenames import ensure_filename
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 REL_COLS = (
@@ -30,7 +36,6 @@ TRIANGLE_VERTICES = np.asarray(
     ],
     dtype=float,
 )
-_ALLOWED_CORRECTIONS = {"none", "bonferroni", "holm", "fdr_bh"}
 
 
 @dataclass
@@ -221,37 +226,6 @@ def _alignment_scores_to_vertex_axes(points_xy: np.ndarray, centroid_xy: np.ndar
     return np.asarray(max_cos, dtype=float)
 
 
-def _permutation_mean_difference_test(
-    x: np.ndarray,
-    y: np.ndarray,
-    *,
-    n_permutations: int,
-    rng: np.random.Generator,
-) -> tuple[float, float]:
-    arr_x = np.asarray(x, dtype=float).reshape(-1)
-    arr_y = np.asarray(y, dtype=float).reshape(-1)
-    arr_x = arr_x[np.isfinite(arr_x)]
-    arr_y = arr_y[np.isfinite(arr_y)]
-    if arr_x.size == 0 or arr_y.size == 0:
-        return np.nan, np.nan
-
-    observed = float(np.mean(arr_x) - np.mean(arr_y))
-    if int(n_permutations) <= 0:
-        return observed, np.nan
-
-    merged = np.concatenate([arr_x, arr_y], axis=0)
-    n_x = int(arr_x.size)
-    obs_abs = abs(observed)
-    hits = 0
-    for _ in range(int(n_permutations)):
-        perm = rng.permutation(merged)
-        diff = float(np.mean(perm[:n_x]) - np.mean(perm[n_x:]))
-        if np.isfinite(diff) and abs(diff) >= obs_abs - 1e-12:
-            hits += 1
-    p_value = (float(hits) + 1.0) / (float(n_permutations) + 1.0)
-    return observed, float(p_value)
-
-
 def _pseudo_f_stat(X: np.ndarray, labels: np.ndarray) -> float:
     arr = np.asarray(X, dtype=float)
     lab = np.asarray(labels)
@@ -285,74 +259,6 @@ def _pseudo_f_stat(X: np.ndarray, labels: np.ndarray) -> float:
     ms_between = ss_between / df_between
     ms_within = ss_within / df_within
     return float(ms_between / ms_within) if ms_within > 0.0 else np.inf
-
-
-def _permutation_pseudo_f_test(
-    X: np.ndarray,
-    labels: np.ndarray,
-    *,
-    n_permutations: int,
-    rng: np.random.Generator,
-) -> tuple[float, float]:
-    observed = _pseudo_f_stat(X, labels)
-    if not np.isfinite(observed):
-        return observed, np.nan
-    if int(n_permutations) <= 0:
-        return observed, np.nan
-
-    hits = 0
-    labels_arr = np.asarray(labels).copy()
-    for _ in range(int(n_permutations)):
-        permuted = rng.permutation(labels_arr)
-        stat = _pseudo_f_stat(X, permuted)
-        if np.isfinite(stat) and stat >= observed - 1e-12:
-            hits += 1
-    p_value = (float(hits) + 1.0) / (float(n_permutations) + 1.0)
-    return observed, float(p_value)
-
-
-def _adjust_pvalues(p_values: Sequence[float], method: str) -> np.ndarray:
-    if method not in _ALLOWED_CORRECTIONS:
-        raise ValueError(
-            f"Unsupported p-value correction '{method}'. "
-            f"Expected one of: {sorted(_ALLOWED_CORRECTIONS)}"
-        )
-    vec = np.asarray(p_values, dtype=float).reshape(-1)
-    out = np.full(vec.shape, np.nan, dtype=float)
-    finite = np.isfinite(vec)
-    if not np.any(finite):
-        return out
-    vals = vec[finite]
-    m = int(vals.size)
-
-    if method == "none":
-        out[finite] = vals
-        return out
-
-    if method == "bonferroni":
-        out[finite] = np.minimum(vals * float(m), 1.0)
-        return out
-
-    order = np.argsort(vals)
-    ranked = vals[order]
-
-    if method == "holm":
-        holm_ranked = (m - np.arange(m, dtype=float)) * ranked
-        holm_ranked = np.maximum.accumulate(holm_ranked)
-        holm_ranked = np.clip(holm_ranked, 0.0, 1.0)
-        adjusted = np.empty(m, dtype=float)
-        adjusted[order] = holm_ranked
-        out[finite] = adjusted
-        return out
-
-    # Benjamini-Hochberg FDR
-    bh_ranked = ranked * (float(m) / np.arange(1.0, float(m) + 1.0))
-    bh_ranked = np.minimum.accumulate(bh_ranked[::-1])[::-1]
-    bh_ranked = np.clip(bh_ranked, 0.0, 1.0)
-    adjusted = np.empty(m, dtype=float)
-    adjusted[order] = bh_ranked
-    out[finite] = adjusted
-    return out
 
 
 def run_fixation_three_way_region_comparison(
@@ -406,6 +312,7 @@ def run_fixation_three_way_region_comparison(
 
     window_order = _window_order(df)
     rng = np.random.default_rng(int(settings.random_seed))
+    correction = normalize_pvalue_correction(settings.pvalue_correction)
     pair_rows: list[dict] = []
     window_rows: list[dict] = []
 
@@ -482,11 +389,12 @@ def run_fixation_three_way_region_comparison(
             else:
                 X = np.zeros((0, 2), dtype=float)
                 labels = np.asarray([], dtype=object)
-            global_f, global_p = _permutation_pseudo_f_test(
+            global_f, global_p = permutation_label_statistic_test(
                 X,
                 labels,
                 n_permutations=int(settings.n_permutations),
                 rng=rng,
+                statistic_fn=_pseudo_f_stat,
             )
 
             disp_vals: list[float] = []
@@ -508,18 +416,20 @@ def run_fixation_three_way_region_comparison(
                     align_labels.extend([str(region)] * int(align.size))
 
             if len(set(disp_labels)) >= int(settings.min_regions_per_window):
-                global_dispersion_f, global_dispersion_p = _permutation_pseudo_f_test(
+                global_dispersion_f, global_dispersion_p = permutation_label_statistic_test(
                     np.asarray(disp_vals, dtype=float).reshape(-1, 1),
                     np.asarray(disp_labels, dtype=object),
                     n_permutations=int(settings.n_permutations),
                     rng=rng,
+                    statistic_fn=_pseudo_f_stat,
                 )
             if len(set(align_labels)) >= int(settings.min_regions_per_window):
-                global_alignment_f, global_alignment_p = _permutation_pseudo_f_test(
+                global_alignment_f, global_alignment_p = permutation_label_statistic_test(
                     np.asarray(align_vals, dtype=float).reshape(-1, 1),
                     np.asarray(align_labels, dtype=object),
                     n_permutations=int(settings.n_permutations),
                     rng=rng,
+                    statistic_fn=_pseudo_f_stat,
                 )
 
             raw_pair_indices: list[int] = []
@@ -538,11 +448,12 @@ def run_fixation_three_way_region_comparison(
                     [region_a] * int(Xa.shape[0]) + [region_b] * int(Xb.shape[0]),
                     dtype=object,
                 )
-                pair_f, pair_p = _permutation_pseudo_f_test(
+                pair_f, pair_p = permutation_label_statistic_test(
                     X_pair,
                     labels_pair,
                     n_permutations=int(settings.n_permutations),
                     rng=rng,
+                    statistic_fn=_pseudo_f_stat,
                 )
 
                 mean_a = np.mean(Xa, axis=0)
@@ -553,7 +464,7 @@ def run_fixation_three_way_region_comparison(
                 radial_b = radial_b[np.isfinite(radial_b)]
                 disp_a = float(np.mean(radial_a)) if radial_a.size > 0 else np.nan
                 disp_b = float(np.mean(radial_b)) if radial_b.size > 0 else np.nan
-                disp_diff, disp_p = _permutation_mean_difference_test(
+                disp_diff, disp_p = permutation_mean_difference_test(
                     radial_a,
                     radial_b,
                     n_permutations=int(settings.n_permutations),
@@ -566,7 +477,7 @@ def run_fixation_three_way_region_comparison(
                 align_b = align_b[np.isfinite(align_b)]
                 mean_align_a = float(np.mean(align_a)) if align_a.size > 0 else np.nan
                 mean_align_b = float(np.mean(align_b)) if align_b.size > 0 else np.nan
-                align_diff, align_p = _permutation_mean_difference_test(
+                align_diff, align_p = permutation_mean_difference_test(
                     align_a,
                     align_b,
                     n_permutations=int(settings.n_permutations),
@@ -621,13 +532,13 @@ def run_fixation_three_way_region_comparison(
                 pair_rows.append(row)
 
             if raw_pair_indices:
-                adj = _adjust_pvalues(raw_pair_pvals, settings.pvalue_correction)
-                adj_disp = _adjust_pvalues(raw_pair_dispersion_pvals, settings.pvalue_correction)
-                adj_align = _adjust_pvalues(raw_pair_alignment_pvals, settings.pvalue_correction)
+                adj = adjust_pvalues(raw_pair_pvals, correction)
+                adj_disp = adjust_pvalues(raw_pair_dispersion_pvals, correction)
+                adj_align = adjust_pvalues(raw_pair_alignment_pvals, correction)
                 for idx_local, idx_global in enumerate(raw_pair_indices):
                     p_adj = float(adj[idx_local]) if np.isfinite(adj[idx_local]) else np.nan
                     pair_rows[idx_global]["p_value_adjusted"] = p_adj
-                    pair_rows[idx_global]["pvalue_correction"] = settings.pvalue_correction
+                    pair_rows[idx_global]["pvalue_correction"] = correction
                     pair_rows[idx_global]["alpha"] = float(settings.alpha)
                     pair_rows[idx_global]["significant"] = bool(
                         np.isfinite(p_adj) and p_adj < float(settings.alpha)
@@ -663,7 +574,7 @@ def run_fixation_three_way_region_comparison(
                 "global_alignment_p_value": global_alignment_p,
                 "global_alignment_p_value_adjusted": np.nan,
                 "global_alignment_significant": False,
-                "global_pvalue_correction": settings.pvalue_correction,
+                "global_pvalue_correction": correction,
                 "alpha": float(settings.alpha),
                 "n_permutations": int(settings.n_permutations),
                 "alignment_cosine_threshold": float(settings.alignment_cosine_threshold),
@@ -679,15 +590,15 @@ def run_fixation_three_way_region_comparison(
             na_position="last",
         ).reset_index(drop=True)
     if not window_df.empty:
-        adj_global = _adjust_pvalues(window_df["global_p_value"].to_numpy(dtype=float), settings.pvalue_correction)
+        adj_global = adjust_pvalues(window_df["global_p_value"].to_numpy(dtype=float), correction)
         window_df["global_p_value_adjusted"] = adj_global
         window_df["global_significant"] = (
             pd.Series(adj_global).apply(lambda p: bool(np.isfinite(p) and p < float(settings.alpha))).to_numpy(dtype=bool)
         )
         if "global_dispersion_p_value" in window_df.columns:
-            adj_disp = _adjust_pvalues(
+            adj_disp = adjust_pvalues(
                 window_df["global_dispersion_p_value"].to_numpy(dtype=float),
-                settings.pvalue_correction,
+                correction,
             )
             window_df["global_dispersion_p_value_adjusted"] = adj_disp
             window_df["global_dispersion_significant"] = (
@@ -696,9 +607,9 @@ def run_fixation_three_way_region_comparison(
                 .to_numpy(dtype=bool)
             )
         if "global_alignment_p_value" in window_df.columns:
-            adj_align = _adjust_pvalues(
+            adj_align = adjust_pvalues(
                 window_df["global_alignment_p_value"].to_numpy(dtype=float),
-                settings.pvalue_correction,
+                correction,
             )
             window_df["global_alignment_p_value_adjusted"] = adj_align
             window_df["global_alignment_significant"] = (
@@ -725,7 +636,7 @@ def run_fixation_three_way_region_comparison(
     result = {
         "meta": {
             "alpha": float(settings.alpha),
-            "pvalue_correction": settings.pvalue_correction,
+            "pvalue_correction": correction,
             "n_permutations": int(settings.n_permutations),
             "min_units_per_region": int(settings.min_units_per_region),
             "min_regions_per_window": int(settings.min_regions_per_window),

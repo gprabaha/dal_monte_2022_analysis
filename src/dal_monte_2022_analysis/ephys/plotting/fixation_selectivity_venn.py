@@ -34,7 +34,7 @@ from dal_monte_2022_analysis.runtime.io.plot_output import (
     normalize_extension,
     save_figure,
 )
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 PAIR_FACE_INT_NONINT = "face_interactive__vs__face_non_interactive"

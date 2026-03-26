@@ -29,7 +29,7 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_psth import (
     _load_trials_for_date as _load_trials_for_date_shared,
 )
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 DEFAULT_EXAMPLE_GRID_REGIONS = ("BLA", "ACCg", "dmPFC", "OFC")

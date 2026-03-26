@@ -16,9 +16,13 @@ import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
 from scipy.optimize import curve_fit
-from scipy.stats import ttest_rel
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.core.stats import (
+    normalize_pvalue_correction,
+    reject_nulls,
+    safe_paired_ttest,
+)
 from dal_monte_2022_analysis.ephys.analysis.fixation_neural_cross_correlation_helpers import (
     CROSS_ANALYSIS_KIND,
     WITHIN_ANALYSIS_KIND,
@@ -38,7 +42,7 @@ from dal_monte_2022_analysis.ephys.plotting.common import (
 )
 from dal_monte_2022_analysis.runtime.io.processed_data import load_pickle_path
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 _CONDITION_LABELS = {
@@ -56,7 +60,6 @@ _CONDITION_COLORS = {
     "face_non_interactive": "#97ca3d",
     "object": "#754c29",
 }
-_SIGNIFICANCE_CORRECTIONS = ("none", "bonferroni", "holm", "fdr_bh")
 
 
 @dataclass
@@ -111,74 +114,7 @@ def _ensure_ext(ext: str, *, fallback: str) -> str:
 
 
 def _resolve_significance_correction(value: str) -> str:
-    token = str(value).strip().lower()
-    if token not in _SIGNIFICANCE_CORRECTIONS:
-        allowed = ", ".join(_SIGNIFICANCE_CORRECTIONS)
-        raise ValueError(f"Unsupported significance correction '{value}'. Expected one of: {allowed}.")
-    return token
-
-
-
-def _apply_pvalue_correction(
-    p_vals: np.ndarray,
-    *,
-    alpha: float,
-    correction: str,
-) -> np.ndarray:
-    vec = np.asarray(p_vals, dtype=np.float64).reshape(-1)
-    sig = np.zeros(vec.shape, dtype=bool)
-    finite = np.isfinite(vec)
-    if not finite.any():
-        return sig.reshape(np.asarray(p_vals).shape)
-
-    if correction == "none":
-        sig = finite & (vec < float(alpha))
-        return sig.reshape(np.asarray(p_vals).shape)
-
-    if correction == "bonferroni":
-        m = int(np.sum(finite))
-        if m <= 0:
-            return sig.reshape(np.asarray(p_vals).shape)
-        sig = finite & (vec < (float(alpha) / float(m)))
-        return sig.reshape(np.asarray(p_vals).shape)
-
-    if correction == "holm":
-        idx = np.flatnonzero(finite)
-        vals = vec[idx]
-        order = np.argsort(vals)
-        ranked = vals[order]
-        m = int(ranked.size)
-        if m <= 0:
-            return sig.reshape(np.asarray(p_vals).shape)
-        reject = np.zeros(m, dtype=bool)
-        for i, p_value in enumerate(ranked):
-            threshold = float(alpha) / float(m - i)
-            if p_value <= threshold:
-                reject[i] = True
-            else:
-                break
-        if np.any(reject):
-            max_i = int(np.max(np.flatnonzero(reject)))
-            keep_sorted = np.zeros(m, dtype=bool)
-            keep_sorted[: max_i + 1] = True
-            keep_original = np.zeros(m, dtype=bool)
-            keep_original[order] = keep_sorted
-            sig[idx] = keep_original
-        return sig.reshape(np.asarray(p_vals).shape)
-
-    idx = np.flatnonzero(finite)
-    vals = vec[idx]
-    order = np.argsort(vals)
-    ranked = vals[order]
-    m = int(ranked.size)
-    if m <= 0:
-        return sig.reshape(np.asarray(p_vals).shape)
-    thresholds = float(alpha) * (np.arange(1, m + 1, dtype=np.float64) / float(m))
-    passed = ranked <= thresholds
-    if np.any(passed):
-        cutoff = ranked[int(np.max(np.flatnonzero(passed)))]
-        sig[idx] = vals <= cutoff
-    return sig.reshape(np.asarray(p_vals).shape)
+    return normalize_pvalue_correction(value)
 
 
 
@@ -210,22 +146,8 @@ def _safe_paired_ttest(
             "tested": False,
         }
 
-    diff = x - y
-    if np.allclose(diff, diff[0]):
-        if float(diff[0]) > 0.0:
-            t_stat = float("inf")
-            p_value = 0.0
-        elif float(diff[0]) < 0.0:
-            t_stat = float("-inf")
-            p_value = 0.0
-        else:
-            t_stat = 0.0
-            p_value = 1.0
-    else:
-        res = ttest_rel(x, y, nan_policy="omit")
-        t_stat = float(np.asarray(res.statistic, dtype=np.float64).reshape(()))
-        p_raw = float(np.asarray(res.pvalue, dtype=np.float64).reshape(()))
-        p_value = p_raw if np.isfinite(p_raw) else None
+    t_stat, p_raw, _ = safe_paired_ttest(x, y)
+    p_value = float(p_raw) if np.isfinite(p_raw) else None
 
     return {
         "n_pairs": n_pairs,
@@ -742,10 +664,10 @@ def _compute_group_pair_condition_comparisons(
             }
         )
 
-    mean_sig = _apply_pvalue_correction(
+    mean_sig = reject_nulls(
         mean_lag_pvals,
         alpha=float(settings.significance_alpha),
-        correction=_resolve_significance_correction(settings.mean_lag_significance_correction),
+        method=_resolve_significance_correction(settings.mean_lag_significance_correction),
     )
     for idx, is_sig in enumerate(np.asarray(mean_sig, dtype=bool).reshape(-1)):
         mean_lag_rows[idx]["significant"] = bool(is_sig)

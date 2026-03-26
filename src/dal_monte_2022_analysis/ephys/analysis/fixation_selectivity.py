@@ -11,7 +11,6 @@ from typing import Optional, Sequence
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
-from scipy.stats import mannwhitneyu, ttest_ind
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
@@ -21,13 +20,14 @@ from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
     extract_trials_df_and_meta as _extract_trials_df_and_meta,
     resolve_bin_centers_from_meta as _resolve_bin_centers_from_meta,
 )
+from dal_monte_2022_analysis.core.stats import safe_mannwhitneyu, safe_welch_ttest
 from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
     scan_processed_paths_for_filename,
     save_pickle_path,
 )
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 DEFAULT_SELECTIVITY_WINDOWS_MS: dict[str, tuple[float, float]] = {
@@ -387,11 +387,9 @@ def _run_pair_test(
     settings: FixationPSTHSelectivitySettings,
 ) -> tuple[float, float]:
     if settings.test_name == "welch_ttest":
-        stat, p = ttest_ind(x, y, equal_var=False, nan_policy="omit")
-        return float(stat), float(p)
+        return safe_welch_ttest(x, y)
     if settings.test_name == "mannwhitney":
-        stat, p = mannwhitneyu(x, y, alternative="two-sided")
-        return float(stat), float(p)
+        return safe_mannwhitneyu(x, y, alternative="two-sided")
     raise ValueError(
         f"Unsupported selective_test '{settings.test_name}'. "
         "Expected 'welch_ttest' or 'mannwhitney'."

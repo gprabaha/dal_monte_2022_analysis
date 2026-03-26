@@ -10,7 +10,6 @@ from typing import Optional
 
 import numpy as np
 import pandas as pd
-from scipy.stats import ttest_ind
 
 from dal_monte_2022_analysis.core.behav.analysis_primitives import (
     clip_period as _clip_period,
@@ -22,6 +21,7 @@ from dal_monte_2022_analysis.core.behav.roi_groups import (
     keywords_for_fixation_label,
     locations_match as _locations_match,
 )
+from dal_monte_2022_analysis.core.stats import safe_welch_ttest
 from dal_monte_2022_analysis.runtime.execution.parallel import get_n_processes
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     build_processed_pickle_path,
@@ -333,7 +333,7 @@ def _compare_pupil_samples(
     if n_lead < 2 or n_follow < 2:
         p_value = np.nan
     else:
-        p_value = float(ttest_ind(lead_values, follow_values, equal_var=False).pvalue)
+        _, p_value = safe_welch_ttest(lead_values, follow_values)
     is_significant = bool(np.isfinite(p_value) and p_value < float(alpha))
 
     return {
@@ -1647,5 +1647,4 @@ def _print_monkey_role_fixation_count_summary(
     else:
         print(monkey_role_fixation_count_summary_df.to_string(index=False))
     print("[leader-follower] -----------------------------------------------\n")
-
 

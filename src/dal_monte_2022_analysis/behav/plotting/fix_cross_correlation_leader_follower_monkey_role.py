@@ -9,8 +9,8 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from scipy.stats import ttest_ind
 
+from dal_monte_2022_analysis.core.stats import safe_welch_ttest
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.plotting.common import (
     apply_plotting_config,
@@ -18,7 +18,7 @@ from dal_monte_2022_analysis.behav.plotting.common import (
     resolve_figsize,
 )
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
-from dal_monte_2022_analysis.utils.paths import build_analysis_output_dir
+from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
 @dataclass
@@ -148,7 +148,7 @@ def _compare_group_means(
     mean_diff = float(lead_mean - follow_mean) if n_leader > 0 and n_follower > 0 else np.nan
 
     if n_leader > 1 and n_follower > 1:
-        p_value = float(ttest_ind(leader_values, follower_values, equal_var=False).pvalue)
+        _, p_value = safe_welch_ttest(leader_values, follower_values)
     else:
         p_value = np.nan
 
