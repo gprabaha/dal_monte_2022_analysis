@@ -34,6 +34,9 @@ DEFAULT_ROI_COLORS: dict[str, str] = {
     "right_nonsocial_object": "#E45756",
 }
 _DEFAULT_ROI_COLOR = "#6E6E6E"
+DEFAULT_SCANPATH_X_HALF_WIDTH = 1200.0
+DEFAULT_SCANPATH_Y_HALF_HEIGHT = 1000.0
+DEFAULT_SCANPATH_CENTER_ROI = "mouth"
 
 
 def _normalize_session_rows(
@@ -150,37 +153,70 @@ def _roi_bounds(rois: ROIRectsData) -> np.ndarray:
     return np.vstack(corners)
 
 
+def _scanpath_points(
+    fixation_centers: np.ndarray,
+    saccade_segments: np.ndarray,
+    rois: Optional[ROIRectsData] = None,
+) -> np.ndarray:
+    points: list[np.ndarray] = []
+    if fixation_centers.size:
+        valid_centers = fixation_centers[np.isfinite(fixation_centers).all(axis=1)]
+        if valid_centers.size:
+            points.append(valid_centers)
+    if saccade_segments.size:
+        segment_points = saccade_segments.reshape(-1, 2)
+        valid_segments = segment_points[np.isfinite(segment_points).all(axis=1)]
+        if valid_segments.size:
+            points.append(valid_segments)
+    if rois is not None:
+        roi_points = _roi_bounds(rois)
+        if roi_points.size:
+            points.append(roi_points)
+    if not points:
+        return np.empty((0, 2), dtype=float)
+    return np.vstack(points)
+
+
+def _roi_center(rois: ROIRectsData, roi_name: str) -> np.ndarray | None:
+    rect = rois.rois.get(str(roi_name))
+    if rect is None:
+        return None
+    coords = np.asarray(rect, dtype=float).reshape(-1)
+    if coords.size < 4 or not np.all(np.isfinite(coords[:4])):
+        return None
+    x1, y1, x2, y2 = coords[:4]
+    return np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0], dtype=float)
+
+
 def resolve_scanpath_bounds(
     fixation_centers: np.ndarray,
     saccade_segments: np.ndarray,
     rois: ROIRectsData,
     *,
-    margin: float = 40.0,
+    x_half_width: float = DEFAULT_SCANPATH_X_HALF_WIDTH,
+    y_half_height: float = DEFAULT_SCANPATH_Y_HALF_HEIGHT,
+    center_roi: str = DEFAULT_SCANPATH_CENTER_ROI,
 ) -> tuple[float, float, float, float]:
-    """Resolve x/y axis limits from event coordinates and ROI bounds."""
-    parts: list[np.ndarray] = []
-    if fixation_centers.size:
-        valid_centers = fixation_centers[np.isfinite(fixation_centers).all(axis=1)]
-        if valid_centers.size:
-            parts.append(valid_centers)
-    if saccade_segments.size:
-        segment_points = saccade_segments.reshape(-1, 2)
-        valid_segments = segment_points[np.isfinite(segment_points).all(axis=1)]
-        if valid_segments.size:
-            parts.append(valid_segments)
-    roi_points = _roi_bounds(rois)
-    if roi_points.size:
-        parts.append(roi_points)
+    """Resolve a fixed x/y window around the mouth ROI center."""
+    anchor = _roi_center(rois, center_roi)
+    if anchor is None:
+        anchor = _roi_center(rois, "face")
+    if anchor is None:
+        event_points = _scanpath_points(fixation_centers, saccade_segments, rois=None)
+        if event_points.size:
+            anchor = np.mean(event_points, axis=0)
+        else:
+            roi_points = _roi_bounds(rois)
+            if not roi_points.size:
+                return (0.0, 1.0, 0.0, 1.0)
+            anchor = np.mean(roi_points, axis=0)
 
-    if not parts:
-        return (0.0, 1.0, 0.0, 1.0)
-
-    coords = np.vstack(parts)
-    min_x = float(np.min(coords[:, 0]) - margin)
-    max_x = float(np.max(coords[:, 0]) + margin)
-    min_y = float(np.min(coords[:, 1]) - margin)
-    max_y = float(np.max(coords[:, 1]) + margin)
-    return (min_x, max_x, min_y, max_y)
+    return (
+        float(anchor[0] - x_half_width),
+        float(anchor[0] + x_half_width),
+        float(anchor[1] - y_half_height),
+        float(anchor[1] + y_half_height),
+    )
 
 
 def _draw_rois(
@@ -204,11 +240,12 @@ def _draw_rois(
             edgecolor=edgecolor,
             facecolor="none",
             alpha=0.9,
-            zorder=1,
+            zorder=4,
         )
+        patch.set_clip_on(True)
         ax.add_patch(patch)
         if label_rois:
-            ax.text(
+            text = ax.text(
                 x1,
                 y1,
                 str(name),
@@ -216,7 +253,7 @@ def _draw_rois(
                 color=edgecolor,
                 ha="left",
                 va="bottom",
-                zorder=4,
+                zorder=5,
                 bbox={
                     "facecolor": "white",
                     "edgecolor": "none",
@@ -224,6 +261,7 @@ def _draw_rois(
                     "pad": 1.0,
                 },
             )
+            text.set_clip_on(True)
 
 
 def plot_agent_gaze_event_scanpath(
@@ -250,12 +288,10 @@ def plot_agent_gaze_event_scanpath(
 
     fixation_centers = compute_fixation_centers(agent_data.position, agent_data.fixations)
     saccade_segments = compute_saccade_segments(agent_data.position, agent_data.saccades)
-
-    _draw_rois(
-        ax,
+    resolved_bounds = bounds or resolve_scanpath_bounds(
+        fixation_centers,
+        saccade_segments,
         agent_data.rois,
-        label_rois=label_rois,
-        line_width=roi_line_width,
     )
 
     valid_segments = saccade_segments[np.isfinite(saccade_segments).all(axis=(1, 2))]
@@ -273,6 +309,7 @@ def plot_agent_gaze_event_scanpath(
             capstyle="round",
             zorder=2,
         )
+        collection.set_clip_on(True)
         ax.add_collection(collection)
 
     valid_fixations = fixation_centers[np.isfinite(fixation_centers).all(axis=1)]
@@ -283,7 +320,7 @@ def plot_agent_gaze_event_scanpath(
             base_alpha=fixation_alpha,
             encode_event_order=encode_event_order,
         )
-        ax.scatter(
+        scatter = ax.scatter(
             valid_fixations[:, 0],
             valid_fixations[:, 1],
             s=fixation_size,
@@ -292,12 +329,16 @@ def plot_agent_gaze_event_scanpath(
             linewidths=0.35,
             zorder=3,
         )
+        scatter.set_clip_on(True)
 
-    x0, x1, y0, y1 = bounds or resolve_scanpath_bounds(
-        fixation_centers,
-        saccade_segments,
+    _draw_rois(
+        ax,
         agent_data.rois,
+        label_rois=label_rois,
+        line_width=roi_line_width,
     )
+
+    x0, x1, y0, y1 = resolved_bounds
     ax.set_xlim(x0, x1)
     ax.set_ylim(y0, y1)
     if invert_y:
@@ -316,18 +357,6 @@ def plot_agent_gaze_event_scanpath(
     return ax
 
 
-def _combine_bounds(
-    bounds: Sequence[tuple[float, float, float, float]],
-) -> tuple[float, float, float, float]:
-    if not bounds:
-        return (0.0, 1.0, 0.0, 1.0)
-    min_x = min(item[0] for item in bounds)
-    max_x = max(item[1] for item in bounds)
-    min_y = min(item[2] for item in bounds)
-    max_y = max(item[3] for item in bounds)
-    return (min_x, max_x, min_y, max_y)
-
-
 def plot_gaze_event_example_sessions(
     cfg_or_path: dict | str | Path,
     sessions: pd.DataFrame | Sequence[Mapping[str, object]],
@@ -336,7 +365,7 @@ def plot_gaze_event_example_sessions(
     figsize_per_panel: tuple[float, float] = (5.2, 4.3),
     label_rois: bool = True,
     encode_event_order: bool = True,
-    share_screen_bounds: bool = True,
+    share_screen_bounds: bool = False,
 ) -> tuple[Figure, np.ndarray]:
     """Plot multiple sessions as a date/session by agent QC grid."""
     session_keys = _normalize_session_rows(sessions)
@@ -353,20 +382,6 @@ def plot_gaze_event_example_sessions(
         )
         for key in session_keys
     ]
-
-    all_bounds: list[tuple[float, float, float, float]] = []
-    if share_screen_bounds:
-        for session_data in loaded_sessions:
-            for agent in agent_names:
-                payload = session_data.agents[agent]
-                all_bounds.append(
-                    resolve_scanpath_bounds(
-                        compute_fixation_centers(payload.position, payload.fixations),
-                        compute_saccade_segments(payload.position, payload.saccades),
-                        payload.rois,
-                    )
-                )
-    shared_bounds = _combine_bounds(all_bounds) if all_bounds else None
 
     n_rows = len(loaded_sessions)
     n_cols = len(agent_names)
@@ -391,7 +406,7 @@ def plot_gaze_event_example_sessions(
                 ax=axes[row_idx, col_idx],
                 label_rois=label_rois,
                 encode_event_order=encode_event_order,
-                bounds=shared_bounds,
+                bounds=None,
                 show_axis_labels=(row_idx == n_rows - 1 or col_idx == 0),
                 title=title,
             )
@@ -406,7 +421,7 @@ def plot_random_gaze_event_example_sessions(
     agents: Sequence[str] = DEFAULT_GAZE_EVENT_AGENTS,
     label_rois: bool = True,
     encode_event_order: bool = True,
-    share_screen_bounds: bool = True,
+    share_screen_bounds: bool = False,
 ) -> tuple[pd.DataFrame, Figure, np.ndarray]:
     """Sample random paired sessions and plot them as a QC grid."""
     sampled = sample_random_paired_gaze_event_sessions(

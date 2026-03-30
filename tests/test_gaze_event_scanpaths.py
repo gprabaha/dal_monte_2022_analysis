@@ -18,6 +18,7 @@ from dal_monte_2022_analysis.behav.plotting.gaze_event_scanpaths import (
     compute_fixation_centers,
     compute_saccade_segments,
     plot_agent_gaze_event_scanpath,
+    resolve_scanpath_bounds,
 )
 from dal_monte_2022_analysis.data.records.behavioral import (
     BehaviorRunContext,
@@ -68,7 +69,10 @@ class TestGazeEventScanpaths(unittest.TestCase):
         )
         self.rois = ROIRectsData(
             context=context,
-            rois={"face": np.array([0.0, 40.0, 30.0, 80.0], dtype=float)},
+            rois={
+                "face": np.array([0.0, 40.0, 30.0, 80.0], dtype=float),
+                "mouth": np.array([100.0, 200.0, 300.0, 400.0], dtype=float),
+            },
         )
 
     def test_compute_fixation_centers_uses_mean_valid_positions(self) -> None:
@@ -159,11 +163,93 @@ class TestGazeEventScanpaths(unittest.TestCase):
             )
             self.assertIs(returned_ax, ax)
             self.assertTrue(ax.yaxis_inverted())
-            self.assertEqual(len(ax.patches), 1)
+            self.assertEqual(len(ax.patches), len(self.rois.rois))
             self.assertTrue(any(isinstance(item, LineCollection) for item in ax.collections))
             self.assertGreaterEqual(len(ax.texts), 1)
         finally:
             plt.close(fig)
+
+    def test_plot_agent_gaze_event_scanpath_clips_full_data_to_crop_window(self) -> None:
+        outlier_position = PositionData(
+            context=self.position.context,
+            x=np.array([200.0, 220.0, 6000.0, 6200.0], dtype=float),
+            y=np.array([300.0, 320.0, 300.0, 320.0], dtype=float),
+        )
+        outlier_fixations = pd.DataFrame(
+            {
+                "date": ["20200101", "20200101"],
+                "session": ["1", "1"],
+                "agent": ["m1", "m1"],
+                "monkey_name": ["Kuro", "Kuro"],
+                "start": [0, 2],
+                "stop": [1, 3],
+            }
+        )
+        outlier_saccades = pd.DataFrame(
+            {
+                "date": ["20200101", "20200101"],
+                "session": ["1", "1"],
+                "agent": ["m1", "m1"],
+                "monkey_name": ["Kuro", "Kuro"],
+                "start": [0, 2],
+                "stop": [1, 3],
+            }
+        )
+        payload = AgentGazeEventArtifacts(
+            position=outlier_position,
+            fixations=outlier_fixations,
+            saccades=outlier_saccades,
+            rois=self.rois,
+        )
+        fig, ax = plt.subplots(figsize=(4, 3))
+        try:
+            plot_agent_gaze_event_scanpath(payload, ax=ax, encode_event_order=False)
+            line_collection = next(
+                item for item in ax.collections if isinstance(item, LineCollection)
+            )
+            np.testing.assert_allclose(
+                line_collection.get_segments(),
+                np.array(
+                    [
+                        [[200.0, 300.0], [220.0, 320.0]],
+                        [[6000.0, 300.0], [6200.0, 320.0]],
+                    ],
+                    dtype=float,
+                ),
+            )
+            scatter = next(
+                item for item in ax.collections if not isinstance(item, LineCollection)
+            )
+            np.testing.assert_allclose(
+                scatter.get_offsets(),
+                np.array([[210.0, 310.0], [6100.0, 310.0]], dtype=float),
+            )
+            self.assertEqual(ax.get_xlim(), (-1000.0, 1400.0))
+            self.assertEqual(ax.get_ylim(), (1300.0, -700.0))
+            self.assertTrue(line_collection.get_clip_on())
+            self.assertTrue(scatter.get_clip_on())
+        finally:
+            plt.close(fig)
+
+    def test_resolve_scanpath_bounds_uses_fixed_window_around_event_center(self) -> None:
+        fixation_centers = compute_fixation_centers(self.position, self.fixations)
+        saccade_segments = compute_saccade_segments(self.position, self.saccades)
+        bounds = resolve_scanpath_bounds(
+            fixation_centers,
+            saccade_segments,
+            self.rois,
+        )
+        expected_center = np.array([200.0, 300.0], dtype=float)
+        actual_center = np.array(
+            [
+                (bounds[0] + bounds[1]) / 2.0,
+                (bounds[2] + bounds[3]) / 2.0,
+            ],
+            dtype=float,
+        )
+        np.testing.assert_allclose(actual_center, expected_center)
+        self.assertEqual(bounds[1] - bounds[0], 2400.0)
+        self.assertEqual(bounds[3] - bounds[2], 2000.0)
 
 
 if __name__ == "__main__":
