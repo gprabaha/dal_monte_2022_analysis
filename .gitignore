@@ -1,5 +1,8 @@
 # OS junk
 .DS_Store
+.vscode/
+.codex
+.codex/
 
 # Data
 *.mat
@@ -11,6 +14,8 @@
 results/
 figures/
 plots/
+slurm-*.out
+slurm-*.err
 
 # Python / MATLAB cruft
 __pycache__/
