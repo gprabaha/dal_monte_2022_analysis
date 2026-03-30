@@ -15,6 +15,17 @@ from .processed_data import (
     scan_processed_paths,
     scan_processed_paths_for_filename,
 )
+from .gaze_event_qc import (
+    AgentGazeEventArtifacts,
+    DEFAULT_GAZE_EVENT_AGENTS,
+    DEFAULT_GAZE_EVENT_MODALITIES,
+    SessionGazeEventArtifacts,
+    SessionKey,
+    find_paired_gaze_event_sessions,
+    load_gaze_event_session_artifacts,
+    normalize_gaze_event_agents,
+    sample_random_paired_gaze_event_sessions,
+)
 from .analysis_index import (
     build_analysis_output_dir,
     scan_analysis_date_paths,
@@ -39,6 +50,15 @@ __all__ = [
     "save_processed_pickle",
     "scan_processed_paths",
     "scan_processed_paths_for_filename",
+    "AgentGazeEventArtifacts",
+    "DEFAULT_GAZE_EVENT_AGENTS",
+    "DEFAULT_GAZE_EVENT_MODALITIES",
+    "SessionGazeEventArtifacts",
+    "SessionKey",
+    "find_paired_gaze_event_sessions",
+    "load_gaze_event_session_artifacts",
+    "normalize_gaze_event_agents",
+    "sample_random_paired_gaze_event_sessions",
     "build_analysis_output_dir",
     "scan_analysis_paths",
     "scan_analysis_date_paths",
