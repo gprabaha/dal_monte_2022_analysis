@@ -7,6 +7,10 @@ import warnings
 from pathlib import Path
 from typing import Iterable, List, Optional
 
+CONDA_INIT_SCRIPT = Path(
+    "/gpfs/milgram/apps/avx2/software/miniconda/24.11.3/etc/profile.d/conda.sh"
+)
+
 
 def write_job_file(job_file_path: Path, commands: Iterable[str]) -> None:
     """Write one command per line to a job file.
@@ -29,16 +33,16 @@ def _build_conda_python_command(
     working_dir: Path | None = None,
 ) -> str:
     """Build one shell command that activates conda env and runs python argv."""
+    if python_argv and python_argv[0] == "python" and "-u" not in python_argv[1:2]:
+        python_argv = ["python", "-u", *python_argv[1:]]
     segments = [
-        "module load miniconda",
-        "conda init",
-        "conda deactivate",
+        f"source {shlex.quote(str(CONDA_INIT_SCRIPT))}",
         f"conda activate {shlex.quote(str(env_name))}",
     ]
     if working_dir is not None:
         segments.append(f"cd {shlex.quote(str(working_dir))}")
     segments.append(shlex.join([str(token) for token in python_argv]))
-    return "; ".join(segments)
+    return " && ".join(segments)
 
 
 def _format_repo_relative_path(path: str | Path, repo_root: Path | None) -> str:

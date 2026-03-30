@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from dal_monte_2022_analysis.runtime.hpc.jobs import (
+    CONDA_INIT_SCRIPT,
     generate_fix_cross_correlation_shuffle_job_file,
     generate_fixation_job_file,
     generate_gaze_event_job_file,
@@ -41,6 +42,9 @@ class TestHpcJobs(unittest.TestCase):
                 gaze_event_cfg_path="/tmp/gaze.yaml",
             )
             line = job_file.read_text().strip()
+            self.assertIn(f"source {CONDA_INIT_SCRIPT}", line)
+            self.assertIn("conda activate analysis-env", line)
+            self.assertIn("python -u /tmp/worker.py", line)
             self.assertIn("--dataset-cfg /tmp/dataset.yaml", line)
             self.assertIn("--gaze-event-cfg /tmp/gaze.yaml", line)
             self.assertIn("--date 01012020", line)
@@ -72,7 +76,7 @@ class TestHpcJobs(unittest.TestCase):
 
             line = job_file.read_text().strip()
             self.assertIn(f"cd {repo_root}", line)
-            self.assertIn("python scripts/worker.py", line)
+            self.assertIn("python -u scripts/worker.py", line)
             self.assertIn("--dataset-cfg configs/dataset.yaml", line)
             self.assertIn("--gaze-event-cfg configs/gaze.yaml", line)
 
@@ -116,7 +120,7 @@ class TestHpcJobs(unittest.TestCase):
 
             line = job_file.read_text().strip()
             self.assertIn(f"cd {repo_root}", line)
-            self.assertIn("python scripts/worker.py", line)
+            self.assertIn("python -u scripts/worker.py", line)
             self.assertIn("--dataset-cfg configs/dataset.yaml", line)
             self.assertIn("--fix-cross-correlation-cfg configs/fix.yaml", line)
 

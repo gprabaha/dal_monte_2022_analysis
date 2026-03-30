@@ -8,4 +8,4 @@ log_dir: hpc/gaze_event_logs
 partition: psych_day
 cpus_per_task: 8
 mem_per_cpu: 2G
-time_limit: "02:00:00"
+time_limit: "00:30:00"
