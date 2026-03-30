@@ -3,6 +3,30 @@ input_modality: gaze_position
 output_fixations_modality: fixations
 output_saccades_modality: saccades
 
+fixation_detection:
+  default_sampling_rate_hz: 1000.0
+  minimum_input_duration_ms: 500.0
+  minimum_feature_samples: 3
+  fixation_min_duration_ms: 25.0
+  saccade_min_duration_ms: 10.0
+  tiny_fixation_reassign_duration_ms: 5.0
+  lowpass_filter_order: 60
+  lowpass_cutoff_hz: 30.0
+  lowpass_buffer_duration_ms: 100.0
+  global_kmeans_k_min: 2
+  global_kmeans_k_max: 5
+  global_decimation_step: 10
+  global_min_sampled_points: 10
+  local_recluster_padding_duration_ms: 50.0
+  local_min_feature_samples: 5
+  local_kmeans_k_min: 2
+  local_kmeans_k_max: 5
+  local_decimation_step: 5
+  kmeans_n_init: 5
+  silhouette_threshold_fraction: 0.9
+  fixation_cluster_velocity_std_multiplier: 3.0
+  random_state: 42
+
 run_hpc: true
 use_parallel: true
 test_single: false

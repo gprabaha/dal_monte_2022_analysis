@@ -1,6 +1,10 @@
 """Behavioral-domain core logic."""
 
-from .fixation_detection import detect_fixations_and_saccades
+from .fixation_detection import (
+    FixationDetectionConfig,
+    coerce_fixation_detection_config,
+    detect_fixations_and_saccades,
+)
 from .roi_groups import (
     DEFAULT_FIXATION_CATEGORY_ORDER,
     DEFAULT_FIXATION_ROI_GROUPS,
@@ -17,6 +21,8 @@ __all__ = [
     "DEFAULT_FIXATION_CATEGORY_ORDER",
     "DEFAULT_FIXATION_ROI_GROUPS",
     "canonical_fixation_category",
+    "FixationDetectionConfig",
+    "coerce_fixation_detection_config",
     "categorize_locations",
     "coerce_location_labels",
     "detect_fixations_and_saccades",

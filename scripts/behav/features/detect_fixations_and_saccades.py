@@ -6,6 +6,7 @@ from pathlib import Path
 from dal_monte_2022_analysis.config.load import get_repo_root, load_config, resolve_repo_path
 from dal_monte_2022_analysis.behav.features.gaze_event_detection import (
     GazeEventDetectionSettings,
+    build_gaze_event_detection_settings,
     process_and_save_gaze_events_for_row,
     run_gaze_event_detection,
 )
@@ -54,15 +55,7 @@ def main():
 
     detection_cfg = load_config(args.gaze_event_cfg)
 
-    settings = GazeEventDetectionSettings(
-        cfg_path=args.dataset_cfg,
-        input_modality=detection_cfg.get("input_modality", "gaze_position"),
-        output_fixations_modality=detection_cfg.get("output_fixations_modality", "fixations"),
-        output_saccades_modality=detection_cfg.get("output_saccades_modality", "saccades"),
-        use_parallel=detection_cfg.get("use_parallel", True),
-        test_single=detection_cfg.get("test_single", False),
-        agents=detection_cfg.get("agents"),
-    )
+    settings = build_gaze_event_detection_settings(args.dataset_cfg, detection_cfg)
 
     if args.date and args.session and args.agent:
         row = {"date": args.date, "session": args.session}

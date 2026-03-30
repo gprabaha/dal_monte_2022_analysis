@@ -1,9 +1,9 @@
 """Gaze event (fixation/saccade) detection pipeline."""
 
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from multiprocessing import Pool
-from typing import List, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -14,7 +14,11 @@ from dal_monte_2022_analysis.data.loaders.behavioral import (
     index_behavioral_processed_data_from_cfg,
 )
 from dal_monte_2022_analysis.core.contracts import validate_gaze_event_frame
-from dal_monte_2022_analysis.core.behav.fixation_detection import detect_fixations_and_saccades
+from dal_monte_2022_analysis.core.behav.fixation_detection import (
+    FixationDetectionConfig,
+    coerce_fixation_detection_config,
+    detect_fixations_and_saccades,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_processed_pickle,
     save_processed_pickle,
@@ -29,9 +33,27 @@ class GazeEventDetectionSettings:
     input_modality: str = "gaze_position"
     output_fixations_modality: str = "fixations"
     output_saccades_modality: str = "saccades"
+    fixation_detection: FixationDetectionConfig = field(default_factory=FixationDetectionConfig)
     use_parallel: bool = True
     test_single: bool = False
     agents: Optional[List[str]] = None
+
+
+def build_gaze_event_detection_settings(
+    cfg_path: str,
+    detection_cfg: Mapping[str, Any],
+) -> GazeEventDetectionSettings:
+    """Build typed gaze-event settings from a YAML config mapping."""
+    return GazeEventDetectionSettings(
+        cfg_path=cfg_path,
+        input_modality=detection_cfg.get("input_modality", "gaze_position"),
+        output_fixations_modality=detection_cfg.get("output_fixations_modality", "fixations"),
+        output_saccades_modality=detection_cfg.get("output_saccades_modality", "saccades"),
+        fixation_detection=coerce_fixation_detection_config(detection_cfg.get("fixation_detection")),
+        use_parallel=detection_cfg.get("use_parallel", True),
+        test_single=detection_cfg.get("test_single", False),
+        agents=detection_cfg.get("agents"),
+    )
 
 
 def _extract_non_nan_chunks(positions: np.ndarray) -> Tuple[List[np.ndarray], List[int]]:
@@ -60,18 +82,24 @@ def _extract_non_nan_chunks(positions: np.ndarray) -> Tuple[List[np.ndarray], Li
     return non_nan_chunks, start_indices
 
 
-def _detect_events_in_chunk(args: Tuple[np.ndarray, int]) -> Tuple[np.ndarray, np.ndarray]:
+def _detect_events_in_chunk(
+    args: Tuple[np.ndarray, int, float, FixationDetectionConfig],
+) -> Tuple[np.ndarray, np.ndarray]:
     """Detect events for a chunk and rebase indices to global offsets.
 
     Args:
-        args: Tuple of (position_chunk, start_index).
+        args: Tuple of (position_chunk, start_index, sampling_rate_hz, detection_config).
 
     Returns:
         Tuple of (fixation_intervals, saccade_intervals) rebased to full indices.
     """
-    position_chunk, start_ind = args
+    position_chunk, start_ind, sampling_rate_hz, detection_config = args
     print(f"Detecting fixations for chunk starting at {start_ind}\n")
-    fixation_start_stop_indices, saccade_start_stop_indices = detect_fixations_and_saccades(position_chunk)
+    fixation_start_stop_indices, saccade_start_stop_indices = detect_fixations_and_saccades(
+        position_chunk,
+        sampling_rate_hz=sampling_rate_hz,
+        config=detection_config,
+    )
     fixation_start_stop_indices += start_ind
     saccade_start_stop_indices += start_ind
     return fixation_start_stop_indices, saccade_start_stop_indices
@@ -113,6 +141,24 @@ def _load_positions(cfg: dict, row: dict, agent: str, input_modality: str):
         return None
 
 
+def _resolve_sampling_rate_hz(
+    settings: GazeEventDetectionSettings,
+    pos_data,
+) -> float:
+    """Resolve sampling rate from data metadata, falling back to config defaults."""
+    sample_rate_hz = getattr(pos_data, "sample_rate_hz", None)
+    if sample_rate_hz is None:
+        context = getattr(pos_data, "context", None)
+        sample_rate_hz = getattr(context, "sample_rate_hz", None)
+    if sample_rate_hz is None:
+        sample_rate_hz = settings.fixation_detection.default_sampling_rate_hz
+
+    sample_rate_hz = float(sample_rate_hz)
+    if sample_rate_hz <= 0:
+        raise ValueError(f"Resolved sampling rate must be positive, got {sample_rate_hz}.")
+    return sample_rate_hz
+
+
 def detect_gaze_events_for_row(
     settings: GazeEventDetectionSettings,
     row: dict,
@@ -136,8 +182,12 @@ def detect_gaze_events_for_row(
         return None, None
 
     positions = np.stack([pos_data.x, pos_data.y], axis=1)
+    sampling_rate_hz = _resolve_sampling_rate_hz(settings, pos_data)
     non_nan_chunks, chunk_start_indices = _extract_non_nan_chunks(positions)
-    args = [(chunk, start) for chunk, start in zip(non_nan_chunks, chunk_start_indices)]
+    args = [
+        (chunk, start, sampling_rate_hz, settings.fixation_detection)
+        for chunk, start in zip(non_nan_chunks, chunk_start_indices)
+    ]
     
     if settings.use_parallel and len(args) > 1:
         n_proc = get_n_processes(max_procs=8)

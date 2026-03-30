@@ -4,7 +4,7 @@ import argparse
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.behav.features.gaze_event_detection import (
-    GazeEventDetectionSettings,
+    build_gaze_event_detection_settings,
     process_and_save_gaze_events_for_row,
 )
 
@@ -22,15 +22,7 @@ def main():
     args = parser.parse_args()
 
     detection_cfg = load_config(args.gaze_event_cfg)
-    settings = GazeEventDetectionSettings(
-        cfg_path=args.dataset_cfg,
-        input_modality=detection_cfg.get("input_modality", "gaze_position"),
-        output_fixations_modality=detection_cfg.get("output_fixations_modality", "fixations"),
-        output_saccades_modality=detection_cfg.get("output_saccades_modality", "saccades"),
-        use_parallel=detection_cfg.get("use_parallel", True),
-        test_single=False,
-        agents=detection_cfg.get("agents"),
-    )
+    settings = build_gaze_event_detection_settings(args.dataset_cfg, detection_cfg)
 
     row = {"date": args.date, "session": args.session}
     process_and_save_gaze_events_for_row(settings, row, args.agent)
