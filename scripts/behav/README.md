@@ -9,7 +9,6 @@ Behavioral CLI entrypoints.
 - `analysis/`
 - `plotting/`
 - `modeling/`
-- `bash/`
 
 ## Typical Execution Order
 
@@ -39,3 +38,5 @@ Behavioral CLI entrypoints.
 - HSMM (`build_face_fixation_hsmm.py`)
 
 Detailed script-level descriptions are in each subfolder README.
+
+SLURM launchers live under `hpc/behav/`.

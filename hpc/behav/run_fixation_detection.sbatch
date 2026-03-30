@@ -4,6 +4,8 @@
 #SBATCH --cpus-per-task=1
 #SBATCH --mem=32G
 #SBATCH --time=05:00:00
+#SBATCH --output=hpc/behav/logs/%x_%j.out
+#SBATCH --error=hpc/behav/logs/%x_%j.err
 
 set -euo pipefail
 

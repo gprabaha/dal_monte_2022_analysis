@@ -10,9 +10,12 @@ This directory is used by dSQ/SLURM submission workflows configured in:
 Typical contents:
 - generated job command files (`*.txt`)
 - generated sbatch scripts (`*.sh`)
+- hand-authored launchers grouped by domain (`behav/*.sbatch`, etc.)
 - per-task stdout/stderr logs
 - dSQ status files
 
 Notes:
 - Files here are usually generated, not hand-edited.
 - Safe to clean between runs if you no longer need logs.
+- Domain-specific log folders can be tracked when needed, for example
+  `hpc/behav/logs/` for direct behavioral `sbatch` entrypoints.

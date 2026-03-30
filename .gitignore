@@ -24,3 +24,10 @@ dist/
 hpc/*
 !hpc/README.md
 !hpc/*.sbatch
+!hpc/behav/
+hpc/behav/*
+!hpc/behav/run_fixation_detection.sbatch
+!hpc/behav/run_face_fix_cross_correlation_all_scopes.sbatch
+!hpc/behav/logs/
+hpc/behav/logs/*
+!hpc/behav/logs/.gitkeep
