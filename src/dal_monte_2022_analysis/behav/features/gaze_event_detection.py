@@ -33,6 +33,7 @@ class GazeEventDetectionSettings:
     input_modality: str = "gaze_position"
     output_fixations_modality: str = "fixations"
     output_saccades_modality: str = "saccades"
+    roi_assignment_expansion_fraction: float = 0.2
     fixation_detection: FixationDetectionConfig = field(default_factory=FixationDetectionConfig)
     use_parallel: bool = True
     test_single: bool = False
@@ -44,11 +45,21 @@ def build_gaze_event_detection_settings(
     detection_cfg: Mapping[str, Any],
 ) -> GazeEventDetectionSettings:
     """Build typed gaze-event settings from a YAML config mapping."""
+    roi_assignment_expansion_fraction = float(
+        detection_cfg.get("roi_assignment_expansion_fraction", 0.2)
+    )
+    if roi_assignment_expansion_fraction < 0:
+        raise ValueError(
+            "roi_assignment_expansion_fraction must be non-negative, "
+            f"got {roi_assignment_expansion_fraction}."
+        )
+
     return GazeEventDetectionSettings(
         cfg_path=cfg_path,
         input_modality=detection_cfg.get("input_modality", "gaze_position"),
         output_fixations_modality=detection_cfg.get("output_fixations_modality", "fixations"),
         output_saccades_modality=detection_cfg.get("output_saccades_modality", "saccades"),
+        roi_assignment_expansion_fraction=roi_assignment_expansion_fraction,
         fixation_detection=coerce_fixation_detection_config(detection_cfg.get("fixation_detection")),
         use_parallel=detection_cfg.get("use_parallel", True),
         test_single=detection_cfg.get("test_single", False),
@@ -247,6 +258,7 @@ def process_and_save_gaze_events_for_row(
                 agent,
                 fix_df,
                 input_modality=settings.input_modality,
+                roi_expansion_fraction=settings.roi_assignment_expansion_fraction,
             )
         if sacc_df is not None and not sacc_df.empty:
             sacc_df = annotate_saccade_from_to(
@@ -255,6 +267,7 @@ def process_and_save_gaze_events_for_row(
                 agent,
                 sacc_df,
                 input_modality=settings.input_modality,
+                roi_expansion_fraction=settings.roi_assignment_expansion_fraction,
             )
     
     if reconcile and fix_df is not None and sacc_df is not None:
@@ -385,6 +398,7 @@ def annotate_fixation_locations(
     fix_df: pd.DataFrame,
     input_modality: str = "gaze_position",
     roi_modality: str = "roi_vertices",
+    roi_expansion_fraction: float = 0.2,
 ) -> pd.DataFrame:
     """Annotate fixation rows with ROI labels based on mean gaze position.
 
@@ -403,7 +417,10 @@ def annotate_fixation_locations(
 
     x = np.array(pos_data.x)
     y = np.array(pos_data.y)
-    roi_rects = _roi_rects_to_df(roi_data)
+    roi_rects = _roi_rects_to_df(
+        roi_data,
+        expansion_fraction=roi_expansion_fraction,
+    )
 
     fix_df = fix_df.copy()
     fix_df["location"] = None
@@ -423,6 +440,7 @@ def annotate_saccade_from_to(
     sacc_df: pd.DataFrame,
     input_modality: str = "gaze_position",
     roi_modality: str = "roi_vertices",
+    roi_expansion_fraction: float = 0.2,
 ) -> pd.DataFrame:
     """Annotate saccade rows with ROI labels for start/end positions.
 
@@ -442,7 +460,10 @@ def annotate_saccade_from_to(
 
     x = np.array(pos_data.x)
     y = np.array(pos_data.y)
-    roi_rects = _roi_rects_to_df(roi_data)
+    roi_rects = _roi_rects_to_df(
+        roi_data,
+        expansion_fraction=roi_expansion_fraction,
+    )
 
     sacc_df = sacc_df.copy()
     sacc_df["from"] = None
@@ -544,27 +565,45 @@ def reconcile_fixation_saccade_label_mismatches_until_stable(
     return fix_df, sacc_df
 
 
-def _roi_rects_to_df(roi_data) -> pd.DataFrame:
+def _roi_rects_to_df(
+    roi_data,
+    *,
+    expansion_fraction: float = 0.0,
+) -> pd.DataFrame:
     """Convert ROI rectangle data into a normalized DataFrame.
 
     Args:
         roi_data: ROI data object with a .rois mapping.
+        expansion_fraction: Fractional width/height growth applied around
+            each ROI center. For example, ``0.2`` makes the rectangle 20%
+            larger in width and height, adding 10% padding on each side.
 
     Returns:
         DataFrame with ROI name and bounding box columns.
     """
+    if expansion_fraction < 0:
+        raise ValueError(
+            f"expansion_fraction must be non-negative, got {expansion_fraction}."
+        )
+
     rows = []
     for name, rect in roi_data.rois.items():
         rect = np.asarray(rect).astype(float)
         if rect.size != 4:
             continue
         x1, y1, x2, y2 = rect
+        x_min = min(x1, x2)
+        x_max = max(x1, x2)
+        y_min = min(y1, y2)
+        y_max = max(y1, y2)
+        x_pad = (x_max - x_min) * expansion_fraction / 2.0
+        y_pad = (y_max - y_min) * expansion_fraction / 2.0
         rows.append({
             "roi_name": name,
-            "x_min": min(x1, x2),
-            "x_max": max(x1, x2),
-            "y_min": min(y1, y2),
-            "y_max": max(y1, y2),
+            "x_min": x_min - x_pad,
+            "x_max": x_max + x_pad,
+            "y_min": y_min - y_pad,
+            "y_max": y_max + y_pad,
         })
     return pd.DataFrame(rows)
 

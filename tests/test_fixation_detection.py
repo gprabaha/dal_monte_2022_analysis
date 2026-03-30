@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
+import pandas as pd
 
 from dal_monte_2022_analysis.core.behav.fixation_detection import (
     FixationDetectionConfig,
@@ -12,6 +15,8 @@ from dal_monte_2022_analysis.core.behav.fixation_detection import (
     detect_fixations_and_saccades,
 )
 from dal_monte_2022_analysis.behav.features.gaze_event_detection import (
+    annotate_fixation_locations,
+    annotate_saccade_from_to,
     build_gaze_event_detection_settings,
 )
 
@@ -48,14 +53,96 @@ class TestFixationDetection(unittest.TestCase):
         settings = build_gaze_event_detection_settings(
             "configs/dataset.yaml",
             {
+                "roi_assignment_expansion_fraction": 0.35,
                 "fixation_detection": {
                     "default_sampling_rate_hz": 500.0,
                     "global_kmeans_k_min": 3,
                 }
             },
         )
+        self.assertEqual(settings.roi_assignment_expansion_fraction, 0.35)
         self.assertEqual(settings.fixation_detection.default_sampling_rate_hz, 500.0)
         self.assertEqual(settings.fixation_detection.global_kmeans_k_min, 3)
+
+    def test_annotate_fixation_locations_expands_roi_assignment_window(self) -> None:
+        pos_data = SimpleNamespace(
+            x=np.array([10.8, 10.8], dtype=float),
+            y=np.array([5.0, 5.0], dtype=float),
+        )
+        roi_data = SimpleNamespace(
+            rois={"mouth": np.array([0.0, 0.0, 10.0, 10.0], dtype=float)}
+        )
+        fix_df = pd.DataFrame({"start": [0], "stop": [1]})
+        row = {"date": "01012018", "session": "1"}
+
+        with patch(
+            "dal_monte_2022_analysis.behav.features.gaze_event_detection.load_config",
+            return_value={},
+        ), patch(
+            "dal_monte_2022_analysis.behav.features.gaze_event_detection._load_positions",
+            return_value=pos_data,
+        ), patch(
+            "dal_monte_2022_analysis.behav.features.gaze_event_detection.load_processed_pickle",
+            return_value=roi_data,
+        ):
+            unexpanded = annotate_fixation_locations(
+                "configs/dataset.yaml",
+                row,
+                "m1",
+                fix_df,
+                roi_expansion_fraction=0.0,
+            )
+            expanded = annotate_fixation_locations(
+                "configs/dataset.yaml",
+                row,
+                "m1",
+                fix_df,
+                roi_expansion_fraction=0.2,
+            )
+
+        self.assertEqual(unexpanded.at[0, "location"], ["out_of_roi"])
+        self.assertEqual(expanded.at[0, "location"], ["mouth"])
+
+    def test_annotate_saccade_from_to_expands_roi_assignment_window(self) -> None:
+        pos_data = SimpleNamespace(
+            x=np.array([10.8, -0.8], dtype=float),
+            y=np.array([5.0, 5.0], dtype=float),
+        )
+        roi_data = SimpleNamespace(
+            rois={"mouth": np.array([0.0, 0.0, 10.0, 10.0], dtype=float)}
+        )
+        sacc_df = pd.DataFrame({"start": [0], "stop": [1]})
+        row = {"date": "01012018", "session": "1"}
+
+        with patch(
+            "dal_monte_2022_analysis.behav.features.gaze_event_detection.load_config",
+            return_value={},
+        ), patch(
+            "dal_monte_2022_analysis.behav.features.gaze_event_detection._load_positions",
+            return_value=pos_data,
+        ), patch(
+            "dal_monte_2022_analysis.behav.features.gaze_event_detection.load_processed_pickle",
+            return_value=roi_data,
+        ):
+            unexpanded = annotate_saccade_from_to(
+                "configs/dataset.yaml",
+                row,
+                "m1",
+                sacc_df,
+                roi_expansion_fraction=0.0,
+            )
+            expanded = annotate_saccade_from_to(
+                "configs/dataset.yaml",
+                row,
+                "m1",
+                sacc_df,
+                roi_expansion_fraction=0.2,
+            )
+
+        self.assertEqual(unexpanded.at[0, "from"], ["out_of_roi"])
+        self.assertEqual(unexpanded.at[0, "to"], ["out_of_roi"])
+        self.assertEqual(expanded.at[0, "from"], ["mouth"])
+        self.assertEqual(expanded.at[0, "to"], ["mouth"])
 
     def test_long_input_returns_well_formed_intervals(self) -> None:
         rng = np.random.default_rng(13)

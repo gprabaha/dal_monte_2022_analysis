@@ -2,6 +2,7 @@
 input_modality: gaze_position
 output_fixations_modality: fixations
 output_saccades_modality: saccades
+roi_assignment_expansion_fraction: 0.2
 
 fixation_detection:
   default_sampling_rate_hz: 1000.0
