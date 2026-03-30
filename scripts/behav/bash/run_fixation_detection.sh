@@ -7,11 +7,16 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+REPO_ROOT="${SLURM_SUBMIT_DIR:-$PWD}"
 cd "${REPO_ROOT}"
 
+if [[ ! -f "scripts/behav/features/detect_fixations_and_saccades.py" ]]; then
+  echo "Expected repo root in SLURM_SUBMIT_DIR or current working directory, got: ${REPO_ROOT}" >&2
+  exit 1
+fi
+
 module load miniconda
-eval "$(conda shell.bash hook)"
+source /gpfs/milgram/apps/avx2/software/miniconda/24.11.3/etc/profile.d/conda.sh
 conda activate gaze_processing
 
 DATASET_CFG="${DATASET_CFG:-configs/dataset.yaml}"

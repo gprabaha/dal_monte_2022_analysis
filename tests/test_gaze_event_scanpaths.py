@@ -18,6 +18,7 @@ from dal_monte_2022_analysis.behav.plotting.gaze_event_scanpaths import (
     compute_fixation_centers,
     compute_saccade_segments,
     plot_agent_gaze_event_scanpath,
+    plot_gaze_event_example_sessions,
     resolve_scanpath_bounds,
 )
 from dal_monte_2022_analysis.data.records.behavioral import (
@@ -169,6 +170,31 @@ class TestGazeEventScanpaths(unittest.TestCase):
         finally:
             plt.close(fig)
 
+    def test_plot_agent_gaze_event_scanpath_expands_roi_boxes(self) -> None:
+        payload = AgentGazeEventArtifacts(
+            position=self.position,
+            fixations=self.fixations,
+            saccades=self.saccades,
+            rois=self.rois,
+        )
+        fig, ax = plt.subplots(figsize=(4, 3))
+        try:
+            plot_agent_gaze_event_scanpath(
+                payload,
+                ax=ax,
+                encode_event_order=False,
+                roi_expansion_fraction=0.2,
+            )
+            mouth_patch = next(
+                patch
+                for patch in ax.patches
+                if np.isclose(patch.get_x(), 80.0) and np.isclose(patch.get_y(), 180.0)
+            )
+            self.assertAlmostEqual(mouth_patch.get_width(), 240.0)
+            self.assertAlmostEqual(mouth_patch.get_height(), 240.0)
+        finally:
+            plt.close(fig)
+
     def test_plot_agent_gaze_event_scanpath_clips_full_data_to_crop_window(self) -> None:
         outlier_position = PositionData(
             context=self.position.context,
@@ -250,6 +276,48 @@ class TestGazeEventScanpaths(unittest.TestCase):
         np.testing.assert_allclose(actual_center, expected_center)
         self.assertEqual(bounds[1] - bounds[0], 2400.0)
         self.assertEqual(bounds[3] - bounds[2], 2000.0)
+
+    def test_plot_gaze_event_example_sessions_uses_detection_cfg_roi_expansion(self) -> None:
+        payload = AgentGazeEventArtifacts(
+            position=self.position,
+            fixations=self.fixations,
+            saccades=self.saccades,
+            rois=self.rois,
+        )
+        session_payload = type(
+            "SessionPayload",
+            (),
+            {
+                "key": type(
+                    "SessionKeyPayload",
+                    (),
+                    {"date": "20200101", "session": "1"},
+                )(),
+                "agents": {"m1": payload},
+            },
+        )()
+        sessions = pd.DataFrame([{"date": "20200101", "session": "1"}])
+
+        with patch(
+            "dal_monte_2022_analysis.behav.plotting.gaze_event_scanpaths.load_gaze_event_session_artifacts",
+            return_value=session_payload,
+        ):
+            fig, axes = plot_gaze_event_example_sessions(
+                {"processed_data_root": "/tmp"},
+                sessions,
+                agents=("m1",),
+                detection_cfg_or_path={"roi_assignment_expansion_fraction": 0.2},
+            )
+        try:
+            mouth_patch = next(
+                patch
+                for patch in axes[0, 0].patches
+                if np.isclose(patch.get_x(), 80.0) and np.isclose(patch.get_y(), 180.0)
+            )
+            self.assertAlmostEqual(mouth_patch.get_width(), 240.0)
+            self.assertAlmostEqual(mouth_patch.get_height(), 240.0)
+        finally:
+            plt.close(fig)
 
 
 if __name__ == "__main__":

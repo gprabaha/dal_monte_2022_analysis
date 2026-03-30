@@ -19,6 +19,11 @@ from dal_monte_2022_analysis.core.behav.fixation_detection import (
     coerce_fixation_detection_config,
     detect_fixations_and_saccades,
 )
+from dal_monte_2022_analysis.core.behav.roi_geometry import (
+    DEFAULT_ROI_ASSIGNMENT_EXPANSION_FRACTION,
+    coerce_roi_expansion_fraction,
+    iter_roi_rect_bounds,
+)
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_processed_pickle,
     save_processed_pickle,
@@ -33,7 +38,7 @@ class GazeEventDetectionSettings:
     input_modality: str = "gaze_position"
     output_fixations_modality: str = "fixations"
     output_saccades_modality: str = "saccades"
-    roi_assignment_expansion_fraction: float = 0.2
+    roi_assignment_expansion_fraction: float = DEFAULT_ROI_ASSIGNMENT_EXPANSION_FRACTION
     fixation_detection: FixationDetectionConfig = field(default_factory=FixationDetectionConfig)
     use_parallel: bool = True
     test_single: bool = False
@@ -45,14 +50,9 @@ def build_gaze_event_detection_settings(
     detection_cfg: Mapping[str, Any],
 ) -> GazeEventDetectionSettings:
     """Build typed gaze-event settings from a YAML config mapping."""
-    roi_assignment_expansion_fraction = float(
-        detection_cfg.get("roi_assignment_expansion_fraction", 0.2)
+    roi_assignment_expansion_fraction = coerce_roi_expansion_fraction(
+        detection_cfg.get("roi_assignment_expansion_fraction")
     )
-    if roi_assignment_expansion_fraction < 0:
-        raise ValueError(
-            "roi_assignment_expansion_fraction must be non-negative, "
-            f"got {roi_assignment_expansion_fraction}."
-        )
 
     return GazeEventDetectionSettings(
         cfg_path=cfg_path,
@@ -398,7 +398,7 @@ def annotate_fixation_locations(
     fix_df: pd.DataFrame,
     input_modality: str = "gaze_position",
     roi_modality: str = "roi_vertices",
-    roi_expansion_fraction: float = 0.2,
+    roi_expansion_fraction: float = DEFAULT_ROI_ASSIGNMENT_EXPANSION_FRACTION,
 ) -> pd.DataFrame:
     """Annotate fixation rows with ROI labels based on mean gaze position.
 
@@ -440,7 +440,7 @@ def annotate_saccade_from_to(
     sacc_df: pd.DataFrame,
     input_modality: str = "gaze_position",
     roi_modality: str = "roi_vertices",
-    roi_expansion_fraction: float = 0.2,
+    roi_expansion_fraction: float = DEFAULT_ROI_ASSIGNMENT_EXPANSION_FRACTION,
 ) -> pd.DataFrame:
     """Annotate saccade rows with ROI labels for start/end positions.
 
@@ -581,29 +581,18 @@ def _roi_rects_to_df(
     Returns:
         DataFrame with ROI name and bounding box columns.
     """
-    if expansion_fraction < 0:
-        raise ValueError(
-            f"expansion_fraction must be non-negative, got {expansion_fraction}."
-        )
-
     rows = []
-    for name, rect in roi_data.rois.items():
-        rect = np.asarray(rect).astype(float)
-        if rect.size != 4:
-            continue
-        x1, y1, x2, y2 = rect
-        x_min = min(x1, x2)
-        x_max = max(x1, x2)
-        y_min = min(y1, y2)
-        y_max = max(y1, y2)
-        x_pad = (x_max - x_min) * expansion_fraction / 2.0
-        y_pad = (y_max - y_min) * expansion_fraction / 2.0
+    for name, bounds in iter_roi_rect_bounds(
+        roi_data,
+        expansion_fraction=expansion_fraction,
+    ):
+        x_min, x_max, y_min, y_max = bounds
         rows.append({
             "roi_name": name,
-            "x_min": x_min - x_pad,
-            "x_max": x_max + x_pad,
-            "y_min": y_min - y_pad,
-            "y_max": y_max + y_pad,
+            "x_min": x_min,
+            "x_max": x_max,
+            "y_min": y_min,
+            "y_max": y_max,
         })
     return pd.DataFrame(rows)
 

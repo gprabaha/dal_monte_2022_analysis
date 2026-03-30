@@ -14,6 +14,14 @@ from matplotlib.collections import LineCollection
 from matplotlib.figure import Figure
 from matplotlib.patches import Rectangle
 
+from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.core.behav.roi_geometry import (
+    DEFAULT_ROI_ASSIGNMENT_EXPANSION_FRACTION,
+    coerce_roi_expansion_fraction,
+    expand_roi_rect_bounds,
+    iter_roi_rect_bounds,
+    normalize_roi_rect_bounds,
+)
 from dal_monte_2022_analysis.runtime.io.gaze_event_qc import (
     AgentGazeEventArtifacts,
     DEFAULT_GAZE_EVENT_AGENTS,
@@ -37,6 +45,7 @@ _DEFAULT_ROI_COLOR = "#6E6E6E"
 DEFAULT_SCANPATH_X_HALF_WIDTH = 1200.0
 DEFAULT_SCANPATH_Y_HALF_HEIGHT = 1000.0
 DEFAULT_SCANPATH_CENTER_ROI = "mouth"
+DEFAULT_GAZE_EVENT_DETECTION_CFG_PATH = Path("configs/gaze_event_detection.yaml")
 
 
 def _normalize_session_rows(
@@ -140,14 +149,32 @@ def _alpha_rgba(
     return colors
 
 
-def _roi_bounds(rois: ROIRectsData) -> np.ndarray:
+def _resolve_roi_expansion_fraction(
+    detection_cfg_or_path: Mapping[str, object] | str | Path | None,
+) -> float:
+    if detection_cfg_or_path is None:
+        return DEFAULT_ROI_ASSIGNMENT_EXPANSION_FRACTION
+    if isinstance(detection_cfg_or_path, (str, Path)):
+        detection_cfg = load_config(str(detection_cfg_or_path))
+    else:
+        detection_cfg = detection_cfg_or_path
+    return coerce_roi_expansion_fraction(
+        detection_cfg.get("roi_assignment_expansion_fraction")
+    )
+
+
+def _roi_bounds(
+    rois: ROIRectsData,
+    *,
+    expansion_fraction: float = 0.0,
+) -> np.ndarray:
     corners: list[np.ndarray] = []
-    for rect in rois.rois.values():
-        coords = np.asarray(rect, dtype=float).reshape(-1)
-        if coords.size < 4 or not np.all(np.isfinite(coords[:4])):
-            continue
-        x1, y1, x2, y2 = coords[:4]
-        corners.append(np.array([[x1, y1], [x2, y2]], dtype=float))
+    for _, bounds in iter_roi_rect_bounds(
+        rois,
+        expansion_fraction=expansion_fraction,
+    ):
+        x_min, x_max, y_min, y_max = bounds
+        corners.append(np.array([[x_min, y_min], [x_max, y_max]], dtype=float))
     if not corners:
         return np.empty((0, 2), dtype=float)
     return np.vstack(corners)
@@ -177,15 +204,23 @@ def _scanpath_points(
     return np.vstack(points)
 
 
-def _roi_center(rois: ROIRectsData, roi_name: str) -> np.ndarray | None:
+def _roi_center(
+    rois: ROIRectsData,
+    roi_name: str,
+    *,
+    expansion_fraction: float = 0.0,
+) -> np.ndarray | None:
     rect = rois.rois.get(str(roi_name))
     if rect is None:
         return None
-    coords = np.asarray(rect, dtype=float).reshape(-1)
-    if coords.size < 4 or not np.all(np.isfinite(coords[:4])):
+    bounds = normalize_roi_rect_bounds(rect)
+    if bounds is None:
         return None
-    x1, y1, x2, y2 = coords[:4]
-    return np.array([(x1 + x2) / 2.0, (y1 + y2) / 2.0], dtype=float)
+    x_min, x_max, y_min, y_max = expand_roi_rect_bounds(
+        bounds,
+        expansion_fraction=expansion_fraction,
+    )
+    return np.array([(x_min + x_max) / 2.0, (y_min + y_max) / 2.0], dtype=float)
 
 
 def resolve_scanpath_bounds(
@@ -196,17 +231,26 @@ def resolve_scanpath_bounds(
     x_half_width: float = DEFAULT_SCANPATH_X_HALF_WIDTH,
     y_half_height: float = DEFAULT_SCANPATH_Y_HALF_HEIGHT,
     center_roi: str = DEFAULT_SCANPATH_CENTER_ROI,
+    roi_expansion_fraction: float = 0.0,
 ) -> tuple[float, float, float, float]:
     """Resolve a fixed x/y window around the mouth ROI center."""
-    anchor = _roi_center(rois, center_roi)
+    anchor = _roi_center(
+        rois,
+        center_roi,
+        expansion_fraction=roi_expansion_fraction,
+    )
     if anchor is None:
-        anchor = _roi_center(rois, "face")
+        anchor = _roi_center(
+            rois,
+            "face",
+            expansion_fraction=roi_expansion_fraction,
+        )
     if anchor is None:
         event_points = _scanpath_points(fixation_centers, saccade_segments, rois=None)
         if event_points.size:
             anchor = np.mean(event_points, axis=0)
         else:
-            roi_points = _roi_bounds(rois)
+            roi_points = _roi_bounds(rois, expansion_fraction=roi_expansion_fraction)
             if not roi_points.size:
                 return (0.0, 1.0, 0.0, 1.0)
             anchor = np.mean(roi_points, axis=0)
@@ -225,17 +269,18 @@ def _draw_rois(
     *,
     label_rois: bool,
     line_width: float,
+    expansion_fraction: float,
 ) -> None:
-    for name, rect in rois.rois.items():
-        coords = np.asarray(rect, dtype=float).reshape(-1)
-        if coords.size < 4 or not np.all(np.isfinite(coords[:4])):
-            continue
-        x1, y1, x2, y2 = coords[:4]
+    for name, bounds in iter_roi_rect_bounds(
+        rois,
+        expansion_fraction=expansion_fraction,
+    ):
+        x_min, x_max, y_min, y_max = bounds
         edgecolor = DEFAULT_ROI_COLORS.get(str(name), _DEFAULT_ROI_COLOR)
         patch = Rectangle(
-            (x1, y1),
-            float(x2 - x1),
-            float(y2 - y1),
+            (x_min, y_min),
+            float(x_max - x_min),
+            float(y_max - y_min),
             linewidth=line_width,
             edgecolor=edgecolor,
             facecolor="none",
@@ -246,8 +291,8 @@ def _draw_rois(
         ax.add_patch(patch)
         if label_rois:
             text = ax.text(
-                x1,
-                y1,
+                x_min,
+                y_min,
                 str(name),
                 fontsize=7,
                 color=edgecolor,
@@ -279,6 +324,7 @@ def plot_agent_gaze_event_scanpath(
     encode_event_order: bool = True,
     invert_y: bool = True,
     bounds: Optional[tuple[float, float, float, float]] = None,
+    roi_expansion_fraction: float = DEFAULT_ROI_ASSIGNMENT_EXPANSION_FRACTION,
     show_axis_labels: bool = True,
     title: Optional[str] = None,
 ) -> Axes:
@@ -292,6 +338,7 @@ def plot_agent_gaze_event_scanpath(
         fixation_centers,
         saccade_segments,
         agent_data.rois,
+        roi_expansion_fraction=roi_expansion_fraction,
     )
 
     valid_segments = saccade_segments[np.isfinite(saccade_segments).all(axis=(1, 2))]
@@ -336,6 +383,7 @@ def plot_agent_gaze_event_scanpath(
         agent_data.rois,
         label_rois=label_rois,
         line_width=roi_line_width,
+        expansion_fraction=roi_expansion_fraction,
     )
 
     x0, x1, y0, y1 = resolved_bounds
@@ -362,6 +410,7 @@ def plot_gaze_event_example_sessions(
     sessions: pd.DataFrame | Sequence[Mapping[str, object]],
     *,
     agents: Sequence[str] = DEFAULT_GAZE_EVENT_AGENTS,
+    detection_cfg_or_path: Mapping[str, object] | str | Path = DEFAULT_GAZE_EVENT_DETECTION_CFG_PATH,
     figsize_per_panel: tuple[float, float] = (5.2, 4.3),
     label_rois: bool = True,
     encode_event_order: bool = True,
@@ -373,6 +422,7 @@ def plot_gaze_event_example_sessions(
         raise ValueError("No sessions were provided for plotting.")
 
     agent_names = normalize_gaze_event_agents(agents)
+    roi_expansion_fraction = _resolve_roi_expansion_fraction(detection_cfg_or_path)
     loaded_sessions = [
         load_gaze_event_session_artifacts(
             cfg_or_path,
@@ -407,6 +457,7 @@ def plot_gaze_event_example_sessions(
                 label_rois=label_rois,
                 encode_event_order=encode_event_order,
                 bounds=None,
+                roi_expansion_fraction=roi_expansion_fraction,
                 show_axis_labels=(row_idx == n_rows - 1 or col_idx == 0),
                 title=title,
             )
@@ -419,6 +470,7 @@ def plot_random_gaze_event_example_sessions(
     n_sessions: int = 5,
     random_state: Optional[int] = None,
     agents: Sequence[str] = DEFAULT_GAZE_EVENT_AGENTS,
+    detection_cfg_or_path: Mapping[str, object] | str | Path = DEFAULT_GAZE_EVENT_DETECTION_CFG_PATH,
     label_rois: bool = True,
     encode_event_order: bool = True,
     share_screen_bounds: bool = False,
@@ -434,6 +486,7 @@ def plot_random_gaze_event_example_sessions(
         cfg_or_path,
         sampled,
         agents=agents,
+        detection_cfg_or_path=detection_cfg_or_path,
         label_rois=label_rois,
         encode_event_order=encode_event_order,
         share_screen_bounds=share_screen_bounds,
