@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=face_fix_crosscorr_all_scopes
 #SBATCH --partition=psych_day
-#SBATCH --cpus-per-task=16
-#SBATCH --mem-per-cpu=6G
+#SBATCH --cpus-per-task=32
+#SBATCH --mem-per-cpu=12G
 #SBATCH --time=04:00:00
-#SBATCH --output=hpc/behav/logs/%x_%j.out
-#SBATCH --error=hpc/behav/logs/%x_%j.err
+#SBATCH --output=/dev/null
+#SBATCH --error=/dev/null
 
 set -euo pipefail
 
@@ -16,6 +16,13 @@ if [[ ! -f "scripts/behav/analysis/build_face_fix_cross_correlation.py" ]]; then
   echo "Expected repo root in SLURM_SUBMIT_DIR or current working directory, got: ${REPO_ROOT}" >&2
   exit 1
 fi
+
+LOG_DIR="${REPO_ROOT}/hpc/behav/logs"
+mkdir -p "${LOG_DIR}"
+JOB_LOG_BASENAME="${SLURM_JOB_NAME:-face_fix_crosscorr_all_scopes}_${SLURM_JOB_ID:-manual}"
+STDOUT_LOG="${LOG_DIR}/${JOB_LOG_BASENAME}.out"
+STDERR_LOG="${LOG_DIR}/${JOB_LOG_BASENAME}.err"
+exec > >(tee -a "${STDOUT_LOG}") 2> >(tee -a "${STDERR_LOG}" >&2)
 
 module load miniconda
 source /gpfs/milgram/apps/avx2/software/miniconda/24.11.3/etc/profile.d/conda.sh
@@ -38,6 +45,8 @@ echo "dataset_cfg=${DATASET_CFG}"
 echo "face_fix_cross_correlation_cfg=${FACE_FIX_CROSS_CORRELATION_CFG}"
 echo "python=${PYTHON_BIN}"
 echo "PYTHONPATH=${PYTHONPATH}"
+echo "stdout_log=${STDOUT_LOG}"
+echo "stderr_log=${STDERR_LOG}"
 
 for scope in "${SCOPES[@]}"; do
   for mode in "${MODES[@]}"; do
