@@ -13,8 +13,9 @@ Configuration loading and normalization utilities.
 
 ## Path Normalization
 
-- Project config resolves referenced config paths relative to `configs/`.
-- Dataset/project roots are resolved relative to the source config file and normalized to absolute `Path` objects.
-- Ephys/HPC configs normalize file paths for robust script/runtime use.
+- Relative config references and path-valued settings are resolved relative to
+  the repo root and normalized to absolute `Path` objects.
+- This keeps local runs and HPC job submission consistent even when the current
+  working directory is not the repo root.
 
 Keep this module dependency-light so all layers can import it safely.

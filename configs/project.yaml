@@ -4,6 +4,6 @@
 project_name: dal_monte_2022_analysis
 
 # Canonical core config references.
-dataset_cfg_path: dataset.yaml
-ephys_data_cfg_path: ephys_data.yaml
-plotting_cfg_path: plotting.yaml
+dataset_cfg_path: configs/dataset.yaml
+ephys_data_cfg_path: configs/ephys_data.yaml
+plotting_cfg_path: configs/plotting.yaml

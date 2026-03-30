@@ -47,6 +47,35 @@ class TestHpcJobs(unittest.TestCase):
             self.assertIn("--session session_a", line)
             self.assertIn("--agent m1", line)
 
+    def test_generate_gaze_event_job_file_can_emit_repo_relative_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo_root = Path(tmp_dir)
+            job_file = repo_root / "hpc" / "gaze_jobs.txt"
+            worker_script = repo_root / "scripts" / "worker.py"
+            dataset_cfg = repo_root / "configs" / "dataset.yaml"
+            gaze_cfg = repo_root / "configs" / "gaze.yaml"
+            worker_script.parent.mkdir(parents=True, exist_ok=True)
+            dataset_cfg.parent.mkdir(parents=True, exist_ok=True)
+            worker_script.write_text("print('worker')\n", encoding="utf-8")
+            dataset_cfg.write_text("raw_data_root: raw\nprocessed_data_root: processed\n", encoding="utf-8")
+            gaze_cfg.write_text("input_modality: gaze_position\n", encoding="utf-8")
+
+            generate_gaze_event_job_file(
+                tasks=[("01012020", "session_a", "m1")],
+                job_file_path=job_file,
+                worker_script=worker_script,
+                env_name="analysis-env",
+                dataset_cfg_path=str(dataset_cfg),
+                gaze_event_cfg_path=str(gaze_cfg),
+                repo_root=repo_root,
+            )
+
+            line = job_file.read_text().strip()
+            self.assertIn(f"cd {repo_root}", line)
+            self.assertIn("python scripts/worker.py", line)
+            self.assertIn("--dataset-cfg configs/dataset.yaml", line)
+            self.assertIn("--gaze-event-cfg configs/gaze.yaml", line)
+
     def test_generate_fix_crosscorr_job_file_includes_time_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             job_file = Path(tmp_dir) / "shuffle_jobs.txt"
@@ -61,6 +90,35 @@ class TestHpcJobs(unittest.TestCase):
             )
             line = job_file.read_text().strip()
             self.assertIn("--time-scope interactive", line)
+
+    def test_generate_fix_crosscorr_job_file_can_emit_repo_relative_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repo_root = Path(tmp_dir)
+            job_file = repo_root / "hpc" / "shuffle_jobs.txt"
+            worker_script = repo_root / "scripts" / "worker.py"
+            dataset_cfg = repo_root / "configs" / "dataset.yaml"
+            fix_cfg = repo_root / "configs" / "fix.yaml"
+            worker_script.parent.mkdir(parents=True, exist_ok=True)
+            dataset_cfg.parent.mkdir(parents=True, exist_ok=True)
+            worker_script.write_text("print('worker')\n", encoding="utf-8")
+            dataset_cfg.write_text("raw_data_root: raw\nprocessed_data_root: processed\n", encoding="utf-8")
+            fix_cfg.write_text("input_modality: fixation_binary_vectors\n", encoding="utf-8")
+
+            generate_fix_cross_correlation_shuffle_job_file(
+                tasks=[("01012020", "session_a")],
+                job_file_path=job_file,
+                worker_script=worker_script,
+                env_name="analysis-env",
+                dataset_cfg_path=str(dataset_cfg),
+                fix_cross_correlation_cfg_path=str(fix_cfg),
+                repo_root=repo_root,
+            )
+
+            line = job_file.read_text().strip()
+            self.assertIn(f"cd {repo_root}", line)
+            self.assertIn("python scripts/worker.py", line)
+            self.assertIn("--dataset-cfg configs/dataset.yaml", line)
+            self.assertIn("--fix-cross-correlation-cfg configs/fix.yaml", line)
 
     def test_generate_fix_crosscorr_job_file_accepts_legacy_cfg_alias_with_warning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:

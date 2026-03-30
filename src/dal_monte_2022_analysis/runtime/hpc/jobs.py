@@ -26,17 +26,31 @@ def _build_conda_python_command(
     *,
     env_name: str,
     python_argv: list[str],
+    working_dir: Path | None = None,
 ) -> str:
     """Build one shell command that activates conda env and runs python argv."""
-    return "; ".join(
-        [
-            "module load miniconda",
-            "conda init",
-            "conda deactivate",
-            f"conda activate {shlex.quote(str(env_name))}",
-            shlex.join([str(token) for token in python_argv]),
-        ],
-    )
+    segments = [
+        "module load miniconda",
+        "conda init",
+        "conda deactivate",
+        f"conda activate {shlex.quote(str(env_name))}",
+    ]
+    if working_dir is not None:
+        segments.append(f"cd {shlex.quote(str(working_dir))}")
+    segments.append(shlex.join([str(token) for token in python_argv]))
+    return "; ".join(segments)
+
+
+def _format_repo_relative_path(path: str | Path, repo_root: Path | None) -> str:
+    """Render a path relative to the repo root when possible."""
+    path_obj = Path(path)
+    if repo_root is None:
+        return str(path_obj)
+
+    try:
+        return str(path_obj.resolve().relative_to(repo_root.resolve()))
+    except ValueError:
+        return str(path_obj)
 
 
 def generate_gaze_event_job_file(
@@ -47,6 +61,7 @@ def generate_gaze_event_job_file(
     env_name: str,
     dataset_cfg_path: str,
     gaze_event_cfg_path: str,
+    repo_root: Path | None = None,
 ) -> None:
     """Generate a job file for gaze-event array jobs.
 
@@ -62,13 +77,14 @@ def generate_gaze_event_job_file(
     for date, session, agent in tasks:
         cmd = _build_conda_python_command(
             env_name=env_name,
+            working_dir=repo_root,
             python_argv=[
                 "python",
-                str(worker_script),
+                _format_repo_relative_path(worker_script, repo_root),
                 "--dataset-cfg",
-                str(dataset_cfg_path),
+                _format_repo_relative_path(dataset_cfg_path, repo_root),
                 "--gaze-event-cfg",
-                str(gaze_event_cfg_path),
+                _format_repo_relative_path(gaze_event_cfg_path, repo_root),
                 "--date",
                 str(date),
                 "--session",
@@ -127,6 +143,7 @@ def generate_fix_cross_correlation_shuffle_job_file(
     fix_cross_correlation_cfg_path: Optional[str] = None,
     fix_crosscorr_cfg_path: Optional[str] = None,
     time_scope: Optional[str] = None,
+    repo_root: Path | None = None,
 ) -> None:
     """Generate a job file for within-session shuffled cross-correlation pairs."""
     if (
@@ -148,11 +165,11 @@ def generate_fix_cross_correlation_shuffle_job_file(
     for date, session in tasks:
         python_argv = [
             "python",
-            str(worker_script),
+            _format_repo_relative_path(worker_script, repo_root),
             "--dataset-cfg",
-            str(dataset_cfg_path),
+            _format_repo_relative_path(dataset_cfg_path, repo_root),
             "--fix-cross-correlation-cfg",
-            str(cfg_path),
+            _format_repo_relative_path(cfg_path, repo_root),
             "--date",
             str(date),
             "--session",
@@ -162,6 +179,7 @@ def generate_fix_cross_correlation_shuffle_job_file(
             python_argv.extend(["--time-scope", str(time_scope)])
         cmd = _build_conda_python_command(
             env_name=env_name,
+            working_dir=repo_root,
             python_argv=python_argv,
         )
         commands.append(cmd)

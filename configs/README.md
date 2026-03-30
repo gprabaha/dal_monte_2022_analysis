@@ -43,4 +43,6 @@ Task configs:
 - Scripts typically accept explicit config paths; defaults point into this directory.
 - Config loading and path normalization are implemented in
   `src/dal_monte_2022_analysis/config/load.py`.
+- Relative paths inside config files are interpreted relative to the repo root,
+  not relative to the individual YAML file location.
 - Add new task configs here when introducing new stage modules or output products.

@@ -13,7 +13,7 @@ from dal_monte_2022_analysis.behav.analysis.fix_cross_correlation import (
     process_and_save_within_session_shuffle_pair,
     run_fix_cross_correlation_analysis,
 )
-from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.config.load import get_repo_root, load_config, resolve_repo_path
 from dal_monte_2022_analysis.runtime.hpc.jobs import (
     generate_fix_cross_correlation_shuffle_job_file,
     submit_dsq_array_job,
@@ -166,9 +166,10 @@ def run_fix_cross_correlation_shuffle_submit_hpc(
     if fix_cfg_path is None:
         raise ValueError("Expected one of fix_cross_correlation_cfg_path or fix_crosscorr_cfg_path.")
 
-    worker_script = Path(hpc_cfg["worker_script_path"]).resolve()
-    dataset_cfg_resolved = str(Path(dataset_cfg_path).resolve())
-    fix_cfg_resolved = str(Path(fix_cfg_path).resolve())
+    repo_root = get_repo_root()
+    worker_script = Path(hpc_cfg["worker_script_path"])
+    dataset_cfg_resolved = str(resolve_repo_path(dataset_cfg_path, repo_root=repo_root))
+    fix_cfg_resolved = str(resolve_repo_path(fix_cfg_path, repo_root=repo_root))
     generate_fix_cross_correlation_shuffle_job_file(
         tasks=tasks,
         job_file_path=hpc_cfg["job_file_path"],
@@ -177,6 +178,7 @@ def run_fix_cross_correlation_shuffle_submit_hpc(
         dataset_cfg_path=dataset_cfg_resolved,
         fix_cross_correlation_cfg_path=fix_cfg_resolved,
         time_scope=settings.time_scope,
+        repo_root=repo_root,
     )
 
     job_id = submit_dsq_array_job(

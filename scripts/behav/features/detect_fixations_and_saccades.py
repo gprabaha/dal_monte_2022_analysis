@@ -3,7 +3,7 @@
 import argparse
 from pathlib import Path
 
-from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.config.load import get_repo_root, load_config, resolve_repo_path
 from dal_monte_2022_analysis.behav.features.gaze_event_detection import (
     GazeEventDetectionSettings,
     process_and_save_gaze_events_for_row,
@@ -78,6 +78,7 @@ def main():
     if run_hpc:
         hpc_cfg = load_config(args.hpc_cfg)
         cfg = load_config(settings.cfg_path)
+        repo_root = get_repo_root()
         index_df = index_processed_dataset(cfg, settings.input_modality)
         tasks = []
         for _, row in index_df.iterrows():
@@ -89,9 +90,9 @@ def main():
         worker_script = hpc_cfg.get("worker_script_path")
         if worker_script is None:
             raise RuntimeError("HPC config missing worker_script_path")
-        worker_script = Path(worker_script).resolve()
-        dataset_cfg_path = Path(args.dataset_cfg).resolve()
-        gaze_event_cfg_path = Path(args.gaze_event_cfg).resolve()
+        worker_script = Path(worker_script)
+        dataset_cfg_path = resolve_repo_path(args.dataset_cfg, repo_root=repo_root)
+        gaze_event_cfg_path = resolve_repo_path(args.gaze_event_cfg, repo_root=repo_root)
         generate_gaze_event_job_file(
             tasks=tasks,
             job_file_path=hpc_cfg["job_file_path"],
@@ -99,6 +100,7 @@ def main():
             env_name=hpc_cfg["env_name"],
             dataset_cfg_path=str(dataset_cfg_path),
             gaze_event_cfg_path=str(gaze_event_cfg_path),
+            repo_root=repo_root,
         )
         job_id = submit_dsq_array_job(
             job_file_path=hpc_cfg["job_file_path"],
