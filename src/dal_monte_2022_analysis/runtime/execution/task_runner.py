@@ -34,7 +34,7 @@ def run_tasks(
             for task in tqdm(task_list, desc=f"{desc} (serial)", unit=unit)
         ]
 
-    n_proc = get_n_processes(max_procs=max_procs)
+    n_proc = get_n_processes()
     with Pool(processes=n_proc) as pool:
         return list(
             tqdm(

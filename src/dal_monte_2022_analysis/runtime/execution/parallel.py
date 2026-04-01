@@ -5,7 +5,7 @@ import os
 from typing import Optional
 
 
-def get_n_processes(max_procs: Optional[int] = 16) -> int:
+def get_n_processes(max_procs: Optional[int] = 32) -> int:
     """Return a safe worker count based on SLURM or local CPU availability.
 
     Args:

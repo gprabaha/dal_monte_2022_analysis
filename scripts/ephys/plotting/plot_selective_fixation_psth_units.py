@@ -175,7 +175,7 @@ def _base_plot_settings(dataset_cfg_path: str, plotting_cfg_path: str, cfg: dict
         selectivity_unit_summary_filename=cfg.get("plot_selectivity_unit_summary_filename", cfg.get("selective_unit_summary_filename", "unit_selectivity.csv")),
         selective_unit_subfolder=cfg.get("plot_selective_unit_subfolder", "selective"),
         output_subdir=cfg.get("plot_output_subdir", "ephys/psth/fixation_psth_unit_plots_multiscale_5s"),
-        output_extension=cfg.get("plot_output_extension", "pdf"),
+        output_extension=cfg.get("plot_output_extension", "png"),
         figure_size=cfg.get("plot_figsize"),
         output_dpi=cfg.get("plot_output_dpi", 220),
         interactive_label=cfg.get("interactive_high_label", "interactive"),

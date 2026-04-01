@@ -622,7 +622,7 @@ selective_example_grid_units:
 # Per-unit fixation PSTH plotting (stored in analysis_output_root)
 # Route multiscale figures to a separate folder so older single-timescale plots remain intact.
 plot_output_subdir: ephys/psth/fixation_psth_unit_plots_multiscale_5s
-plot_output_extension: pdf
+plot_output_extension: png
 plot_figsize: [15.0, 6.8]
 plot_output_dpi: 220
 plot_use_parallel: true

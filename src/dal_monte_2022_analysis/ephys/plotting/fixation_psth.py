@@ -84,7 +84,7 @@ class FixationPSTHUnitPlotSettings:
     selectivity_unit_summary_filename: str = "unit_selectivity.csv"
     selective_unit_subfolder: str = "selective"
     output_subdir: str = "ephys/psth/fixation_psth_unit_plots_multiscale_5s"
-    output_extension: str = "pdf"
+    output_extension: str = "png"
     example_units_subfolder: Optional[str] = None
     figure_size: Optional[Sequence[float]] = None
     output_dpi: Optional[int] = 220
@@ -133,7 +133,7 @@ class FixationPSTHUnitPlotSettings:
 
 
 def _ensure_ext(ext: str) -> str:
-    return _ensure_ext_shared(ext, fallback="pdf")
+    return _ensure_ext_shared(ext, fallback="png")
 
 
 def _iter_trial_rows(
@@ -1089,6 +1089,46 @@ def _resolve_display_windows(
     return [(float(left_bound_s), float(right_bound_s), "Full Window")]
 
 
+def _window_spike_rows(
+    spike_rows: Sequence[np.ndarray],
+    *,
+    x_min: float,
+    x_max: float,
+) -> list[np.ndarray]:
+    out: list[np.ndarray] = []
+    for row in spike_rows:
+        spikes = np.asarray(row, dtype=float).reshape(-1)
+        if spikes.size == 0:
+            out.append(spikes)
+            continue
+        mask = np.isfinite(spikes) & (spikes >= float(x_min)) & (spikes <= float(x_max))
+        out.append(spikes[mask])
+    return out
+
+
+def _window_trace_arrays(
+    trace_bin_centers: np.ndarray,
+    mean_hz: np.ndarray,
+    sem_hz: np.ndarray,
+    *,
+    x_min: float,
+    x_max: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    centers = np.asarray(trace_bin_centers, dtype=float).reshape(-1)
+    mean_vals = np.asarray(mean_hz, dtype=float).reshape(-1)
+    sem_vals = np.asarray(sem_hz, dtype=float).reshape(-1)
+    if centers.size != mean_vals.size or centers.size != sem_vals.size:
+        return np.zeros(0, dtype=float), np.zeros(0, dtype=float), np.zeros(0, dtype=float)
+    mask = (
+        np.isfinite(centers)
+        & np.isfinite(mean_vals)
+        & np.isfinite(sem_vals)
+        & (centers >= float(x_min))
+        & (centers <= float(x_max))
+    )
+    return centers[mask], mean_vals[mask], sem_vals[mask]
+
+
 def _add_analysis_window_overlays(
     ax,
     settings: FixationPSTHUnitPlotSettings,
@@ -1233,8 +1273,12 @@ def _plot_single_unit(
 
         for payload, line_offsets in condition_rows:
             n_trials = int(payload["n_trials"])
-            ax_raster.eventplot(
-                payload["spike_rows"],
+            raster_collections = ax_raster.eventplot(
+                _window_spike_rows(
+                    payload["spike_rows"],
+                    x_min=float(x_min),
+                    x_max=float(x_max),
+                ),
                 lineoffsets=line_offsets,
                 linelengths=float(settings.raster_linelength),
                 linewidths=float(settings.raster_linewidth),
@@ -1242,6 +1286,11 @@ def _plot_single_unit(
                 alpha=float(settings.raster_alpha),
                 zorder=3,
             )
+            if not isinstance(raster_collections, (list, tuple)):
+                raster_collections = [raster_collections]
+            for collection in raster_collections:
+                collection.set_clip_on(True)
+                collection.set_clip_path(ax_raster.patch)
             if settings.raster_show_condition_background:
                 ax_raster.axhspan(
                     float(line_offsets[0]) - 0.5,
@@ -1279,20 +1328,33 @@ def _plot_single_unit(
             sem_hz = np.asarray(payload["sem_hz"], dtype=float)
             if payload_trace_bin_centers.size != mean_hz.size or sem_hz.size != mean_hz.size:
                 continue
-            ax_rate.plot(
+            panel_trace_bin_centers, panel_mean_hz, panel_sem_hz = _window_trace_arrays(
                 payload_trace_bin_centers,
                 mean_hz,
+                sem_hz,
+                x_min=float(x_min),
+                x_max=float(x_max),
+            )
+            if panel_trace_bin_centers.size == 0:
+                continue
+            line = ax_rate.plot(
+                panel_trace_bin_centers,
+                panel_mean_hz,
                 color=payload["color"],
                 label=payload["label"],
-            )
-            ax_rate.fill_between(
-                payload_trace_bin_centers,
-                mean_hz - sem_hz,
-                mean_hz + sem_hz,
+            )[0]
+            line.set_clip_on(True)
+            line.set_clip_path(ax_rate.patch)
+            band = ax_rate.fill_between(
+                panel_trace_bin_centers,
+                panel_mean_hz - panel_sem_hz,
+                panel_mean_hz + panel_sem_hz,
                 color=payload["color"],
                 alpha=0.22,
                 linewidth=0.0,
             )
+            band.set_clip_on(True)
+            band.set_clip_path(ax_rate.patch)
         ax_rate.axvline(0.0, color="#333333", linestyle="--", linewidth=1.0, zorder=3)
         ax_rate.grid(True, alpha=0.16, linewidth=0.45)
         ax_rate.set_xlim(float(x_min), float(x_max))
@@ -1545,7 +1607,7 @@ def plot_fixation_psth_units(
         and len(all_unit_tasks) >= int(settings.unit_parallel_min_units)
     )
     if use_global_unit_parallel:
-        n_proc = get_n_processes(max_procs=settings.max_procs)
+        n_proc = get_n_processes()
         with Pool(processes=n_proc) as pool:
             for out_path in tqdm(
                 pool.imap_unordered(_plot_single_unit_worker, all_unit_tasks),
