@@ -22,7 +22,7 @@ mkdir -p "${LOG_DIR}"
 JOB_LOG_BASENAME="${SLURM_JOB_NAME:-plot_fixation_psth_units}"
 STDOUT_LOG="${LOG_DIR}/${JOB_LOG_BASENAME}.out"
 STDERR_LOG="${LOG_DIR}/${JOB_LOG_BASENAME}.err"
-exec > >(tee -a "${STDOUT_LOG}") 2> >(tee -a "${STDERR_LOG}" >&2)
+exec > >(tee "${STDOUT_LOG}") 2> >(tee "${STDERR_LOG}" >&2)
 
 module load miniconda
 source /gpfs/milgram/apps/avx2/software/miniconda/24.11.3/etc/profile.d/conda.sh

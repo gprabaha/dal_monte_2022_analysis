@@ -205,10 +205,10 @@ def _base_plot_settings(dataset_cfg_path: str, plotting_cfg_path: str, cfg: dict
         analysis_window_overlays_s=_resolve_analysis_windows_s(cfg),
         analysis_window_overlay_colors=_normalize_color_list(
             cfg.get("plot_analysis_window_colors"),
-            fallback=("#bdbdbd", "#8f8f8f", "#636363"),
+            fallback=("#9e9e9e", "#6f6f6f", "#3f3f3f"),
         ),
-        analysis_window_overlay_linestyle=cfg.get("plot_analysis_window_linestyle", ":"),
-        analysis_window_overlay_linewidth=cfg.get("plot_analysis_window_linewidth", 0.8),
+        analysis_window_overlay_linestyle=cfg.get("plot_analysis_window_linestyle", "--"),
+        analysis_window_overlay_linewidth=cfg.get("plot_analysis_window_linewidth", 1.4),
         bin_size_ms_fallback=cfg.get("bin_size_ms", 10.0),
         window_pre_s=cfg.get("window_pre_s", 1.0),
         window_post_s=cfg.get("window_post_s", 1.0),

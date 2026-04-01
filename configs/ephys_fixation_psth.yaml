@@ -667,9 +667,9 @@ plot_panel_rate_height_ratio: 2.0
 plot_display_half_windows_s: [5.0, 3.0, 1.0]
 plot_show_analysis_window_overlays: true
 # If unset, overlay windows default to selective_windows_ms.{pre_fix, peri_fix, post_fix}.
-plot_analysis_window_colors: ["#bdbdbd", "#8f8f8f", "#636363"]
-plot_analysis_window_linestyle: ":"
-plot_analysis_window_linewidth: 0.8
+plot_analysis_window_colors: ["#9e9e9e", "#6f6f6f", "#3f3f3f"]
+plot_analysis_window_linestyle: "--"
+plot_analysis_window_linewidth: 1.4
 plot_condition_colors:
   face_interactive: "#b64198"
   face_non_interactive: "#97ca3d"

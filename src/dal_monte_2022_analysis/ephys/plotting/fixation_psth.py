@@ -12,6 +12,7 @@ import matplotlib as mpl
 
 mpl.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_rgba
 from matplotlib.patches import Rectangle
 import numpy as np
 import pandas as pd
@@ -60,7 +61,10 @@ _PLOT_CONDITION_ORDER = (
     ("face_non_interactive", "Non-Interactive Face"),
     ("object", "Object"),
 )
-_AVERAGE_TRACE_CACHE: dict[tuple[str, str, str, str], Optional[tuple[pd.DataFrame, np.ndarray, float]]] = {}
+_AVERAGE_TRACE_CACHE: dict[
+    tuple[str, str, str, str],
+    Optional[tuple[pd.DataFrame, np.ndarray, float, bool]],
+] = {}
 
 
 @dataclass
@@ -123,10 +127,10 @@ class FixationPSTHUnitPlotSettings:
         default_factory=lambda: ((-0.5, 0.0), (-0.25, 0.25), (0.0, 0.5)),
     )
     analysis_window_overlay_colors: Sequence[str] = field(
-        default_factory=lambda: ("#bdbdbd", "#8f8f8f", "#636363"),
+        default_factory=lambda: ("#9e9e9e", "#6f6f6f", "#3f3f3f"),
     )
-    analysis_window_overlay_linestyle: str = ":"
-    analysis_window_overlay_linewidth: float = 0.8
+    analysis_window_overlay_linestyle: str = "--"
+    analysis_window_overlay_linewidth: float = 1.4
     bin_size_ms_fallback: float = 10.0
     window_pre_s: float = 1.0
     window_post_s: float = 1.0
@@ -458,6 +462,19 @@ def _resolve_average_bin_duration_s(
     return float(settings.bin_size_ms_fallback) / 1000.0
 
 
+def _average_values_are_firing_rate(meta: dict) -> bool:
+    value_kind = str(meta.get("psth_value_kind", "")).strip().lower()
+    if value_kind:
+        return value_kind == "firing_rate_hz"
+    flag = meta.get("convert_to_firing_rate_before_average")
+    if isinstance(flag, bool):
+        return flag
+    try:
+        return bool(flag)
+    except Exception:
+        return False
+
+
 def _resolve_average_trace_input_location(
     settings: FixationPSTHUnitPlotSettings,
     *,
@@ -478,7 +495,7 @@ def _load_average_trace_bundle_for_date(
     *,
     date: str,
     for_object: bool,
-) -> Optional[tuple[pd.DataFrame, np.ndarray, float]]:
+) -> Optional[tuple[pd.DataFrame, np.ndarray, float, bool]]:
     if not bool(settings.use_precomputed_average_traces):
         return None
 
@@ -504,6 +521,7 @@ def _load_average_trace_bundle_for_date(
     dfs: list[pd.DataFrame] = []
     bin_centers_ref: Optional[np.ndarray] = None
     bin_duration_ref: Optional[float] = None
+    values_are_firing_rate_ref: Optional[bool] = None
     for row in rows:
         obj = load_pickle_path(row["path"])
         avg_df, meta = _extract_average_partition_df_and_meta(
@@ -528,6 +546,13 @@ def _load_average_trace_bundle_for_date(
                 raise ValueError(
                     f"Mismatched average PSTH bin durations across files for plotting; path={row['path']}"
                 )
+        values_are_firing_rate = _average_values_are_firing_rate(meta)
+        if values_are_firing_rate_ref is None:
+            values_are_firing_rate_ref = bool(values_are_firing_rate)
+        elif bool(values_are_firing_rate) != bool(values_are_firing_rate_ref):
+            raise ValueError(
+                f"Mismatched average PSTH value kinds across files for plotting; path={row['path']}"
+            )
 
         df = avg_df.copy()
         if "date" not in df.columns:
@@ -553,7 +578,14 @@ def _load_average_trace_bundle_for_date(
             bin_centers=np.asarray(bin_centers_ref, dtype=float),
             settings=settings,
         )
-    bundle = (out_df, np.asarray(bin_centers_ref, dtype=float), float(bin_duration_ref))
+    if values_are_firing_rate_ref is None:
+        values_are_firing_rate_ref = False
+    bundle = (
+        out_df,
+        np.asarray(bin_centers_ref, dtype=float),
+        float(bin_duration_ref),
+        bool(values_are_firing_rate_ref),
+    )
     _AVERAGE_TRACE_CACHE[cache_key] = bundle
     return bundle
 
@@ -642,6 +674,7 @@ def _build_precomputed_trace_overrides(
     unit_uuid: str,
     bin_centers: np.ndarray,
     bin_size_s: float,
+    values_are_firing_rate: bool,
     settings: FixationPSTHUnitPlotSettings,
 ) -> dict[str, dict]:
     if average_df.empty or "unit_uuid" not in average_df.columns:
@@ -689,10 +722,16 @@ def _build_precomputed_trace_overrides(
         combined = _combine_average_records(records)
         if combined is None:
             continue
-        mean_counts, sem_counts, n_trials = combined
+        mean_values, sem_values, n_trials = combined
+        if bool(values_are_firing_rate):
+            mean_hz = np.asarray(mean_values, dtype=float)
+            sem_hz = np.asarray(sem_values, dtype=float)
+        else:
+            mean_hz = np.asarray(mean_values, dtype=float) / float(bin_size_s)
+            sem_hz = np.asarray(sem_values, dtype=float) / float(bin_size_s)
         out[cond] = {
-            "mean_hz": mean_counts / float(bin_size_s),
-            "sem_hz": sem_counts / float(bin_size_s),
+            "mean_hz": mean_hz,
+            "sem_hz": sem_hz,
             "trace_bin_centers": np.asarray(bin_centers, dtype=float),
             "trace_n_trials": int(n_trials),
         }
@@ -816,23 +855,25 @@ def _build_unit_condition_payloads(
 
             split_overrides: dict[str, dict] = {}
             if split_bundle is not None:
-                split_df, split_centers, split_bin_size_s = split_bundle
+                split_df, split_centers, split_bin_size_s, split_values_are_firing_rate = split_bundle
                 split_overrides = _build_precomputed_trace_overrides(
                     split_df,
                     unit_uuid=unit_token,
                     bin_centers=split_centers,
                     bin_size_s=split_bin_size_s,
+                    values_are_firing_rate=split_values_are_firing_rate,
                     settings=settings,
                 )
 
             object_overrides: dict[str, dict] = {}
             if object_bundle is not None:
-                object_df, object_centers, object_bin_size_s = object_bundle
+                object_df, object_centers, object_bin_size_s, object_values_are_firing_rate = object_bundle
                 object_overrides = _build_precomputed_trace_overrides(
                     object_df,
                     unit_uuid=unit_token,
                     bin_centers=object_centers,
                     bin_size_s=object_bin_size_s,
+                    values_are_firing_rate=object_values_are_firing_rate,
                     settings=settings,
                 )
 
@@ -1160,18 +1201,32 @@ def _add_analysis_window_overlays(
         if right <= left:
             continue
         color = colors[idx] if idx < len(colors) else default_color
-        ax.add_patch(
-            Rectangle(
-                (left, float(y_min)),
-                right - left,
-                float(y_max) - float(y_min),
-                fill=False,
-                edgecolor=color,
-                linestyle=str(settings.analysis_window_overlay_linestyle),
-                linewidth=float(settings.analysis_window_overlay_linewidth),
-                zorder=0.5,
-            )
+        fill_patch = Rectangle(
+            (left, float(y_min)),
+            right - left,
+            float(y_max) - float(y_min),
+            fill=True,
+            facecolor=to_rgba(color, alpha=0.08),
+            edgecolor="none",
+            linewidth=0.0,
+            zorder=0.6,
         )
+        fill_patch.set_clip_on(True)
+        fill_patch.set_clip_path(ax.patch)
+        ax.add_patch(fill_patch)
+        outline_patch = Rectangle(
+            (left, float(y_min)),
+            right - left,
+            float(y_max) - float(y_min),
+            fill=False,
+            edgecolor=to_rgba(color, alpha=0.95),
+            linestyle=str(settings.analysis_window_overlay_linestyle),
+            linewidth=float(settings.analysis_window_overlay_linewidth),
+            zorder=2.6,
+        )
+        outline_patch.set_clip_on(True)
+        outline_patch.set_clip_path(ax.patch)
+        ax.add_patch(outline_patch)
 
 
 def _plot_single_unit(
