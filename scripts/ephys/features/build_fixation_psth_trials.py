@@ -183,7 +183,7 @@ def _build_settings(
         trial_output_filename=trial_output_filename,
         roi_groups=cfg.get("roi_groups", DEFAULT_FIXATION_ROI_GROUPS),
         agent_roi_groups=cfg.get("agent_roi_groups"),
-        categories=cfg.get("categories", ("face", "object", "out_of_roi")),
+        categories=cfg.get("categories", ("face", "object")),
         include_interactive_state=cfg.get("include_interactive_state", True),
         interactive_high_label=cfg.get("interactive_high_label", "interactive"),
         bin_size_ms=bin_size_ms,

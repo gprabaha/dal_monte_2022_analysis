@@ -1,4 +1,4 @@
-"""Plot per-unit fixation PSTH rasters and mean firing-rate traces."""
+"""Plot multiscale per-unit fixation PSTH rasters and mean firing-rate traces."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import matplotlib as mpl
 
 mpl.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 import numpy as np
 import pandas as pd
 from scipy.ndimage import gaussian_filter1d
@@ -78,9 +79,14 @@ class FixationPSTHUnitPlotSettings:
     average_trace_object_input_subdir: Optional[str] = None
     average_trace_object_input_filename: Optional[str] = None
     allow_trial_trace_fallback: bool = True
-    output_subdir: str = "ephys/psth/fixation_psth_unit_plots"
+    segregate_selective_units: bool = False
+    selectivity_input_subdir: str = "ephys/psth/fixation_psth_selectivity"
+    selectivity_unit_summary_filename: str = "unit_selectivity.csv"
+    selective_unit_subfolder: str = "selective"
+    output_subdir: str = "ephys/psth/fixation_psth_unit_plots_multiscale_5s"
     output_extension: str = "pdf"
     example_units_subfolder: Optional[str] = None
+    figure_size: Optional[Sequence[float]] = None
     output_dpi: Optional[int] = 220
     interactive_label: str = "interactive"
     face_label: str = "face"
@@ -111,6 +117,16 @@ class FixationPSTHUnitPlotSettings:
     significance_min_trials_per_condition: int = 2
     significance_tick_height_ratio: float = 0.03
     significance_tick_row_gap_ratio: float = 0.08
+    display_half_windows_s: Sequence[float] = field(default_factory=lambda: (5.0, 3.0, 1.0))
+    show_analysis_window_overlays: bool = True
+    analysis_window_overlays_s: Sequence[tuple[float, float]] = field(
+        default_factory=lambda: ((-0.5, 0.0), (-0.25, 0.25), (0.0, 0.5)),
+    )
+    analysis_window_overlay_colors: Sequence[str] = field(
+        default_factory=lambda: ("#bdbdbd", "#8f8f8f", "#636363"),
+    )
+    analysis_window_overlay_linestyle: str = ":"
+    analysis_window_overlay_linewidth: float = 0.8
     bin_size_ms_fallback: float = 10.0
     window_pre_s: float = 1.0
     window_post_s: float = 1.0
@@ -331,10 +347,20 @@ def _load_trials_for_date(
 
 
 def _resolve_figsize_and_dpi(settings: FixationPSTHUnitPlotSettings) -> tuple[list[float], Optional[int]]:
+    if settings.figure_size is not None:
+        figure_size = [float(val) for val in settings.figure_size]
+        if len(figure_size) != 2:
+            raise ValueError("figure_size must contain exactly two values: width and height in inches.")
+        _, dpi = _resolve_figsize_and_dpi_shared(
+            plotting_cfg_path=settings.plotting_cfg_path,
+            output_dpi=settings.output_dpi,
+            default_figsize=figure_size,
+        )
+        return figure_size, dpi
     return _resolve_figsize_and_dpi_shared(
         plotting_cfg_path=settings.plotting_cfg_path,
         output_dpi=settings.output_dpi,
-        default_figsize=[11.0, 8.0],
+        default_figsize=[15.0, 6.8],
     )
 
 
@@ -380,6 +406,33 @@ def _extract_average_df_and_meta(obj) -> tuple[pd.DataFrame, dict]:
     if isinstance(obj, pd.DataFrame):
         return obj, {}
     raise ValueError(f"Unsupported average PSTH object type for plotting: {type(obj)}")
+
+
+def _extract_average_partition_df_and_meta(
+    obj,
+    *,
+    require_split_partition: bool,
+) -> tuple[pd.DataFrame, dict]:
+    if isinstance(obj, dict):
+        if require_split_partition:
+            avg_df = obj.get("averages_split_by_interactive_state")
+            meta = obj.get("meta", {})
+            if isinstance(avg_df, pd.DataFrame):
+                meta_dict = meta if isinstance(meta, dict) else {}
+                split_meta = meta_dict.get("split_meta", {})
+                if not isinstance(split_meta, dict):
+                    split_meta = {}
+                return avg_df, split_meta or meta_dict
+        else:
+            avg_df = obj.get("averages_unsplit_by_interactive_state")
+            meta = obj.get("meta", {})
+            if isinstance(avg_df, pd.DataFrame):
+                meta_dict = meta if isinstance(meta, dict) else {}
+                unsplit_meta = meta_dict.get("unsplit_meta", {})
+                if not isinstance(unsplit_meta, dict):
+                    unsplit_meta = {}
+                return avg_df, unsplit_meta or meta_dict
+    return _extract_average_df_and_meta(obj)
 
 
 def _resolve_average_bin_duration_s(
@@ -453,7 +506,10 @@ def _load_average_trace_bundle_for_date(
     bin_duration_ref: Optional[float] = None
     for row in rows:
         obj = load_pickle_path(row["path"])
-        avg_df, meta = _extract_average_df_and_meta(obj)
+        avg_df, meta = _extract_average_partition_df_and_meta(
+            obj,
+            require_split_partition=not bool(for_object),
+        )
         if avg_df.empty or "psth_mean" not in avg_df.columns:
             continue
 
@@ -910,6 +966,174 @@ def _darken_color(hex_color: str, factor: float) -> str:
     return _darken_color_shared(hex_color, factor)
 
 
+def _ensure_csv_filename(filename: str) -> str:
+    token = str(filename).strip()
+    if not token:
+        token = "unit_selectivity.csv"
+    if not token.endswith(".csv"):
+        token = f"{token}.csv"
+    return token
+
+
+def _normalize_selectivity_date_str(val) -> str:
+    if val is None:
+        return ""
+    token = str(val).strip()
+    if not token:
+        return ""
+    if token.endswith(".0"):
+        token = token[:-2]
+    if token.isdigit():
+        return token.zfill(8)
+    try:
+        intval = int(float(token))
+        return str(intval).zfill(8)
+    except Exception:
+        return token
+
+
+def _coerce_selective_bool(val) -> bool:
+    if isinstance(val, bool):
+        return val
+    if val is None:
+        return False
+    try:
+        if pd.isna(val):
+            return False
+    except Exception:
+        pass
+    token = str(val).strip().lower()
+    return token in {"1", "true", "t", "yes", "y"}
+
+
+def _load_selective_unit_lookup(settings: FixationPSTHUnitPlotSettings) -> dict[str, bool]:
+    if not bool(settings.segregate_selective_units):
+        return {}
+
+    cfg = load_config(settings.cfg_path)
+    unit_summary_path = (
+        build_analysis_output_dir(cfg, settings.selectivity_input_subdir)
+        / _ensure_csv_filename(settings.selectivity_unit_summary_filename)
+    )
+    if not unit_summary_path.exists():
+        print(
+            "[plot] selective-unit summary not found; plotting all units as non-selective. "
+            f"path={unit_summary_path}"
+        )
+        return {}
+
+    df = pd.read_csv(unit_summary_path)
+    if df.empty:
+        return {}
+    if "unit_key" not in df.columns:
+        if {"date", "unit_uuid"}.issubset(df.columns):
+            df = df.copy()
+            df["date"] = df["date"].map(_normalize_selectivity_date_str)
+            df["unit_uuid"] = df["unit_uuid"].astype(str).map(str.strip)
+            df["unit_key"] = df["date"].astype(str) + "|" + df["unit_uuid"].astype(str)
+        else:
+            print(
+                "[plot] selective-unit summary is missing unit identifiers; "
+                "plotting all units as non-selective."
+            )
+            return {}
+    if "is_selective_unit" not in df.columns:
+        print(
+            "[plot] selective-unit summary is missing 'is_selective_unit'; "
+            "plotting all units as non-selective."
+        )
+        return {}
+
+    lookup: dict[str, bool] = {}
+    for row in df.itertuples(index=False):
+        unit_key = str(getattr(row, "unit_key", "")).strip()
+        if not unit_key:
+            continue
+        is_selective = _coerce_selective_bool(getattr(row, "is_selective_unit", False))
+        lookup[unit_key] = bool(lookup.get(unit_key, False) or is_selective)
+    return lookup
+
+
+def _format_half_window_label(half_window_s: float) -> str:
+    if np.isclose(float(half_window_s), round(float(half_window_s))):
+        return f"+/-{int(round(float(half_window_s)))} s"
+    return f"+/-{float(half_window_s):g} s"
+
+
+def _resolve_display_windows(
+    settings: FixationPSTHUnitPlotSettings,
+    *,
+    left_bound_s: float,
+    right_bound_s: float,
+) -> list[tuple[float, float, str]]:
+    windows: list[tuple[float, float, str]] = []
+    seen: set[float] = set()
+    for raw in settings.display_half_windows_s:
+        try:
+            half_window_s = float(raw)
+        except Exception:
+            continue
+        if not np.isfinite(half_window_s) or half_window_s <= 0.0:
+            continue
+        key = round(half_window_s, 9)
+        if key in seen:
+            continue
+        seen.add(key)
+        x_min = max(float(left_bound_s), -half_window_s)
+        x_max = min(float(right_bound_s), half_window_s)
+        if x_max <= x_min:
+            continue
+        windows.append((x_min, x_max, _format_half_window_label(half_window_s)))
+    if windows:
+        return windows
+    return [(float(left_bound_s), float(right_bound_s), "Full Window")]
+
+
+def _add_analysis_window_overlays(
+    ax,
+    settings: FixationPSTHUnitPlotSettings,
+    *,
+    x_min: float,
+    x_max: float,
+    y_min: float,
+    y_max: float,
+) -> None:
+    if not bool(settings.show_analysis_window_overlays):
+        return
+    if not np.isfinite(y_min) or not np.isfinite(y_max) or y_max <= y_min:
+        return
+
+    colors = [str(color).strip() for color in settings.analysis_window_overlay_colors if str(color).strip()]
+    default_color = colors[-1] if colors else "#808080"
+    for idx, bounds in enumerate(settings.analysis_window_overlays_s):
+        if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+            continue
+        try:
+            start_s = float(bounds[0])
+            stop_s = float(bounds[1])
+        except Exception:
+            continue
+        if not np.isfinite(start_s) or not np.isfinite(stop_s):
+            continue
+        left = max(min(start_s, stop_s), float(x_min))
+        right = min(max(start_s, stop_s), float(x_max))
+        if right <= left:
+            continue
+        color = colors[idx] if idx < len(colors) else default_color
+        ax.add_patch(
+            Rectangle(
+                (left, float(y_min)),
+                right - left,
+                float(y_max) - float(y_min),
+                fill=False,
+                edgecolor=color,
+                linestyle=str(settings.analysis_window_overlay_linestyle),
+                linewidth=float(settings.analysis_window_overlay_linewidth),
+                zorder=0.5,
+            )
+        )
+
+
 def _plot_single_unit(
     *,
     df_unit: pd.DataFrame,
@@ -948,22 +1172,47 @@ def _plot_single_unit(
     if not any(payload["n_trials"] > 0 for payload in payloads):
         return None
 
-    fig, (ax_raster, ax_rate) = plt.subplots(
+    trace_finite = np.asarray(trace_bin_centers, dtype=float)
+    trace_finite = trace_finite[np.isfinite(trace_finite)]
+    raster_finite = np.asarray(raster_bin_centers, dtype=float)
+    raster_finite = raster_finite[np.isfinite(raster_finite)]
+    if trace_finite.size == 0 or raster_finite.size == 0:
+        return None
+
+    left_bound_s = max(float(np.min(trace_finite)), float(np.min(raster_finite)))
+    right_bound_s = min(float(np.max(trace_finite)), float(np.max(raster_finite)))
+    if right_bound_s <= left_bound_s:
+        return None
+    panel_windows = _resolve_display_windows(
+        settings,
+        left_bound_s=left_bound_s,
+        right_bound_s=right_bound_s,
+    )
+    n_panels = len(panel_windows)
+    if n_panels <= 0:
+        return None
+
+    fig, axes = plt.subplots(
         2,
-        1,
+        n_panels,
         figsize=figsize,
         dpi=dpi,
-        sharex=True,
+        squeeze=False,
+        sharey="row",
         gridspec_kw={
             "height_ratios": [
                 float(settings.panel_raster_height_ratio),
                 float(settings.panel_rate_height_ratio),
             ],
             "hspace": 0.08,
+            "wspace": 0.14,
         },
     )
+    ax_rasters = axes[0, :]
+    ax_rates = axes[1, :]
 
-    y_cursor = 1
+    condition_rows: list[tuple[dict, np.ndarray]] = []
+    y_cursor = 1.0
     y_ticks: list[float] = []
     y_labels: list[str] = []
     for payload in payloads:
@@ -971,64 +1220,106 @@ def _plot_single_unit(
         if n_trials <= 0:
             continue
         line_offsets = np.arange(y_cursor, y_cursor + n_trials, dtype=float)
-        ax_raster.eventplot(
-            payload["spike_rows"],
-            lineoffsets=line_offsets,
-            linelengths=float(settings.raster_linelength),
-            linewidths=float(settings.raster_linewidth),
-            colors=[_darken_color(payload["color"], settings.raster_darkening_factor)] * n_trials,
-            alpha=float(settings.raster_alpha),
-            zorder=3,
-        )
-        if settings.raster_show_condition_background:
-            ax_raster.axhspan(
-                float(line_offsets[0]) - 0.5,
-                float(line_offsets[-1]) + 0.5,
-                color=payload["color"],
-                alpha=0.07,
-                zorder=0,
-            )
+        condition_rows.append((payload, line_offsets))
         mid = 0.5 * (line_offsets[0] + line_offsets[-1])
         y_ticks.append(float(mid))
         y_labels.append(f"{payload['label']} (n={n_trials})")
         y_cursor += n_trials
-        ax_raster.axhline(float(y_cursor) - 0.5, color="#cccccc", linewidth=0.7)
 
-    ax_raster.axvline(0.0, color="#333333", linestyle="--", linewidth=1.0)
-    ax_raster.set_ylabel("Trials")
-    if y_ticks:
-        ax_raster.set_yticks(y_ticks)
-        ax_raster.set_yticklabels(y_labels)
-        ax_raster.set_ylim(float(y_cursor) - 0.5, 0.5)
-    else:
-        ax_raster.set_yticks([])
+    raster_ylim = (float(y_cursor) - 0.5, 0.5) if y_ticks else (1.0, 0.0)
+    for panel_idx, (x_min, x_max, label) in enumerate(panel_windows):
+        ax_raster = ax_rasters[panel_idx]
+        ax_rate = ax_rates[panel_idx]
 
-    for payload in payloads:
-        if int(payload["n_trials"]) <= 0:
-            continue
-        payload_trace_bin_centers = np.asarray(
-            payload.get("trace_bin_centers", trace_bin_centers),
-            dtype=float,
-        ).reshape(-1)
-        mean_hz = np.asarray(payload["mean_hz"], dtype=float)
-        sem_hz = np.asarray(payload["sem_hz"], dtype=float)
-        if payload_trace_bin_centers.size != mean_hz.size or sem_hz.size != mean_hz.size:
-            continue
-        ax_rate.plot(payload_trace_bin_centers, mean_hz, color=payload["color"], label=payload["label"])
-        ax_rate.fill_between(
-            payload_trace_bin_centers,
-            mean_hz - sem_hz,
-            mean_hz + sem_hz,
-            color=payload["color"],
-            alpha=0.22,
-            linewidth=0.0,
+        for payload, line_offsets in condition_rows:
+            n_trials = int(payload["n_trials"])
+            ax_raster.eventplot(
+                payload["spike_rows"],
+                lineoffsets=line_offsets,
+                linelengths=float(settings.raster_linelength),
+                linewidths=float(settings.raster_linewidth),
+                colors=[_darken_color(payload["color"], settings.raster_darkening_factor)] * n_trials,
+                alpha=float(settings.raster_alpha),
+                zorder=3,
+            )
+            if settings.raster_show_condition_background:
+                ax_raster.axhspan(
+                    float(line_offsets[0]) - 0.5,
+                    float(line_offsets[-1]) + 0.5,
+                    color=payload["color"],
+                    alpha=0.07,
+                    zorder=0,
+                )
+            ax_raster.axhline(float(line_offsets[-1]) + 0.5, color="#cccccc", linewidth=0.7)
+
+        ax_raster.axvline(0.0, color="#333333", linestyle="--", linewidth=1.0)
+        ax_raster.set_xlim(float(x_min), float(x_max))
+        ax_raster.set_title(label)
+        if y_ticks:
+            ax_raster.set_ylim(*raster_ylim)
+            if panel_idx == 0:
+                ax_raster.set_ylabel("Trials")
+                ax_raster.set_yticks(y_ticks)
+                ax_raster.set_yticklabels(y_labels)
+            else:
+                ax_raster.set_yticks(y_ticks)
+                ax_raster.tick_params(axis="y", labelleft=False)
+        else:
+            ax_raster.set_yticks([])
+        ax_raster.tick_params(axis="x", labelbottom=False)
+
+        for payload in payloads:
+            if int(payload["n_trials"]) <= 0:
+                continue
+            payload_trace_bin_centers = np.asarray(
+                payload.get("trace_bin_centers", trace_bin_centers),
+                dtype=float,
+            ).reshape(-1)
+            mean_hz = np.asarray(payload["mean_hz"], dtype=float)
+            sem_hz = np.asarray(payload["sem_hz"], dtype=float)
+            if payload_trace_bin_centers.size != mean_hz.size or sem_hz.size != mean_hz.size:
+                continue
+            ax_rate.plot(
+                payload_trace_bin_centers,
+                mean_hz,
+                color=payload["color"],
+                label=payload["label"],
+            )
+            ax_rate.fill_between(
+                payload_trace_bin_centers,
+                mean_hz - sem_hz,
+                mean_hz + sem_hz,
+                color=payload["color"],
+                alpha=0.22,
+                linewidth=0.0,
+            )
+        ax_rate.axvline(0.0, color="#333333", linestyle="--", linewidth=1.0, zorder=3)
+        ax_rate.grid(True, alpha=0.16, linewidth=0.45)
+        ax_rate.set_xlim(float(x_min), float(x_max))
+        ax_rate.set_xlabel("Time From Fixation Start (s)")
+        if panel_idx == 0:
+            ax_rate.set_ylabel("Firing Rate (Hz)")
+            ax_rate.legend(loc="upper right", frameon=False)
+        else:
+            ax_rate.tick_params(axis="y", labelleft=False)
+
+    rate_y_lims = [ax.get_ylim() for ax in ax_rates]
+    base_y_min = min(float(bounds[0]) for bounds in rate_y_lims)
+    base_y_max = max(float(bounds[1]) for bounds in rate_y_lims)
+    if not np.isfinite(base_y_min) or not np.isfinite(base_y_max) or np.isclose(base_y_min, base_y_max):
+        base_y_min, base_y_max = (-0.5, 0.5)
+    for ax in ax_rates:
+        ax.set_ylim(base_y_min, base_y_max)
+
+    for ax, (x_min, x_max, _) in zip(ax_rates, panel_windows):
+        _add_analysis_window_overlays(
+            ax,
+            settings,
+            x_min=float(x_min),
+            x_max=float(x_max),
+            y_min=base_y_min,
+            y_max=base_y_max,
         )
-
-    ax_rate.axvline(0.0, color="#333333", linestyle="--", linewidth=1.0)
-    ax_rate.set_xlabel("Time From Fixation Start (s)")
-    ax_rate.set_ylabel("Firing Rate (Hz)")
-    ax_rate.set_xlim(float(trace_bin_centers[0]), float(trace_bin_centers[-1]))
-    ax_rate.legend(loc="upper right", frameon=False)
 
     if settings.show_significance_ticks:
         pair_masks = _pair_significance_masks(
@@ -1037,42 +1328,49 @@ def _plot_single_unit(
             bin_size_s=trace_bin_size_s,
             settings=settings,
         )
-        y_min, y_max = ax_rate.get_ylim()
-        span = max(1e-6, float(y_max - y_min))
+        span = max(1e-6, float(base_y_max - base_y_min))
         row_gap = float(settings.significance_tick_row_gap_ratio) * span
         tick_h = float(settings.significance_tick_height_ratio) * span
         n_rows = len(pair_masks)
-        new_y_min = y_min - (row_gap * (n_rows + 1.4))
-        ax_rate.set_ylim(new_y_min, y_max)
-
-        for idx, pair in enumerate(pair_masks):
-            y0 = y_min - row_gap * float(n_rows - idx)
-            sig_x = trace_bin_centers[np.asarray(pair["mask"], dtype=bool)]
-            if sig_x.size > 0:
-                ax_rate.vlines(sig_x, y0, y0 + tick_h, color=pair["color"], linewidth=0.8, alpha=0.95)
-
-            y_frac = (y0 + 0.5 * tick_h - new_y_min) / max(1e-6, y_max - new_y_min)
-            ax_rate.text(
-                1.01,
-                float(y_frac),
-                f"{pair['label']} (p<{settings.significance_alpha:g})",
-                transform=ax_rate.transAxes,
-                ha="left",
-                va="center",
-                fontsize=8,
-                color=pair["color"],
-            )
-
-        ax_rate.text(
-            0.0,
-            -0.22,
-            "Significance ticks: per-bin category-pair FR difference",
-            transform=ax_rate.transAxes,
-            ha="left",
-            va="top",
-            fontsize=8,
-            color="#333333",
-        )
+        sig_y_min = base_y_min - (row_gap * (n_rows + 1.4))
+        for panel_idx, (ax_rate, (x_min, x_max, _)) in enumerate(zip(ax_rates, panel_windows)):
+            ax_rate.set_ylim(sig_y_min, base_y_max)
+            for idx, pair in enumerate(pair_masks):
+                y0 = base_y_min - row_gap * float(n_rows - idx)
+                sig_x = trace_bin_centers[np.asarray(pair["mask"], dtype=bool)]
+                sig_x = sig_x[(sig_x >= float(x_min)) & (sig_x <= float(x_max))]
+                if sig_x.size > 0:
+                    ax_rate.vlines(
+                        sig_x,
+                        y0,
+                        y0 + tick_h,
+                        color=pair["color"],
+                        linewidth=0.8,
+                        alpha=0.95,
+                    )
+                if panel_idx == (n_panels - 1):
+                    y_frac = (y0 + 0.5 * tick_h - sig_y_min) / max(1e-6, base_y_max - sig_y_min)
+                    ax_rate.text(
+                        1.01,
+                        float(y_frac),
+                        f"{pair['label']} (p<{settings.significance_alpha:g})",
+                        transform=ax_rate.transAxes,
+                        ha="left",
+                        va="center",
+                        fontsize=8,
+                        color=pair["color"],
+                    )
+            if panel_idx == (n_panels - 1):
+                ax_rate.text(
+                    0.0,
+                    -0.22,
+                    "Significance ticks: per-bin category-pair FR difference",
+                    transform=ax_rate.transAxes,
+                    ha="left",
+                    va="top",
+                    fontsize=8,
+                    color="#333333",
+                )
 
     row0 = df_unit.iloc[0]
     region = _safe_optional_str_shared(row0.get("region")) if isinstance(row0, pd.Series) else None
@@ -1082,13 +1380,13 @@ def _plot_single_unit(
         title_bits.append(f"Region {region}")
     if channel:
         title_bits.append(f"Channel {channel}")
-    fig.suptitle(" | ".join(title_bits), y=0.99)
+    fig.suptitle(" | ".join(title_bits), y=0.995)
 
     ext = _ensure_ext(settings.output_extension)
     out_path = out_dir / f"date={date}__unit={_safe_unit_filename(unit_uuid)}.{ext}"
     fig.patch.set_facecolor("white")
-    ax_raster.set_facecolor("white")
-    ax_rate.set_facecolor("white")
+    for ax in list(ax_rasters) + list(ax_rates):
+        ax.set_facecolor("white")
     save_figure(
         fig,
         out_path,
@@ -1118,7 +1416,7 @@ def _plot_single_unit_worker(args) -> Optional[Path]:
 
 
 def _build_unit_plot_tasks_for_date(args):
-    settings, date, primary_paths, raster_paths, unit_filter, unit_key_filter = args
+    settings, date, primary_paths, raster_paths, unit_filter, unit_key_filter, selective_lookup = args
     cfg = load_config(settings.cfg_path)
     out_root = build_analysis_output_dir(cfg, settings.output_subdir)
     df, trace_bin_centers, raster_bin_centers = _load_trials_for_date(
@@ -1141,7 +1439,8 @@ def _build_unit_plot_tasks_for_date(args):
     figsize, dpi = _resolve_figsize_and_dpi(settings)
     unit_tasks = []
     for unit_uuid in unit_ids:
-        if unit_key_filter is not None and f"{date}|{unit_uuid}" not in unit_key_filter:
+        unit_key = f"{date}|{unit_uuid}"
+        if unit_key_filter is not None and unit_key not in unit_key_filter:
             continue
         df_unit = df.loc[df["unit_uuid"].astype(str) == unit_uuid].copy()
         if df_unit.empty:
@@ -1155,6 +1454,8 @@ def _build_unit_plot_tasks_for_date(args):
         if not region_series.empty:
             region = next((val for val in region_series if val), None)
         unit_out_dir = out_root / _safe_region_folder(region)
+        if bool(settings.segregate_selective_units) and bool(selective_lookup.get(unit_key, False)):
+            unit_out_dir = unit_out_dir / str(settings.selective_unit_subfolder)
         if settings.example_units_subfolder:
             unit_out_dir = unit_out_dir / str(settings.example_units_subfolder)
         unit_tasks.append(
@@ -1181,7 +1482,7 @@ def plot_fixation_psth_units(
     unit_uuids: Optional[Sequence[str]] = None,
     unit_keys: Optional[Sequence[str]] = None,
 ) -> list[Path]:
-    """Generate one raster + average firing-rate PSTH figure per unit/date."""
+    """Generate one multiscale raster + average firing-rate PSTH figure per unit/date."""
     cfg = load_config(settings.cfg_path)
     primary_trial_rows = _iter_trial_rows(cfg, settings, dates=dates, sessions=sessions)
     if not primary_trial_rows:
@@ -1215,6 +1516,7 @@ def plot_fixation_psth_units(
 
     unit_filter = None if unit_uuids is None else {str(unit) for unit in unit_uuids}
     unit_key_filter = None if unit_keys is None else {str(key) for key in unit_keys}
+    selective_lookup = _load_selective_unit_lookup(settings)
     out_paths: list[Path] = []
 
     all_unit_tasks = []
@@ -1228,6 +1530,7 @@ def plot_fixation_psth_units(
                     grouped_raster.get(date),
                     unit_filter,
                     unit_key_filter,
+                    selective_lookup,
                 )
             )
         )

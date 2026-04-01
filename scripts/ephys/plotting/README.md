@@ -8,17 +8,28 @@ Current scripts:
   Output layout is grouped by region (across all dates):
   `.../region=<region>/date=<date>__unit=<unit_uuid>.pdf`
   Each figure has:
-  - top: color-coded rasters for interactive face, non-interactive face, and object fixations
+  - three time-scale columns: `+/-5 s`, `+/-3 s`, and `+/-1 s`
+  - each column has top rasters for interactive face, non-interactive face, and object fixations
     using the separate `1 ms` fixation spike-train trial file when configured
-  - bottom: mean firing rate (Hz) with SEM shading for the same conditions
+  - each column has bottom mean firing rate (Hz) with SEM shading for the same conditions
     using the `10 ms` fixation PSTH trial file plus the matching date-level averages
+  - pre/peri/post analysis windows (`[-500, 0]`, `[-250, 250]`, `[0, 500]` ms by default)
+    are overlaid on every rate panel
+  - when selectivity segregation is enabled, selective units are written under
+    `.../region=<region>/selective/` and non-selective units stay directly under
+    `.../region=<region>/`
   - trial PSTHs are smoothed before mean/SEM by default (`plot_smooth_before_average`)
 
 Config:
 - `configs/ephys_fixation_psth.yaml`
   - `plot_output_subdir`
   - `plot_output_extension`
+  - `plot_figsize`
   - `plot_output_dpi`
+  - `plot_segregate_selective_units`
+  - `plot_selectivity_input_subdir`
+  - `plot_selectivity_unit_summary_filename`
+  - `plot_selective_unit_subfolder`
   - `plot_use_parallel`
   - `plot_parallelize_units`
   - `plot_unit_parallel_min_units`
@@ -34,6 +45,12 @@ Config:
   - `plot_raster_show_condition_background`
   - `plot_panel_raster_height_ratio`
   - `plot_panel_rate_height_ratio`
+  - `plot_display_half_windows_s`
+  - `plot_show_analysis_window_overlays`
+  - `plot_analysis_windows_ms`
+  - `plot_analysis_window_colors`
+  - `plot_analysis_window_linestyle`
+  - `plot_analysis_window_linewidth`
   - `plot_condition_colors`
 
 - `plot_period_psth_units.py`
@@ -246,14 +263,15 @@ Config:
 - `plot_selective_fixation_psth_units.py`
   Selective-unit PSTH plotting with two modes:
   - batch mode (default): generate PNG plots for all selective units
-    in region folders (no extra statistical computation)
+    in region-specific `selective/` subfolders (no extra statistical computation)
   - example mode (`--example-unit-uuid`): generate PDF + PNG for a selected
-    selective unit under an `example units/` subfolder with per-bin
+    selective unit under `selective/example units/` with per-bin
     significance tick marks for all three fixation-pair comparisons
 
   Config:
   - `selective_plot_output_subdir`
   - `selective_plot_output_extension`
+  - `selective_plot_region_subfolder`
   - `selective_example_subfolder`
   - `selective_example_output_extensions`
   - `selective_example_significance_alpha`

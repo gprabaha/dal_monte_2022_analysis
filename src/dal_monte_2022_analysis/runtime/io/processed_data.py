@@ -249,16 +249,57 @@ def scan_processed_paths_for_filename(
 ) -> list[dict]:
     """List processed artifact paths matching one filename under a modality."""
     target_name = Path(str(filename)).name
-    rows = scan_processed_paths(
-        cfg,
-        modality,
-        dates=dates,
-        sessions=sessions,
-        agents=agents,
-    )
-    filtered = [row for row in rows if Path(row["path"]).name == target_name]
-    filtered.sort(key=lambda row: (row["date"], row["session"], str(row.get("agent") or "")))
-    return filtered
+    root = Path(cfg["processed_data_root"])
+    layout = _processed_layout_pattern(cfg)
+    rel_pattern = layout.format(date="*", session="*", modality=modality)
+    pattern = Path(rel_pattern) / target_name
+
+    dates_filter = _normalize_filter(dates)
+    sessions_filter = _normalize_filter(sessions)
+    agents_filter = None
+    if agents is not None:
+        agents_filter = set()
+        for agent in agents:
+            if agent is None or str(agent).strip().lower() == "shared":
+                agents_filter.add(None)
+            else:
+                agents_filter.add(str(agent).strip())
+
+    rows: list[dict] = []
+    for pkl_path in root.glob(str(pattern)):
+        parts = pkl_path.parts
+        date_part = next((part for part in parts if part.startswith("date=")), None)
+        session_part = next((part for part in parts if part.startswith("session=")), None)
+        if date_part is None or session_part is None:
+            continue
+
+        date = date_part.split("=", 1)[1]
+        session = session_part.split("=", 1)[1]
+        if dates_filter is not None and date not in dates_filter:
+            continue
+        if sessions_filter is not None and session not in sessions_filter:
+            continue
+
+        stem = pkl_path.stem
+        if stem.startswith("agent="):
+            agent = stem.split("=", 1)[1]
+        else:
+            agent = None
+
+        if agents_filter is not None and agent not in agents_filter:
+            continue
+
+        rows.append(
+            {
+                "date": date,
+                "session": session,
+                "agent": agent,
+                "path": pkl_path,
+            }
+        )
+
+    rows.sort(key=lambda row: (row["date"], row["session"], str(row.get("agent") or "")))
+    return rows
 
 
 def index_agent_paths(

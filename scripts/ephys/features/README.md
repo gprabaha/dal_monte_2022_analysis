@@ -14,6 +14,8 @@ Current scripts:
   (`fixations.pkl` is intentionally event-specific, not `shared.pkl`).
 - `build_fixation_psth_trials_10ms.py`
   Builds per-fixation `10 ms` non-overlapping spike-count PSTHs only.
+  Current default config stores a `+-5 s` window and limits fixation categories
+  to `face` and `object` to avoid large out-of-ROI neural trial files.
   Outputs are stored as:
   `date=<date>/session=<session>/psth/fixations_psth_10ms.pkl`
 - `build_fixation_psth_trials_50ms_step_25ms.py`
@@ -23,6 +25,8 @@ Current scripts:
   `date=<date>/session=<session>/psth/fixations_psth_50ms_step_25ms.pkl`
 - `build_fixation_spike_train_trials_1ms.py`
   Builds per-fixation `1 ms` spike-train counts only.
+  Current default config stores a `+-5 s` window and limits fixation categories
+  to `face` and `object`.
   Outputs are stored as:
   `date=<date>/session=<session>/psth/fixations_spike_train_1ms.pkl`
 - `build_period_psth_trials.py`
@@ -46,6 +50,8 @@ Current scripts:
   - `fixations_unsplit_by_interactive_state.pkl`
 - `build_fixation_psth_averages_10ms.py`
   Builds date-level averages from explicit `10 ms` fixation trial PSTH files.
+  Current default config therefore produces per-unit average traces across the
+  same `+-5 s` fixation-aligned window.
   Outputs are stored by default as:
   `analysis_output_root/ephys/psth/fixation_psth_averages/date=<date>/fixations_psth_10ms.pkl`
 - `build_fixation_psth_averages_50ms_step_25ms.py`

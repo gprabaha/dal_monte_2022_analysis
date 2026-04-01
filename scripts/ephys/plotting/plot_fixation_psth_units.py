@@ -16,11 +16,64 @@ def _as_unit_list(values):
     return [str(v) for v in values if str(v).strip()]
 
 
+def _normalize_float_list(raw, *, fallback):
+    if raw is None:
+        seq = list(fallback)
+    elif isinstance(raw, (list, tuple)):
+        seq = list(raw)
+    else:
+        seq = [raw]
+    out = []
+    for item in seq:
+        try:
+            value = float(item)
+        except Exception:
+            continue
+        if value > 0:
+            out.append(value)
+    return out or list(fallback)
+
+
+def _normalize_color_list(raw, *, fallback):
+    if raw is None:
+        seq = list(fallback)
+    elif isinstance(raw, (list, tuple)):
+        seq = list(raw)
+    else:
+        seq = [raw]
+    out = [str(item).strip() for item in seq if str(item).strip()]
+    return out or list(fallback)
+
+
+def _resolve_analysis_windows_s(cfg: dict) -> list[tuple[float, float]]:
+    raw = cfg.get("plot_analysis_windows_ms")
+    out: list[tuple[float, float]] = []
+    if isinstance(raw, dict):
+        raw = [raw.get(key) for key in ("pre_fix", "peri_fix", "post_fix")]
+    if raw is None:
+        selective_windows = cfg.get("selective_windows_ms")
+        if isinstance(selective_windows, dict):
+            raw = [selective_windows.get(key) for key in ("pre_fix", "peri_fix", "post_fix")]
+    if isinstance(raw, (list, tuple)):
+        for bounds in raw:
+            if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                continue
+            try:
+                start_s = float(bounds[0]) / 1000.0
+                stop_s = float(bounds[1]) / 1000.0
+            except Exception:
+                continue
+            if start_s > stop_s:
+                start_s, stop_s = stop_s, start_s
+            out.append((start_s, stop_s))
+    return out or [(-0.5, 0.0), (-0.25, 0.25), (0.0, 0.5)]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Build per-unit fixation PSTH figures with top rasters and bottom "
-            "mean firing-rate ± SEM traces."
+            "Build multiscale per-unit fixation PSTH figures with +/-5 s, +/-3 s, "
+            "and +/-1 s raster/rate panels."
         ),
     )
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
@@ -53,7 +106,7 @@ def main() -> None:
         average_trace_input_subdir=cfg.get("plot_average_input_subdir", "ephys/psth/fixation_psth_averages"),
         average_trace_input_filename=cfg.get(
             "plot_average_input_filename_split",
-            cfg.get("plot_average_input_filename", "fixations_psth_10ms_split_by_interactive_state.pkl"),
+            cfg.get("plot_average_input_filename", "fixations_psth_10ms.pkl"),
         ),
         average_trace_object_input_subdir=cfg.get(
             "plot_average_object_input_subdir",
@@ -61,11 +114,16 @@ def main() -> None:
         ),
         average_trace_object_input_filename=cfg.get(
             "plot_average_object_input_filename",
-            cfg.get("plot_average_input_filename_unsplit", "fixations_psth_10ms_unsplit_by_interactive_state.pkl"),
+            cfg.get("plot_average_input_filename_unsplit", cfg.get("plot_average_input_filename", "fixations_psth_10ms.pkl")),
         ),
         allow_trial_trace_fallback=cfg.get("plot_allow_trial_trace_fallback", True),
-        output_subdir=cfg.get("plot_output_subdir", "ephys/psth/fixation_psth_unit_plots"),
+        segregate_selective_units=cfg.get("plot_segregate_selective_units", True),
+        selectivity_input_subdir=cfg.get("plot_selectivity_input_subdir", cfg.get("selective_output_subdir", "ephys/psth/fixation_psth_selectivity")),
+        selectivity_unit_summary_filename=cfg.get("plot_selectivity_unit_summary_filename", cfg.get("selective_unit_summary_filename", "unit_selectivity.csv")),
+        selective_unit_subfolder=cfg.get("plot_selective_unit_subfolder", "selective"),
+        output_subdir=cfg.get("plot_output_subdir", "ephys/psth/fixation_psth_unit_plots_multiscale_5s"),
         output_extension=cfg.get("plot_output_extension", "pdf"),
+        figure_size=cfg.get("plot_figsize"),
         output_dpi=cfg.get("plot_output_dpi", 220),
         interactive_label=cfg.get("interactive_high_label", "interactive"),
         use_parallel=cfg.get("plot_use_parallel", True),
@@ -86,6 +144,18 @@ def main() -> None:
         raster_show_condition_background=cfg.get("plot_raster_show_condition_background", False),
         panel_raster_height_ratio=cfg.get("plot_panel_raster_height_ratio", 1.2),
         panel_rate_height_ratio=cfg.get("plot_panel_rate_height_ratio", 2.0),
+        display_half_windows_s=_normalize_float_list(
+            cfg.get("plot_display_half_windows_s"),
+            fallback=(5.0, 3.0, 1.0),
+        ),
+        show_analysis_window_overlays=cfg.get("plot_show_analysis_window_overlays", True),
+        analysis_window_overlays_s=_resolve_analysis_windows_s(cfg),
+        analysis_window_overlay_colors=_normalize_color_list(
+            cfg.get("plot_analysis_window_colors"),
+            fallback=("#bdbdbd", "#8f8f8f", "#636363"),
+        ),
+        analysis_window_overlay_linestyle=cfg.get("plot_analysis_window_linestyle", ":"),
+        analysis_window_overlay_linewidth=cfg.get("plot_analysis_window_linewidth", 0.8),
         bin_size_ms_fallback=cfg.get("bin_size_ms", 10.0),
         window_pre_s=cfg.get("window_pre_s", 1.0),
         window_post_s=cfg.get("window_post_s", 1.0),

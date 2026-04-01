@@ -69,7 +69,7 @@ class FixationPSTHSettings:
         default_factory=lambda: {k: tuple(v) for k, v in DEFAULT_FIXATION_ROI_GROUPS.items()}
     )
     agent_roi_groups: Optional[Dict[str, Dict[str, Sequence[str]]]] = None
-    categories: Optional[Sequence[str]] = ("face", "object", "out_of_roi")
+    categories: Optional[Sequence[str]] = ("face", "object")
     include_interactive_state: bool = True
     interactive_high_label: str = "interactive"
     bin_size_ms: float = 10.0
@@ -107,7 +107,7 @@ class FixationPSTHAverageSettings:
     use_parallel: bool = True
     max_procs: int = 16
     test_single: bool = False
-    categories: Optional[Sequence[str]] = ("face", "object", "out_of_roi")
+    categories: Optional[Sequence[str]] = ("face", "object")
 
 
 def _resolve_roi_groups(settings: FixationPSTHSettings, agent: str) -> Dict[str, list[str]]:

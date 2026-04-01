@@ -319,7 +319,7 @@ def _build_settings_common(
         use_parallel=cfg.get("average_use_parallel", True),
         max_procs=cfg.get("max_procs", 16),
         test_single=cfg.get("test_single", False),
-        categories=cfg.get(str(profile["categories_key"]), ("face", "object", "out_of_roi")),
+        categories=cfg.get(str(profile["categories_key"]), ("face", "object")),
     )
     return (
         settings_common,

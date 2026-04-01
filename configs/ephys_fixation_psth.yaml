@@ -17,7 +17,8 @@ roi_groups:
   face: ["face", "mouth", "eyes_nf"]
   object: ["right_nonsocial_object", "left_nonsocial_object"]
   out_of_roi: ["out_of_roi"]
-categories: ["face", "object", "out_of_roi"]
+# Keep only neural conditions that are analyzed downstream.
+categories: ["face", "object"]
 
 # PSTH construction
 bin_size_ms: 10.0
@@ -27,8 +28,8 @@ spike_train_bin_size_ms: 1.0
 # Gaussian smoothing applied to the saved 1 ms spike train. Sigma is expressed
 # in 1 ms bins, so the default of 2.0 corresponds to a 2 ms standard deviation.
 spike_train_smoothing_sigma_bins: 2.0
-window_pre_s: 1.0
-window_post_s: 1.0
+window_pre_s: 5.0
+window_post_s: 5.0
 include_interactive_state: true
 interactive_high_label: interactive
 
@@ -560,8 +561,9 @@ selective_region_comparison_plot_pvalue_floor: 1e-6
 selective_region_comparison_plot_annotation_max_regions: 10
 
 # Selective-unit firing-rate plotting
-selective_plot_output_subdir: ephys/psth/fixation_psth_selective_unit_plots
+selective_plot_output_subdir: ephys/psth/fixation_psth_unit_plots_multiscale_5s
 selective_plot_output_extension: png
+selective_plot_region_subfolder: selective
 selective_example_subfolder: "example units"
 selective_example_output_extensions: [pdf, png]
 selective_example_significance_alpha: 0.05
@@ -618,8 +620,10 @@ selective_example_grid_units:
     object: {unit_uuid: "1255"}
 
 # Per-unit fixation PSTH plotting (stored in analysis_output_root)
-plot_output_subdir: ephys/psth/fixation_psth_unit_plots
+# Route multiscale figures to a separate folder so older single-timescale plots remain intact.
+plot_output_subdir: ephys/psth/fixation_psth_unit_plots_multiscale_5s
 plot_output_extension: pdf
+plot_figsize: [15.0, 6.8]
 plot_output_dpi: 220
 plot_use_parallel: true
 plot_parallelize_units: true
@@ -635,15 +639,19 @@ plot_trial_input_filename: fixations_psth_10ms.pkl
 plot_raster_trial_input_modality: psth
 plot_raster_trial_input_filename: fixations_spike_train_1ms.pkl
 plot_average_input_subdir: ephys/psth/fixation_psth_averages
-plot_average_input_filename: fixations_psth_10ms_split_by_interactive_state.pkl
-plot_average_input_filename_split: fixations_psth_10ms_split_by_interactive_state.pkl
+plot_average_input_filename: fixations_psth_10ms.pkl
+plot_average_input_filename_split: fixations_psth_10ms.pkl
 # Object traces can be sourced from an unsplit average file so object is not
 # split by interactive state in downstream plotting/index workflows.
 plot_average_object_input_subdir: ephys/psth/fixation_psth_averages
-plot_average_object_input_filename: fixations_psth_10ms_unsplit_by_interactive_state.pkl
-plot_average_input_filename_unsplit: fixations_psth_10ms_unsplit_by_interactive_state.pkl
+plot_average_object_input_filename: fixations_psth_10ms.pkl
+plot_average_input_filename_unsplit: fixations_psth_10ms.pkl
 # If true, conditions missing from average rows fall back to trial-derived traces.
 plot_allow_trial_trace_fallback: false
+plot_segregate_selective_units: true
+plot_selectivity_input_subdir: ephys/psth/fixation_psth_selectivity
+plot_selectivity_unit_summary_filename: unit_selectivity.csv
+plot_selective_unit_subfolder: selective
 plot_max_trials_per_condition: 300
 plot_random_seed: 42
 plot_smooth_before_average: true
@@ -656,6 +664,12 @@ plot_raster_darkening_factor: 0.65
 plot_raster_show_condition_background: false
 plot_panel_raster_height_ratio: 1.2
 plot_panel_rate_height_ratio: 2.0
+plot_display_half_windows_s: [5.0, 3.0, 1.0]
+plot_show_analysis_window_overlays: true
+# If unset, overlay windows default to selective_windows_ms.{pre_fix, peri_fix, post_fix}.
+plot_analysis_window_colors: ["#bdbdbd", "#8f8f8f", "#636363"]
+plot_analysis_window_linestyle: ":"
+plot_analysis_window_linewidth: 0.8
 plot_condition_colors:
   face_interactive: "#b64198"
   face_non_interactive: "#97ca3d"
