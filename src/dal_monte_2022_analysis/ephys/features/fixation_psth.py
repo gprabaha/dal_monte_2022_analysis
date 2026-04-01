@@ -780,7 +780,7 @@ def run_fixation_psth_trial_build(
             )
 
     if settings.use_parallel and len(payloads) > 1:
-        n_proc = get_n_processes(max_procs=settings.max_procs)
+        n_proc = get_n_processes()
         with Pool(
             processes=n_proc,
             initializer=_init_fixation_unit_worker,
