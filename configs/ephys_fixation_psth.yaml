@@ -252,6 +252,52 @@ selective_index_pair_names:
 # - cross-condition explained-variance curves from per-condition fits
 population_pca_trial_input_modality: psth
 population_pca_trial_input_filename: fixations.pkl
+population_pca_analysis_variant: three_condition_core
+population_pca_analysis_variants:
+  three_condition_core:
+    conditions: [face_interactive, face_non_interactive, object]
+    input_subdir: ephys/psth/fixation_psth_averages
+    input_filename: fixations_split_by_interactive_state.pkl
+    object_input_subdir: ephys/psth/fixation_psth_averages
+    object_input_filename: fixations_unsplit_by_interactive_state.pkl
+    output_subdir: ephys/psth/fixation_population_pca
+    plot_input_subdir: ephys/psth/fixation_population_pca
+    plot_output_subdir: ephys/psth/fixation_population_pca/plots
+    plot_trajectory_output_filename: population_pca_pc_trajectories
+    plot_explained_variance_output_filename: population_pca_explained_variance_bars
+    plot_cumulative_variance_output_filename: population_pca_explained_variance_cumulative
+    plot_pairwise_geometry_output_filename: population_pca_pairwise_geometry_violin
+    plot_condition_labels:
+      face_interactive: Interactive Face
+      face_non_interactive: Non-Interactive Face
+      object: Object
+    plot_condition_colors:
+      face_interactive: "#b64198"
+      face_non_interactive: "#97ca3d"
+      object: "#754c29"
+  interactive_state_matched:
+    conditions: [face_interactive, face_non_interactive, object_interactive, object_non_interactive]
+    input_subdir: ephys/psth/fixation_psth_averages
+    input_filename: fixations_split_by_interactive_state.pkl
+    object_input_subdir: null
+    object_input_filename: null
+    output_subdir: ephys/psth/fixation_population_pca_interactive_state_matched
+    plot_input_subdir: ephys/psth/fixation_population_pca_interactive_state_matched
+    plot_output_subdir: ephys/psth/fixation_population_pca_interactive_state_matched/plots
+    plot_trajectory_output_filename: population_pca_pc_trajectories
+    plot_explained_variance_output_filename: population_pca_explained_variance_bars
+    plot_cumulative_variance_output_filename: population_pca_explained_variance_cumulative
+    plot_pairwise_geometry_output_filename: population_pca_pairwise_geometry_violin
+    plot_condition_labels:
+      face_interactive: Interactive Face
+      face_non_interactive: Non-Interactive Face
+      object_interactive: Interactive Object
+      object_non_interactive: Non-Interactive Object
+    plot_condition_colors:
+      face_interactive: "#b64198"
+      face_non_interactive: "#97ca3d"
+      object_interactive: "#4c78a8"
+      object_non_interactive: "#f58518"
 # Prefer precomputed average PSTHs so smoothing/averaging settings are consistent
 # with the dedicated average builders.
 population_pca_prefer_trial_input: false

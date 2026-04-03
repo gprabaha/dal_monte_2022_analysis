@@ -16,7 +16,9 @@ _DEFAULT_EPHYS_FIX_PSTH_CFG = _REPO_ROOT / "configs" / "ephys_fixation_psth.yaml
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.analysis.fixation_population_pca import (
+    DEFAULT_POPULATION_PCA_ANALYSIS_VARIANT,
     FixationPopulationPCASettings,
+    resolve_population_pca_variant_config,
     run_fixation_population_pca_analysis,
 )
 
@@ -46,6 +48,7 @@ def main() -> None:
     )
     parser.add_argument("--dataset-cfg", default=str(_DEFAULT_DATASET_CFG))
     parser.add_argument("--ephys-fixation-psth-cfg", default=str(_DEFAULT_EPHYS_FIX_PSTH_CFG))
+    parser.add_argument("--analysis-variant", default=None)
     parser.add_argument("--date", action="append", default=None)
     parser.add_argument("--region", action="append", default=None)
     parser.add_argument("--window-ms-start", type=float, default=None)
@@ -58,6 +61,10 @@ def main() -> None:
     dataset_cfg_path = _resolve_cli_path(args.dataset_cfg)
     ephys_fix_psth_cfg_path = _resolve_cli_path(args.ephys_fixation_psth_cfg)
     cfg = load_config(ephys_fix_psth_cfg_path)
+    variant_cfg = resolve_population_pca_variant_config(
+        cfg,
+        analysis_variant=args.analysis_variant,
+    )
 
     window_start_ms, window_stop_ms = _resolve_window_ms(cfg.get("population_pca_window_ms", [-500.0, 500.0]))
     if args.window_ms_start is not None:
@@ -69,48 +76,72 @@ def main() -> None:
 
     settings = FixationPopulationPCASettings(
         cfg_path=str(dataset_cfg_path),
+        analysis_variant=str(
+            variant_cfg.get("analysis_variant", DEFAULT_POPULATION_PCA_ANALYSIS_VARIANT)
+        ),
         trial_input_modality=cfg.get("population_pca_trial_input_modality", cfg.get("trial_output_modality", "psth")),
         trial_input_filename=cfg.get("population_pca_trial_input_filename", cfg.get("trial_output_filename", "fixations.pkl")),
         prefer_trial_input=cfg.get("population_pca_prefer_trial_input", False),
         allow_trial_fallback=cfg.get("population_pca_allow_trial_fallback", True),
-        input_subdir=cfg.get(
-            "population_pca_input_subdir",
-            cfg.get(
-                "average_output_subdir",
+        input_subdir=str(
+            variant_cfg.get(
+                "input_subdir",
                 cfg.get(
-                    "selective_index_average_output_subdir",
-                    "ephys/psth/fixation_psth_averages",
-                ),
-            ),
-        ),
-        input_filename=cfg.get(
-            "population_pca_input_filename_split",
-            cfg.get(
-                "population_pca_input_filename",
-                cfg.get(
-                    "average_output_filename_split",
+                    "population_pca_input_subdir",
                     cfg.get(
-                        "average_output_filename",
+                        "average_output_subdir",
                         cfg.get(
-                            "selective_index_average_output_filename_split",
-                            "fixations.pkl",
+                            "selective_index_average_output_subdir",
+                            "ephys/psth/fixation_psth_averages",
                         ),
                     ),
                 ),
-            ),
+            )
         ),
-        object_input_subdir=cfg.get(
-            "population_pca_object_input_subdir",
-            cfg.get("average_output_subdir_unsplit"),
+        input_filename=str(
+            variant_cfg.get(
+                "input_filename",
+                cfg.get(
+                    "population_pca_input_filename_split",
+                    cfg.get(
+                        "population_pca_input_filename",
+                        cfg.get(
+                            "average_output_filename_split",
+                            cfg.get(
+                                "average_output_filename",
+                                cfg.get(
+                                    "selective_index_average_output_filename_split",
+                                    "fixations.pkl",
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
         ),
-        object_input_filename=cfg.get(
-            "population_pca_object_input_filename",
+        object_input_subdir=variant_cfg.get(
+            "object_input_subdir",
             cfg.get(
-                "average_output_filename_unsplit",
-                cfg.get("selective_index_average_output_filename_unsplit"),
+                "population_pca_object_input_subdir",
+                cfg.get("average_output_subdir_unsplit"),
             ),
         ),
-        output_subdir=cfg.get("population_pca_output_subdir", "ephys/psth/fixation_population_pca"),
+        object_input_filename=variant_cfg.get(
+            "object_input_filename",
+            cfg.get(
+                "population_pca_object_input_filename",
+                cfg.get(
+                    "average_output_filename_unsplit",
+                    cfg.get("selective_index_average_output_filename_unsplit"),
+                ),
+            ),
+        ),
+        output_subdir=str(
+            variant_cfg.get(
+                "output_subdir",
+                cfg.get("population_pca_output_subdir", "ephys/psth/fixation_population_pca"),
+            )
+        ),
         summary_filename=cfg.get("population_pca_summary_filename", "pca_fit_summary.csv"),
         timecourse_filename=cfg.get("population_pca_timecourse_filename", "concatenated_pc_timecourses.csv"),
         explained_variance_filename=cfg.get("population_pca_explained_variance_filename", "cross_condition_explained_variance.csv"),
@@ -135,6 +166,7 @@ def main() -> None:
         interactive_label=cfg.get("interactive_high_label", "interactive"),
         face_label=cfg.get("face_label", "face"),
         object_label=cfg.get("object_label", "object"),
+        conditions=tuple(variant_cfg.get("conditions", ())),
         window_start_ms=window_start_ms,
         window_stop_ms=window_stop_ms,
         max_components=cfg.get("population_pca_max_components", 50),
@@ -193,6 +225,7 @@ def main() -> None:
     )
     print(
         "[analysis] population PCA settings: "
+        f"analysis_variant={settings.analysis_variant}, "
         f"window_ms=[{settings.window_start_ms}, {settings.window_stop_ms}], "
         f"min_units_per_region={settings.min_units_per_region}, "
         f"max_components={settings.max_components}, "

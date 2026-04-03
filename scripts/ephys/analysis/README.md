@@ -231,6 +231,8 @@ Config:
   - `selective_region_comparison_alignment_cosine_threshold`
   - `population_pca_trial_input_modality`
   - `population_pca_trial_input_filename`
+  - `population_pca_analysis_variant`
+  - `population_pca_analysis_variants`
   - `population_pca_prefer_trial_input`
   - `population_pca_allow_trial_fallback`
   - `population_pca_smooth_before_average`

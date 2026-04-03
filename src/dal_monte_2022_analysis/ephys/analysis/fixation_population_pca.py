@@ -39,6 +39,7 @@ DEFAULT_POPULATION_PCA_CONDITIONS: tuple[str, ...] = (
     "face_non_interactive",
     "object",
 )
+DEFAULT_POPULATION_PCA_ANALYSIS_VARIANT = "three_condition_core"
 
 
 @dataclass
@@ -46,6 +47,7 @@ class FixationPopulationPCASettings:
     """Configuration for population PCA from fixation PSTH averages."""
 
     cfg_path: str
+    analysis_variant: str = DEFAULT_POPULATION_PCA_ANALYSIS_VARIANT
     trial_input_modality: str = "psth"
     trial_input_filename: str = "fixations.pkl"
     prefer_trial_input: bool = False
@@ -92,6 +94,124 @@ class FixationPopulationPCASettings:
     bin_size_ms_fallback: float = 10.0
     window_pre_s_fallback: float = 1.0
     window_post_s_fallback: float = 1.0
+
+
+def _normalize_condition_sequence(
+    raw: object,
+    *,
+    fallback: Sequence[str],
+) -> tuple[str, ...]:
+    if raw is None:
+        return tuple(str(token) for token in fallback)
+    if isinstance(raw, str):
+        seq = [raw]
+    elif isinstance(raw, (list, tuple)):
+        seq = list(raw)
+    else:
+        seq = [raw]
+    out: list[str] = []
+    for item in seq:
+        token = str(item).strip()
+        if token:
+            out.append(token)
+    return tuple(out) if out else tuple(str(token) for token in fallback)
+
+
+def _normalize_str_dict(raw: object) -> dict[str, str]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in raw.items():
+        key_token = str(key).strip()
+        value_token = str(value).strip()
+        if key_token and value_token:
+            out[key_token] = value_token
+    return out
+
+
+def _normalize_variant_cfg(raw: object) -> dict[str, dict[str, object]]:
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, object]] = {}
+    for key, value in raw.items():
+        token = str(key).strip()
+        if token and isinstance(value, dict):
+            out[token] = dict(value)
+    return out
+
+
+def resolve_population_pca_variant_config(
+    cfg: dict,
+    *,
+    analysis_variant: Optional[str] = None,
+) -> dict[str, object]:
+    """Resolve variant-specific PCA analysis and plotting settings."""
+    variant = str(
+        analysis_variant
+        if analysis_variant is not None
+        else cfg.get("population_pca_analysis_variant", DEFAULT_POPULATION_PCA_ANALYSIS_VARIANT)
+    ).strip() or DEFAULT_POPULATION_PCA_ANALYSIS_VARIANT
+
+    configured_variants = _normalize_variant_cfg(cfg.get("population_pca_analysis_variants"))
+    variant_cfg = configured_variants.get(variant, {})
+    if variant != DEFAULT_POPULATION_PCA_ANALYSIS_VARIANT and not variant_cfg:
+        raise ValueError(
+            f"Unknown population PCA analysis variant '{variant}'. "
+            "Add it to population_pca_analysis_variants in the config."
+        )
+
+    legacy_base: dict[str, object] = {}
+    if variant == DEFAULT_POPULATION_PCA_ANALYSIS_VARIANT:
+        legacy_base = {
+            "conditions": cfg.get("population_pca_conditions"),
+            "input_subdir": cfg.get("population_pca_input_subdir"),
+            "input_filename": cfg.get(
+                "population_pca_input_filename_split",
+                cfg.get("population_pca_input_filename"),
+            ),
+            "object_input_subdir": cfg.get("population_pca_object_input_subdir"),
+            "object_input_filename": cfg.get("population_pca_object_input_filename"),
+            "output_subdir": cfg.get("population_pca_output_subdir"),
+            "plot_input_subdir": cfg.get("population_pca_plot_input_subdir"),
+            "plot_output_subdir": cfg.get("population_pca_plot_output_subdir"),
+            "plot_trajectory_output_filename": cfg.get("population_pca_plot_trajectory_output_filename"),
+            "plot_explained_variance_output_filename": cfg.get(
+                "population_pca_plot_explained_variance_output_filename"
+            ),
+            "plot_cumulative_variance_output_filename": cfg.get(
+                "population_pca_plot_cumulative_variance_output_filename"
+            ),
+            "plot_pairwise_geometry_output_filename": cfg.get(
+                "population_pca_plot_pairwise_geometry_output_filename"
+            ),
+            "plot_condition_labels": cfg.get("population_pca_plot_condition_labels"),
+            "plot_condition_colors": cfg.get("population_pca_plot_condition_colors"),
+        }
+
+    resolved: dict[str, object] = {}
+    for key, value in legacy_base.items():
+        if value is not None:
+            resolved[key] = value
+    for key, value in variant_cfg.items():
+        resolved[key] = value
+
+    fallback_conditions = (
+        DEFAULT_POPULATION_PCA_CONDITIONS
+        if variant == DEFAULT_POPULATION_PCA_ANALYSIS_VARIANT
+        else ()
+    )
+    resolved["analysis_variant"] = variant
+    resolved["conditions"] = _normalize_condition_sequence(
+        resolved.get("conditions"),
+        fallback=fallback_conditions,
+    )
+    if variant != DEFAULT_POPULATION_PCA_ANALYSIS_VARIANT and not resolved["conditions"]:
+        raise ValueError(
+            f"population_pca_analysis_variants.{variant}.conditions is required for non-default variants."
+        )
+    resolved["plot_condition_labels"] = _normalize_str_dict(resolved.get("plot_condition_labels"))
+    resolved["plot_condition_colors"] = _normalize_str_dict(resolved.get("plot_condition_colors"))
+    return resolved
 
 
 def _fallback_bin_centers_s(settings: FixationPopulationPCASettings, n_bins: int) -> np.ndarray:
@@ -191,13 +311,55 @@ def _resolve_condition_from_row_fields(
     if not category_token or category_token == "nan":
         return None
 
+    requested_conditions = {str(token).strip() for token in settings.conditions if str(token).strip()}
+
     object_tokens = {
         _norm_token(settings.object_label),
         "object",
         "objects",
     }
+    split_object_requested = bool(
+        {"object_interactive", "object_non_interactive"}.intersection(requested_conditions)
+    )
+    pooled_object_requested = "object" in requested_conditions
+
+    has_interactive_state = interactive_state is not None and not pd.isna(interactive_state)
+    has_is_interactive = is_interactive is not None and not pd.isna(is_interactive)
+
+    def _resolve_interactive_flag() -> bool:
+        if has_is_interactive:
+            return _as_bool(is_interactive, settings.interactive_label)
+        if has_interactive_state:
+            return _as_bool(interactive_state, settings.interactive_label)
+        raise ValueError("Interactive-state label is required for split PCA conditions.")
+
+    if category_token in {
+        "object_interactive",
+        "interactive_object",
+        "int_object",
+        "objectinteractive",
+    }:
+        return "object_interactive" if split_object_requested else ("object" if pooled_object_requested else None)
+    if category_token in {
+        "object_non_interactive",
+        "object_noninteractive",
+        "non_interactive_object",
+        "noninteractive_object",
+        "nonint_object",
+    }:
+        return "object_non_interactive" if split_object_requested else ("object" if pooled_object_requested else None)
     if category_token in object_tokens:
-        return "object"
+        if split_object_requested:
+            if not has_interactive_state and not has_is_interactive:
+                raise ValueError(
+                    "Object rows are missing interactive-state labels. "
+                    "Build averages with split_by_interactive_state=true "
+                    "or provide is_interactive/interactive_state columns."
+                )
+            return "object_interactive" if _resolve_interactive_flag() else "object_non_interactive"
+        if pooled_object_requested or not requested_conditions:
+            return "object"
+        return None
 
     if category_token in {
         "face_interactive",
@@ -215,12 +377,14 @@ def _resolve_condition_from_row_fields(
     }:
         return "face_non_interactive"
 
+    if category_token == "face":
+        if "face" in requested_conditions and "face_interactive" not in requested_conditions and "face_non_interactive" not in requested_conditions:
+            return "face"
+
     face_token = _norm_token(settings.face_label)
     if category_token != face_token:
         return None
 
-    has_interactive_state = interactive_state is not None and not pd.isna(interactive_state)
-    has_is_interactive = is_interactive is not None and not pd.isna(is_interactive)
     require_face_state = (
         bool(settings.require_face_interactive_state)
         if require_face_interactive_state is None
@@ -233,13 +397,16 @@ def _resolve_condition_from_row_fields(
                 "Build averages with split_by_interactive_state=true "
                 "or provide is_interactive/interactive_state columns."
             )
+        if "face" in requested_conditions and "face_interactive" not in requested_conditions and "face_non_interactive" not in requested_conditions:
+            return "face"
         return "face_non_interactive"
 
-    if has_is_interactive:
-        interactive = _as_bool(is_interactive, settings.interactive_label)
-    else:
-        interactive = _as_bool(interactive_state, settings.interactive_label)
-    return "face_interactive" if interactive else "face_non_interactive"
+    interactive = _resolve_interactive_flag()
+    if "face_interactive" in requested_conditions or "face_non_interactive" in requested_conditions:
+        return "face_interactive" if interactive else "face_non_interactive"
+    if "face" in requested_conditions:
+        return "face"
+    return None
 
 
 def _resolve_condition_for_average_row(
@@ -1385,7 +1552,7 @@ def _build_fit_summary_row(
 ) -> dict:
     ratio = np.asarray(model["explained_variance_ratio"], dtype=float).reshape(-1)
     cum = np.asarray(model["cumulative_explained_variance_ratio"], dtype=float).reshape(-1)
-    return {
+    row = {
         "region": str(region),
         "fit_scope": str(fit_scope),
         "fit_condition": str(fit_condition),
@@ -1397,10 +1564,12 @@ def _build_fit_summary_row(
         "explained_variance_ratio_pc2": float(ratio[1]) if ratio.size >= 2 else np.nan,
         "explained_variance_ratio_pc3": float(ratio[2]) if ratio.size >= 3 else np.nan,
         "cumulative_explained_variance_ratio_pc3": float(cum[2]) if cum.size >= 3 else np.nan,
-        "n_units_face_interactive": int(condition_unit_counts.get("face_interactive", 0)),
-        "n_units_face_non_interactive": int(condition_unit_counts.get("face_non_interactive", 0)),
-        "n_units_object": int(condition_unit_counts.get("object", 0)),
     }
+    for condition, count in condition_unit_counts.items():
+        token = _norm_token(condition)
+        if token:
+            row[f"n_units_{token}"] = int(count)
+    return row
 
 
 def _build_region_analysis(args) -> dict:
@@ -1794,6 +1963,7 @@ def run_fixation_population_pca_analysis(
     if settings.verbose_logging:
         print(
             "[analysis] fixation population PCA request: "
+            f"analysis_variant={settings.analysis_variant}, "
             f"fixation_types={list(settings.conditions)}, "
             f"date_filter={list(dates) if dates is not None else 'all'}, "
             f"region_filter={list(regions) if regions is not None else 'all'}"
@@ -1809,6 +1979,7 @@ def run_fixation_population_pca_analysis(
         print("[analysis] no usable fixation PSTH rows found for population PCA")
         return {
             "meta": {
+                "analysis_variant": str(settings.analysis_variant),
                 "input_source": str(input_source),
                 "n_regions_input": 0,
                 "n_regions_analyzed": 0,
@@ -1866,6 +2037,7 @@ def run_fixation_population_pca_analysis(
         print("[analysis] no rows remain after applying population PCA time window")
         return {
             "meta": {
+                "analysis_variant": str(settings.analysis_variant),
                 "n_regions_input": 0,
                 "n_regions_analyzed": 0,
                 "n_units_common_total": 0,
@@ -1889,6 +2061,7 @@ def run_fixation_population_pca_analysis(
         print("[analysis] no rows remain after region filtering for population PCA")
         return {
             "meta": {
+                "analysis_variant": str(settings.analysis_variant),
                 "n_regions_input": 0,
                 "n_regions_analyzed": 0,
                 "n_units_common_total": 0,
@@ -2084,6 +2257,7 @@ def run_fixation_population_pca_analysis(
 
     result_obj = {
         "meta": {
+            "analysis_variant": str(settings.analysis_variant),
             "input_source": str(input_source),
             "input_subdir": settings.input_subdir,
             "input_filename": _ensure_filename(settings.input_filename, ".pkl"),

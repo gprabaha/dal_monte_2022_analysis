@@ -43,11 +43,15 @@ DEFAULT_CONDITION_LABELS: dict[str, str] = {
     "face_interactive": "Interactive Face",
     "face_non_interactive": "Non-Interactive Face",
     "object": "Object",
+    "object_interactive": "Interactive Object",
+    "object_non_interactive": "Non-Interactive Object",
 }
 DEFAULT_CONDITION_COLORS: dict[str, str] = {
     "face_interactive": "#d62728",
     "face_non_interactive": "#1f77b4",
     "object": "#2ca02c",
+    "object_interactive": "#17becf",
+    "object_non_interactive": "#ff7f0e",
 }
 DEFAULT_REGION_ORDER: tuple[str, ...] = ("bla", "accg", "dmpfc", "ofc")
 DEFAULT_REGION_LABELS: dict[str, str] = {
@@ -404,6 +408,10 @@ def _short_condition_label(condition: object) -> str:
         return "Int"
     if token == "face_non_interactive":
         return "Non"
+    if token == "object_interactive":
+        return "Obj Int"
+    if token == "object_non_interactive":
+        return "Obj Non"
     if token == "object":
         return "Obj"
     return str(condition)
@@ -966,7 +974,7 @@ def plot_fixation_population_pca_trajectories(
                 n_pcs=int(settings.trajectory_n_pcs),
             )
 
-            border_color = str(color_map.get(condition, DEFAULT_CONDITION_COLORS[condition]))
+            border_color = str(color_map.get(condition, DEFAULT_CONDITION_COLORS.get(condition, "#444444")))
             ax.plot(
                 xyz[:, 0],
                 xyz[:, 1],

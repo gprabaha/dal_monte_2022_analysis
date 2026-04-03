@@ -59,6 +59,10 @@ def _condition_labels(condition: str) -> tuple[str, str]:
         return "face", "interactive"
     if condition == "face_non_interactive":
         return "face", "non_interactive"
+    if condition == "object_interactive":
+        return "object", "interactive"
+    if condition == "object_non_interactive":
+        return "object", "non_interactive"
     if condition == "object":
         return "object", "non_interactive"
     raise ValueError(f"Unknown condition '{condition}'.")
@@ -70,6 +74,10 @@ def _build_pattern(bin_centers: np.ndarray, *, unit_scale: float, condition: str
         vec = 6.0 + (1.5 * unit_scale) + np.sin(2.0 * np.pi * (x + 0.55))
     elif condition == "face_non_interactive":
         vec = 4.0 + (1.2 * unit_scale) + np.cos(2.0 * np.pi * (x + 0.35))
+    elif condition == "object_interactive":
+        vec = 5.0 + (0.9 * unit_scale) + 0.75 * np.cos(2.0 * np.pi * (x + 0.05))
+    elif condition == "object_non_interactive":
+        vec = 2.5 + (0.7 * unit_scale) + 0.45 * np.sin(2.0 * np.pi * (x + 0.20))
     elif condition == "object":
         vec = 3.0 + (0.8 * unit_scale) + 0.6 * np.sin(2.0 * np.pi * (x + 0.15))
     else:
@@ -172,6 +180,87 @@ def _run_population_pca_fixture(
     return cfg_path, analysis_root, bin_centers, result
 
 
+def _run_population_pca_interactive_state_matched_fixture(
+    root: Path,
+) -> tuple[Path, Path, np.ndarray, dict]:
+    processed_root = root / "processed"
+    analysis_root = root / "analysis"
+    cfg_path = root / "dataset.yaml"
+    _write_dataset_cfg(cfg_path, processed_root=processed_root, analysis_root=analysis_root)
+
+    date = "20990103"
+    avg_root = analysis_root / "ephys/psth/fixation_psth_averages" / f"date={date}"
+    avg_root.mkdir(parents=True, exist_ok=True)
+    split_avg_path = avg_root / "fixations_split.pkl"
+
+    bin_centers = np.arange(-0.55, 0.56, 0.1, dtype=float)
+    split_rows: list[dict] = []
+    for region, unit_ids in (("ACC", ("u_acc_1", "u_acc_2", "u_acc_3")), ("BLA", ("u_bla_1", "u_bla_2"))):
+        for unit_idx, unit_id in enumerate(unit_ids):
+            condition_order = (
+                "face_interactive",
+                "face_non_interactive",
+                "object_interactive",
+                "object_non_interactive",
+            )
+            if region == "BLA" and unit_id == "u_bla_2":
+                condition_order = (
+                    "face_interactive",
+                    "face_non_interactive",
+                    "object_interactive",
+                )
+            for condition in condition_order:
+                category, interactive_state = _condition_labels(condition)
+                split_rows.append(
+                    {
+                        "date": date,
+                        "unit_uuid": unit_id,
+                        "region": region,
+                        "spike_channel": f"ch_{unit_idx + 1}",
+                        "recorded_agent": "m1",
+                        "recorded_monkey": "test_monkey",
+                        "area": region.lower(),
+                        "fixation_category": category,
+                        "interactive_state": interactive_state,
+                        "n_trials": float(12 + unit_idx),
+                        "psth_mean": _build_pattern(
+                            bin_centers,
+                            unit_scale=float(unit_idx + 1),
+                            condition=condition,
+                        ),
+                    }
+                )
+
+    save_pickle_path(
+        {"meta": {"bin_centers_s_rel": bin_centers}, "averages": pd.DataFrame(split_rows)},
+        split_avg_path,
+    )
+
+    settings = FixationPopulationPCASettings(
+        cfg_path=str(cfg_path),
+        analysis_variant="interactive_state_matched",
+        input_subdir="ephys/psth/fixation_psth_averages",
+        input_filename="fixations_split.pkl",
+        object_input_subdir=None,
+        object_input_filename=None,
+        output_subdir="ephys/psth/fixation_population_pca_interactive_state_matched",
+        conditions=(
+            "face_interactive",
+            "face_non_interactive",
+            "object_interactive",
+            "object_non_interactive",
+        ),
+        window_start_ms=-500.0,
+        window_stop_ms=500.0,
+        max_components=4,
+        min_units_per_region=2,
+        use_parallel=False,
+        geometry_n_pcs=20,
+    )
+    result = run_fixation_population_pca_analysis(settings)
+    return cfg_path, analysis_root, bin_centers, result
+
+
 class TestFixationPopulationPCA(unittest.TestCase):
     """Regression checks for fixation population PCA build outputs."""
 
@@ -217,7 +306,19 @@ class TestFixationPopulationPCA(unittest.TestCase):
             self.assertIsInstance(explained_df, pd.DataFrame)
             self.assertFalse(explained_df.empty)
             acc_explained_df = explained_df.loc[explained_df["region"].astype(str) == "ACC"].copy()
-            self.assertEqual(len(acc_explained_df), 3 * 3 * 3)
+            self.assertEqual(
+                set(acc_explained_df["fit_condition"].astype(str)),
+                {
+                    "face_interactive",
+                    "face_non_interactive",
+                    "object",
+                    "concatenated",
+                },
+            )
+            self.assertEqual(
+                set(acc_explained_df["eval_condition"].astype(str)),
+                {"face_interactive", "face_non_interactive", "object"},
+            )
             self.assertEqual(set(acc_explained_df["n_components"].astype(int)), {1, 2, 3})
 
             geometry_time_df = result["pairwise_geometry_timecourses"]
@@ -289,6 +390,97 @@ class TestFixationPopulationPCA(unittest.TestCase):
             self.assertTrue((out_root / "pairwise_geometry_within_region_stats.csv").exists())
             self.assertTrue((out_root / "pairwise_geometry_cross_region_stats.csv").exists())
             self.assertTrue((out_root / "region_unit_inventory.csv").exists())
+            self.assertTrue((out_root / "results.pkl").exists())
+
+    def test_population_pca_interactive_state_matched_outputs_split_object_conditions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            _, analysis_root, bin_centers, result = _run_population_pca_interactive_state_matched_fixture(
+                Path(tmp_dir)
+            )
+            date = "20990103"
+
+            self.assertIn("ACC", result["regions"])
+            self.assertNotIn("BLA", result["regions"])
+            self.assertEqual(str(result["meta"].get("analysis_variant")), "interactive_state_matched")
+
+            acc_payload = result["regions"]["ACC"]
+            obj_int_matrix = np.asarray(
+                acc_payload["condition_matrices_units_by_time"]["object_interactive"],
+                dtype=float,
+            )
+            obj_non_matrix = np.asarray(
+                acc_payload["condition_matrices_units_by_time"]["object_non_interactive"],
+                dtype=float,
+            )
+            unit_keys = [str(token) for token in np.asarray(acc_payload["unit_keys"], dtype=object).tolist()]
+            u1_idx = unit_keys.index(f"{date}|u_acc_1")
+            expected_u1_object_int = _build_pattern(
+                bin_centers[np.logical_and(bin_centers >= -0.5, bin_centers <= 0.5)],
+                unit_scale=1.0,
+                condition="object_interactive",
+            )
+            expected_u1_object_non = _build_pattern(
+                bin_centers[np.logical_and(bin_centers >= -0.5, bin_centers <= 0.5)],
+                unit_scale=1.0,
+                condition="object_non_interactive",
+            )
+
+            self.assertEqual(obj_int_matrix.shape, (3, 10))
+            self.assertEqual(obj_non_matrix.shape, (3, 10))
+            self.assertTrue(np.allclose(obj_int_matrix[u1_idx], expected_u1_object_int))
+            self.assertTrue(np.allclose(obj_non_matrix[u1_idx], expected_u1_object_non))
+
+            time_df = result["concatenated_timecourses"]
+            self.assertEqual(
+                set(time_df["eval_condition"].astype(str)),
+                {
+                    "face_interactive",
+                    "face_non_interactive",
+                    "object_interactive",
+                    "object_non_interactive",
+                },
+            )
+
+            explained_df = result["cross_condition_explained_variance"]
+            acc_explained_df = explained_df.loc[explained_df["region"].astype(str) == "ACC"].copy()
+            self.assertEqual(
+                set(acc_explained_df["fit_condition"].astype(str)),
+                {
+                    "face_interactive",
+                    "face_non_interactive",
+                    "object_interactive",
+                    "object_non_interactive",
+                    "concatenated",
+                },
+            )
+            self.assertEqual(
+                set(acc_explained_df["eval_condition"].astype(str)),
+                {
+                    "face_interactive",
+                    "face_non_interactive",
+                    "object_interactive",
+                    "object_non_interactive",
+                },
+            )
+
+            geometry_time_df = result["pairwise_geometry_timecourses"]
+            acc_geometry_df = geometry_time_df.loc[geometry_time_df["region"].astype(str) == "ACC"].copy()
+            self.assertEqual(
+                set(acc_geometry_df["condition_pair"].astype(str)),
+                {
+                    "face_interactive__vs__face_non_interactive",
+                    "face_interactive__vs__object_interactive",
+                    "face_interactive__vs__object_non_interactive",
+                    "face_non_interactive__vs__object_interactive",
+                    "face_non_interactive__vs__object_non_interactive",
+                    "object_interactive__vs__object_non_interactive",
+                },
+            )
+
+            out_root = analysis_root / "ephys/psth/fixation_population_pca_interactive_state_matched"
+            self.assertTrue((out_root / "pca_fit_summary.csv").exists())
+            self.assertTrue((out_root / "concatenated_pc_timecourses.csv").exists())
+            self.assertTrue((out_root / "cross_condition_explained_variance.csv").exists())
             self.assertTrue((out_root / "results.pkl").exists())
 
     def test_population_pca_requires_face_interactive_state_labels_when_enabled(self) -> None:
@@ -380,6 +572,88 @@ class TestFixationPopulationPCAPlotting(unittest.TestCase):
             self.assertIsNotNone(cumulative_out)
             assert cumulative_out is not None
             self.assertTrue(Path(str(cumulative_out["output_path"])).exists())
+
+    def test_population_pca_plotting_supports_interactive_state_matched_variant(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            cfg_path, _, _, _ = _run_population_pca_interactive_state_matched_fixture(Path(tmp_dir))
+            settings = FixationPopulationPCAPlotSettings(
+                cfg_path=str(cfg_path),
+                input_subdir="ephys/psth/fixation_population_pca_interactive_state_matched",
+                input_filename="results.pkl",
+                output_subdir="ephys/psth/fixation_population_pca_interactive_state_matched/plots",
+                output_extension="png",
+                output_dpi=100,
+                conditions=(
+                    "face_interactive",
+                    "face_non_interactive",
+                    "object_interactive",
+                    "object_non_interactive",
+                ),
+                condition_labels={
+                    "face_interactive": "Interactive Face",
+                    "face_non_interactive": "Non-Interactive Face",
+                    "object_interactive": "Interactive Object",
+                    "object_non_interactive": "Non-Interactive Object",
+                },
+                condition_colors={
+                    "face_interactive": "#b64198",
+                    "face_non_interactive": "#97ca3d",
+                    "object_interactive": "#4c78a8",
+                    "object_non_interactive": "#f58518",
+                },
+                max_components_display=3,
+            )
+
+            trajectory_out = plot_fixation_population_pca_trajectories(
+                settings,
+                output_filename="population_pca_pc_trajectories_test_matched",
+            )
+            self.assertIsNotNone(trajectory_out)
+            assert trajectory_out is not None
+            self.assertTrue(Path(str(trajectory_out["output_path"])).exists())
+            self.assertEqual(
+                set(trajectory_out["conditions"]),
+                {
+                    "face_interactive",
+                    "face_non_interactive",
+                    "object_interactive",
+                    "object_non_interactive",
+                },
+            )
+
+            explained_out = plot_fixation_population_pca_explained_variance_bars(
+                settings,
+                output_filename="population_pca_explained_variance_bars_test_matched",
+            )
+            self.assertIsNotNone(explained_out)
+            assert explained_out is not None
+            self.assertTrue(Path(str(explained_out["output_path"])).exists())
+            self.assertEqual(
+                set(explained_out["eval_conditions"]),
+                {
+                    "face_interactive",
+                    "face_non_interactive",
+                    "object_interactive",
+                    "object_non_interactive",
+                },
+            )
+
+            cumulative_out = plot_fixation_population_pca_explained_variance_cumulative(
+                settings,
+                output_filename="population_pca_explained_variance_cumulative_test_matched",
+            )
+            self.assertIsNotNone(cumulative_out)
+            assert cumulative_out is not None
+            self.assertTrue(Path(str(cumulative_out["output_path"])).exists())
+            self.assertEqual(
+                set(cumulative_out["fit_conditions"]),
+                {
+                    "face_interactive",
+                    "face_non_interactive",
+                    "object_interactive",
+                    "object_non_interactive",
+                },
+            )
 
 
 @unittest.skipUnless(
