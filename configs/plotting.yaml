@@ -93,6 +93,25 @@ violin:
     leader: "#4C72B0"
     follower: "#DD8452"
 
+# Face-fixation gap distribution histograms.
+face_fixation_gap_distribution:
+  m1_figsize: [9.2, 3.8]
+  m1_m2_figsize: [9.2, 3.8]
+  histogram_bins: 60
+  density: true
+  alpha: 0.42
+  edgecolor: "#1F1F1F"
+  linewidth: 0.8
+  colors:
+    interactive: "#1b9e77"
+    non_interactive: "#7f7f7f"
+    cross: "#d95f02"
+  zero_line:
+    color: "#1A1A1A"
+    linewidth: 0.9
+    linestyle: "--"
+    alpha: 0.8
+
 # Pupil vs fixation-density correlation violin style.
 pupil_fixation_density_correlation:
   # Fit roughly half of a US letter page width.

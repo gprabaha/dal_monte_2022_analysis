@@ -5,6 +5,8 @@ CLI entrypoints for analysis outputs written to `analysis_output_root`.
 Scripts:
 - `build_face_fixation_probability.py`
   Computes within-session, cross-session, and interactive-period face fixation probabilities.
+- `build_face_fixation_gap_distributions.py`
+  Computes tidy gap distributions for m1 face fixations by interactive state and for interactive cross-monkey m1/m2 face-fixation transitions.
 - `build_out_of_roi_fixation_probability.py`
   Computes within-session and cross-session out-of-ROI fixation probabilities.
 - `build_face_fix_cross_correlation.py`
@@ -26,6 +28,7 @@ Scripts:
   Worker script used by array jobs for shuffled within-session out-of-ROI cross-correlation pairs.
 
 Primary configs:
+- `configs/face_fixation_gap_distribution.yaml`
 - `configs/face_fixation_probability.yaml`
 - `configs/out_of_roi_fixation_probability.yaml`
 - `configs/face_fix_cross_correlation.yaml`
