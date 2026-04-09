@@ -17,6 +17,10 @@ Current scripts:
   `interactive_state_matched`, `face_vs_object_unsplit`).
   Pair is selective if any configured significance window is significant
   (default significance windows: `pre_fix`, `peri_fix`, `post_fix`).
+  Outputs now retain raw/current selectivity calls and also include corrected
+  selectivity columns; corrected calls use the configured p-value correction
+  across all pair x significance-window tests for each unit/comparison family
+  (default primary family: 3 pairs x 3 windows).
   `full_fix` can remain in outputs without affecting significance calls.
   Writes per-comparison CSVs suffixed with `__<comparison_label>.csv`
   and keeps unsuffixed CSVs for the configured primary comparison.
@@ -92,6 +96,17 @@ Current scripts:
   Writes:
   - `pairwise_region_comparisons.csv`
   - `window_region_comparisons.csv`
+- `build_fixation_condition_dominance.py`
+  Summarizes which broad-window fixation condition each unit fires most for.
+  The default dominance window is `[-500, 500] ms`; it is descriptive and uses
+  updated selectivity labels only for subsetting:
+  - all units
+  - raw selective units
+  - corrected selective units
+  Writes:
+  - `unit_condition_dominance.csv`
+  - `region_condition_dominance_summary.csv`
+  - `results.pkl`
 - `build_within_region_fixation_neural_cross_correlation.py`
   Computes fixation-level neural cross-correlations for within-region
   unit pairs (nC2 per region per fixation) from fixation-aligned trial signals.
@@ -163,6 +178,7 @@ Config:
   - `selective_primary_comparison_group`
   - `selective_comparison_groups`
   - `selective_alpha`
+  - `selective_pvalue_correction`
   - `selective_test`
   - `selective_min_trials_per_condition`
   - `selective_use_parallel`
@@ -229,6 +245,18 @@ Config:
   - `selective_region_comparison_require_selective_units`
   - `selective_region_comparison_pseudo_count`
   - `selective_region_comparison_alignment_cosine_threshold`
+  - `condition_dominance_average_input_subdir`
+  - `condition_dominance_average_input_filename`
+  - `condition_dominance_selectivity_input_subdir`
+  - `condition_dominance_selectivity_unit_summary_filename`
+  - `condition_dominance_output_subdir`
+  - `condition_dominance_unit_output_filename`
+  - `condition_dominance_region_summary_filename`
+  - `condition_dominance_output_pickle_filename`
+  - `condition_dominance_window_ms`
+  - `condition_dominance_condition_order`
+  - `condition_dominance_unit_subset_order`
+  - `condition_dominance_region_order`
   - `population_pca_trial_input_modality`
   - `population_pca_trial_input_filename`
   - `population_pca_prefer_trial_input`

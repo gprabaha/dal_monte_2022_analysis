@@ -11,6 +11,7 @@ import pandas as pd
 
 from dal_monte_2022_analysis.ephys.analysis.fixation_selectivity import (
     FixationPSTHSelectivitySettings,
+    _append_corrected_selectivity_columns,
     run_fixation_selectivity_analysis,
 )
 
@@ -43,6 +44,103 @@ def _write_dataset_cfg(path: Path, processed_root: Path, analysis_root: Path) ->
 
 class TestFixationSelectivityThreeWayOutputs(unittest.TestCase):
     """Regression checks for stored three-way per-unit window means."""
+
+    def test_selectivity_writes_raw_and_corrected_flags(self) -> None:
+        settings = FixationPSTHSelectivitySettings(
+            cfg_path="unused.yaml",
+            pvalue_correction="fdr_bh",
+        )
+        pairs = [
+            ("face_interactive", "face_non_interactive"),
+            ("face_interactive", "object"),
+            ("face_non_interactive", "object"),
+        ]
+        windows = [
+            ("pre_fix", -500.0, 0.0),
+            ("peri_fix", -250.0, 250.0),
+            ("post_fix", 0.0, 500.0),
+        ]
+        p_values = [0.02, 0.7, 0.8, 0.9, 0.95, 0.99, 0.6, 0.65, 0.75]
+        window_rows = []
+        i = 0
+        for cond_a, cond_b in pairs:
+            pair_label = f"{cond_a}__vs__{cond_b}"
+            for window_name, start, stop in windows:
+                p_value = p_values[i]
+                i += 1
+                raw_sig = p_value < 0.05
+                window_rows.append(
+                    {
+                        "comparison_label": "three_condition_core",
+                        "unit_key": "01012020|u1",
+                        "date": "01012020",
+                        "unit_uuid": "u1",
+                        "region": "ACC",
+                        "pair_label": pair_label,
+                        "condition_a": cond_a,
+                        "condition_b": cond_b,
+                        "window_name": window_name,
+                        "window_start_ms": start,
+                        "window_stop_ms": stop,
+                        "p_value": p_value,
+                        "alpha": 0.05,
+                        "significant": raw_sig,
+                        "counts_toward_selectivity": True,
+                        "significant_for_selectivity": raw_sig,
+                        "tested": True,
+                    }
+                )
+        pair_df = pd.DataFrame(
+            [
+                {
+                    "comparison_label": "three_condition_core",
+                    "unit_key": "01012020|u1",
+                    "date": "01012020",
+                    "unit_uuid": "u1",
+                    "region": "ACC",
+                    "pair_label": f"{cond_a}__vs__{cond_b}",
+                    "condition_a": cond_a,
+                    "condition_b": cond_b,
+                    "is_selective_pair": idx == 0,
+                    "n_significant_windows": 1 if idx == 0 else 0,
+                    "n_tested_windows": 3,
+                    "significant_windows": "pre_fix" if idx == 0 else "",
+                    "min_p_value": p_values[idx * 3],
+                }
+                for idx, (cond_a, cond_b) in enumerate(pairs)
+            ]
+        )
+        unit_df = pd.DataFrame(
+            [
+                {
+                    "comparison_label": "three_condition_core",
+                    "unit_key": "01012020|u1",
+                    "date": "01012020",
+                    "unit_uuid": "u1",
+                    "region": "ACC",
+                    "is_selective_unit": True,
+                    "n_selective_pairs": 1,
+                    "n_tested_pairs": 3,
+                    "selective_pairs": "face_interactive__vs__face_non_interactive",
+                }
+            ]
+        )
+
+        out_window, out_pair, out_unit = _append_corrected_selectivity_columns(
+            pd.DataFrame(window_rows),
+            pair_df,
+            unit_df,
+            settings=settings,
+        )
+
+        raw_sig = out_window.loc[out_window["p_value"] == 0.02].iloc[0]
+        self.assertTrue(bool(raw_sig["significant_raw"]))
+        self.assertFalse(bool(raw_sig["significant_corrected"]))
+        self.assertAlmostEqual(float(raw_sig["p_value_corrected"]), 0.18, places=6)
+        self.assertTrue(bool(out_pair.iloc[0]["is_selective_pair_raw"]))
+        self.assertFalse(bool(out_pair.iloc[0]["is_selective_pair_corrected"]))
+        self.assertTrue(bool(out_unit.iloc[0]["is_selective_unit_raw"]))
+        self.assertFalse(bool(out_unit.iloc[0]["is_selective_unit_corrected"]))
 
     def test_run_selectivity_writes_condition_summary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -296,4 +394,3 @@ class TestFixationThreeWayTriangularPlot(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
