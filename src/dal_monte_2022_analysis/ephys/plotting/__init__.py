@@ -10,6 +10,14 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_psth_example_grid import (
     parse_example_grid_unit_specs,
     plot_fixation_psth_example_grid,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_psth_phasic_tonic_example_grid import (
+    DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_REGIONS,
+    DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_LABELS,
+    DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_STYLES,
+    normalize_example_response_style,
+    parse_phasic_tonic_example_grid_unit_specs,
+    plot_fixation_psth_phasic_tonic_example_grid,
+)
 from dal_monte_2022_analysis.ephys.plotting.period_psth import (
     PeriodPSTHUnitPlotSettings,
     plot_period_psth_units,
@@ -76,6 +84,12 @@ __all__ = [
     "FixationPSTHExampleUnitSpec",
     "parse_example_grid_unit_specs",
     "plot_fixation_psth_example_grid",
+    "DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_REGIONS",
+    "DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_LABELS",
+    "DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_STYLES",
+    "normalize_example_response_style",
+    "parse_phasic_tonic_example_grid_unit_specs",
+    "plot_fixation_psth_phasic_tonic_example_grid",
     "PeriodPSTHUnitPlotSettings",
     "plot_period_psth_units",
     "FixationSelectivityVennPlotSettings",
