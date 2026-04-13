@@ -432,6 +432,47 @@ peakiness_competition_penalty_lambda: 0.5
 peakiness_prominence_epsilon: 1.0e-12
 peakiness_region_order: [bla, accg, dmpfc, ofc]
 
+peakiness_plot_input_subdir: ephys/psth/fixation_peakiness
+peakiness_plot_unit_output_filename: unit_peakiness.csv
+peakiness_plot_output_subdir: ephys/psth/fixation_peakiness/plots
+peakiness_plot_output_filename: fixation_peakiness_by_region
+peakiness_plot_output_extension: pdf
+peakiness_plot_output_dpi: 220
+peakiness_plot_region_order: [bla, accg, dmpfc, ofc]
+peakiness_plot_region_labels:
+  bla: BLA
+  accg: ACCg
+  dmpfc: dmPFC
+  ofc: OFC
+peakiness_plot_show_points: true
+peakiness_plot_point_color: "#7a7a7a"
+peakiness_plot_point_alpha: 0.28
+peakiness_plot_point_size: 10.0
+peakiness_plot_violin_facecolor: "#d2d7df"
+peakiness_plot_violin_edgecolor: "#3b3f47"
+peakiness_plot_violin_alpha: 0.92
+peakiness_plot_violin_width: 0.86
+peakiness_plot_show_highlight_units: true
+peakiness_plot_highlight_style_order: [phasic, tonic]
+peakiness_plot_highlight_style_labels:
+  phasic: Phasic
+  tonic: Tonic
+peakiness_plot_highlight_style_colors:
+  phasic: "#c03a2b"
+  tonic: "#2878b5"
+peakiness_plot_highlight_style_markers:
+  phasic: "o"
+  tonic: "s"
+peakiness_plot_highlight_marker_size: 42.0
+peakiness_plot_highlight_annotation_fontsize: 7.5
+peakiness_plot_figure_width_in: 7.8
+peakiness_plot_figure_height_in: 4.0
+peakiness_plot_left_margin: 0.08
+peakiness_plot_right_margin: 0.995
+peakiness_plot_top_margin: 0.92
+peakiness_plot_bottom_margin: 0.20
+peakiness_plot_y_label: Peakiness Score
+
 # Preference-index heatmap plotting.
 # Default footprint for combined 3x4 output: letter width x <= 2/5 letter height.
 selective_index_plot_output_subdir: ephys/fixation_preference_index/plots

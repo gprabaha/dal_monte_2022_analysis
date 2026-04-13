@@ -277,3 +277,93 @@ class TestFixationPeakiness(unittest.TestCase):
             self.assertTrue((out_root / "unit_condition_peakiness.csv").exists())
             self.assertTrue((out_root / "region_peakiness_summary.csv").exists())
             self.assertTrue((out_root / "results.pkl").exists())
+
+    def test_peakiness_query_matches_prefixed_unit_uuid_from_bare_numeric_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            processed_root = root / "processed"
+            analysis_root = root / "analysis"
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, processed_root=processed_root, analysis_root=analysis_root)
+
+            avg_path = (
+                analysis_root
+                / "ephys/psth/fixation_psth_averages"
+                / "date=01012020"
+                / "fixations_psth_10ms.pkl"
+            )
+            avg_path.parent.mkdir(parents=True, exist_ok=True)
+
+            bin_centers = np.asarray([-0.15, -0.05, 0.05, 0.15], dtype=float)
+            meta = {
+                "convert_to_firing_rate_before_average": True,
+                "psth_value_kind": "firing_rate_hz",
+                "split_meta": {
+                    "bin_centers_s_rel": bin_centers,
+                    "output_bin_size_s": 0.1,
+                    "convert_to_firing_rate_before_average": True,
+                    "psth_value_kind": "firing_rate_hz",
+                },
+                "unsplit_meta": {
+                    "bin_centers_s_rel": bin_centers,
+                    "output_bin_size_s": 0.1,
+                    "convert_to_firing_rate_before_average": True,
+                    "psth_value_kind": "firing_rate_hz",
+                },
+            }
+            save_pickle_path(
+                {
+                    "meta": meta,
+                    "averages_split_by_interactive_state": pd.DataFrame(
+                        [
+                            {
+                                "date": "01012020",
+                                "unit_uuid": "unit_uuid__145",
+                                "region": "ACC",
+                                "fixation_category": "face",
+                                "interactive_state": "interactive",
+                                "is_interactive": True,
+                                "n_trials": 10,
+                                "psth_mean": np.asarray([1.0, 1.0, 4.0, 1.0], dtype=float),
+                            },
+                            {
+                                "date": "01012020",
+                                "unit_uuid": "unit_uuid__145",
+                                "region": "ACC",
+                                "fixation_category": "face",
+                                "interactive_state": "non_interactive",
+                                "is_interactive": False,
+                                "n_trials": 10,
+                                "psth_mean": np.asarray([1.0, 1.0, 1.0, 1.0], dtype=float),
+                            },
+                        ]
+                    ),
+                    "averages_unsplit_by_interactive_state": pd.DataFrame(
+                        [
+                            {
+                                "date": "01012020",
+                                "unit_uuid": "unit_uuid__145",
+                                "region": "ACC",
+                                "fixation_category": "object",
+                                "interactive_state": np.nan,
+                                "is_interactive": np.nan,
+                                "n_trials": 10,
+                                "psth_mean": np.asarray([1.0, 1.0, 1.0, 1.0], dtype=float),
+                            },
+                        ]
+                    ),
+                },
+                avg_path,
+            )
+
+            settings = FixationPeakinessSettings(
+                cfg_path=str(cfg_path),
+                average_input_subdir="ephys/psth/fixation_psth_averages",
+                average_input_filename="fixations_psth_10ms.pkl",
+                output_subdir="ephys/psth/fixation_peakiness",
+                peak_distance_ms=20.0,
+            )
+            result = run_fixation_peakiness_analysis(settings, unit_uuids=("145",))
+            queried = result["queried_units"]
+            self.assertEqual(len(queried), 1)
+            self.assertEqual(str(queried.iloc[0]["unit_uuid"]), "unit_uuid__145")

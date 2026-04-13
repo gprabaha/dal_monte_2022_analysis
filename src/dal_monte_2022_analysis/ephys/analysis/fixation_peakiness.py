@@ -32,6 +32,7 @@ PEAKINESS_CONDITIONS: tuple[str, ...] = (
     "face_non_interactive",
     "object",
 )
+_UNIT_UUID_PREFIX = "unit_uuid__"
 
 
 @dataclass
@@ -74,6 +75,20 @@ def _date_token(value: object) -> str:
     if len(token) == 7 and token.isdigit():
         return token.zfill(8)
     return token
+
+
+def _unit_uuid_lookup_variants(value: object) -> set[str]:
+    token = _as_optional_str(value)
+    if token is None:
+        return set()
+    out = {token}
+    if token.startswith(_UNIT_UUID_PREFIX):
+        suffix = token[len(_UNIT_UUID_PREFIX) :].strip()
+        if suffix:
+            out.add(suffix)
+    else:
+        out.add(f"{_UNIT_UUID_PREFIX}{token}")
+    return out
 
 
 def _extract_average_partitions(obj) -> list[tuple[str, pd.DataFrame, dict]]:
@@ -727,7 +742,9 @@ def run_fixation_peakiness_analysis(
 
     queried_df = pd.DataFrame()
     if unit_uuids is not None:
-        requested = {str(unit_uuid).strip() for unit_uuid in unit_uuids if str(unit_uuid).strip()}
+        requested: set[str] = set()
+        for unit_uuid in unit_uuids:
+            requested.update(_unit_uuid_lookup_variants(unit_uuid))
         queried_df = unit_df.loc[unit_df["unit_uuid"].astype(str).isin(requested)].copy()
 
     cfg = load_config(settings.cfg_path)

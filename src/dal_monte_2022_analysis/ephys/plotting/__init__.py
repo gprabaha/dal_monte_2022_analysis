@@ -42,6 +42,10 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_condition_dominance import 
     FixationConditionDominancePlotSettings,
     plot_fixation_condition_dominance_by_region,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_peakiness import (
+    FixationPeakinessPlotSettings,
+    plot_fixation_peakiness_by_region,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_preference_index_heatmap import (
     FixationPreferenceIndexHeatmapPlotSettings,
     plot_fixation_preference_index_heatmaps,
@@ -102,6 +106,8 @@ __all__ = [
     "plot_fixation_three_way_region_comparison_heatmaps",
     "FixationConditionDominancePlotSettings",
     "plot_fixation_condition_dominance_by_region",
+    "FixationPeakinessPlotSettings",
+    "plot_fixation_peakiness_by_region",
     "FixationPreferenceIndexHeatmapPlotSettings",
     "plot_fixation_preference_index_heatmaps",
     "FixationNeuralCrossCorrelationPlotSettings",
