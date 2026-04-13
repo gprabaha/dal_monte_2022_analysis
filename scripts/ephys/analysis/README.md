@@ -107,6 +107,22 @@ Current scripts:
   - `unit_condition_dominance.csv`
   - `region_condition_dominance_summary.csv`
   - `results.pkl`
+- `build_fixation_peakiness.py`
+  Scores how strongly each unit shows a localized peak in the mean fixation PSTH.
+  Current defaults use only the three target average traces:
+  - `face_interactive`
+  - `face_non_interactive`
+  - `object` (unsplit)
+  Per-condition mean traces are normalized by that trace's mean firing rate,
+  peaks are detected with `scipy.signal.find_peaks`, and the score is:
+  - `p1 / (1 + lambda * (p2 / p1))`
+    where `p1` is the largest prominence, `p2` is the second-largest prominence,
+    and `lambda` is a configurable soft competition penalty.
+  Writes:
+  - `unit_condition_peakiness.csv`
+  - `unit_peakiness.csv`
+  - `region_peakiness_summary.csv`
+  - `results.pkl`
 - `build_within_region_fixation_neural_cross_correlation.py`
   Computes fixation-level neural cross-correlations for within-region
   unit pairs (nC2 per region per fixation) from fixation-aligned trial signals.

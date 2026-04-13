@@ -28,8 +28,8 @@ spike_train_bin_size_ms: 1.0
 # Gaussian smoothing applied to the saved 1 ms spike train. Sigma is expressed
 # in 1 ms bins, so the default of 2.0 corresponds to a 2 ms standard deviation.
 spike_train_smoothing_sigma_bins: 2.0
-window_pre_s: 5.0
-window_post_s: 5.0
+window_pre_s: 1.0
+window_post_s: 1.0
 include_interactive_state: true
 interactive_high_label: interactive
 
@@ -415,6 +415,23 @@ fano_factor_plot_time_window_ms: [-500.0, 500.0]
 fano_factor_plot_x_label: Time from fixation onset (ms)
 fano_factor_plot_y_label: Fano Factor
 
+# Peakiness scoring from average fixation PSTHs.
+peakiness_average_input_subdir: ephys/psth/fixation_psth_averages
+peakiness_average_input_filename: fixations_psth_10ms.pkl
+peakiness_output_subdir: ephys/psth/fixation_peakiness
+peakiness_unit_output_filename: unit_peakiness.csv
+peakiness_condition_output_filename: unit_condition_peakiness.csv
+peakiness_region_summary_filename: region_peakiness_summary.csv
+peakiness_output_pickle_filename: results.pkl
+peakiness_condition_order: [face_interactive, face_non_interactive, object]
+peakiness_min_trials_per_condition: 1
+peakiness_mean_rate_floor_hz: 0.5
+peakiness_peak_distance_ms: 30.0
+peakiness_peak_prominence_floor: 0.0
+peakiness_competition_penalty_lambda: 0.5
+peakiness_prominence_epsilon: 1.0e-12
+peakiness_region_order: [bla, accg, dmpfc, ofc]
+
 # Preference-index heatmap plotting.
 # Default footprint for combined 3x4 output: letter width x <= 2/5 letter height.
 selective_index_plot_output_subdir: ephys/fixation_preference_index/plots
@@ -704,7 +721,7 @@ phasic_tonic_example_grid_units:
     phasic: {unit_uuid: "1796"}
     tonic: {unit_uuid: "1516"}
   OFC:
-    phasic: {unit_uuid: "1218"}
+    phasic: {unit_uuid: "1091"}
     tonic: {unit_uuid: "1011"}
 
 # Per-unit fixation PSTH plotting (stored in analysis_output_root)
