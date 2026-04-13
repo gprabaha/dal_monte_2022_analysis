@@ -113,11 +113,15 @@ Current scripts:
   - `face_interactive`
   - `face_non_interactive`
   - `object` (unsplit)
-  Per-condition mean traces are normalized by that trace's mean firing rate,
+  Per-condition mean traces are normalized by a configurable firing-rate scale
+  (current default: `sqrt(mean FR)`),
   peaks are detected with `scipy.signal.find_peaks`, and the score is:
   - `p1 / (1 + lambda * (p2 / p1))`
     where `p1` is the largest prominence, `p2` is the second-largest prominence,
     and `lambda` is a configurable soft competition penalty.
+  The competition term now ignores secondary peaks that fall within a
+  configurable exclusion window around the dominant peak
+  (default `250 ms`), so close double-peaks are not penalized as separate events.
   Writes:
   - `unit_condition_peakiness.csv`
   - `unit_peakiness.csv`

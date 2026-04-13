@@ -34,7 +34,7 @@ DEFAULT_REGION_LABELS: dict[str, str] = {
 }
 DEFAULT_HIGHLIGHT_STYLE_ORDER: tuple[str, ...] = ("phasic", "tonic")
 DEFAULT_HIGHLIGHT_STYLE_LABELS: dict[str, str] = {
-    "phasic": "Phasic",
+    "phasic": "Peaky",
     "tonic": "Tonic",
 }
 DEFAULT_HIGHLIGHT_STYLE_COLORS: dict[str, str] = {
@@ -295,11 +295,13 @@ def _build_highlight_records(
             "style": str(spec["style"]),
             "style_label": str(settings.highlight_style_labels.get(str(spec["style"]), str(spec["style"]))),
             "configured_unit_uuid": configured_unit_uuid,
+            "annotation_label": None,
             "matched": False,
             "matched_unit_uuid": None,
             "peakiness_score": np.nan,
             "best_condition": None,
         }
+        row["annotation_label"] = f"{row['style_label']} {configured_unit_uuid}"
         if not matched.empty:
             picked = matched.iloc[0]
             row["matched"] = True
@@ -413,7 +415,7 @@ def plot_fixation_peakiness_by_region(
             zorder=5,
         )
         ax.annotate(
-            str(row["style_label"]),
+            str(row["annotation_label"]),
             xy=(xpos, ypos),
             xytext=(4, 5),
             textcoords="offset points",

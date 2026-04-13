@@ -109,3 +109,8 @@ class TestFixationPeakinessPlot(unittest.TestCase):
             self.assertEqual(len(matched), 4)
             by_style = {(row["region_label"], row["style"]): float(row["peakiness_score"]) for row in matched}
             self.assertGreater(by_style[("ACCg", "phasic")], by_style[("ACCg", "tonic")])
+            phasic_accg = next(row for row in matched if row["region_label"] == "ACCg" and row["style"] == "phasic")
+            tonic_accg = next(row for row in matched if row["region_label"] == "ACCg" and row["style"] == "tonic")
+            self.assertEqual(str(phasic_accg["style_label"]), "Peaky")
+            self.assertEqual(str(phasic_accg["annotation_label"]), "Peaky 145")
+            self.assertEqual(str(tonic_accg["annotation_label"]), "Tonic 118")

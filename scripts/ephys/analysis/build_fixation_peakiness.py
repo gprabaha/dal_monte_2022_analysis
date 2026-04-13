@@ -62,10 +62,14 @@ def main() -> None:
         object_label=cfg.get("object_label", "object"),
         condition_order=tuple(cfg.get("peakiness_condition_order", PEAKINESS_CONDITIONS)),
         min_trials_per_condition=int(cfg.get("peakiness_min_trials_per_condition", 1)),
+        rate_normalization_mode=str(cfg.get("peakiness_rate_normalization_mode", "sqrt_mean")),
         mean_rate_floor_hz=float(cfg.get("peakiness_mean_rate_floor_hz", 0.5)),
         peak_distance_ms=float(cfg.get("peakiness_peak_distance_ms", 30.0)),
         peak_prominence_floor=float(cfg.get("peakiness_peak_prominence_floor", 0.0)),
         competition_penalty_lambda=float(cfg.get("peakiness_competition_penalty_lambda", 0.5)),
+        competition_exclusion_window_ms=float(
+            cfg.get("peakiness_competition_exclusion_window_ms", 250.0)
+        ),
         prominence_epsilon=float(cfg.get("peakiness_prominence_epsilon", 1.0e-12)),
         bin_size_ms_fallback=float(cfg.get("bin_size_ms", 10.0)),
         region_order=cfg.get("peakiness_region_order"),

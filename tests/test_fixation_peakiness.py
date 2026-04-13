@@ -11,6 +11,8 @@ import pandas as pd
 
 from dal_monte_2022_analysis.ephys.analysis.fixation_peakiness import (
     FixationPeakinessSettings,
+    _resolve_rate_normalization_scale,
+    _score_trace,
     run_fixation_peakiness_analysis,
 )
 from dal_monte_2022_analysis.runtime.io.processed_data import save_pickle_path
@@ -367,3 +369,35 @@ class TestFixationPeakiness(unittest.TestCase):
             queried = result["queried_units"]
             self.assertEqual(len(queried), 1)
             self.assertEqual(str(queried.iloc[0]["unit_uuid"]), "unit_uuid__145")
+
+    def test_peakiness_competition_ignores_close_secondary_peak(self) -> None:
+        settings = FixationPeakinessSettings(
+            cfg_path="configs/dataset.yaml",
+            peak_distance_ms=20.0,
+            competition_exclusion_window_ms=250.0,
+            competition_penalty_lambda=0.5,
+        )
+        centers_s = np.asarray([-0.30, -0.20, -0.10, 0.00, 0.10, 0.20, 0.30], dtype=float)
+        trace_hz = np.asarray([1.0, 1.0, 5.0, 1.0, 4.7, 1.0, 1.0], dtype=float)
+        score = _score_trace(trace_hz, centers_s, settings)
+        self.assertEqual(int(score["n_detected_peaks"]), 2)
+        self.assertEqual(float(score["second_peak_prominence"]), 0.0)
+        self.assertEqual(float(score["competition_ratio"]), 0.0)
+        self.assertAlmostEqual(float(score["dominance"]), 1.0, places=11)
+
+    def test_peakiness_defaults_to_sqrt_mean_normalization(self) -> None:
+        settings = FixationPeakinessSettings(cfg_path="configs/dataset.yaml")
+        mode, scale = _resolve_rate_normalization_scale(mean_fr_hz=9.0, settings=settings)
+        self.assertEqual(str(mode), "sqrt_mean")
+        self.assertAlmostEqual(float(scale), 3.0)
+
+        mean_settings = FixationPeakinessSettings(
+            cfg_path="configs/dataset.yaml",
+            rate_normalization_mode="mean",
+        )
+        mean_mode, mean_scale = _resolve_rate_normalization_scale(
+            mean_fr_hz=9.0,
+            settings=mean_settings,
+        )
+        self.assertEqual(str(mean_mode), "mean")
+        self.assertAlmostEqual(float(mean_scale), 9.0)

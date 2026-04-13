@@ -425,10 +425,12 @@ peakiness_region_summary_filename: region_peakiness_summary.csv
 peakiness_output_pickle_filename: results.pkl
 peakiness_condition_order: [face_interactive, face_non_interactive, object]
 peakiness_min_trials_per_condition: 1
+peakiness_rate_normalization_mode: sqrt_mean
 peakiness_mean_rate_floor_hz: 0.5
 peakiness_peak_distance_ms: 30.0
 peakiness_peak_prominence_floor: 0.0
 peakiness_competition_penalty_lambda: 0.5
+peakiness_competition_exclusion_window_ms: 250.0
 peakiness_prominence_epsilon: 1.0e-12
 peakiness_region_order: [bla, accg, dmpfc, ofc]
 
@@ -455,7 +457,7 @@ peakiness_plot_violin_width: 0.86
 peakiness_plot_show_highlight_units: true
 peakiness_plot_highlight_style_order: [phasic, tonic]
 peakiness_plot_highlight_style_labels:
-  phasic: Phasic
+  phasic: Peaky
   tonic: Tonic
 peakiness_plot_highlight_style_colors:
   phasic: "#c03a2b"

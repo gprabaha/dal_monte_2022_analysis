@@ -33,6 +33,9 @@ PEAKINESS_CONDITIONS: tuple[str, ...] = (
     "object",
 )
 _UNIT_UUID_PREFIX = "unit_uuid__"
+_RATE_NORM_MEAN = "mean"
+_RATE_NORM_SQRT_MEAN = "sqrt_mean"
+_RATE_NORM_NONE = "none"
 
 
 @dataclass
@@ -52,10 +55,12 @@ class FixationPeakinessSettings:
     object_label: str = "object"
     condition_order: tuple[str, ...] = field(default_factory=lambda: PEAKINESS_CONDITIONS)
     min_trials_per_condition: int = 1
+    rate_normalization_mode: str = _RATE_NORM_SQRT_MEAN
     mean_rate_floor_hz: float = 0.5
     peak_distance_ms: float = 30.0
     peak_prominence_floor: float = 0.0
     competition_penalty_lambda: float = 0.5
+    competition_exclusion_window_ms: float = 250.0
     prominence_epsilon: float = 1.0e-12
     bin_size_ms_fallback: float = 10.0
     region_order: Optional[Sequence[str]] = None
@@ -89,6 +94,45 @@ def _unit_uuid_lookup_variants(value: object) -> set[str]:
     else:
         out.add(f"{_UNIT_UUID_PREFIX}{token}")
     return out
+
+
+def _normalize_rate_normalization_mode(value: object) -> str:
+    token = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "mean": _RATE_NORM_MEAN,
+        "full_mean": _RATE_NORM_MEAN,
+        "mean_fr": _RATE_NORM_MEAN,
+        "sqrt": _RATE_NORM_SQRT_MEAN,
+        "sqrt_mean": _RATE_NORM_SQRT_MEAN,
+        "sqrt_mean_fr": _RATE_NORM_SQRT_MEAN,
+        "sqrt_fr": _RATE_NORM_SQRT_MEAN,
+        "none": _RATE_NORM_NONE,
+        "raw": _RATE_NORM_NONE,
+        "no_norm": _RATE_NORM_NONE,
+        "no_normalization": _RATE_NORM_NONE,
+    }
+    resolved = aliases.get(token, token)
+    if resolved not in {_RATE_NORM_MEAN, _RATE_NORM_SQRT_MEAN, _RATE_NORM_NONE}:
+        raise ValueError(
+            "Unsupported rate_normalization_mode for fixation peakiness. "
+            "Expected one of: sqrt_mean, mean, none."
+        )
+    return resolved
+
+
+def _resolve_rate_normalization_scale(
+    *,
+    mean_fr_hz: float,
+    settings: FixationPeakinessSettings,
+) -> tuple[str, float]:
+    mode = _normalize_rate_normalization_mode(settings.rate_normalization_mode)
+    floor_hz = max(float(settings.mean_rate_floor_hz), float(settings.prominence_epsilon))
+    mean_ref_hz = max(float(mean_fr_hz), floor_hz) if np.isfinite(mean_fr_hz) else floor_hz
+    if mode == _RATE_NORM_NONE:
+        return mode, 1.0
+    if mode == _RATE_NORM_MEAN:
+        return mode, mean_ref_hz
+    return mode, float(np.sqrt(mean_ref_hz))
 
 
 def _extract_average_partitions(obj) -> list[tuple[str, pd.DataFrame, dict]]:
@@ -374,7 +418,10 @@ def _score_trace(
     if values_hz.size == 0:
         return {
             "mean_fr_hz": np.nan,
-            "normalization_denom_hz": np.nan,
+            "rate_normalization_mode": str(
+                _normalize_rate_normalization_mode(settings.rate_normalization_mode)
+            ),
+            "normalization_scale": np.nan,
             "bin_step_ms": float(settings.bin_size_ms_fallback),
             "peak_distance_bins": 1,
             "n_detected_peaks": 0,
@@ -390,15 +437,17 @@ def _score_trace(
 
     finite_mask = np.isfinite(values_hz)
     mean_fr_hz = float(np.mean(values_hz[finite_mask])) if np.any(finite_mask) else np.nan
-    floor_hz = float(settings.mean_rate_floor_hz)
-    denom_hz = max(mean_fr_hz, floor_hz) if np.isfinite(mean_fr_hz) else floor_hz
+    rate_normalization_mode, normalization_scale = _resolve_rate_normalization_scale(
+        mean_fr_hz=mean_fr_hz,
+        settings=settings,
+    )
 
     if np.any(finite_mask):
         fill_value = float(np.min(values_hz[finite_mask]))
     else:
         fill_value = 0.0
     safe_values_hz = np.where(finite_mask, values_hz, fill_value)
-    norm_values = safe_values_hz / max(denom_hz, float(settings.prominence_epsilon))
+    norm_values = safe_values_hz / max(normalization_scale, float(settings.prominence_epsilon))
 
     bin_step_ms = _resolve_bin_step_ms(centers, settings)
     distance_bins = max(1, int(round(float(settings.peak_distance_ms) / max(bin_step_ms, 1.0e-12))))
@@ -412,7 +461,8 @@ def _score_trace(
     if peaks.size == 0 or prominences.size == 0:
         return {
             "mean_fr_hz": mean_fr_hz,
-            "normalization_denom_hz": denom_hz,
+            "rate_normalization_mode": str(rate_normalization_mode),
+            "normalization_scale": normalization_scale,
             "bin_step_ms": bin_step_ms,
             "peak_distance_bins": distance_bins,
             "n_detected_peaks": 0,
@@ -430,7 +480,16 @@ def _score_trace(
     best_rank = int(order[0])
     best_peak_idx = int(peaks[best_rank])
     p1 = float(prominences[best_rank])
-    p2 = float(prominences[order[1]]) if order.size > 1 else 0.0
+    best_peak_latency_ms = float(centers[best_peak_idx] * 1000.0)
+    exclusion_window_ms = max(float(settings.competition_exclusion_window_ms), 0.0)
+    p2 = 0.0
+    if order.size > 1:
+        for candidate_rank in order[1:]:
+            candidate_peak_idx = int(peaks[int(candidate_rank)])
+            candidate_latency_ms = float(centers[candidate_peak_idx] * 1000.0)
+            if abs(candidate_latency_ms - best_peak_latency_ms) >= exclusion_window_ms:
+                p2 = float(prominences[int(candidate_rank)])
+                break
     eps = float(settings.prominence_epsilon)
     competition_ratio = float(p2 / (p1 + eps)) if p1 > 0.0 else 0.0
     dominance = float(p1 / (p1 + p2 + eps)) if p1 > 0.0 else 0.0
@@ -440,11 +499,13 @@ def _score_trace(
 
     return {
         "mean_fr_hz": mean_fr_hz,
-        "normalization_denom_hz": denom_hz,
+        "rate_normalization_mode": str(rate_normalization_mode),
+        "normalization_scale": normalization_scale,
         "bin_step_ms": bin_step_ms,
         "peak_distance_bins": distance_bins,
+        "competition_exclusion_window_ms": exclusion_window_ms,
         "n_detected_peaks": int(peaks.size),
-        "best_peak_latency_ms": float(centers[best_peak_idx] * 1000.0),
+        "best_peak_latency_ms": best_peak_latency_ms,
         "best_peak_value_hz": float(values_hz[best_peak_idx]) if np.isfinite(values_hz[best_peak_idx]) else np.nan,
         "best_peak_value_norm": float(norm_values[best_peak_idx]) if np.isfinite(norm_values[best_peak_idx]) else np.nan,
         "best_peak_prominence": p1,
@@ -474,9 +535,11 @@ def _build_condition_peakiness_table(
                 "n_trials",
                 "n_source_rows",
                 "mean_fr_hz",
-                "normalization_denom_hz",
+                "rate_normalization_mode",
+                "normalization_scale",
                 "bin_step_ms",
                 "peak_distance_bins",
+                "competition_exclusion_window_ms",
                 "n_detected_peaks",
                 "best_peak_latency_ms",
                 "best_peak_value_hz",
@@ -765,10 +828,14 @@ def run_fixation_peakiness_analysis(
             "average_input_filename": ensure_filename(settings.average_input_filename, ".pkl"),
             "condition_order": list(settings.condition_order),
             "min_trials_per_condition": int(settings.min_trials_per_condition),
+            "rate_normalization_mode": str(
+                _normalize_rate_normalization_mode(settings.rate_normalization_mode)
+            ),
             "mean_rate_floor_hz": float(settings.mean_rate_floor_hz),
             "peak_distance_ms": float(settings.peak_distance_ms),
             "peak_prominence_floor": float(settings.peak_prominence_floor),
             "competition_penalty_lambda": float(settings.competition_penalty_lambda),
+            "competition_exclusion_window_ms": float(settings.competition_exclusion_window_ms),
             "prominence_epsilon": float(settings.prominence_epsilon),
             "n_units": int(len(unit_df)),
             "n_condition_rows": int(len(condition_df)),
