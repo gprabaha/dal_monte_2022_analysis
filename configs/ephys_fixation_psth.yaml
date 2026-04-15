@@ -446,7 +446,7 @@ peakiness_plot_region_labels:
   accg: ACCg
   dmpfc: dmPFC
   ofc: OFC
-peakiness_plot_show_points: true
+peakiness_plot_show_points: false
 peakiness_plot_point_color: "#7a7a7a"
 peakiness_plot_point_alpha: 0.28
 peakiness_plot_point_size: 10.0
@@ -466,13 +466,14 @@ peakiness_plot_highlight_style_markers:
   phasic: "o"
   tonic: "s"
 peakiness_plot_highlight_marker_size: 42.0
-peakiness_plot_highlight_annotation_fontsize: 7.5
+peakiness_plot_highlight_annotation_fontsize: 6.8
 peakiness_plot_figure_width_in: 7.8
-peakiness_plot_figure_height_in: 4.0
+peakiness_plot_figure_height_in: 2.45
 peakiness_plot_left_margin: 0.08
 peakiness_plot_right_margin: 0.995
-peakiness_plot_top_margin: 0.92
-peakiness_plot_bottom_margin: 0.20
+peakiness_plot_top_margin: 0.84
+peakiness_plot_bottom_margin: 0.26
+peakiness_plot_panel_wspace: 0.12
 peakiness_plot_y_label: Peakiness Score
 
 # Preference-index heatmap plotting.
