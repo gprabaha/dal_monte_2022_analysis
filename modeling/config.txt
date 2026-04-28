@@ -1,0 +1,2 @@
+model_path=checkpoints/social_mrnn_latent
+experiment=plot_eigs_ablation_all_models_bla
