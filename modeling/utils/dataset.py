@@ -135,10 +135,11 @@ class MeanFixationDataset:
         loss_mask_list = []
         # Build loss masks per condition; all ones because padding encodes lengths.
         for normalized_fr in normalized_condition_list:
-            loss_mask_shape = (
-                normalized_fr.shape[0],
-                n_components * len(self.regions),
-            )
+            if latent_training:
+                loss_feature_dim = n_components * len(self.regions)
+            else:
+                loss_feature_dim = normalized_fr.shape[-1]
+            loss_mask_shape = (normalized_fr.shape[0], loss_feature_dim)
             loss_mask_list.append(torch.ones(loss_mask_shape))
 
         # Pad loss masks to match the padded batch layout.

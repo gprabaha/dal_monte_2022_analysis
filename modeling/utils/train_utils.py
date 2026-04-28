@@ -12,9 +12,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import os
-import curate_data
 from utils.dataset import MeanFixationDataset
-import load_data
 import json
 
 import sys
@@ -33,6 +31,9 @@ DEF_HP = {
     "inp_dim": 3,
     "epochs": 25000,
     "lr": 1e-3,
+    "loss_fn": "mse",
+    "initial_state": "zeros",
+    "initial_state_scale": 0.01,
     "dt": 10,
     "tau": 100,
     "l1_weight": 1e-4,
@@ -91,14 +92,16 @@ def train(hp=None):
     ).cuda()
 
     xn_0 = nn.Parameter(
-        torch.zeros(size=(1, model.mrnn.total_num_units), device="cuda")
-    )
-    hn_0 = nn.Parameter(
-        torch.zeros(size=(1, model.mrnn.total_num_units), device="cuda")
+        initial_state(
+            hp["initial_state"],
+            (1, model.mrnn.total_num_units),
+            device="cuda",
+            scale=hp["initial_state_scale"],
+        )
     )
 
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam([*model.parameters(), xn_0, hn_0], lr=hp["lr"])
+    criterion = get_loss_fn(hp["loss_fn"])
+    optimizer = optim.Adam([*model.parameters(), xn_0], lr=hp["lr"])
     cur_loss = 0
     losses = []
 
@@ -114,7 +117,7 @@ def train(hp=None):
         inp = inp.cuda()
         loss_mask = loss_mask.cuda()
 
-        out, hn = model(inp, xn_0, hn_0)
+        out, hn = model(xn_0, inp)
 
         out = out * loss_mask
 
@@ -135,8 +138,11 @@ def train(hp=None):
 
             state_dict = {
                 "model_state_dict": model.state_dict(),
-                "xn_0": xn_0,
-                "hn_0": hn_0,
+                "xn_0": xn_0.detach().cpu(),
+                "hn_0": model.mrnn.activation(xn_0.detach()).cpu(),
+                "hp": hp.copy(),
+                "epoch": epoch,
+                "losses": losses,
             }
 
             torch.save(
@@ -167,6 +173,8 @@ def initialize_params(
     is_cluster=False,
     path_name=None,
 ):
+    import curate_data
+
     params = {
         "remake_firing_rate_df": remake_firing_rate_df,
         "neural_data_bin_size": neural_data_bin_size,  # 10 ms in seconds
@@ -206,6 +214,8 @@ def reduce_padding(act, keys):
 
 
 def get_mean_fixation_data(path):
+    import load_data
+
     # "/Users/John/naturalistic_social_gaze_mech/social_gaze"
     # Load processed dataframe
     params = initialize_params(path_name=path)
@@ -241,6 +251,30 @@ def save_hp(hp, model_dir):
     hp_copy = hp.copy()
     with open(os.path.join(model_dir, "hp.json"), "w") as f:
         json.dump(hp_copy, f)
+
+
+def get_loss_fn(loss_fn):
+    """Return a reconstruction loss by name for experiment sweeps."""
+    if loss_fn == "mse":
+        return nn.MSELoss()
+    if loss_fn == "mae":
+        return nn.L1Loss()
+    if loss_fn == "smooth_l1":
+        return nn.SmoothL1Loss()
+    raise ValueError(f"Unsupported loss_fn '{loss_fn}'. Use mse, mae, or smooth_l1.")
+
+
+def initial_state(kind, shape, *, device, scale=0.01):
+    """Initialize the trainable starting pre-activation state."""
+    if kind == "zeros":
+        return torch.zeros(size=shape, device=device)
+    if kind == "normal":
+        return scale * torch.randn(size=shape, device=device)
+    if kind == "uniform":
+        return torch.empty(size=shape, device=device).uniform_(-scale, scale)
+    raise ValueError(
+        f"Unsupported initial_state '{kind}'. Use zeros, normal, or uniform."
+    )
 
 
 def l1_weight(rnn, scale):

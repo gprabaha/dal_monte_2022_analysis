@@ -91,7 +91,7 @@ def plot_flow_fields(
     ):
     
     hp = load_hp(model_path)
-    exp_path = f"results/{hp["model_save_name"]}/flow_fields"
+    exp_path = f"results/{hp['model_save_name']}/flow_fields"
     
     dataset = get_mean_fixation_data("/Users/lazza/naturalistic_social_gaze_mech/social_gaze") 
 
@@ -125,13 +125,11 @@ def plot_flow_fields(
 
     if hp["output_layer"]:
         xn = torch.zeros(size=(batch.shape[0], model.mrnn.total_num_units), device="cpu")
-        hn = torch.zeros(size=(batch.shape[0], model.mrnn.total_num_units), device="cpu")
     else:
         xn = checkpoint["xn_0"].cpu()
-        hn = checkpoint["hn_0"].cpu()
 
     with torch.no_grad():
-        out, hn = model(inp, xn, hn, noise=False)
+        out, hn = model(xn, inp, noise=False)
 
     out = out.detach().cpu()
     hn = hn.detach().cpu()

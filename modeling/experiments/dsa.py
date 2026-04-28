@@ -57,9 +57,8 @@ def dsa_similarity_matrix(model_path):
     trials = []
     for t in range(50):
         xn = torch.zeros(size=(batch.shape[0], model.mrnn.total_num_units), device="cpu")
-        hn = torch.zeros(size=(batch.shape[0], model.mrnn.total_num_units), device="cpu")
         with torch.no_grad():
-            out, hn = model(inp, xn, hn, noise=True)
+            out, hn = model(xn, inp, noise=True)
             trials.append(hn)
     trials = torch.cat(trials, dim=0)
 
@@ -139,9 +138,8 @@ def dsa_similarity_matrix_all_models():
         trials = []
         for t in range(50):
             xn = torch.zeros(size=(batch.shape[0], model.mrnn.total_num_units), device="cpu")
-            hn = torch.zeros(size=(batch.shape[0], model.mrnn.total_num_units), device="cpu")
             with torch.no_grad():
-                out, hn = model(inp, xn, hn, noise=True)
+                out, hn = model(xn, inp, noise=True)
                 trials.append(hn)
         trials = torch.cat(trials, dim=0)
 
@@ -211,7 +209,7 @@ def dsa_heatmap_all_models():
 def dsa_scatter(model_path):
 
     hp = load_hp(model_path)
-    exp_path = f"results/{hp["model_save_name"]}/dsa"
+    exp_path = f"results/{hp['model_save_name']}/dsa"
 
     fig, ax = standard_2d_ax()
 
@@ -231,7 +229,7 @@ def dsa_scatter(model_path):
 def dsa_heatmap(model_path):
 
     hp = load_hp(model_path)
-    exp_path = f"results/{hp["model_save_name"]}/dsa"
+    exp_path = f"results/{hp['model_save_name']}/dsa"
 
     # Create figure and 3D axes
     fig = plt.figure(figsize=(4, 4))

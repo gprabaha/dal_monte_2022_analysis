@@ -50,13 +50,12 @@ def _get_act(model_path, condition, stim_inp=None):
     inp = interactivity_input(keys, batch.shape[1])
 
     xn = torch.zeros(size=(batch.shape[0], model.mrnn.total_num_units), device="cpu")
-    hn = torch.zeros(size=(batch.shape[0], model.mrnn.total_num_units), device="cpu")
 
     with torch.no_grad():
         if stim_inp is not None:
-            out, hn = model(inp, xn, hn, stim_inp, noise=False)
+            out, hn = model(xn, inp, stim_inp, noise=False)
         else:
-            out, hn = model(inp, xn, hn, noise=False)
+            out, hn = model(xn, inp, noise=False)
 
     out = out.detach().cpu()
     hn = hn.detach().cpu()
@@ -121,7 +120,7 @@ def _get_ablation_stim(model_path, region, start_silence=50, end_silence=75, sti
 def _plot_subspace_stim(model_path, region, condition, stim_strength=-5):
 
     hp = load_hp(model_path)
-    exp_path = f"results/{hp["model_save_name"]}/behavior"
+    exp_path = f"results/{hp['model_save_name']}/behavior"
 
     _, out_ctrl_hi = _get_act(model_path, 0)    
     _, out_ctrl_li = _get_act(model_path, 1) 

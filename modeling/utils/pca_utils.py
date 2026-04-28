@@ -87,10 +87,10 @@ def model_pca(model_path, data_type):
     inp = interactivity_input(dataset.group_by_columns, batch.shape[1])
     inp = inp.cpu()
 
-    xn, hn = initial_state(hp, model, batch.shape[0])
+    xn, _ = initial_state(hp, model, batch.shape[0])
 
     with torch.no_grad():
-        out, hn = model(inp, xn, hn, noise=False)
+        out, hn = model(xn, inp, noise=False)
 
     if data_type == "data":
         plot_all_pcs(model, exp_path, batch, "data", dataset)

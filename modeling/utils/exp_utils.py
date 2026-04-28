@@ -56,13 +56,12 @@ def control_trial(model_path, condition, stim_inp=None):
     inp = interactivity_input(keys, batch.shape[1])
 
     xn = torch.zeros(size=(batch.shape[0], model.mrnn.total_num_units), device="cpu")
-    hn = torch.zeros(size=(batch.shape[0], model.mrnn.total_num_units), device="cpu")
 
     with torch.no_grad():
         if stim_inp is not None:
-            out, hn = model(inp, xn, hn, stim_inp, noise=False)
+            out, hn = model(xn, inp, stim_inp, noise=False)
         else:
-            out, hn = model(inp, xn, hn, noise=False)
+            out, hn = model(xn, inp, noise=False)
 
     out = out.detach().cpu()
     hn = hn.detach().cpu()
@@ -124,10 +123,10 @@ def initial_state(hp, model, batch_size):
     )
     if hp["output_layer"]:
         xn = torch.zeros(size=(batch_size, model.mrnn.total_num_units))
-        hn = torch.zeros(size=(batch_size, model.mrnn.total_num_units))
+        hn = model.mrnn.activation(xn)
     else:
         xn = checkpoint["xn_0"].cpu()
-        hn = checkpoint["hn_0"].cpu()
+        hn = checkpoint.get("hn_0", model.mrnn.activation(xn)).cpu()
     return xn, hn
 
 

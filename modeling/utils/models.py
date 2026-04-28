@@ -2,7 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from mrnntorch.mRNN import mRNN
+from mRNNTorch.mRNN import mRNN
+from mRNNTorch.utils import get_region_activity
 
 
 class Model(nn.Module):
@@ -39,12 +40,18 @@ class Model(nn.Module):
         self.latent_training = latent_training
         self.n_components = n_components
 
+        if rec_constrained != inp_constrained:
+            raise ValueError(
+                "This mRNNTorch implementation uses one shared 'constrained' "
+                "setting for recurrent and input weights; rec_constrained and "
+                "inp_constrained must match."
+            )
+
         if self.output_layer:
             self.mrnn = mRNN(
                 config,
                 activation=activation,
-                rec_constrained=rec_constrained,
-                inp_constrained=inp_constrained,
+                constrained=rec_constrained,
                 batch_first=batch_first,
                 dt=dt,
                 tau=tau,
@@ -56,8 +63,7 @@ class Model(nn.Module):
         else:
             self.mrnn = mRNN(
                 activation=activation,
-                rec_constrained=rec_constrained,
-                inp_constrained=inp_constrained,
+                constrained=rec_constrained,
                 batch_first=batch_first,
                 dt=dt,
                 tau=tau,
@@ -89,16 +95,20 @@ class Model(nn.Module):
             for region in self.connection_props:
                 self.mrnn.add_input_connection("input", region)
         else:
+            mrnn_region_units = {
+                region: self.mrnn.region_dict[region].num_units
+                for region in self.connection_props
+            }
             if latent_training:
-                self.pfc_out = nn.Linear(hid_dim, n_components)
-                self.acc_out = nn.Linear(hid_dim, n_components)
-                self.ofc_out = nn.Linear(hid_dim, n_components)
-                self.bla_out = nn.Linear(hid_dim, n_components)
+                self.pfc_out = nn.Linear(mrnn_region_units["pfc"], n_components)
+                self.acc_out = nn.Linear(mrnn_region_units["acc"], n_components)
+                self.ofc_out = nn.Linear(mrnn_region_units["ofc"], n_components)
+                self.bla_out = nn.Linear(mrnn_region_units["bla"], n_components)
             else:
-                self.pfc_out = nn.Linear(hid_dim, pfc_units)
-                self.acc_out = nn.Linear(hid_dim, acc_units)
-                self.ofc_out = nn.Linear(hid_dim, ofc_units)
-                self.bla_out = nn.Linear(hid_dim, bla_units)
+                self.pfc_out = nn.Linear(mrnn_region_units["pfc"], pfc_units)
+                self.acc_out = nn.Linear(mrnn_region_units["acc"], acc_units)
+                self.ofc_out = nn.Linear(mrnn_region_units["ofc"], ofc_units)
+                self.bla_out = nn.Linear(mrnn_region_units["bla"], bla_units)
 
         # Build fully connected network with proper cell types
         for src_region in self.connection_props:
@@ -112,10 +122,10 @@ class Model(nn.Module):
         xn, hn = self.mrnn(xn, inp, *args, noise=noise)
 
         if self.output_layer:
-            pfc_act = self.mrnn.get_region_activity(hn, "pfc")
-            acc_act = self.mrnn.get_region_activity(hn, "acc")
-            ofc_act = self.mrnn.get_region_activity(hn, "ofc")
-            bla_act = self.mrnn.get_region_activity(hn, "bla")
+            pfc_act = get_region_activity(self.mrnn, hn, "pfc")
+            acc_act = get_region_activity(self.mrnn, hn, "acc")
+            ofc_act = get_region_activity(self.mrnn, hn, "ofc")
+            bla_act = get_region_activity(self.mrnn, hn, "bla")
 
             pfc_out = self.pfc_out(pfc_act)
             acc_out = self.acc_out(acc_act)

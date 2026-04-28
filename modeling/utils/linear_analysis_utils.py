@@ -63,13 +63,12 @@ def get_eigenvalues(model_path, condition, *args, stim_inp=None):
     inp = interactivity_input(dataset.group_by_columns, batch.shape[1])
 
     xn = checkpoint["xn_0"].cpu()
-    hn = checkpoint["hn_0"].cpu()
 
     with torch.no_grad():
         if stim_inp is not None:
-            out, hn = model(inp, xn, hn, stim_inp, noise=False)
+            out, hn = model(xn, inp, stim_inp, noise=False)
         else:
-            out, hn = model(inp, xn, hn, noise=False)
+            out, hn = model(xn, inp, noise=False)
 
     out = out.detach().cpu()
     hn = hn.detach().cpu()
