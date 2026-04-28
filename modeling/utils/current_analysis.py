@@ -387,13 +387,26 @@ def _current_summary_rows(current, target_next, conditions, target_region, sourc
 
 def analyze_checkpoint_currents(
     model_dir,
+    batch=None,
+    region_unit_counts=None,
     *,
-    timesteps,
+    timesteps=None,
     condition_columns=None,
     device="cpu",
     save=True,
+    config_path=None,
+    return_model=False,
 ):
-    """Run current analysis and optionally save CSV outputs next to checkpoint."""
+    """Run current analysis and optionally save CSV outputs next to checkpoint.
+
+    Passing a batch is supported for notebook compatibility; only its time dimension
+    is used.
+    """
+    if timesteps is None:
+        if batch is None:
+            raise TypeError("analyze_checkpoint_currents requires timesteps or batch.")
+        timesteps = batch.shape[1]
+
     replay = replay_checkpoint(
         model_dir,
         timesteps=timesteps,
@@ -409,4 +422,9 @@ def analyze_checkpoint_currents(
         current_df.to_csv(out_dir / "source_to_next_activity_alignment.csv", index=False)
         pairwise_df.to_csv(out_dir / "pairwise_source_current_alignment.csv", index=False)
 
+    legacy_return = (
+        batch is not None or region_unit_counts is not None or config_path is not None
+    )
+    if return_model or legacy_return:
+        return replay["model"], replay, current_df, pairwise_df, vectors
     return replay, current_df, pairwise_df, vectors
