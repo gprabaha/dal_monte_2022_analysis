@@ -11,8 +11,8 @@ class Model(nn.Module):
         self,
         config,
         hid_dim,
-        pfc_units,
-        acc_units,
+        dmpfc_units,
+        accg_units,
         ofc_units,
         bla_units,
         dt,
@@ -73,11 +73,11 @@ class Model(nn.Module):
                 device=device,
             )
 
-        self.connection_props = ["pfc", "acc", "ofc", "bla"]
+        self.connection_props = ["dmpfc", "accg", "ofc", "bla"]
 
         self.region_units = {
-            "pfc": pfc_units,
-            "acc": acc_units,
+            "dmpfc": dmpfc_units,
+            "accg": accg_units,
             "ofc": ofc_units,
             "bla": bla_units,
         }
@@ -100,13 +100,13 @@ class Model(nn.Module):
                 for region in self.connection_props
             }
             if latent_training:
-                self.pfc_out = nn.Linear(mrnn_region_units["pfc"], n_components)
-                self.acc_out = nn.Linear(mrnn_region_units["acc"], n_components)
+                self.dmpfc_out = nn.Linear(mrnn_region_units["dmpfc"], n_components)
+                self.accg_out = nn.Linear(mrnn_region_units["accg"], n_components)
                 self.ofc_out = nn.Linear(mrnn_region_units["ofc"], n_components)
                 self.bla_out = nn.Linear(mrnn_region_units["bla"], n_components)
             else:
-                self.pfc_out = nn.Linear(mrnn_region_units["pfc"], pfc_units)
-                self.acc_out = nn.Linear(mrnn_region_units["acc"], acc_units)
+                self.dmpfc_out = nn.Linear(mrnn_region_units["dmpfc"], dmpfc_units)
+                self.accg_out = nn.Linear(mrnn_region_units["accg"], accg_units)
                 self.ofc_out = nn.Linear(mrnn_region_units["ofc"], ofc_units)
                 self.bla_out = nn.Linear(mrnn_region_units["bla"], bla_units)
 
@@ -116,23 +116,23 @@ class Model(nn.Module):
                 self.mrnn.add_recurrent_connection(src_region, dst_region)
         self.mrnn.finalize_connectivity()
 
-        self.out_order = ["ofc", "bla", "pfc", "acc"]
+        self.out_order = ["ofc", "bla", "dmpfc", "accg"]
 
     def forward(self, xn, inp, *args, noise=True):
         xn, hn = self.mrnn(xn, inp, *args, noise=noise)
 
         if self.output_layer:
-            pfc_act = get_region_activity(self.mrnn, hn, "pfc")
-            acc_act = get_region_activity(self.mrnn, hn, "acc")
+            dmpfc_act = get_region_activity(self.mrnn, hn, "dmpfc")
+            accg_act = get_region_activity(self.mrnn, hn, "accg")
             ofc_act = get_region_activity(self.mrnn, hn, "ofc")
             bla_act = get_region_activity(self.mrnn, hn, "bla")
 
-            pfc_out = self.pfc_out(pfc_act)
-            acc_out = self.acc_out(acc_act)
+            dmpfc_out = self.dmpfc_out(dmpfc_act)
+            accg_out = self.accg_out(accg_act)
             ofc_out = self.ofc_out(ofc_act)
             bla_out = self.bla_out(bla_act)
 
-            out = torch.cat([ofc_out, bla_out, pfc_out, acc_out], dim=-1)
+            out = torch.cat([ofc_out, bla_out, dmpfc_out, accg_out], dim=-1)
 
         else:
             out = hn

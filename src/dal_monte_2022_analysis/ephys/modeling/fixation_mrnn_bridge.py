@@ -26,12 +26,12 @@ MRNN_CONDITION_COLUMN_ORDER = (
     "low_interactivity_face",
     "object",
 )
-MRNN_REGION_ORDER = ("ofc", "bla", "pfc", "acc")
+MRNN_REGION_ORDER = ("ofc", "bla", "dmpfc", "accg")
 ANALYSIS_TO_MRNN_REGION = {
     "ofc": "ofc",
     "bla": "bla",
-    "dmpfc": "pfc",
-    "accg": "acc",
+    "dmpfc": "dmpfc",
+    "accg": "accg",
 }
 
 _UNIT_KEY_COLUMNS = (

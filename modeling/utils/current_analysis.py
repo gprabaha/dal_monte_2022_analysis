@@ -37,8 +37,8 @@ def load_model_from_checkpoint(model_dir, *, device="cpu"):
     model = Model(
         hp["mrnn_config_file"],
         hp.get("hidden_size", 100),
-        region_unit_counts["pfc"],
-        region_unit_counts["acc"],
+        _region_count(region_unit_counts, "dmpfc", "pfc"),
+        _region_count(region_unit_counts, "accg", "acc"),
         region_unit_counts["ofc"],
         region_unit_counts["bla"],
         hp["dt"],
@@ -57,6 +57,15 @@ def load_model_from_checkpoint(model_dir, *, device="cpu"):
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model, hp, checkpoint
+
+
+def _region_count(region_unit_counts, region, legacy_region=None):
+    """Fetch a region count, accepting one legacy alias for older checkpoints."""
+    if region in region_unit_counts:
+        return region_unit_counts[region]
+    if legacy_region is not None and legacy_region in region_unit_counts:
+        return region_unit_counts[legacy_region]
+    raise KeyError(f"Missing region count for {region}")
 
 
 def build_condition_input(condition_names, timesteps, *, device):

@@ -27,28 +27,28 @@ import warnings
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
 
-def plot_subspace_ablation_pfc_hi(model_path):
-    _plot_subspace_stim(model_path, "pfc", 0)
+def plot_subspace_ablation_dmpfc_hi(model_path):
+    _plot_subspace_stim(model_path, "dmpfc", 0)
 
 
-def plot_subspace_ablation_pfc_li(model_path):
-    _plot_subspace_stim(model_path, "pfc", 1)
+def plot_subspace_ablation_dmpfc_li(model_path):
+    _plot_subspace_stim(model_path, "dmpfc", 1)
 
 
-def plot_subspace_ablation_pfc_obj(model_path):
-    _plot_subspace_stim(model_path, "pfc", 2)
+def plot_subspace_ablation_dmpfc_obj(model_path):
+    _plot_subspace_stim(model_path, "dmpfc", 2)
 
 
-def plot_subspace_ablation_acc_hi(model_path):
-    _plot_subspace_stim(model_path, "acc", 0)
+def plot_subspace_ablation_accg_hi(model_path):
+    _plot_subspace_stim(model_path, "accg", 0)
 
 
-def plot_subspace_ablation_acc_li(model_path):
-    _plot_subspace_stim(model_path, "acc", 1)
+def plot_subspace_ablation_accg_li(model_path):
+    _plot_subspace_stim(model_path, "accg", 1)
 
 
-def plot_subspace_ablation_acc_obj(model_path):
-    _plot_subspace_stim(model_path, "acc", 2)
+def plot_subspace_ablation_accg_obj(model_path):
+    _plot_subspace_stim(model_path, "accg", 2)
 
 
 def plot_subspace_ablation_bla_hi(model_path):
@@ -76,12 +76,12 @@ def plot_subspace_ablation_ofc_obj(model_path):
 
 
 def plot_all_subspace_ablation(model_path):
-    plot_subspace_ablation_pfc_hi(model_path)
-    plot_subspace_ablation_pfc_li(model_path)
-    plot_subspace_ablation_pfc_obj(model_path)
-    plot_subspace_ablation_acc_hi(model_path)
-    plot_subspace_ablation_acc_li(model_path)
-    plot_subspace_ablation_acc_obj(model_path)
+    plot_subspace_ablation_dmpfc_hi(model_path)
+    plot_subspace_ablation_dmpfc_li(model_path)
+    plot_subspace_ablation_dmpfc_obj(model_path)
+    plot_subspace_ablation_accg_hi(model_path)
+    plot_subspace_ablation_accg_li(model_path)
+    plot_subspace_ablation_accg_obj(model_path)
     plot_subspace_ablation_bla_hi(model_path)
     plot_subspace_ablation_bla_li(model_path)
     plot_subspace_ablation_bla_obj(model_path)
@@ -90,28 +90,28 @@ def plot_all_subspace_ablation(model_path):
     plot_subspace_ablation_ofc_obj(model_path)
 
 
-def plot_subspace_activation_pfc_hi(model_path):
-    _plot_subspace_stim(model_path, "pfc", 0, stim_strength=5)
+def plot_subspace_activation_dmpfc_hi(model_path):
+    _plot_subspace_stim(model_path, "dmpfc", 0, stim_strength=5)
 
 
-def plot_subspace_activation_pfc_li(model_path):
-    _plot_subspace_stim(model_path, "pfc", 1, stim_strength=5)
+def plot_subspace_activation_dmpfc_li(model_path):
+    _plot_subspace_stim(model_path, "dmpfc", 1, stim_strength=5)
 
 
-def plot_subspace_activation_pfc_obj(model_path):
-    _plot_subspace_stim(model_path, "pfc", 2, stim_strength=5)
+def plot_subspace_activation_dmpfc_obj(model_path):
+    _plot_subspace_stim(model_path, "dmpfc", 2, stim_strength=5)
 
 
-def plot_subspace_activation_acc_hi(model_path):
-    _plot_subspace_stim(model_path, "acc", 0, stim_strength=5)
+def plot_subspace_activation_accg_hi(model_path):
+    _plot_subspace_stim(model_path, "accg", 0, stim_strength=5)
 
 
-def plot_subspace_activation_acc_li(model_path):
-    _plot_subspace_stim(model_path, "acc", 1, stim_strength=5)
+def plot_subspace_activation_accg_li(model_path):
+    _plot_subspace_stim(model_path, "accg", 1, stim_strength=5)
 
 
-def plot_subspace_activation_acc_obj(model_path):
-    _plot_subspace_stim(model_path, "acc", 2, stim_strength=5)
+def plot_subspace_activation_accg_obj(model_path):
+    _plot_subspace_stim(model_path, "accg", 2, stim_strength=5)
 
 
 def plot_subspace_activation_bla_hi(model_path):
@@ -139,12 +139,12 @@ def plot_subspace_activation_ofc_obj(model_path):
 
 
 def plot_all_subspace_activation(model_path):
-    plot_subspace_activation_pfc_hi(model_path)
-    plot_subspace_activation_pfc_li(model_path)
-    plot_subspace_activation_pfc_obj(model_path)
-    plot_subspace_activation_acc_hi(model_path)
-    plot_subspace_activation_acc_li(model_path)
-    plot_subspace_activation_acc_obj(model_path)
+    plot_subspace_activation_dmpfc_hi(model_path)
+    plot_subspace_activation_dmpfc_li(model_path)
+    plot_subspace_activation_dmpfc_obj(model_path)
+    plot_subspace_activation_accg_hi(model_path)
+    plot_subspace_activation_accg_li(model_path)
+    plot_subspace_activation_accg_obj(model_path)
     plot_subspace_activation_bla_hi(model_path)
     plot_subspace_activation_bla_li(model_path)
     plot_subspace_activation_bla_obj(model_path)

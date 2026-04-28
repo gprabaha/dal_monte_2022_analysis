@@ -34,26 +34,26 @@ def _plot_energy(coords, speed, save_path):
     # Optionally, you can set labels for those ticks
     ax.set_zticklabels(['0', '1'])
     save_fig(save_path)
-    
+
 
 def _plot_flow(coords, x_vel, y_vel, save_path):
 
     # Add line collection
     fig, ax = empty_2d_ax()
     # Create plot
-    ax.streamplot(coords[:, :, 0], 
-                  coords[:, :, 1], 
-                  x_vel, 
-                  y_vel, 
-                  color="black", 
-                  linewidth=2, 
-                  arrowsize=2, 
+    ax.streamplot(coords[:, :, 0],
+                  coords[:, :, 1],
+                  x_vel,
+                  y_vel,
+                  color="black",
+                  linewidth=2,
+                  arrowsize=2,
                   zorder=0,
     )
 
     save_fig(save_path, eps=True)
 
-    
+
 def _gen_line_collection(
     data,
     time_skips=10
@@ -62,9 +62,9 @@ def _gen_line_collection(
     # Create line collection for plotting
     lines = []
     for t in range(0, data.shape[0]-1, time_skips):
-        lines.append(np.array([(data[t, 0], 
-                                data[t, 1]), 
-                                (data[t, 0], 
+        lines.append(np.array([(data[t, 0],
+                                data[t, 1]),
+                                (data[t, 0],
                                 data[t, 1])]))
     line_collection = LineCollection(lines, cmap='viridis', linewidths=6, zorder=5)
     # Create a scalar array that will control the color (e.g., use line's x-coordinate)
@@ -80,32 +80,32 @@ def _gen_line_collection(
 
 
 def plot_flow_fields(
-    model_path, 
+    model_path,
     condition,
-    *args, 
+    *args,
     num_points=20,
     x_offset=10,
     y_offset=10,
     cancel_other_regions=False,
     time_skips=1
     ):
-    
+
     hp = load_hp(model_path)
     exp_path = f"results/{hp['model_save_name']}/flow_fields"
-    
-    dataset = get_mean_fixation_data("/Users/lazza/naturalistic_social_gaze_mech/social_gaze") 
+
+    dataset = get_mean_fixation_data("/Users/lazza/naturalistic_social_gaze_mech/social_gaze")
 
     # Training variables
     model = Model(
-        hp["mrnn_config_file"], 
-        100, 
-        dataset.units_per_region["dmpfc"], 
-        dataset.units_per_region["accg"], 
-        dataset.units_per_region["ofc"], 
-        dataset.units_per_region["bla"], 
-        hp["dt"], 
-        hp["tau"], 
-        hp["inp_noise"], 
+        hp["mrnn_config_file"],
+        100,
+        dataset.units_per_region["dmpfc"],
+        dataset.units_per_region["accg"],
+        dataset.units_per_region["ofc"],
+        dataset.units_per_region["bla"],
+        hp["dt"],
+        hp["tau"],
+        hp["inp_noise"],
         hp["act_noise"],
         hp["constrained"],
         hp["batch_first"],
@@ -159,7 +159,7 @@ def plot_flow_fields(
 
     print("Plotting flow fields...")
     for i in tqdm(range(0, len(x_vels))):
-        
+
         # Plot and save energy landscape
         energy_save = save_path_energy + f"t{i*time_skips}_energy"
         _plot_energy(data_coords[i], speeds[i], energy_save)
@@ -171,19 +171,19 @@ def plot_flow_fields(
 
 
 
-def plot_flow_pfc_object(model_path):
-    plot_flow_fields(model_path, 2, "pfc")
-def plot_flow_pfc_low_int(model_path):
-    plot_flow_fields(model_path, 1, "pfc")
-def plot_flow_pfc_high_int(model_path):
-    plot_flow_fields(model_path, 0, "pfc")
+def plot_flow_dmpfc_object(model_path):
+    plot_flow_fields(model_path, 2, "dmpfc")
+def plot_flow_dmpfc_low_int(model_path):
+    plot_flow_fields(model_path, 1, "dmpfc")
+def plot_flow_dmpfc_high_int(model_path):
+    plot_flow_fields(model_path, 0, "dmpfc")
 
-def plot_flow_acc_object(model_path):
-    plot_flow_fields(model_path, 2, "acc")
-def plot_flow_acc_low_int(model_path):
-    plot_flow_fields(model_path, 1, "acc")
-def plot_flow_acc_high_int(model_path):
-    plot_flow_fields(model_path, 0, "acc")
+def plot_flow_accg_object(model_path):
+    plot_flow_fields(model_path, 2, "accg")
+def plot_flow_accg_low_int(model_path):
+    plot_flow_fields(model_path, 1, "accg")
+def plot_flow_accg_high_int(model_path):
+    plot_flow_fields(model_path, 0, "accg")
 
 def plot_flow_bla_object(model_path):
     plot_flow_fields(model_path, 2, "bla")
@@ -200,12 +200,12 @@ def plot_flow_ofc_high_int(model_path):
     plot_flow_fields(model_path, 0, "ofc")
 
 def plot_all_flow_fields(model_path):
-    plot_flow_pfc_object(model_path)
-    plot_flow_pfc_high_int(model_path)
-    plot_flow_pfc_low_int(model_path)
-    plot_flow_acc_object(model_path)
-    plot_flow_acc_high_int(model_path)
-    plot_flow_acc_low_int(model_path)
+    plot_flow_dmpfc_object(model_path)
+    plot_flow_dmpfc_high_int(model_path)
+    plot_flow_dmpfc_low_int(model_path)
+    plot_flow_accg_object(model_path)
+    plot_flow_accg_high_int(model_path)
+    plot_flow_accg_low_int(model_path)
     plot_flow_bla_object(model_path)
     plot_flow_bla_high_int(model_path)
     plot_flow_bla_low_int(model_path)
@@ -219,41 +219,41 @@ def main():
     ### PARAMETERS ###
     parser = config.config_parser()
     args = parser.parse_args()
-    
-    # Principle Angles
-    if args.experiment == "plot_flow_pfc_object":
-        plot_flow_pfc_object(args.model_path) 
-    elif args.experiment == "plot_flow_pfc_low_int":
-        plot_flow_pfc_low_int(args.model_path) 
-    elif args.experiment == "plot_flow_pfc_high_int":
-        plot_flow_pfc_high_int(args.model_path) 
 
-    elif args.experiment == "plot_flow_acc_object":
-        plot_flow_acc_object(args.model_path) 
-    elif args.experiment == "plot_flow_acc_low_int":
-        plot_flow_acc_low_int(args.model_path) 
-    elif args.experiment == "plot_flow_acc_high_int":
-        plot_flow_acc_high_int(args.model_path) 
+    # Principle Angles
+    if args.experiment == "plot_flow_dmpfc_object":
+        plot_flow_dmpfc_object(args.model_path)
+    elif args.experiment == "plot_flow_dmpfc_low_int":
+        plot_flow_dmpfc_low_int(args.model_path)
+    elif args.experiment == "plot_flow_dmpfc_high_int":
+        plot_flow_dmpfc_high_int(args.model_path)
+
+    elif args.experiment == "plot_flow_accg_object":
+        plot_flow_accg_object(args.model_path)
+    elif args.experiment == "plot_flow_accg_low_int":
+        plot_flow_accg_low_int(args.model_path)
+    elif args.experiment == "plot_flow_accg_high_int":
+        plot_flow_accg_high_int(args.model_path)
 
     elif args.experiment == "plot_flow_bla_object":
-        plot_flow_bla_object(args.model_path) 
+        plot_flow_bla_object(args.model_path)
     elif args.experiment == "plot_flow_bla_low_int":
-        plot_flow_bla_low_int(args.model_path) 
+        plot_flow_bla_low_int(args.model_path)
     elif args.experiment == "plot_flow_bla_high_int":
-        plot_flow_bla_high_int(args.model_path) 
+        plot_flow_bla_high_int(args.model_path)
 
     elif args.experiment == "plot_flow_ofc_object":
-        plot_flow_ofc_object(args.model_path) 
+        plot_flow_ofc_object(args.model_path)
     elif args.experiment == "plot_flow_ofc_low_int":
-        plot_flow_ofc_low_int(args.model_path) 
+        plot_flow_ofc_low_int(args.model_path)
     elif args.experiment == "plot_flow_ofc_high_int":
-        plot_flow_ofc_high_int(args.model_path) 
-    
+        plot_flow_ofc_high_int(args.model_path)
+
     elif args.experiment == "plot_all_flow_fields":
         plot_all_flow_fields(args.model_path)
 
     else:
         raise ValueError("Experiment not in this file")
-    
+
 if __name__ == "__main__":
     main()

@@ -12,11 +12,11 @@
 
     "recurrent_regions": [
       {
-        "name": "pfc",
+        "name": "dmpfc",
         "num_units": 100
       },
       {
-        "name": "acc",
+        "name": "accg",
         "num_units": 100
       },
       {
@@ -67,11 +67,11 @@
     "input_connections": [
       {
         "src_region": "input",
-        "dst_region": "pfc"
+        "dst_region": "dmpfc"
       },
       {
         "src_region": "input",
-        "dst_region": "acc"
+        "dst_region": "accg"
       },
       {
         "src_region": "input",
