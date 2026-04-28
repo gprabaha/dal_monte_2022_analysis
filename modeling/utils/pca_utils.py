@@ -10,13 +10,15 @@ from utils.models import Model
 from utils.exp_utils import pca_batched, save_fig, load_hp, load_model, initial_state
 from utils.train_utils import get_mean_fixation_data, interactivity_input
 from utils.plt_utils import ax_3d_no_grid
+from utils.current_analysis import condition_label, region_slice
 import os
+import numpy as np
 
 
 def plot_pca(act, exp_path, region, data_type):
     fig, ax = ax_3d_no_grid()
 
-    label_str = ["high_interactivity_face", "low_interactivity_face", "object"]
+    label_str = ["interactive face", "noninteractive face", "object"]
     ax.plot(
         act[0, :, 0],
         act[0, :, 1],
@@ -45,6 +47,73 @@ def plot_pca(act, exp_path, region, data_type):
 
     save_path = os.path.join(exp_path, f"{region}_{data_type}_pca")
     save_fig(save_path, eps=False)
+
+
+def fit_region_pcs(activity, model, regions=None, n_components=3):
+    """Fit PCA to each region's activity across all conditions and time bins."""
+    regions = regions or list(model.mrnn.region_dict)
+    pc_by_region = {}
+    for region in regions:
+        sl = region_slice(model, region)
+        region_activity = activity[..., sl].detach().cpu().numpy()
+        flat = region_activity.reshape(-1, region_activity.shape[-1])
+        mean = flat.mean(axis=0, keepdims=True)
+        centered = flat - mean
+        _, singular_values, vt = np.linalg.svd(centered, full_matrices=False)
+        components = vt[:n_components]
+        scores = centered @ components.T
+        denom = max(centered.shape[0] - 1, 1)
+        explained = (singular_values[:n_components] ** 2) / denom
+        total = (singular_values**2).sum() / denom
+        explained_ratio = explained / total if total > 0 else np.zeros_like(explained)
+        pc_by_region[region] = {
+            "scores": scores.reshape(
+                region_activity.shape[0], region_activity.shape[1], -1
+            ),
+            "components": components,
+            "mean": mean.squeeze(0),
+            "explained_ratio": explained_ratio,
+        }
+    return pc_by_region
+
+
+def plot_region_pc_timeseries(
+    pc_by_region, condition_names, pc_indices=(0, 1, 2), *, plt_module=None
+):
+    """Plot regional PC score time series by fixation condition."""
+    if plt_module is None:
+        import matplotlib.pyplot as plt_module
+
+    n_regions = len(pc_by_region)
+    fig, axes = plt_module.subplots(
+        n_regions,
+        len(pc_indices),
+        figsize=(4.0 * len(pc_indices), 2.6 * n_regions),
+        sharex=True,
+    )
+    axes = np.asarray(axes)
+    if n_regions == 1:
+        axes = axes[None, :]
+    if len(pc_indices) == 1:
+        axes = axes[:, None]
+
+    for row_idx, (region, data) in enumerate(pc_by_region.items()):
+        scores = data["scores"]
+        for col_idx, pc_idx in enumerate(pc_indices):
+            ax = axes[row_idx, col_idx]
+            for cond_idx, condition in enumerate(condition_names):
+                ax.plot(scores[cond_idx, :, pc_idx], label=condition_label(condition))
+            pct = 100 * data["explained_ratio"][pc_idx]
+            ax.set_title(f"{region} PC{pc_idx + 1} ({pct:.1f}%)")
+            ax.set_ylabel("score")
+            if row_idx == n_regions - 1:
+                ax.set_xlabel("time bin")
+            if row_idx == 0 and col_idx == len(pc_indices) - 1:
+                ax.legend(
+                    frameon=False, bbox_to_anchor=(1.02, 1.0), loc="upper left"
+                )
+    fig.tight_layout()
+    return fig
 
 
 def plot_all_pcs(model, exp_path, x, data_type, dataset=None):

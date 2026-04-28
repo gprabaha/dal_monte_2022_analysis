@@ -26,6 +26,11 @@ MRNN_CONDITION_COLUMN_ORDER = (
     "low_interactivity_face",
     "object",
 )
+MRNN_CONDITION_LABELS = {
+    "high_interactivity_face": "interactive face",
+    "low_interactivity_face": "noninteractive face",
+    "object": "object",
+}
 MRNN_REGION_ORDER = ("ofc", "bla", "dmpfc", "accg")
 ANALYSIS_TO_MRNN_REGION = {
     "ofc": "ofc",

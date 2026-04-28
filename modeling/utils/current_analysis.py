@@ -6,6 +6,7 @@ import json
 import pandas as pd
 import torch
 import torch.nn.functional as F
+import numpy as np
 
 from modeling.utils.models import Model
 
@@ -15,6 +16,11 @@ DEFAULT_CONDITION_COLUMNS = [
     "low_interactivity_face",
     "object",
 ]
+CONDITION_LABELS = {
+    "high_interactivity_face": "interactive face",
+    "low_interactivity_face": "noninteractive face",
+    "object": "object",
+}
 
 
 def load_model_from_checkpoint(model_dir, *, device="cpu"):
@@ -81,6 +87,11 @@ def build_condition_input(condition_names, timesteps, *, device):
     for row_idx, condition_name in enumerate(condition_names):
         input_tensor[row_idx, :, condition_index[condition_name]] = 1.0
     return input_tensor
+
+
+def condition_label(condition):
+    """Return a readable condition label for plotting."""
+    return CONDITION_LABELS.get(condition, condition)
 
 
 def recurrent_weight(model):
@@ -260,6 +271,95 @@ def pairwise_current_alignment(replay, vectors, *, sources=None):
                             }
                         )
     return pd.DataFrame(rows)
+
+
+def recurrent_current_contribution_table(current_df, regions):
+    """Normalize recurrent-current magnitudes across source regions per target/time."""
+    recurrent = current_df[current_df["source"].isin(regions)].copy()
+    group_cols = ["condition", "time_idx", "target_region"]
+    total = recurrent.groupby(group_cols)["current_norm"].transform("sum")
+    recurrent["relative_current_norm"] = np.where(
+        total > 0, recurrent["current_norm"] / total, 0.0
+    )
+    return recurrent
+
+
+def current_alignment_summary(current_df, regions):
+    """Average source-current magnitude and alignment to next target activity."""
+    return (
+        current_df[current_df["source"].isin(regions)]
+        .groupby(["condition", "target_region", "source"], as_index=False)
+        .agg(
+            mean_current_norm=("current_norm", "mean"),
+            mean_cosine_to_next_activity=("cosine_to_next_activity", "mean"),
+        )
+    )
+
+
+def pairwise_current_alignment_summary(pairwise_df):
+    """Average pairwise source-current alignment within target regions."""
+    return (
+        pairwise_df.groupby(
+            ["condition", "target_region", "source_a", "source_b"], as_index=False
+        ).agg(mean_pairwise_cosine=("cosine", "mean"))
+    )
+
+
+def plot_relative_recurrent_currents(
+    relative_df, regions, condition_names, *, plt_module=None
+):
+    """Plot relative recurrent-current magnitude by source, target, and condition."""
+    if plt_module is None:
+        import matplotlib.pyplot as plt_module
+
+    n_rows = len(regions)
+    n_cols = len(condition_names)
+    fig, axes = plt_module.subplots(
+        n_rows, n_cols, figsize=(4.2 * n_cols, 2.5 * n_rows), sharex=True, sharey=True
+    )
+    axes = np.asarray(axes)
+    if n_rows == 1:
+        axes = axes[None, :]
+    if n_cols == 1:
+        axes = axes[:, None]
+
+    for row_idx, target_region in enumerate(regions):
+        for col_idx, condition in enumerate(condition_names):
+            ax = axes[row_idx, col_idx]
+            subset = relative_df[
+                (relative_df["target_region"] == target_region)
+                & (relative_df["condition"] == condition)
+            ]
+            pivot = (
+                subset.pivot_table(
+                    index="time_idx",
+                    columns="source",
+                    values="relative_current_norm",
+                    aggfunc="mean",
+                )
+                .reindex(columns=regions)
+                .fillna(0.0)
+                .sort_index()
+            )
+            ax.stackplot(pivot.index.to_numpy(), pivot.T.to_numpy(), labels=pivot.columns)
+            if row_idx == 0:
+                ax.set_title(condition_label(condition))
+            if col_idx == 0:
+                ax.set_ylabel(f"target {target_region}\nrelative norm")
+            if row_idx == n_rows - 1:
+                ax.set_xlabel("time bin")
+            ax.set_ylim(0, 1)
+
+    handles, labels = axes[0, -1].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        frameon=False,
+        bbox_to_anchor=(1.01, 0.5),
+        loc="center left",
+    )
+    fig.tight_layout()
+    return fig
 
 
 def _current_summary_rows(current, target_next, conditions, target_region, source):
