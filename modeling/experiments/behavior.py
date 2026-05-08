@@ -11,7 +11,7 @@ import config
 from utils.plt_utils import standard_2d_ax
 from utils.exp_utils import (
     load_hp,
-    get_mean_fixation_data,
+    get_mean_fixation_data, 
     interactivity_input,
     save_fig,
     stim_inp,
