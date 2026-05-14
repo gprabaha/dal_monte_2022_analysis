@@ -22,10 +22,11 @@ from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_model import (
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_targets import (
     CANONICAL_CONDITION_ORDER,
     FixationMRNNTargets,
-    build_condition_input,
     build_fixation_mrnn_targets,
     normalize_target_mode,
     serialize_pca_metadata,
+    summarize_fixation_mrnn_pca,
+    summarize_fixation_mrnn_targets,
 )
 from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 from dal_monte_2022_analysis.runtime.io.processed_data import save_pickle_path
@@ -61,6 +62,8 @@ class FixationMRNNRunSettings:
     batch_first: bool = True
     rec_constrained: bool = False
     inp_constrained: bool = False
+    recurrent_sparsity: float | None = None
+    input_sparsity: float | None = None
     inp_noise: float = 0.0
     act_noise: float = 0.0
     input_region_name: str = "input"
@@ -338,6 +341,72 @@ def _feature_indices(
     return [index[str(feature)] for feature in internal]
 
 
+def feature_order_indices(
+    canonical: Sequence[str],
+    internal: Sequence[str],
+) -> list[int]:
+    """Return canonical indices needed to arrange features in internal order."""
+    canonical_tuple = tuple(str(feature) for feature in canonical)
+    internal_tuple = tuple(str(feature) for feature in internal)
+    if set(canonical_tuple) != set(internal_tuple):
+        missing = sorted(set(canonical_tuple) - set(internal_tuple))
+        extra = sorted(set(internal_tuple) - set(canonical_tuple))
+        raise ValueError(
+            "Internal features must be a within-region permutation of canonical "
+            f"features. missing={missing}, extra={extra}"
+        )
+    return _feature_indices(canonical_tuple, internal_tuple)
+
+
+def summarize_fixation_mrnn_shuffles(
+    *,
+    canonical_region_order: Sequence[str],
+    internal_region_order: Sequence[str],
+    canonical_feature_order_by_region: Mapping[str, Sequence[str]],
+    internal_feature_order_by_region: Mapping[str, Sequence[str]],
+    sample_features: int = 6,
+) -> pd.DataFrame:
+    """Summarize deterministic region and within-region feature shuffles."""
+    canonical_regions = tuple(str(region) for region in canonical_region_order)
+    internal_regions = tuple(str(region) for region in internal_region_order)
+    if set(canonical_regions) != set(internal_regions):
+        missing = sorted(set(canonical_regions) - set(internal_regions))
+        extra = sorted(set(internal_regions) - set(canonical_regions))
+        raise ValueError(
+            "Internal region order must be a permutation of canonical regions. "
+            f"missing={missing}, extra={extra}"
+        )
+
+    rows: list[dict[str, object]] = []
+    internal_region_index = {region: idx for idx, region in enumerate(internal_regions)}
+    for canonical_idx, region in enumerate(canonical_regions):
+        canonical_features = tuple(
+            str(feature) for feature in canonical_feature_order_by_region[region]
+        )
+        internal_features = tuple(
+            str(feature) for feature in internal_feature_order_by_region[region]
+        )
+        permutation_indices = feature_order_indices(canonical_features, internal_features)
+        rows.append(
+            {
+                "region": region,
+                "canonical_region_index": canonical_idx,
+                "internal_region_index": internal_region_index[region],
+                "region_order_changed": canonical_idx != internal_region_index[region],
+                "n_features": len(canonical_features),
+                "feature_order_changed": canonical_features != internal_features,
+                "feature_permutation_indices": json.dumps(permutation_indices),
+                "canonical_first_features": json.dumps(
+                    list(canonical_features[: int(sample_features)])
+                ),
+                "internal_first_features": json.dumps(
+                    list(internal_features[: int(sample_features)])
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _tensor_targets_for_training(
     targets: FixationMRNNTargets,
     *,
@@ -353,12 +422,31 @@ def _tensor_targets_for_training(
             canonical_features[region],
             internal_feature_order_by_region[region],
         )
-        out[region] = torch.tensor(
-            canonical_targets[region][..., indices],
-            dtype=torch.float32,
-            device=device,
-        )
+        values = canonical_targets[region][..., indices]
+        if not np.isfinite(values).all():
+            nan_count = int(np.isnan(values).sum())
+            inf_count = int(np.isinf(values).sum())
+            raise ValueError(
+                f"Non-finite training targets for region={region!r}, "
+                f"mode={target_mode!r}: nan={nan_count}, inf={inf_count}."
+            )
+        out[region] = torch.tensor(values, dtype=torch.float32, device=device)
     return out
+
+
+def _assert_model_parameters_finite(model: torch.nn.Module) -> None:
+    bad: list[str] = []
+    for name, param in model.named_parameters():
+        if not torch.isfinite(param).all():
+            bad.append(
+                f"{name}: shape={tuple(param.shape)}, "
+                f"nan={int(torch.isnan(param).sum().item())}, "
+                f"inf={int(torch.isinf(param).sum().item())}"
+            )
+    if bad:
+        raise ValueError(
+            "Model initialization produced non-finite parameters: " + "; ".join(bad)
+        )
 
 
 def _concatenate_region_tensors(
@@ -523,6 +611,8 @@ def train_fixation_mrnn_run(
         rec_constrained=settings.rec_constrained,
         inp_constrained=settings.inp_constrained,
         batch_first=settings.batch_first,
+        recurrent_sparsity=settings.recurrent_sparsity,
+        input_sparsity=settings.input_sparsity,
         spectral_radius=settings.spectral_radius,
     )
 
@@ -537,7 +627,20 @@ def train_fixation_mrnn_run(
     )
 
     try:
+        target_summary = summarize_fixation_mrnn_targets(targets)
+        pca_summary = summarize_fixation_mrnn_pca(targets)
+        shuffle_summary = summarize_fixation_mrnn_shuffles(
+            canonical_region_order=settings.canonical_region_order,
+            internal_region_order=internal_region_order,
+            canonical_feature_order_by_region=canonical_features,
+            internal_feature_order_by_region=internal_feature_order,
+        )
+        target_summary.to_csv(run_dir / "target_summary.csv", index=False)
+        pca_summary.to_csv(run_dir / "pca_summary.csv", index=False)
+        shuffle_summary.to_csv(run_dir / "shuffle_summary.csv", index=False)
+
         model = FixationMRNNModel(model_spec).to(device)
+        _assert_model_parameters_finite(model)
         train_targets_by_region = _tensor_targets_for_training(
             targets,
             target_mode=target_mode,

@@ -21,7 +21,11 @@ from dal_monte_2022_analysis.ephys.modeling import (
     compute_fixation_mrnn_eigenvalues,
     derive_internal_feature_order_by_region,
     derive_internal_region_order,
+    feature_order_indices,
     replay_fixation_mrnn_run,
+    summarize_fixation_mrnn_pca,
+    summarize_fixation_mrnn_shuffles,
+    summarize_fixation_mrnn_targets,
     train_fixation_mrnn_scratch,
 )
 
@@ -100,9 +104,19 @@ class TestFixationMRNNTargetsAndShuffling(unittest.TestCase):
         self.assertEqual(targets.raw_targets_by_region["ofc"].shape, (3, 4, 2))
         self.assertEqual(targets.region_unit_counts["accg"], 2)
         self.assertEqual(targets.raw_feature_order_by_region["bla"], ("bla_unit_0", "bla_unit_1"))
+        pc_dims = {
+            region: tensor.shape[-1]
+            for region, tensor in targets.pc_targets_by_region.items()
+        }
+        self.assertEqual(len(set(pc_dims.values())), 1)
+        required_components = {
+            region: metadata.n_components_required_for_threshold
+            for region, metadata in targets.pca_metadata_by_region.items()
+        }
+        self.assertEqual(next(iter(set(pc_dims.values()))), max(required_components.values()))
         self.assertGreaterEqual(
             float(targets.pca_metadata_by_region["ofc"].cumulative_explained_variance_ratio[
-                targets.pca_metadata_by_region["ofc"].n_components - 1
+                targets.pca_metadata_by_region["ofc"].n_components_required_for_threshold - 1
             ]),
             0.95,
         )
@@ -110,6 +124,11 @@ class TestFixationMRNNTargetsAndShuffling(unittest.TestCase):
             targets.pc_targets_by_region["dmpfc"].shape[-1],
             len(targets.pc_feature_order_by_region["dmpfc"]),
         )
+        target_summary = summarize_fixation_mrnn_targets(targets)
+        pca_summary = summarize_fixation_mrnn_pca(targets)
+        self.assertEqual(int(target_summary["n_nan"].sum()), 0)
+        self.assertEqual(int(target_summary["n_inf"].sum()), 0)
+        self.assertEqual(int(pca_summary["n_components"].nunique()), 1)
 
     def test_seed_derived_shuffles_are_deterministic_and_within_region(self) -> None:
         regions = ("ofc", "bla", "dmpfc", "accg")
@@ -117,6 +136,10 @@ class TestFixationMRNNTargetsAndShuffling(unittest.TestCase):
         second = derive_internal_region_order(regions, seed=123)
         self.assertEqual(first, second)
         self.assertEqual(set(first), set(regions))
+        self.assertEqual(derive_internal_region_order(regions, seed=123, shuffle=False), regions)
+        self.assertTrue(
+            any(derive_internal_region_order(regions, seed=seed) != regions for seed in range(20))
+        )
 
         features = {
             "ofc": ("ofc_a", "ofc_b", "ofc_c"),
@@ -127,6 +150,26 @@ class TestFixationMRNNTargetsAndShuffling(unittest.TestCase):
         self.assertEqual(feature_first, feature_second)
         self.assertEqual(set(feature_first["ofc"]), set(features["ofc"]))
         self.assertEqual(set(feature_first["bla"]), set(features["bla"]))
+        self.assertTrue(
+            any(
+                derive_internal_feature_order_by_region(features, seed=seed)["ofc"]
+                != features["ofc"]
+                for seed in range(20)
+            )
+        )
+        self.assertEqual(feature_order_indices(("a", "b", "c"), ("c", "a", "b")), [2, 0, 1])
+        with self.assertRaises(ValueError):
+            feature_order_indices(("a", "b"), ("a", "c"))
+
+        feature_regions = tuple(features)
+        shuffle_summary = summarize_fixation_mrnn_shuffles(
+            canonical_region_order=feature_regions,
+            internal_region_order=derive_internal_region_order(feature_regions, seed=123),
+            canonical_feature_order_by_region=features,
+            internal_feature_order_by_region=feature_first,
+        )
+        self.assertEqual(set(shuffle_summary["region"]), set(features))
+        self.assertTrue(shuffle_summary["feature_order_changed"].any())
 
 
 @unittest.skipUnless(_HAS_MRNNTORCH, "installed lowercase mrnntorch is required")
@@ -192,6 +235,9 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             )
             self.assertTrue((Path(result["run_dir"]) / "checkpoint_final.pth").exists())
             self.assertTrue((Path(result["run_dir"]) / "history.csv").exists())
+            self.assertTrue((Path(result["run_dir"]) / "target_summary.csv").exists())
+            self.assertTrue((Path(result["run_dir"]) / "shuffle_summary.csv").exists())
+            self.assertTrue(np.isfinite(result["history"]["loss"]).all())
 
             replay = replay_fixation_mrnn_run(result["run_dir"], device="cpu")
             self.assertEqual(
@@ -203,6 +249,27 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             eig_df = compute_fixation_mrnn_eigenvalues(replay)
             self.assertFalse(current_df.empty)
             self.assertFalse(eig_df.empty)
+
+            pc_settings = FixationMRNNRunSettings(
+                dataset_cfg_path=str(cfg_path),
+                input_subdir="ephys/psth/fixation_psth_averages",
+                dataframe_filename=dataframe_filename,
+                timeline_filename=timeline_filename,
+                output_subdir="ephys/modeling/fixation_mrnn",
+                target_mode="region_pcs",
+                hidden_units=3,
+                epochs=2,
+                seed=778,
+                device="cpu",
+                spectral_radius=1.0,
+            )
+            pc_result = train_fixation_mrnn_scratch(
+                pc_settings,
+                scratch_id="test_region_pcs",
+                overwrite=True,
+            )
+            self.assertTrue((Path(pc_result["run_dir"]) / "checkpoint_final.pth").exists())
+            self.assertTrue(np.isfinite(pc_result["history"]["loss"]).all())
 
 
 if __name__ == "__main__":

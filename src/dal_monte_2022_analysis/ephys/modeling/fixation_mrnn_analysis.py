@@ -45,7 +45,11 @@ def load_fixation_mrnn_checkpoint(
     """Load a trained fixation mRNN model and checkpoint payload."""
     resolved_device = resolve_device(device)
     checkpoint_path = Path(run_dir) / "checkpoint_final.pth"
-    checkpoint = torch.load(checkpoint_path, map_location=resolved_device)
+    checkpoint = torch.load(
+        checkpoint_path,
+        map_location=resolved_device,
+        weights_only=False,
+    )
     model = FixationMRNNModel(
         _model_spec_from_checkpoint(checkpoint, device=resolved_device)
     ).to(resolved_device)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
 from typing import Mapping
 
@@ -50,6 +51,7 @@ class RegionPCAMetadata:
     explained_variance_ratio: np.ndarray
     cumulative_explained_variance_ratio: np.ndarray
     n_components: int
+    n_components_required_for_threshold: int
     variance_threshold: float
     source_feature_order: tuple[str, ...]
 
@@ -113,6 +115,8 @@ def normalize_target_mode(target_mode: str) -> str:
 def robust_normalize(values: np.ndarray, *, stabilizer: float = 5.0) -> np.ndarray:
     """Normalize values using the old mRNN robust percentile scale."""
     arr = np.asarray(values, dtype=float)
+    if not np.isfinite(arr).all():
+        raise ValueError("Cannot normalize arrays containing NaN or infinite values.")
     scale = float(np.percentile(arr, 95) - np.percentile(arr, 5))
     return arr / (scale + float(stabilizer))
 
@@ -186,18 +190,37 @@ def _condition_matrix_for_region(
             f"{sorted(lengths)}"
         )
     matrix = np.column_stack(traces)
+    if not np.isfinite(matrix).all():
+        nan_count = int(np.isnan(matrix).sum())
+        inf_count = int(np.isinf(matrix).sum())
+        raise ValueError(
+            f"Region {region!r}, condition {condition!r} contains non-finite "
+            f"values before normalization: nan={nan_count}, inf={inf_count}."
+        )
     if normalize:
         matrix = robust_normalize(matrix, stabilizer=stabilizer)
     return matrix.astype(np.float32, copy=False)
 
 
-def _fit_region_pca(
+@dataclass(frozen=True)
+class _RegionPCAFit:
+    region: str
+    mean: np.ndarray
+    centered: np.ndarray
+    components_full: np.ndarray
+    explained_variance_ratio: np.ndarray
+    cumulative_explained_variance_ratio: np.ndarray
+    n_components_required_for_threshold: int
+    source_feature_order: tuple[str, ...]
+
+
+def _fit_region_pca_full(
     raw_by_condition: list[np.ndarray],
     *,
     region: str,
     feature_order: tuple[str, ...],
     variance_threshold: float,
-) -> tuple[np.ndarray, RegionPCAMetadata]:
+) -> _RegionPCAFit:
     concat = np.concatenate(raw_by_condition, axis=0).astype(float, copy=False)
     mean = concat.mean(axis=0, keepdims=True)
     centered = concat - mean
@@ -210,25 +233,57 @@ def _fit_region_pca(
     total = float(explained.sum())
     ratios = explained / total if total > 0 else np.zeros_like(explained)
     cumulative = np.cumsum(ratios)
-    if ratios.size == 0:
-        n_components = 1
+    if ratios.size == 0 or total <= 0:
+        n_components_required = 1
     else:
-        n_components = int(np.searchsorted(cumulative, float(variance_threshold), side="left") + 1)
-        n_components = max(1, min(n_components, vt.shape[0]))
+        n_components_required = int(
+            np.searchsorted(cumulative, float(variance_threshold), side="left") + 1
+        )
+        n_components_required = max(1, min(n_components_required, vt.shape[0]))
 
-    components = vt[:n_components]
-    scores = (centered @ components.T).astype(np.float32, copy=False)
-    time_len = raw_by_condition[0].shape[0]
-    pc_targets = scores.reshape(len(raw_by_condition), time_len, n_components)
-    metadata = RegionPCAMetadata(
+    return _RegionPCAFit(
         region=region,
         mean=mean.squeeze(0).astype(np.float32, copy=False),
-        components=components.astype(np.float32, copy=False),
+        centered=centered.astype(np.float32, copy=False),
+        components_full=vt.astype(np.float32, copy=False),
         explained_variance_ratio=ratios.astype(np.float32, copy=False),
         cumulative_explained_variance_ratio=cumulative.astype(np.float32, copy=False),
-        n_components=n_components,
-        variance_threshold=float(variance_threshold),
+        n_components_required_for_threshold=n_components_required,
         source_feature_order=feature_order,
+    )
+
+
+def _project_region_pca(
+    fit: _RegionPCAFit,
+    *,
+    n_components: int,
+    n_conditions: int,
+    time_len: int,
+    variance_threshold: float,
+) -> tuple[np.ndarray, RegionPCAMetadata]:
+    n_components = int(n_components)
+    n_fit_components = min(n_components, int(fit.components_full.shape[0]))
+    components = np.zeros(
+        (n_components, int(fit.components_full.shape[1])),
+        dtype=np.float32,
+    )
+    components[:n_fit_components] = fit.components_full[:n_fit_components]
+    scores = np.zeros((fit.centered.shape[0], n_components), dtype=np.float32)
+    if n_fit_components:
+        scores[:, :n_fit_components] = (
+            fit.centered @ components[:n_fit_components].T
+        ).astype(np.float32, copy=False)
+    pc_targets = scores.reshape(int(n_conditions), int(time_len), n_components)
+    metadata = RegionPCAMetadata(
+        region=fit.region,
+        mean=fit.mean.astype(np.float32, copy=False),
+        components=components.astype(np.float32, copy=False),
+        explained_variance_ratio=fit.explained_variance_ratio,
+        cumulative_explained_variance_ratio=fit.cumulative_explained_variance_ratio,
+        n_components=int(n_components),
+        n_components_required_for_threshold=int(fit.n_components_required_for_threshold),
+        variance_threshold=float(variance_threshold),
+        source_feature_order=fit.source_feature_order,
     )
     return pc_targets, metadata
 
@@ -262,6 +317,8 @@ def build_fixation_mrnn_targets_from_dataframe(
     pc_feature_order_by_region: dict[str, tuple[str, ...]] = {}
     pca_metadata_by_region: dict[str, RegionPCAMetadata] = {}
     region_unit_counts: dict[str, int] = {}
+    condition_matrices_by_region: dict[str, list[np.ndarray]] = {}
+    pca_fits_by_region: dict[str, _RegionPCAFit] = {}
 
     for region in canonical_region_order:
         region_frame = training_df.loc[training_df["region"].astype(str) == region]
@@ -280,10 +337,24 @@ def build_fixation_mrnn_targets_from_dataframe(
             for condition in condition_names
         ]
         raw_targets_by_region[region] = np.stack(condition_matrices, axis=0)
-        pc_targets, pca_metadata = _fit_region_pca(
+        condition_matrices_by_region[region] = condition_matrices
+        pca_fits_by_region[region] = _fit_region_pca_full(
             condition_matrices,
             region=region,
             feature_order=feature_order,
+            variance_threshold=float(pca_variance_threshold),
+        )
+
+    global_n_components = max(
+        fit.n_components_required_for_threshold for fit in pca_fits_by_region.values()
+    )
+    for region in canonical_region_order:
+        condition_matrices = condition_matrices_by_region[region]
+        pc_targets, pca_metadata = _project_region_pca(
+            pca_fits_by_region[region],
+            n_components=int(global_n_components),
+            n_conditions=len(condition_names),
+            time_len=condition_matrices[0].shape[0],
             variance_threshold=float(pca_variance_threshold),
         )
         pc_targets_by_region[region] = pc_targets
@@ -363,11 +434,100 @@ def serialize_pca_metadata(
             "explained_variance_ratio": metadata.explained_variance_ratio,
             "cumulative_explained_variance_ratio": metadata.cumulative_explained_variance_ratio,
             "n_components": metadata.n_components,
+            "n_components_required_for_threshold": metadata.n_components_required_for_threshold,
             "variance_threshold": metadata.variance_threshold,
             "source_feature_order": list(metadata.source_feature_order),
         }
         for region, metadata in pca_metadata_by_region.items()
     }
+
+
+def summarize_fixation_mrnn_targets(
+    targets: FixationMRNNTargets,
+    *,
+    target_modes: tuple[str, ...] = ("raw_fr", "region_pcs"),
+    sample_timepoints: int = 5,
+    sample_features: int = 5,
+) -> pd.DataFrame:
+    """Build a compact finite-value and sample summary for target tensors."""
+    rows: list[dict[str, object]] = []
+    for target_mode_raw in target_modes:
+        target_mode = normalize_target_mode(target_mode_raw)
+        by_region = targets.targets_for_mode(target_mode)
+        for region in targets.canonical_region_order:
+            arr = np.asarray(by_region[region], dtype=float)
+            finite = np.isfinite(arr)
+            finite_values = arr[finite]
+            for condition_idx, condition in enumerate(targets.condition_names):
+                condition_arr = arr[condition_idx]
+                condition_finite = np.isfinite(condition_arr)
+                condition_values = condition_arr[condition_finite]
+                sample = condition_arr[
+                    : int(sample_timepoints),
+                    : min(int(sample_features), condition_arr.shape[-1]),
+                ]
+                rows.append(
+                    {
+                        "target_mode": target_mode,
+                        "region": region,
+                        "condition": condition,
+                        "shape": json_shape(arr.shape),
+                        "condition_shape": json_shape(condition_arr.shape),
+                        "n_values": int(condition_arr.size),
+                        "n_finite": int(condition_finite.sum()),
+                        "n_nan": int(np.isnan(condition_arr).sum()),
+                        "n_inf": int(np.isinf(condition_arr).sum()),
+                        "global_n_finite": int(finite.sum()),
+                        "global_n_nan": int(np.isnan(arr).sum()),
+                        "global_n_inf": int(np.isinf(arr).sum()),
+                        "min": float(np.min(condition_values)) if condition_values.size else np.nan,
+                        "max": float(np.max(condition_values)) if condition_values.size else np.nan,
+                        "mean": float(np.mean(condition_values)) if condition_values.size else np.nan,
+                        "std": float(np.std(condition_values)) if condition_values.size else np.nan,
+                        "global_min": float(np.min(finite_values)) if finite_values.size else np.nan,
+                        "global_max": float(np.max(finite_values)) if finite_values.size else np.nan,
+                        "sample_values": json_sample(sample),
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def summarize_fixation_mrnn_pca(targets: FixationMRNNTargets) -> pd.DataFrame:
+    """Summarize per-region PCA requirements and the shared retained PC count."""
+    rows: list[dict[str, object]] = []
+    for region in targets.canonical_region_order:
+        metadata = targets.pca_metadata_by_region[region]
+        n_required = int(metadata.n_components_required_for_threshold)
+        n_components = int(metadata.n_components)
+        cumulative = metadata.cumulative_explained_variance_ratio
+        retained_index = min(n_components, int(cumulative.size)) - 1
+        rows.append(
+            {
+                "region": region,
+                "n_source_features": len(metadata.source_feature_order),
+                "n_components": n_components,
+                "n_components_required_for_threshold": n_required,
+                "variance_threshold": float(metadata.variance_threshold),
+                "cumulative_at_required": float(cumulative[n_required - 1])
+                if cumulative.size >= n_required
+                else np.nan,
+                "cumulative_at_retained": float(cumulative[retained_index])
+                if retained_index >= 0
+                else np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def json_shape(shape: tuple[int, ...]) -> str:
+    """Serialize an array shape for compact summaries."""
+    return "[" + ", ".join(str(int(value)) for value in shape) + "]"
+
+
+def json_sample(values: np.ndarray) -> str:
+    """Serialize a small numeric sample block for human-readable diagnostics."""
+    rounded = np.asarray(values, dtype=float)
+    return json.dumps(np.round(rounded, 6).tolist())
 
 
 __all__ = [
@@ -381,4 +541,6 @@ __all__ = [
     "normalize_target_mode",
     "robust_normalize",
     "serialize_pca_metadata",
+    "summarize_fixation_mrnn_pca",
+    "summarize_fixation_mrnn_targets",
 ]

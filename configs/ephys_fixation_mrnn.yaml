@@ -28,6 +28,9 @@ spectral_radius: 1.3
 batch_first: true
 rec_constrained: false
 inp_constrained: false
+# Installed mrnntorch treats null sparsity as dense connectivity.
+recurrent_sparsity: null
+input_sparsity: null
 inp_noise: 0.0
 act_noise: 0.0
 input_region_name: input

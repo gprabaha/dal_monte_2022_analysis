@@ -26,6 +26,8 @@ class FixationMRNNModelSpec:
     rec_constrained: bool = False
     inp_constrained: bool = False
     batch_first: bool = True
+    recurrent_sparsity: float | None = None
+    input_sparsity: float | None = None
     spectral_radius: float | None = 1.3
     device: str = "cpu"
 
@@ -81,12 +83,16 @@ class FixationMRNNModel(nn.Module):
         )
         for src_region in self.internal_region_order:
             for dst_region in self.internal_region_order:
-                self.mrnn.add_recurrent_connection(src_region, dst_region, sparsity=1.0)
+                self.mrnn.add_recurrent_connection(
+                    src_region,
+                    dst_region,
+                    sparsity=spec.recurrent_sparsity,
+                )
         for dst_region in self.internal_region_order:
             self.mrnn.add_input_connection(
                 spec.input_region_name,
                 dst_region,
-                sparsity=1.0,
+                sparsity=spec.input_sparsity,
             )
         self.mrnn.finalize_connectivity()
 
