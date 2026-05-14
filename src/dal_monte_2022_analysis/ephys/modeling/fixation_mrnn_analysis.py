@@ -367,11 +367,34 @@ def compute_fixation_mrnn_flow_fields(
         region_list=[region],
         cancel_other_regions=bool(cancel_other_regions),
     )
+    _patch_flow_field_inverse_transform_dtype(
+        finder,
+        dtype=fit_states.dtype,
+        device=fit_states.device,
+    )
     return {
         "region": region,
         "condition": condition_names[cond_idx],
         "flow_fields": finder.find_nonlinear_flow(x_seq, inp),
     }
+
+
+def _patch_flow_field_inverse_transform_dtype(
+    finder,
+    *,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> None:
+    """Make RNNToolkit's sklearn PCA inverse transform return a torch tensor."""
+    inverse_transform = finder.reduce_obj.inverse_transform
+
+    def _inverse_transform_as_tensor(values):
+        if isinstance(values, torch.Tensor):
+            values = values.detach().cpu().numpy()
+        inverse = inverse_transform(values)
+        return torch.as_tensor(inverse, dtype=dtype, device=device)
+
+    finder.reduce_obj.inverse_transform = _inverse_transform_as_tensor
 
 
 def build_region_stimulus(

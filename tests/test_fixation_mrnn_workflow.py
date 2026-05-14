@@ -11,6 +11,7 @@ import importlib.util
 import numpy as np
 import pandas as pd
 import torch
+import matplotlib.pyplot as plt
 
 from dal_monte_2022_analysis.ephys.modeling import (
     FixationMRNNRunSettings,
@@ -19,6 +20,7 @@ from dal_monte_2022_analysis.ephys.modeling import (
     build_model_spec,
     compute_fixation_mrnn_currents,
     compute_fixation_mrnn_eigenvalues,
+    compute_fixation_mrnn_flow_fields,
     derive_internal_feature_order_by_region,
     derive_internal_region_order,
     feature_order_indices,
@@ -27,6 +29,10 @@ from dal_monte_2022_analysis.ephys.modeling import (
     summarize_fixation_mrnn_shuffles,
     summarize_fixation_mrnn_targets,
     train_fixation_mrnn_scratch,
+)
+from dal_monte_2022_analysis.ephys.plotting import (
+    plot_fixation_mrnn_activation_trajectories_3d,
+    plot_fixation_mrnn_current_influence,
 )
 
 
@@ -247,8 +253,23 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
 
             current_df, _ = compute_fixation_mrnn_currents(replay)
             eig_df = compute_fixation_mrnn_eigenvalues(replay)
+            flow = compute_fixation_mrnn_flow_fields(
+                replay,
+                region="ofc",
+                condition="face_interactive",
+                num_points=3,
+            )
             self.assertFalse(current_df.empty)
             self.assertFalse(eig_df.empty)
+            self.assertEqual(flow["region"], "ofc")
+            self.assertGreater(len(flow["flow_fields"]), 0)
+
+            fig_3d, _ = plot_fixation_mrnn_activation_trajectories_3d(replay)
+            fig_current, _ = plot_fixation_mrnn_current_influence(replay)
+            self.assertGreaterEqual(len(fig_3d.axes), 4)
+            self.assertGreaterEqual(len(fig_current.axes), 24)
+            plt.close(fig_3d)
+            plt.close(fig_current)
 
             pc_settings = FixationMRNNRunSettings(
                 dataset_cfg_path=str(cfg_path),
