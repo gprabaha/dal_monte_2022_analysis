@@ -34,6 +34,10 @@ def main():
         default="interactive_period_duration_distributions_histogram_all_pairs_aggregate.pdf",
     )
     parser.add_argument(
+        "--compact-output-filename",
+        default="interactive_period_duration_distributions_histogram_compact.pdf",
+    )
+    parser.add_argument(
         "--histogram-bins",
         type=int,
         default=60,
@@ -50,6 +54,7 @@ def main():
         output_filename=args.output_filename,
         m1_output_filename=args.m1_output_filename,
         aggregate_output_filename=args.aggregate_output_filename,
+        compact_output_filename=args.compact_output_filename,
         histogram_bins=int(args.histogram_bins),
     )
 
@@ -57,6 +62,7 @@ def main():
     print(f"[plot] wrote interactive-period duration histogram grid: {out_paths[0]}")
     print(f"[plot] wrote interactive-period duration histogram grid by m1: {out_paths[1]}")
     print(f"[plot] wrote interactive-period duration aggregate histogram: {out_paths[2]}")
+    print(f"[plot] wrote compact aggregate duration histogram: {out_paths[3]}")
 
 
 if __name__ == "__main__":
