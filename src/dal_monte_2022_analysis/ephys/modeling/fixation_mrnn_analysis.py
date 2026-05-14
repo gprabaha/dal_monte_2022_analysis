@@ -274,12 +274,45 @@ def compute_fixation_mrnn_eigenvalues(
     rows: list[dict[str, object]] = []
     for cond_idx, condition in enumerate(replay["condition_names"]):
         for time_idx in range(inp.shape[1]):
-            reals, ims, _ = linearization.eigendecomposition(
-                inp[cond_idx, time_idx],
-                x_prev[cond_idx, time_idx],
-                h=h_prev[cond_idx, time_idx] if dh else None,
-                dh=dh,
-            )
+            input_t = inp[cond_idx, time_idx]
+            x_t = x_prev[cond_idx, time_idx]
+            h_t = h_prev[cond_idx, time_idx] if dh else None
+            finite = torch.isfinite(input_t).all() and torch.isfinite(x_t).all()
+            if h_t is not None:
+                finite = finite and torch.isfinite(h_t).all()
+            if not bool(finite):
+                rows.append(
+                    {
+                        "condition": str(condition),
+                        "time_idx": int(time_idx),
+                        "eig_idx": None,
+                        "regions": ",".join(region_args),
+                        "real": np.nan,
+                        "imag": np.nan,
+                        "status": "nonfinite_state",
+                    }
+                )
+                continue
+            try:
+                reals, ims, _ = linearization.eigendecomposition(
+                    input_t,
+                    x_t,
+                    h=h_t,
+                    dh=dh,
+                )
+            except RuntimeError as exc:
+                rows.append(
+                    {
+                        "condition": str(condition),
+                        "time_idx": int(time_idx),
+                        "eig_idx": None,
+                        "regions": ",".join(region_args),
+                        "real": np.nan,
+                        "imag": np.nan,
+                        "status": f"failed: {exc}",
+                    }
+                )
+                continue
             for eig_idx, (real, imag) in enumerate(zip(reals, ims)):
                 rows.append(
                     {
@@ -289,6 +322,7 @@ def compute_fixation_mrnn_eigenvalues(
                         "regions": ",".join(region_args),
                         "real": float(real),
                         "imag": float(imag),
+                        "status": "ok",
                     }
                 )
     return pd.DataFrame(rows)
