@@ -1,0 +1,54 @@
+# configs/ephys_fixation_mrnn.yaml
+# mRNN training on combined fixation PSTH averages.
+
+dataset_cfg_path: configs/dataset.yaml
+
+# Input combined PSTH export produced by
+# scripts/ephys/analysis/build_combined_fixation_psth_average_dataframe.py
+input_subdir: ephys/psth/fixation_psth_averages
+dataframe_filename: fixations_psth_10ms_combined_window_neg500ms_to_pos500ms.pkl
+timeline_filename: fixations_psth_10ms_bin_centers_s_rel_window_neg500ms_to_pos500ms.pkl
+
+# Outputs are rooted at dataset.analysis_output_root/output_subdir.
+output_subdir: ephys/modeling/fixation_mrnn
+scratch_id: latest
+
+canonical_region_order: [ofc, bla, dmpfc, accg]
+condition_order: [face_interactive, face_non_interactive, object]
+pca_variance_threshold: 0.95
+normalize_targets: true
+normalization_stabilizer: 5.0
+
+# Model defaults.
+hidden_units: 100
+activation: softplus
+dt: 10.0
+tau: 100.0
+spectral_radius: 1.3
+batch_first: true
+rec_constrained: false
+inp_constrained: false
+inp_noise: 0.0
+act_noise: 0.0
+input_region_name: input
+
+# Training defaults.
+target_mode: raw_fr
+epochs: 500
+lr: 0.001
+loss_fn: mse
+l1_weight_scale: 0.0001
+l1_rate_scale: 0.0001
+initial_state: zeros
+initial_state_scale: 0.01
+train_initial_state: true
+seed: 123456
+device: auto
+checkpoint_every: 0
+
+# Experiment planning defaults.
+experiment_id: raw_fr_100init_v1
+n_runs: 100
+seed_start: 123456
+shuffle_region_order: true
+shuffle_feature_order: true
