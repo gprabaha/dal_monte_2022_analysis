@@ -536,8 +536,11 @@ def plot_fixation_mrnn_average_current_influence_pies(
             ax.pie(
                 mean_relative,
                 colors=colors,
+                autopct="%1.0f%%",
+                pctdistance=0.68,
                 startangle=90,
                 counterclock=False,
+                textprops={"fontsize": 6, "color": "white", "fontweight": "bold"},
                 wedgeprops={"linewidth": 0.7, "edgecolor": "white"},
             )
             if row_idx == 0:
