@@ -58,6 +58,7 @@ class FixationMRNNDiagnosticPlotSettings:
     current_figsize: tuple[float, float] = (12.0, 10.0)
     pie_figsize: tuple[float, float] = (11.0, 8.5)
     flow_figsize: tuple[float, float] = (11.0, 8.5)
+    flow_arrow_scale: float = 1.6
     line_width: float = 1.8
     marker_size: float = 22.0
     alpha: float = 0.94
@@ -609,7 +610,7 @@ def plot_fixation_mrnn_flow_fields_at_time(
     replay: Mapping[str, object],
     *,
     time_s: float = 0.0,
-    num_points: int = 5,
+    num_points: int = 9,
     x_offset: float = 1.0,
     y_offset: float = 1.0,
     cancel_other_regions: bool = False,
@@ -654,8 +655,8 @@ def plot_fixation_mrnn_flow_fields_at_time(
             ax.quiver(
                 grid_x,
                 grid_y,
-                x_vels,
-                y_vels,
+                x_vels * float(settings.flow_arrow_scale),
+                y_vels * float(settings.flow_arrow_scale),
                 speeds,
                 cmap="viridis",
                 angles="xy",
