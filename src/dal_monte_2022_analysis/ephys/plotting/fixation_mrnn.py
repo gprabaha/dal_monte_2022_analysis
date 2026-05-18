@@ -53,10 +53,14 @@ class FixationMRNNDiagnosticPlotSettings:
     )
     activation_state: str = "h"
     activation_figsize: tuple[float, float] = (9.5, 7.2)
+    pc_timeseries_figsize: tuple[float, float] = (12.0, 8.2)
     current_figsize: tuple[float, float] = (12.0, 10.0)
+    pie_figsize: tuple[float, float] = (11.0, 8.5)
     line_width: float = 1.8
     marker_size: float = 22.0
     alpha: float = 0.94
+    pc_alphas: tuple[float, float, float] = (0.98, 0.66, 0.38)
+    pc_line_styles: tuple[str, str, str] = ("-", "--", ":")
     dpi: int = 150
 
 
@@ -245,6 +249,93 @@ def plot_fixation_mrnn_activation_trajectories_3d(
     return fig, axes
 
 
+def _plot_pc_timeseries(
+    ax,
+    *,
+    time: np.ndarray,
+    scores_time_by_pc: np.ndarray,
+    color: str,
+    settings: FixationMRNNDiagnosticPlotSettings,
+    show_legend: bool = False,
+) -> None:
+    for pc_idx in range(min(3, scores_time_by_pc.shape[1])):
+        alpha = settings.pc_alphas[min(pc_idx, len(settings.pc_alphas) - 1)]
+        linestyle = settings.pc_line_styles[min(pc_idx, len(settings.pc_line_styles) - 1)]
+        ax.plot(
+            time,
+            scores_time_by_pc[:, pc_idx],
+            color=color,
+            alpha=float(alpha),
+            linestyle=str(linestyle),
+            linewidth=float(settings.line_width),
+            label=f"PC{pc_idx + 1}",
+        )
+    ax.axhline(0.0, color="#333333", linewidth=0.45, alpha=0.35)
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=4))
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=3))
+    ax.tick_params(axis="both", labelsize=6, pad=1)
+    ax.grid(axis="y", linewidth=0.3, alpha=0.23)
+    if show_legend:
+        ax.legend(frameon=False, fontsize=6, loc="upper right", handlelength=2.0)
+
+
+def plot_fixation_mrnn_activation_pc_timeseries(
+    replay: Mapping[str, object],
+    *,
+    settings: FixationMRNNDiagnosticPlotSettings | None = None,
+    region_order: Sequence[str] | None = None,
+    condition_order: Sequence[str] | None = None,
+):
+    """Plot PC1-PC3 activation scores over time for each region and condition."""
+    settings = settings or FixationMRNNDiagnosticPlotSettings()
+    regions = tuple(region_order or checkpoint_region_order(replay))
+    conditions = tuple(condition_order or replay["condition_names"])
+    condition_names = tuple(replay["condition_names"])
+    condition_indices = [condition_names.index(condition) for condition in conditions]
+
+    n_rows = len(regions)
+    n_cols = len(conditions)
+    fig, axes_arr = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=settings.pc_timeseries_figsize,
+        dpi=int(settings.dpi),
+        squeeze=False,
+        sharex=True,
+    )
+    axes: dict[tuple[str, str], plt.Axes] = {}
+    for row_idx, region in enumerate(regions):
+        activity = _region_activity_np(
+            replay,
+            str(region),
+            state=settings.activation_state,
+        )
+        projected, _ = _fit_condition_pca_trajectories(activity, n_components=3)
+        time = _timeline(replay, activity.shape[1])
+        for col_idx, condition in enumerate(conditions):
+            ax = axes_arr[row_idx, col_idx]
+            axes[(str(region), str(condition))] = ax
+            cond_idx = condition_indices[col_idx]
+            color = settings.condition_colors.get(str(condition), "#777777")
+            _plot_pc_timeseries(
+                ax,
+                time=time,
+                scores_time_by_pc=projected[cond_idx],
+                color=color,
+                settings=settings,
+                show_legend=(row_idx == 0 and col_idx == n_cols - 1),
+            )
+            if row_idx == 0:
+                ax.set_title(_condition_display(str(condition), settings), fontsize=9)
+            if col_idx == 0:
+                ax.set_ylabel(f"{_region_display(str(region))}\nPC score", fontsize=8)
+            if row_idx == n_rows - 1:
+                ax.set_xlabel("Time (s)", fontsize=8)
+    fig.suptitle("mRNN Activation PC Timecourses", y=0.995, fontsize=13)
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.965))
+    return fig, axes
+
+
 def _current_relative_influence(
     current_vectors: Mapping[tuple[str, str], torch.Tensor],
     *,
@@ -271,7 +362,7 @@ def plot_fixation_mrnn_current_influence(
     region_order: Sequence[str] | None = None,
     condition_order: Sequence[str] | None = None,
 ):
-    """Plot signal evolution with stacked relative source-region current norms."""
+    """Plot PC timecourses with stacked relative source-region current norms."""
     settings = settings or FixationMRNNDiagnosticPlotSettings()
     regions = tuple(region_order or checkpoint_region_order(replay))
     source_regions = regions
@@ -302,7 +393,7 @@ def plot_fixation_mrnn_current_influence(
             str(target_region),
             state=settings.activation_state,
         )
-        projected, _ = _fit_condition_pca_trajectories(activity, n_components=2)
+        projected, _ = _fit_condition_pca_trajectories(activity, n_components=3)
         time = _timeline(replay, activity.shape[1])
         for col_idx, condition in enumerate(conditions):
             cond_idx = condition_indices[col_idx]
@@ -316,47 +407,19 @@ def plot_fixation_mrnn_current_influence(
             ax_area = fig.add_subplot(inner[1, 0])
             axes[(str(target_region), str(condition))] = (ax_traj, ax_area)
 
-            xy = projected[cond_idx]
+            pc_scores = projected[cond_idx]
             color = settings.condition_colors.get(str(condition), "#777777")
-            ax_traj.plot(
-                xy[:, 0],
-                xy[:, 1],
+            _plot_pc_timeseries(
+                ax_traj,
+                time=time,
+                scores_time_by_pc=pc_scores,
                 color=color,
-                linewidth=float(settings.line_width),
-                alpha=float(settings.alpha),
+                settings=settings,
+                show_legend=(row_idx == 0 and col_idx == n_cols - 1),
             )
-            scatter = ax_traj.scatter(
-                xy[:, 0],
-                xy[:, 1],
-                c=time,
-                cmap="viridis",
-                s=8.0,
-                alpha=0.75,
-                linewidths=0.0,
-            )
-            ax_traj.scatter(
-                xy[0:1, 0],
-                xy[0:1, 1],
-                color=color,
-                edgecolors="black",
-                linewidths=0.45,
-                s=float(settings.marker_size),
-                marker="o",
-            )
-            ax_traj.scatter(
-                xy[-1:, 0],
-                xy[-1:, 1],
-                color=color,
-                edgecolors="black",
-                linewidths=0.45,
-                s=float(settings.marker_size),
-                marker="^",
-            )
+            ax_traj.set_xlim(float(time[0]), float(time[-1]))
             ax_traj.set_xticklabels([])
-            ax_traj.set_ylabel("PC2", fontsize=7)
-            ax_traj.tick_params(axis="both", labelsize=6, pad=1)
-            ax_traj.xaxis.set_major_locator(MaxNLocator(nbins=3))
-            ax_traj.yaxis.set_major_locator(MaxNLocator(nbins=3))
+            ax_traj.set_ylabel("PC score", fontsize=7)
             if row_idx == 0:
                 ax_traj.set_title(_condition_display(str(condition), settings), fontsize=9)
             if col_idx == 0:
@@ -423,11 +486,111 @@ def plot_fixation_mrnn_current_influence(
     return fig, axes
 
 
+def plot_fixation_mrnn_average_current_influence_pies(
+    replay: Mapping[str, object],
+    *,
+    current_vectors: Mapping[tuple[str, str], torch.Tensor] | None = None,
+    settings: FixationMRNNDiagnosticPlotSettings | None = None,
+    region_order: Sequence[str] | None = None,
+    condition_order: Sequence[str] | None = None,
+):
+    """Plot time-averaged relative source-region current influence as pie charts."""
+    settings = settings or FixationMRNNDiagnosticPlotSettings()
+    regions = tuple(region_order or checkpoint_region_order(replay))
+    source_regions = regions
+    conditions = tuple(condition_order or replay["condition_names"])
+    condition_names = tuple(replay["condition_names"])
+    condition_indices = [condition_names.index(condition) for condition in conditions]
+    if current_vectors is None:
+        _, current_vectors = compute_fixation_mrnn_currents(replay)
+
+    n_rows = len(regions)
+    n_cols = len(conditions)
+    fig, axes_arr = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=settings.pie_figsize,
+        dpi=int(settings.dpi),
+        squeeze=False,
+        subplot_kw={"aspect": "equal"},
+    )
+    axes: dict[tuple[str, str], plt.Axes] = {}
+    colors = [
+        settings.region_colors.get(str(source_region), "#777777")
+        for source_region in source_regions
+    ]
+    for row_idx, target_region in enumerate(regions):
+        for col_idx, condition in enumerate(conditions):
+            ax = axes_arr[row_idx, col_idx]
+            axes[(str(target_region), str(condition))] = ax
+            cond_idx = condition_indices[col_idx]
+            _, relative = _current_relative_influence(
+                current_vectors,
+                target_region=str(target_region),
+                source_regions=source_regions,
+                condition_idx=cond_idx,
+            )
+            mean_relative = np.nanmean(relative, axis=1)
+            if not np.isfinite(mean_relative).any() or float(np.nansum(mean_relative)) <= 0.0:
+                mean_relative = np.ones((len(source_regions),), dtype=float) / len(source_regions)
+            ax.pie(
+                mean_relative,
+                colors=colors,
+                startangle=90,
+                counterclock=False,
+                wedgeprops={"linewidth": 0.7, "edgecolor": "white"},
+            )
+            if row_idx == 0:
+                ax.set_title(_condition_display(str(condition), settings), fontsize=9)
+            if col_idx == 0:
+                ax.text(
+                    -0.22,
+                    0.5,
+                    _region_display(str(target_region)),
+                    transform=ax.transAxes,
+                    rotation=90,
+                    va="center",
+                    ha="center",
+                    fontsize=10,
+                    fontweight="bold",
+                )
+
+    region_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            color="none",
+            markerfacecolor=settings.region_colors.get(str(region), "#777777"),
+            markeredgecolor="white",
+            markersize=8,
+            label=_region_display(str(region)),
+        )
+        for region in source_regions
+    ]
+    fig.legend(
+        handles=region_handles,
+        loc="upper center",
+        ncol=len(region_handles),
+        frameon=False,
+        fontsize=8,
+    )
+    fig.suptitle(
+        "Time-Averaged Relative Recurrent Current Influence",
+        y=0.985,
+        fontsize=13,
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.93))
+    return fig, axes
+
+
 __all__ = [
     "DEFAULT_MRNN_CONDITION_COLORS",
     "DEFAULT_MRNN_CONDITION_LABELS",
     "DEFAULT_MRNN_REGION_COLORS",
     "FixationMRNNDiagnosticPlotSettings",
     "plot_fixation_mrnn_activation_trajectories_3d",
+    "plot_fixation_mrnn_activation_pc_timeseries",
+    "plot_fixation_mrnn_average_current_influence_pies",
     "plot_fixation_mrnn_current_influence",
 ]

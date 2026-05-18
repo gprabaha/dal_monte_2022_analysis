@@ -31,7 +31,9 @@ from dal_monte_2022_analysis.ephys.modeling import (
     train_fixation_mrnn_scratch,
 )
 from dal_monte_2022_analysis.ephys.plotting import (
+    plot_fixation_mrnn_activation_pc_timeseries,
     plot_fixation_mrnn_activation_trajectories_3d,
+    plot_fixation_mrnn_average_current_influence_pies,
     plot_fixation_mrnn_current_influence,
 )
 
@@ -251,7 +253,7 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
                 ("ofc", "bla", "dmpfc", "accg"),
             )
 
-            current_df, _ = compute_fixation_mrnn_currents(replay)
+            current_df, current_vectors = compute_fixation_mrnn_currents(replay)
             eig_df = compute_fixation_mrnn_eigenvalues(replay)
             flow = compute_fixation_mrnn_flow_fields(
                 replay,
@@ -265,11 +267,23 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             self.assertGreater(len(flow["flow_fields"]), 0)
 
             fig_3d, _ = plot_fixation_mrnn_activation_trajectories_3d(replay)
-            fig_current, _ = plot_fixation_mrnn_current_influence(replay)
+            fig_pc, _ = plot_fixation_mrnn_activation_pc_timeseries(replay)
+            fig_current, _ = plot_fixation_mrnn_current_influence(
+                replay,
+                current_vectors=current_vectors,
+            )
+            fig_pies, _ = plot_fixation_mrnn_average_current_influence_pies(
+                replay,
+                current_vectors=current_vectors,
+            )
             self.assertGreaterEqual(len(fig_3d.axes), 4)
+            self.assertGreaterEqual(len(fig_pc.axes), 12)
             self.assertGreaterEqual(len(fig_current.axes), 24)
+            self.assertGreaterEqual(len(fig_pies.axes), 12)
             plt.close(fig_3d)
+            plt.close(fig_pc)
             plt.close(fig_current)
+            plt.close(fig_pies)
 
             pc_settings = FixationMRNNRunSettings(
                 dataset_cfg_path=str(cfg_path),

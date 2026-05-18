@@ -76,7 +76,9 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_population_pca import (
 )
 from dal_monte_2022_analysis.ephys.plotting.fixation_mrnn import (
     FixationMRNNDiagnosticPlotSettings,
+    plot_fixation_mrnn_activation_pc_timeseries,
     plot_fixation_mrnn_activation_trajectories_3d,
+    plot_fixation_mrnn_average_current_influence_pies,
     plot_fixation_mrnn_current_influence,
 )
 from dal_monte_2022_analysis.ephys.plotting.fixation_psth_variability import (
@@ -137,7 +139,9 @@ __all__ = [
     "plot_fixation_population_pca_explained_variance_cumulative",
     "plot_fixation_population_pca_pairwise_geometry_violins",
     "FixationMRNNDiagnosticPlotSettings",
+    "plot_fixation_mrnn_activation_pc_timeseries",
     "plot_fixation_mrnn_activation_trajectories_3d",
+    "plot_fixation_mrnn_average_current_influence_pies",
     "plot_fixation_mrnn_current_influence",
     "FixationPSTHVariabilityPlotSettings",
     "plot_fixation_psth_variability_violins",
