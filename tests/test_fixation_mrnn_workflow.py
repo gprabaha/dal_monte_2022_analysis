@@ -35,6 +35,7 @@ from dal_monte_2022_analysis.ephys.plotting import (
     plot_fixation_mrnn_activation_trajectories_3d,
     plot_fixation_mrnn_average_current_influence_pies,
     plot_fixation_mrnn_current_influence,
+    plot_fixation_mrnn_flow_fields_at_time,
 )
 
 
@@ -259,12 +260,14 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
                 replay,
                 region="ofc",
                 condition="face_interactive",
+                time_indices=(2,),
                 num_points=3,
             )
             self.assertFalse(current_df.empty)
             self.assertFalse(eig_df.empty)
             self.assertEqual(flow["region"], "ofc")
-            self.assertGreater(len(flow["flow_fields"]), 0)
+            self.assertEqual(flow["time_indices"], (2,))
+            self.assertEqual(len(flow["flow_fields"]), 1)
 
             fig_3d, _ = plot_fixation_mrnn_activation_trajectories_3d(replay)
             fig_pc, _ = plot_fixation_mrnn_activation_pc_timeseries(replay)
@@ -276,14 +279,22 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
                 replay,
                 current_vectors=current_vectors,
             )
+            fig_flow, _ = plot_fixation_mrnn_flow_fields_at_time(
+                replay,
+                region_order=("ofc",),
+                condition_order=("face_interactive",),
+                num_points=3,
+            )
             self.assertGreaterEqual(len(fig_3d.axes), 4)
             self.assertGreaterEqual(len(fig_pc.axes), 12)
             self.assertGreaterEqual(len(fig_current.axes), 24)
             self.assertGreaterEqual(len(fig_pies.axes), 12)
+            self.assertEqual(len(fig_flow.axes), 1)
             plt.close(fig_3d)
             plt.close(fig_pc)
             plt.close(fig_current)
             plt.close(fig_pies)
+            plt.close(fig_flow)
 
             pc_settings = FixationMRNNRunSettings(
                 dataset_cfg_path=str(cfg_path),

@@ -337,6 +337,7 @@ def compute_fixation_mrnn_flow_fields(
     *,
     region: str,
     condition: str | int = 0,
+    time_indices: Sequence[int] | None = None,
     num_points: int = 7,
     x_offset: float = 1.0,
     y_offset: float = 1.0,
@@ -358,6 +359,27 @@ def compute_fixation_mrnn_flow_fields(
     x_seq = replay["x_seq"][cond_idx : cond_idx + 1]
     inp = replay["inp"][cond_idx : cond_idx + 1]
     fit_states = model.mrnn.get_region_activity(x_seq, region)
+    if time_indices is None:
+        query_x_seq = x_seq
+        query_inp = inp
+        selected_time_indices = tuple(range(int(x_seq.shape[1])))
+    else:
+        selected_time_indices = tuple(int(idx) for idx in time_indices)
+        if not selected_time_indices:
+            raise ValueError("time_indices must contain at least one index.")
+        n_time = int(x_seq.shape[1])
+        bad_indices = [idx for idx in selected_time_indices if idx < 0 or idx >= n_time]
+        if bad_indices:
+            raise IndexError(
+                f"time_indices out of range for {n_time} time bins: {bad_indices}"
+            )
+        index_tensor = torch.as_tensor(
+            selected_time_indices,
+            dtype=torch.long,
+            device=x_seq.device,
+        )
+        query_x_seq = x_seq.index_select(1, index_tensor)
+        query_inp = inp.index_select(1, index_tensor)
     finder = mFlowFieldFinder(
         model.mrnn,
         fit_states,
@@ -375,7 +397,8 @@ def compute_fixation_mrnn_flow_fields(
     return {
         "region": region,
         "condition": condition_names[cond_idx],
-        "flow_fields": finder.find_nonlinear_flow(x_seq, inp),
+        "time_indices": selected_time_indices,
+        "flow_fields": finder.find_nonlinear_flow(query_x_seq, query_inp),
     }
 
 

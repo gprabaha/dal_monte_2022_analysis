@@ -17,6 +17,7 @@ from matplotlib.ticker import MaxNLocator
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import (
     checkpoint_region_order,
     compute_fixation_mrnn_currents,
+    compute_fixation_mrnn_flow_fields,
 )
 
 
@@ -56,6 +57,7 @@ class FixationMRNNDiagnosticPlotSettings:
     pc_timeseries_figsize: tuple[float, float] = (12.0, 8.2)
     current_figsize: tuple[float, float] = (12.0, 10.0)
     pie_figsize: tuple[float, float] = (11.0, 8.5)
+    flow_figsize: tuple[float, float] = (11.0, 8.5)
     line_width: float = 1.8
     marker_size: float = 22.0
     alpha: float = 0.94
@@ -587,6 +589,102 @@ def plot_fixation_mrnn_average_current_influence_pies(
     return fig, axes
 
 
+def _as_flow_numpy(value: object) -> np.ndarray:
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().numpy().astype(float, copy=False)
+    return np.asarray(value, dtype=float)
+
+
+def _flow_field_arrays(flow_field: object) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    grid = _as_flow_numpy(flow_field.grid)
+    x_vels = _as_flow_numpy(flow_field.x_vels)
+    y_vels = _as_flow_numpy(flow_field.y_vels)
+    speeds = _as_flow_numpy(flow_field.speeds)
+    if grid.ndim != 3 or grid.shape[-1] < 2:
+        raise ValueError("FlowField.grid must have shape rows x columns x 2.")
+    return grid[..., 0], grid[..., 1], x_vels, y_vels, speeds
+
+
+def plot_fixation_mrnn_flow_fields_at_time(
+    replay: Mapping[str, object],
+    *,
+    time_s: float = 0.0,
+    num_points: int = 5,
+    x_offset: float = 1.0,
+    y_offset: float = 1.0,
+    cancel_other_regions: bool = False,
+    settings: FixationMRNNDiagnosticPlotSettings | None = None,
+    region_order: Sequence[str] | None = None,
+    condition_order: Sequence[str] | None = None,
+):
+    """Plot 2D nonlinear flow fields near one replay time for each region/condition."""
+    settings = settings or FixationMRNNDiagnosticPlotSettings()
+    regions = tuple(region_order or checkpoint_region_order(replay))
+    conditions = tuple(condition_order or replay["condition_names"])
+    timeline = _timeline(replay, int(replay["inp"].shape[1]))
+    time_idx = int(np.argmin(np.abs(timeline - float(time_s))))
+    selected_time = float(timeline[time_idx])
+
+    n_rows = len(regions)
+    n_cols = len(conditions)
+    fig, axes_arr = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=settings.flow_figsize,
+        dpi=int(settings.dpi),
+        squeeze=False,
+    )
+    axes: dict[tuple[str, str], plt.Axes] = {}
+    for row_idx, region in enumerate(regions):
+        for col_idx, condition in enumerate(conditions):
+            ax = axes_arr[row_idx, col_idx]
+            axes[(str(region), str(condition))] = ax
+            flow = compute_fixation_mrnn_flow_fields(
+                replay,
+                region=str(region),
+                condition=str(condition),
+                time_indices=(time_idx,),
+                num_points=int(num_points),
+                x_offset=float(x_offset),
+                y_offset=float(y_offset),
+                cancel_other_regions=bool(cancel_other_regions),
+            )
+            field = flow["flow_fields"][0]
+            grid_x, grid_y, x_vels, y_vels, speeds = _flow_field_arrays(field)
+            ax.quiver(
+                grid_x,
+                grid_y,
+                x_vels,
+                y_vels,
+                speeds,
+                cmap="viridis",
+                angles="xy",
+                scale_units="xy",
+                pivot="mid",
+                width=0.0045,
+            )
+            ax.set_aspect("equal", adjustable="box")
+            ax.xaxis.set_major_locator(MaxNLocator(nbins=3))
+            ax.yaxis.set_major_locator(MaxNLocator(nbins=3))
+            ax.tick_params(axis="both", labelsize=6, pad=1)
+            ax.grid(linewidth=0.3, alpha=0.25)
+            if row_idx == 0:
+                ax.set_title(_condition_display(str(condition), settings), fontsize=9)
+            if col_idx == 0:
+                ax.set_ylabel(f"{_region_display(str(region))}\nFlow PC2", fontsize=8)
+            else:
+                ax.set_ylabel("Flow PC2", fontsize=7)
+            if row_idx == n_rows - 1:
+                ax.set_xlabel("Flow PC1", fontsize=8)
+    fig.suptitle(
+        f"mRNN Flow Fields Near Fixation Onset (t = {selected_time:.3f}s)",
+        y=0.985,
+        fontsize=13,
+    )
+    fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.95))
+    return fig, axes
+
+
 __all__ = [
     "DEFAULT_MRNN_CONDITION_COLORS",
     "DEFAULT_MRNN_CONDITION_LABELS",
@@ -596,4 +694,5 @@ __all__ = [
     "plot_fixation_mrnn_activation_pc_timeseries",
     "plot_fixation_mrnn_average_current_influence_pies",
     "plot_fixation_mrnn_current_influence",
+    "plot_fixation_mrnn_flow_fields_at_time",
 ]
