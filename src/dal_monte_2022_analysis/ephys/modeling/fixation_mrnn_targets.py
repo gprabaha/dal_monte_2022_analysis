@@ -40,6 +40,7 @@ class PCAMetadata:
     mean: np.ndarray
     components: np.ndarray
     explained_variance_ratio: np.ndarray
+    n_components_required: int
     source_features: tuple[str, ...]
 
 
@@ -89,12 +90,27 @@ def build_condition_input(
     condition_order: tuple[str, ...],
     *,
     timesteps: int,
+    temporal_basis_count: int = 20,
 ) -> np.ndarray:
-    """Return condition x time x one-hot input."""
+    """Return condition x time x input with condition and temporal channels."""
     channel = {condition: idx for idx, condition in enumerate(CONDITION_ORDER)}
-    out = np.zeros((len(condition_order), int(timesteps), len(CONDITION_ORDER)), dtype=np.float32)
+    n_temporal = max(0, int(temporal_basis_count))
+    out = np.zeros(
+        (len(condition_order), int(timesteps), len(CONDITION_ORDER) + n_temporal),
+        dtype=np.float32,
+    )
     for cond_idx, condition in enumerate(condition_order):
         out[cond_idx, :, channel[condition]] = 1.0
+    if n_temporal:
+        time = np.linspace(-1.0, 1.0, int(timesteps), dtype=np.float32)
+        centers = np.linspace(-1.0, 1.0, n_temporal, dtype=np.float32)
+        if n_temporal == 1:
+            width = 1.0
+        else:
+            width = float(centers[1] - centers[0])
+        basis = np.exp(-0.5 * ((time[:, None] - centers[None, :]) / width) ** 2)
+        basis = basis / np.maximum(basis.max(axis=0, keepdims=True), 1e-8)
+        out[:, :, len(CONDITION_ORDER) :] = basis[None, :, :]
     return out
 
 
@@ -135,12 +151,24 @@ def _condition_matrix(
     return matrix.astype(np.float32, copy=False)
 
 
-def _fit_region_pcs(
+@dataclass(frozen=True)
+class _RegionPCAFit:
+    mean: np.ndarray
+    components_full: np.ndarray
+    explained_variance_ratio: np.ndarray
+    n_components_required: int
+    source_features: tuple[str, ...]
+    centered: np.ndarray
+    n_conditions: int
+    n_time: int
+
+
+def _fit_region_pca(
     raw_conditions: np.ndarray,
     *,
     feature_order: tuple[str, ...],
     variance_threshold: float,
-) -> tuple[np.ndarray, PCAMetadata]:
+) -> _RegionPCAFit:
     n_conditions, n_time, n_features = raw_conditions.shape
     flat = raw_conditions.reshape(n_conditions * n_time, n_features).astype(float, copy=False)
     mean = flat.mean(axis=0, keepdims=True)
@@ -152,13 +180,33 @@ def _fit_region_pcs(
     cumulative = np.cumsum(ratios)
     n_components = int(np.searchsorted(cumulative, float(variance_threshold)) + 1) if total > 0 else 1
     n_components = max(1, min(n_components, vt.shape[0]))
-    scores = centered @ vt[:n_components].T
-    pcs = scores.reshape(n_conditions, n_time, n_components).astype(np.float32, copy=False)
-    metadata = PCAMetadata(
+    return _RegionPCAFit(
         mean=mean.squeeze(0).astype(np.float32, copy=False),
-        components=vt[:n_components].astype(np.float32, copy=False),
-        explained_variance_ratio=ratios[:n_components].astype(np.float32, copy=False),
+        components_full=vt.astype(np.float32, copy=False),
+        explained_variance_ratio=ratios.astype(np.float32, copy=False),
+        n_components_required=int(n_components),
         source_features=feature_order,
+        centered=centered.astype(np.float32, copy=False),
+        n_conditions=int(n_conditions),
+        n_time=int(n_time),
+    )
+
+
+def _project_region_pca(fit: _RegionPCAFit, *, n_components: int) -> tuple[np.ndarray, PCAMetadata]:
+    n_components = int(n_components)
+    n_fit = min(n_components, fit.components_full.shape[0])
+    components = np.zeros((n_components, fit.components_full.shape[1]), dtype=np.float32)
+    components[:n_fit] = fit.components_full[:n_fit]
+    scores = np.zeros((fit.centered.shape[0], n_components), dtype=np.float32)
+    if n_fit:
+        scores[:, :n_fit] = fit.centered @ components[:n_fit].T
+    pcs = scores.reshape(fit.n_conditions, fit.n_time, n_components).astype(np.float32, copy=False)
+    metadata = PCAMetadata(
+        mean=fit.mean,
+        components=components,
+        explained_variance_ratio=fit.explained_variance_ratio[:n_fit],
+        n_components_required=fit.n_components_required,
+        source_features=fit.source_features,
     )
     return pcs, metadata
 
@@ -172,6 +220,7 @@ def build_fixation_mrnn_targets_from_dataframe(
     normalize_targets: bool = True,
     normalization_stabilizer: float = 5.0,
     pca_variance_threshold: float = 0.95,
+    temporal_basis_count: int = 20,
 ) -> FixationMRNNTargets:
     """Build raw firing-rate and region-PC targets from combined PSTH rows."""
     region_order = _validate_order(region_order, name="region_order")
@@ -211,16 +260,24 @@ def build_fixation_mrnn_targets_from_dataframe(
     pcs_by_region: dict[str, np.ndarray] = {}
     pc_features_by_region: dict[str, tuple[str, ...]] = {}
     pca_by_region: dict[str, PCAMetadata] = {}
+    pca_fits_by_region: dict[str, _RegionPCAFit] = {}
     for region in region_order:
         matrices = matrices_by_region[region]
         if normalization_scale is not None:
             matrices = [(matrix / normalization_scale).astype(np.float32, copy=False) for matrix in matrices]
         raw = np.stack(matrices, axis=0).astype(np.float32, copy=False)
         raw_by_region[region] = raw
-        pcs, pca = _fit_region_pcs(
+        pca_fits_by_region[region] = _fit_region_pca(
             raw,
             feature_order=raw_features_by_region[region],
             variance_threshold=float(pca_variance_threshold),
+        )
+
+    shared_n_components = max(fit.n_components_required for fit in pca_fits_by_region.values())
+    for region in region_order:
+        pcs, pca = _project_region_pca(
+            pca_fits_by_region[region],
+            n_components=shared_n_components,
         )
         pcs_by_region[region] = pcs
         pca_by_region[region] = pca
@@ -235,7 +292,11 @@ def build_fixation_mrnn_targets_from_dataframe(
         condition_order=condition_order,
         region_order=region_order,
         timeline_s=timeline,
-        input_tensor=build_condition_input(condition_order, timesteps=n_time),
+        input_tensor=build_condition_input(
+            condition_order,
+            timesteps=n_time,
+            temporal_basis_count=temporal_basis_count,
+        ),
         raw_by_region=raw_by_region,
         pcs_by_region=pcs_by_region,
         raw_features_by_region=raw_features_by_region,
@@ -257,6 +318,7 @@ def build_fixation_mrnn_targets(
     normalize_targets: bool = True,
     normalization_stabilizer: float = 5.0,
     pca_variance_threshold: float = 0.95,
+    temporal_basis_count: int = 20,
 ) -> FixationMRNNTargets:
     """Load combined PSTH files and build targets."""
     loaded = load_combined_fixation_psth(
@@ -273,6 +335,7 @@ def build_fixation_mrnn_targets(
         normalize_targets=normalize_targets,
         normalization_stabilizer=normalization_stabilizer,
         pca_variance_threshold=pca_variance_threshold,
+        temporal_basis_count=temporal_basis_count,
     )
     return FixationMRNNTargets(
         **{
@@ -312,6 +375,7 @@ def serialize_pca_metadata(pca_by_region: Mapping[str, PCAMetadata]) -> dict[str
             "mean": meta.mean,
             "components": meta.components,
             "explained_variance_ratio": meta.explained_variance_ratio,
+            "n_components_required": meta.n_components_required,
             "source_features": list(meta.source_features),
         }
         for region, meta in pca_by_region.items()

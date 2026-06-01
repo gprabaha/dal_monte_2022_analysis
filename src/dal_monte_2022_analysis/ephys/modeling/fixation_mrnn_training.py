@@ -46,6 +46,7 @@ class FixationMRNNRunSettings:
     normalize_targets: bool = True
     normalization_stabilizer: float = 5.0
     pca_variance_threshold: float = 0.95
+    temporal_basis_count: int = 20
     hidden_units: int | dict[str, int] = 100
     activation: str = "softplus"
     spectral_radius: float | None = 1.3
@@ -57,8 +58,8 @@ class FixationMRNNRunSettings:
     epochs: int = 10_000
     lr: float = 1e-3
     loss_fn: str = "mse"
-    l1_weight_scale: float = 1e-4
-    l1_rate_scale: float = 1e-4
+    l1_weight_scale: float = 0.0
+    l1_rate_scale: float = 0.0
     train_initial_state: bool = True
     initial_state_scale: float = 0.01
     seed: int = 123456
@@ -122,6 +123,7 @@ def make_targets(settings: FixationMRNNRunSettings) -> FixationMRNNTargets:
         normalize_targets=bool(settings.normalize_targets),
         normalization_stabilizer=float(settings.normalization_stabilizer),
         pca_variance_threshold=float(settings.pca_variance_threshold),
+        temporal_basis_count=int(settings.temporal_basis_count),
     )
 
 
@@ -225,6 +227,7 @@ def train_one_initialization(
         output_dims_by_region=output_dims,
         hidden_units=settings.hidden_units,
         device=device,
+        input_dim=int(inp.shape[-1]),
         activation=settings.activation,
         spectral_radius=settings.spectral_radius,
         rec_constrained=settings.rec_constrained,

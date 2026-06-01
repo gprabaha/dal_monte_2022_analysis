@@ -1,6 +1,8 @@
 """Minimal ephys mRNN modeling API."""
 
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import (
+    compute_global_flow_field,
+    compute_region_flow_field,
     extract_region_currents,
     load_fixation_mrnn_checkpoint,
     output_pc_scores,
@@ -63,6 +65,8 @@ __all__ = [
     "build_fixation_mrnn_targets_from_dataframe",
     "build_model_spec",
     "build_mrnn_training_dataframe",
+    "compute_global_flow_field",
+    "compute_region_flow_field",
     "extract_region_currents",
     "global_robust_scale",
     "load_combined_fixation_psth",

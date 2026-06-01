@@ -139,7 +139,10 @@ def extract_region_currents(replay: Mapping[str, object]) -> tuple[pd.DataFrame,
 
         I_{s -> r}(t) = W_rec[r, s] h_s(t - 1)
 
-    Rows report vector norms and relative recurrent contributions.
+    Rows report vector norms, signed projections onto the target-region next
+    activity vector, and signed relative contributions. The signed projection is
+    positive when a source current aligns with the next activity vector and
+    negative when it opposes that vector.
     """
     model = replay["model"]
     mrnn = model.mrnn
@@ -159,6 +162,9 @@ def extract_region_currents(replay: Mapping[str, object]) -> tuple[pd.DataFrame,
         target_start, target_stop = mrnn.get_region_indices(target_region)
         target_slice = slice(target_start, target_stop)
         recurrent_norms = []
+        recurrent_projections = []
+        target_next = h_seq[..., target_slice]
+        target_next_norm = torch.linalg.vector_norm(target_next, dim=-1)
         for source_region in region_order:
             source_start, source_stop = mrnn.get_region_indices(source_region)
             source_slice = slice(source_start, source_stop)
@@ -171,11 +177,21 @@ def extract_region_currents(replay: Mapping[str, object]) -> tuple[pd.DataFrame,
             )
             vectors[(target_region, source_region)] = current.detach().cpu()
             recurrent_norms.append(torch.linalg.vector_norm(current, dim=-1))
+            projection = (current * target_next).sum(dim=-1) / torch.clamp(
+                target_next_norm,
+                min=1e-8,
+            )
+            recurrent_projections.append(projection)
 
         norm_stack = torch.stack(recurrent_norms, dim=0)
-        denom = norm_stack.sum(dim=0, keepdim=True)
-        rel = norm_stack / torch.where(denom > 0, denom, torch.ones_like(denom))
-        rel = torch.where(denom > 0, rel, torch.zeros_like(rel))
+        projection_stack = torch.stack(recurrent_projections, dim=0)
+        projection_denom = torch.sum(torch.abs(projection_stack), dim=0, keepdim=True)
+        rel = projection_stack / torch.where(
+            projection_denom > 0,
+            projection_denom,
+            torch.ones_like(projection_denom),
+        )
+        rel = torch.where(projection_denom > 0, rel, torch.zeros_like(rel))
         external = (w_inp[target_slice, :] @ flat_inp.T).T.reshape(inp.shape[0], inp.shape[1], -1)
         vectors[(target_region, "external_input")] = external.detach().cpu()
         vectors[(target_region, "bias")] = mrnn.tonic_inp[target_slice].detach().cpu()
@@ -190,10 +206,115 @@ def extract_region_currents(replay: Mapping[str, object]) -> tuple[pd.DataFrame,
                             "condition": condition,
                             "time_idx": int(time_idx),
                             "current_norm": float(norm_stack[source_idx, cond_idx, time_idx].detach().cpu()),
+                            "signed_projection": float(
+                                projection_stack[source_idx, cond_idx, time_idx].detach().cpu()
+                            ),
+                            "target_next_norm": float(
+                                target_next_norm[cond_idx, time_idx].detach().cpu()
+                            ),
                             "relative_contribution": float(rel[source_idx, cond_idx, time_idx].detach().cpu()),
                         }
                     )
     return pd.DataFrame(rows), vectors
+
+
+def _fit_hidden_pca(values: np.ndarray, *, n_components: int = 2) -> tuple[np.ndarray, np.ndarray]:
+    n_conditions, n_time, n_features = values.shape
+    flat = values.reshape(n_conditions * n_time, n_features)
+    mean = flat.mean(axis=0, keepdims=True)
+    centered = flat - mean
+    _, _, vt = np.linalg.svd(centered, full_matrices=False)
+    components = np.zeros((int(n_components), n_features), dtype=float)
+    n_fit = min(int(n_components), vt.shape[0])
+    if n_fit:
+        components[:n_fit] = vt[:n_fit]
+    return mean.squeeze(0), components
+
+
+def compute_global_flow_field(
+    replay: Mapping[str, object],
+    *,
+    condition: str,
+    time_idx: int,
+    grid_points: int = 15,
+    radius: float = 1.0,
+) -> dict[str, object]:
+    """Compute a 2D Elman flow field in global hidden-state PC space.
+
+    The PCA is fit on the full hidden state concatenated across all regions.
+    At each grid point, the whole hidden state is replaced by a point in that
+    global PC plane, one Elman update is applied with the selected condition
+    and time-bin input held fixed, and the displacement is projected back into
+    the same global PC plane.
+    """
+    model = replay["model"]
+    mrnn = model.mrnn
+    condition_order = tuple(replay["condition_order"])
+    cond_idx = condition_order.index(condition)
+    time_idx = int(time_idx)
+    h_seq = replay["h_seq"]
+    if time_idx < 0 or time_idx >= int(h_seq.shape[1]):
+        raise IndexError(f"time_idx={time_idx} outside replay length {h_seq.shape[1]}.")
+
+    hidden_values = h_seq.detach().cpu().numpy().astype(float, copy=False)
+    mean, components = _fit_hidden_pca(hidden_values, n_components=2)
+    scores = (hidden_values.reshape(-1, hidden_values.shape[-1]) - mean) @ components.T
+    center = (hidden_values[cond_idx, time_idx] - mean) @ components.T
+    spread = float(np.nanstd(scores[:, :2]))
+    if not np.isfinite(spread) or spread <= 0:
+        spread = 1.0
+    extent = float(radius) * spread
+    x_values = np.linspace(center[0] - extent, center[0] + extent, int(grid_points))
+    y_values = np.linspace(center[1] - extent, center[1] + extent, int(grid_points))
+    grid_x, grid_y = np.meshgrid(x_values, y_values)
+
+    h_base = h_seq[cond_idx, time_idx].detach().clone()
+    inp_t = replay["inp"][cond_idx, time_idx]
+    w_rec = _effective_recurrent_weight(model)
+    w_inp = _effective_input_weight(model)
+    velocities = np.zeros((*grid_x.shape, 2), dtype=float)
+
+    with torch.no_grad():
+        for row in range(grid_x.shape[0]):
+            for col in range(grid_x.shape[1]):
+                pc_point = np.asarray([grid_x[row, col], grid_y[row, col]], dtype=float)
+                h_full_np = mean + pc_point @ components
+                h_full = torch.as_tensor(h_full_np, dtype=h_base.dtype, device=h_base.device)
+                pre_next = w_rec @ h_full + w_inp @ inp_t + mrnn.tonic_inp
+                h_next = mrnn.activation(pre_next)
+                next_hidden = h_next.detach().cpu().numpy().astype(float, copy=False)
+                next_pc = (next_hidden - mean) @ components.T
+                velocities[row, col] = next_pc - pc_point
+
+    return {
+        "region": "global",
+        "condition": condition,
+        "time_idx": int(time_idx),
+        "grid_x": grid_x,
+        "grid_y": grid_y,
+        "u": velocities[..., 0],
+        "v": velocities[..., 1],
+        "speed": np.linalg.norm(velocities, axis=-1),
+    }
+
+
+def compute_region_flow_field(
+    replay: Mapping[str, object],
+    *,
+    region: str,
+    condition: str,
+    time_idx: int,
+    grid_points: int = 15,
+    radius: float = 1.0,
+) -> dict[str, object]:
+    """Backward-compatible wrapper for the global hidden-state flow field."""
+    return compute_global_flow_field(
+        replay,
+        condition=condition,
+        time_idx=time_idx,
+        grid_points=grid_points,
+        radius=radius,
+    )
 
 
 def output_pc_scores(
@@ -217,6 +338,8 @@ def output_pc_scores(
 
 __all__ = [
     "extract_region_currents",
+    "compute_global_flow_field",
+    "compute_region_flow_field",
     "load_fixation_mrnn_checkpoint",
     "output_pc_scores",
     "reconstruction_accuracy",

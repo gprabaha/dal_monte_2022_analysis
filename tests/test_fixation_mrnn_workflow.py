@@ -16,6 +16,7 @@ from dal_monte_2022_analysis.ephys.modeling import (
     FixationMRNNModel,
     build_fixation_mrnn_targets_from_dataframe,
     build_model_spec,
+    compute_region_flow_field,
     extract_region_currents,
     reconstruction_accuracy,
     replay_fixation_mrnn_run,
@@ -81,13 +82,15 @@ class TestFixationMRNNTargets(unittest.TestCase):
             pca_variance_threshold=0.95,
         )
         self.assertEqual(targets.condition_order, ("face_interactive", "face_non_interactive", "object"))
-        self.assertEqual(targets.input_tensor.shape, (3, 4, 3))
+        self.assertEqual(targets.input_tensor.shape, (3, 4, 23))
         self.assertEqual(targets.raw_by_region["ofc"].shape, (3, 4, 2))
         raw_values = np.concatenate(df["psth_mean"].to_numpy())
         expected_scale = np.percentile(raw_values, 95) - np.percentile(raw_values, 5) + 5.0
         self.assertAlmostEqual(float(targets.normalization_scale), float(expected_scale))
         self.assertEqual(targets.output_dims_for_mode("raw_fr")["bla"], 2)
-        self.assertGreaterEqual(targets.output_dims_for_mode("region_pcs")["ofc"], 1)
+        pc_dims = targets.output_dims_for_mode("region_pcs")
+        self.assertEqual(len(set(pc_dims.values())), 1)
+        self.assertGreaterEqual(pc_dims["ofc"], 1)
 
 
 class TestFixationMRNNTorchSmoke(unittest.TestCase):
@@ -134,17 +137,29 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
                 epochs=1,
                 seed=777,
                 device="cpu",
-                spectral_radius=1.0,
-            )
+            spectral_radius=1.0,
+            temporal_basis_count=0,
+        )
             result = train_fixation_mrnn_scratch(settings, scratch_id="test_raw", overwrite=True)
             replay = replay_fixation_mrnn_run(result["run_dir"], device="cpu")
             current_df, current_vectors = extract_region_currents(replay)
             self.assertTrue((Path(result["run_dir"]) / "checkpoint_final.pth").exists())
             self.assertTrue((Path(result["run_dir"]) / "seed_plan.json").exists())
             self.assertFalse(current_df.empty)
+            self.assertIn("signed_projection", current_df.columns)
+            self.assertTrue((current_df["relative_contribution"].abs() <= 1.0 + 1e-6).all())
             self.assertTrue(current_vectors)
             self.assertFalse(reconstruction_accuracy(replay).empty)
             self.assertFalse(variance_comparison(replay).empty)
+            flow = compute_region_flow_field(
+                replay,
+                region="ofc",
+                condition="face_interactive",
+                time_idx=1,
+                grid_points=3,
+            )
+            self.assertEqual(flow["u"].shape, (3, 3))
+            self.assertEqual(flow["v"].shape, (3, 3))
 
 
 if __name__ == "__main__":
