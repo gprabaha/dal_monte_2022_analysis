@@ -35,6 +35,10 @@ target_mode: raw_fr
 epochs: 10000
 lr: 0.001
 loss_fn: mse
+temporal_derivative_loss_scale: 1.0
+temporal_curvature_loss_scale: 0.5
+pre_fixation_loss_weight: 1.0
+post_fixation_loss_weight: 1.0
 l1_weight_scale: 0.0
 l1_rate_scale: 0.0
 initial_state_scale: 0.01

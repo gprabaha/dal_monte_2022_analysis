@@ -137,14 +137,15 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
                 epochs=1,
                 seed=777,
                 device="cpu",
-            spectral_radius=1.0,
-            temporal_basis_count=0,
-        )
+                spectral_radius=1.0,
+                temporal_basis_count=0,
+            )
             result = train_fixation_mrnn_scratch(settings, scratch_id="test_raw", overwrite=True)
             replay = replay_fixation_mrnn_run(result["run_dir"], device="cpu")
             current_df, current_vectors = extract_region_currents(replay)
             self.assertTrue((Path(result["run_dir"]) / "checkpoint_final.pth").exists())
             self.assertTrue((Path(result["run_dir"]) / "seed_plan.json").exists())
+            self.assertIn("temporal_derivative_loss", result["history"].columns)
             self.assertFalse(current_df.empty)
             self.assertIn("signed_projection", current_df.columns)
             self.assertTrue((current_df["relative_contribution"].abs() <= 1.0 + 1e-6).all())
@@ -158,6 +159,7 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
                 time_idx=1,
                 grid_points=3,
             )
+            self.assertEqual(flow["region"], "ofc")
             self.assertEqual(flow["u"].shape, (3, 3))
             self.assertEqual(flow["v"].shape, (3, 3))
 

@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import (
-    compute_global_flow_field,
+    compute_region_flow_field,
     extract_region_currents,
     output_pc_scores,
 )
@@ -301,45 +301,50 @@ def plot_fixation_mrnn_flow_fields_at_time(
     region_order: Sequence[str] | None = None,
     condition_order: Sequence[str] | None = None,
 ):
-    """Plot 2D Elman flow fields in each region's hidden PC space."""
+    """Plot region flow contributions on shared global hidden PC axes."""
     settings = settings or FixationMRNNDiagnosticPlotSettings()
+    regions = tuple(region_order or replay["region_order"])
     conditions = tuple(condition_order or replay["condition_order"])
     timeline = np.asarray(replay["checkpoint"]["timeline_s"], dtype=float)
     selected_idx = int(np.argmin(np.abs(timeline - float(time_s)))) if time_idx is None else int(time_idx)
     fig, axes = plt.subplots(
-        1,
+        len(regions),
         len(conditions),
-        figsize=settings.figsize,
+        figsize=(settings.figsize[0], max(settings.figsize[1], 2.2 * len(regions))),
         dpi=settings.dpi,
         squeeze=False,
     )
-    for col, condition in enumerate(conditions):
-        ax = axes[0, col]
-        field = compute_global_flow_field(
-            replay,
-            condition=condition,
-            time_idx=selected_idx,
-            grid_points=grid_points,
-            radius=radius,
-        )
-        ax.quiver(
-            field["grid_x"],
-            field["grid_y"],
-            field["u"] * settings.flow_scale,
-            field["v"] * settings.flow_scale,
-            field["speed"],
-            cmap="viridis",
-            angles="xy",
-            scale_units="xy",
-            pivot="mid",
-            width=0.006,
-        )
-        ax.set_aspect("equal", adjustable="box")
-        ax.set_title(condition)
-        ax.set_xlabel("global hidden PC1")
-        if col == 0:
-            ax.set_ylabel("global hidden PC2")
-    fig.suptitle(f"Global Elman mRNN Flow Fields (t={timeline[selected_idx]:.3f}s)", y=1.01)
+    for row, region in enumerate(regions):
+        for col, condition in enumerate(conditions):
+            ax = axes[row, col]
+            field = compute_region_flow_field(
+                replay,
+                region=region,
+                condition=condition,
+                time_idx=selected_idx,
+                grid_points=grid_points,
+                radius=radius,
+            )
+            ax.quiver(
+                field["grid_x"],
+                field["grid_y"],
+                field["u"] * settings.flow_scale,
+                field["v"] * settings.flow_scale,
+                field["speed"],
+                cmap="viridis",
+                angles="xy",
+                scale_units="xy",
+                pivot="mid",
+                width=0.006,
+            )
+            ax.set_aspect("equal", adjustable="box")
+            if row == 0:
+                ax.set_title(condition)
+            if row == len(regions) - 1:
+                ax.set_xlabel("global hidden PC1")
+            if col == 0:
+                ax.set_ylabel(f"{region}\nglobal hidden PC2")
+    fig.suptitle(f"Region Elman Flow Contributions (t={timeline[selected_idx]:.3f}s)", y=1.01)
     fig.tight_layout()
     return fig, axes
 

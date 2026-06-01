@@ -307,14 +307,68 @@ def compute_region_flow_field(
     grid_points: int = 15,
     radius: float = 1.0,
 ) -> dict[str, object]:
-    """Backward-compatible wrapper for the global hidden-state flow field."""
-    return compute_global_flow_field(
-        replay,
-        condition=condition,
-        time_idx=time_idx,
-        grid_points=grid_points,
-        radius=radius,
-    )
+    """Compute a region-specific flow contribution in global hidden PC space.
+
+    The PC axes are fit once on the full hidden state across all regions. At
+    each grid point, the model is advanced one Elman step, but only the
+    selected region's slice of the hidden-state displacement is projected back
+    onto those global PC axes. This keeps every region in a comparable PC
+    coordinate system while showing each region's contribution separately.
+    """
+    model = replay["model"]
+    mrnn = model.mrnn
+    if region not in tuple(replay["region_order"]):
+        raise ValueError(f"Unknown region: {region}")
+    condition_order = tuple(replay["condition_order"])
+    cond_idx = condition_order.index(condition)
+    time_idx = int(time_idx)
+    h_seq = replay["h_seq"]
+    if time_idx < 0 or time_idx >= int(h_seq.shape[1]):
+        raise IndexError(f"time_idx={time_idx} outside replay length {h_seq.shape[1]}.")
+
+    hidden_values = h_seq.detach().cpu().numpy().astype(float, copy=False)
+    mean, components = _fit_hidden_pca(hidden_values, n_components=2)
+    scores = (hidden_values.reshape(-1, hidden_values.shape[-1]) - mean) @ components.T
+    center = (hidden_values[cond_idx, time_idx] - mean) @ components.T
+    spread = float(np.nanstd(scores[:, :2]))
+    if not np.isfinite(spread) or spread <= 0:
+        spread = 1.0
+    extent = float(radius) * spread
+    x_values = np.linspace(center[0] - extent, center[0] + extent, int(grid_points))
+    y_values = np.linspace(center[1] - extent, center[1] + extent, int(grid_points))
+    grid_x, grid_y = np.meshgrid(x_values, y_values)
+
+    region_start, region_stop = mrnn.get_region_indices(region)
+    region_slice = slice(region_start, region_stop)
+    h_base = h_seq[cond_idx, time_idx].detach().clone()
+    inp_t = replay["inp"][cond_idx, time_idx]
+    w_rec = _effective_recurrent_weight(model)
+    w_inp = _effective_input_weight(model)
+    velocities = np.zeros((*grid_x.shape, 2), dtype=float)
+
+    with torch.no_grad():
+        for row in range(grid_x.shape[0]):
+            for col in range(grid_x.shape[1]):
+                pc_point = np.asarray([grid_x[row, col], grid_y[row, col]], dtype=float)
+                h_full_np = mean + pc_point @ components
+                h_full = torch.as_tensor(h_full_np, dtype=h_base.dtype, device=h_base.device)
+                pre_next = w_rec @ h_full + w_inp @ inp_t + mrnn.tonic_inp
+                h_next = mrnn.activation(pre_next)
+                delta = h_next.detach().cpu().numpy().astype(float, copy=False) - h_full_np
+                region_delta = np.zeros_like(delta)
+                region_delta[region_slice] = delta[region_slice]
+                velocities[row, col] = region_delta @ components.T
+
+    return {
+        "region": region,
+        "condition": condition,
+        "time_idx": int(time_idx),
+        "grid_x": grid_x,
+        "grid_y": grid_y,
+        "u": velocities[..., 0],
+        "v": velocities[..., 1],
+        "speed": np.linalg.norm(velocities, axis=-1),
+    }
 
 
 def output_pc_scores(

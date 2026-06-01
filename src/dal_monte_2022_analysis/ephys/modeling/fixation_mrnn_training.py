@@ -58,6 +58,10 @@ class FixationMRNNRunSettings:
     epochs: int = 10_000
     lr: float = 1e-3
     loss_fn: str = "mse"
+    temporal_derivative_loss_scale: float = 1.0
+    temporal_curvature_loss_scale: float = 0.0
+    pre_fixation_loss_weight: float = 1.0
+    post_fixation_loss_weight: float = 1.0
     l1_weight_scale: float = 0.0
     l1_rate_scale: float = 0.0
     train_initial_state: bool = True
@@ -191,6 +195,65 @@ def _loss_fn(name: str) -> nn.Module:
     raise ValueError("loss_fn must be 'mse' or 'mae'.")
 
 
+def _elementwise_loss(name: str, prediction: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    token = str(name).strip().lower()
+    if token == "mse":
+        return (prediction - target) ** 2
+    if token == "mae":
+        return torch.abs(prediction - target)
+    raise ValueError("loss_fn must be 'mse' or 'mae'.")
+
+
+def _weighted_loss(
+    name: str,
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    loss = _elementwise_loss(name, prediction, target)
+    if weights is not None:
+        loss = loss * weights
+    return torch.mean(loss)
+
+
+def _time_weights(
+    timeline_s: Sequence[float],
+    *,
+    pre_fixation_weight: float,
+    post_fixation_weight: float,
+    device: str,
+) -> torch.Tensor:
+    weights = np.where(
+        np.asarray(timeline_s, dtype=float) < 0.0,
+        float(pre_fixation_weight),
+        float(post_fixation_weight),
+    ).astype(np.float32)
+    mean_weight = float(np.mean(weights))
+    if mean_weight > 0:
+        weights = weights / mean_weight
+    return torch.as_tensor(weights, dtype=torch.float32, device=device).reshape(1, -1, 1)
+
+
+def _temporal_difference_loss(
+    name: str,
+    prediction: torch.Tensor,
+    target: torch.Tensor,
+    *,
+    order: int,
+    weights: torch.Tensor | None = None,
+) -> torch.Tensor:
+    if prediction.shape[1] <= int(order):
+        return torch.zeros((), dtype=prediction.dtype, device=prediction.device)
+    pred_diff = prediction
+    target_diff = target
+    for _ in range(int(order)):
+        pred_diff = pred_diff[:, 1:, :] - pred_diff[:, :-1, :]
+        target_diff = target_diff[:, 1:, :] - target_diff[:, :-1, :]
+    diff_weights = weights[:, int(order) :, :] if weights is not None else None
+    return _weighted_loss(name, pred_diff, target_diff, weights=diff_weights)
+
+
 def _l1(parameters: Sequence[torch.Tensor], scale: float) -> torch.Tensor:
     if not parameters:
         return torch.zeros(())
@@ -244,22 +307,50 @@ def train_one_initialization(
     else:
         opt_params = list(model.parameters())
     optimizer = torch.optim.Adam(opt_params, lr=float(settings.lr))
-    criterion = _loss_fn(settings.loss_fn)
+    time_weights = _time_weights(
+        targets.timeline_s,
+        pre_fixation_weight=float(settings.pre_fixation_loss_weight),
+        post_fixation_weight=float(settings.post_fixation_loss_weight),
+        device=device,
+    )
     history = []
 
     for iteration in tqdm(range(1, int(settings.epochs) + 1), desc=f"{target_mode} seed={seed}", unit="iter"):
         optimizer.zero_grad()
         out = model(inp, h0, noise=False)
-        mse = criterion(out["output"], target)
+        reconstruction = _weighted_loss(settings.loss_fn, out["output"], target, weights=time_weights)
+        derivative = _temporal_difference_loss(
+            settings.loss_fn,
+            out["output"],
+            target,
+            order=1,
+            weights=time_weights,
+        )
+        curvature = _temporal_difference_loss(
+            settings.loss_fn,
+            out["output"],
+            target,
+            order=2,
+            weights=time_weights,
+        )
         rate = torch.mean(torch.abs(out["h_seq"])) * float(settings.l1_rate_scale)
         weight = _l1([param for param in model.mrnn.parameters()], settings.l1_weight_scale)
-        loss = mse + rate + weight
+        loss = (
+            reconstruction
+            + float(settings.temporal_derivative_loss_scale) * derivative
+            + float(settings.temporal_curvature_loss_scale) * curvature
+            + rate
+            + weight
+        )
         loss.backward()
         optimizer.step()
         row = {
             "iteration": iteration,
             "loss": float(loss.detach().cpu()),
-            "mse_loss": float(mse.detach().cpu()),
+            "reconstruction_loss": float(reconstruction.detach().cpu()),
+            "mse_loss": float(reconstruction.detach().cpu()),
+            "temporal_derivative_loss": float(derivative.detach().cpu()),
+            "temporal_curvature_loss": float(curvature.detach().cpu()),
             "rate_loss": float(rate.detach().cpu()),
             "weight_loss": float(weight.detach().cpu()),
         }
