@@ -13,7 +13,7 @@ timeline_filename: fixations_psth_10ms_bin_centers_s_rel_window_neg500ms_to_pos5
 output_subdir: ephys/modeling/fixation_mrnn
 scratch_id: latest
 
-canonical_region_order: [ofc, bla, dmpfc, accg]
+region_order: [ofc, bla, dmpfc, accg]
 condition_order: [face_interactive, face_non_interactive, object]
 pca_variance_threshold: 0.95
 normalize_targets: true
@@ -22,18 +22,12 @@ normalization_stabilizer: 5.0
 # Model defaults.
 hidden_units: 100
 activation: softplus
-dt: 10.0
-tau: 100.0
 spectral_radius: 1.3
 batch_first: true
 rec_constrained: false
 inp_constrained: false
-# Installed mrnntorch treats null sparsity as dense connectivity.
-recurrent_sparsity: null
-input_sparsity: null
 inp_noise: 0.0
 act_noise: 0.0
-input_region_name: input
 
 # Training defaults.
 target_mode: raw_fr
@@ -42,7 +36,6 @@ lr: 0.001
 loss_fn: mse
 l1_weight_scale: 0.0001
 l1_rate_scale: 0.0001
-initial_state: zeros
 initial_state_scale: 0.01
 train_initial_state: true
 seed: 123456
@@ -51,11 +44,3 @@ n_initializations: 100
 overwrite_seed_plan: false
 seed_plan_filename: seed_plan.json
 device: auto
-checkpoint_every: 0
-
-# Experiment planning defaults.
-experiment_id: raw_fr_100init_v1
-n_runs: 100
-seed_start: 123456
-shuffle_region_order: false
-shuffle_feature_order: false

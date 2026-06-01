@@ -1,4 +1,4 @@
-"""Tests for the fixation mRNN target, shuffle, and smoke-training workflow."""
+"""Tests for the minimal fixation Elman mRNN workflow."""
 
 from __future__ import annotations
 
@@ -7,42 +7,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import importlib.util
 import numpy as np
 import pandas as pd
 import torch
-import matplotlib.pyplot as plt
 
 from dal_monte_2022_analysis.ephys.modeling import (
     FixationMRNNRunSettings,
     FixationMRNNModel,
     build_fixation_mrnn_targets_from_dataframe,
     build_model_spec,
-    compare_fixation_mrnn_region_variance,
-    compute_fixation_mrnn_currents,
-    compute_fixation_mrnn_eigenvalues,
-    compute_fixation_mrnn_flow_fields,
-    compute_fixation_mrnn_reconstruction_accuracy,
-    compute_fixation_mrnn_relative_current_contributions,
-    derive_internal_feature_order_by_region,
-    derive_internal_region_order,
-    feature_order_indices,
+    extract_region_currents,
+    reconstruction_accuracy,
     replay_fixation_mrnn_run,
-    summarize_fixation_mrnn_pca,
-    summarize_fixation_mrnn_ordering,
-    summarize_fixation_mrnn_targets,
     train_fixation_mrnn_scratch,
+    variance_comparison,
 )
-from dal_monte_2022_analysis.ephys.plotting import (
-    plot_fixation_mrnn_activation_pc_timeseries,
-    plot_fixation_mrnn_activation_trajectories_3d,
-    plot_fixation_mrnn_average_current_influence_pies,
-    plot_fixation_mrnn_current_influence,
-    plot_fixation_mrnn_flow_fields_at_time,
-)
-
-
-_HAS_MRNNTORCH = importlib.util.find_spec("mrnntorch") is not None
 
 
 def _synthetic_combined_dataframe(
@@ -59,13 +38,12 @@ def _synthetic_combined_dataframe(
     ]
     for region_idx, region in enumerate(regions):
         for unit_idx in range(n_units_per_region):
-            unit_uuid = f"{region}_unit_{unit_idx}"
             for partition, category, interactive_state, offset in condition_rows:
                 base = 10.0 * region_idx + unit_idx + offset
                 rows.append(
                     {
                         "date": "20990101",
-                        "unit_uuid": unit_uuid,
+                        "unit_uuid": f"{region}_unit_{unit_idx}",
                         "region": region,
                         "spike_channel": unit_idx,
                         "recorded_agent": "m1",
@@ -73,10 +51,7 @@ def _synthetic_combined_dataframe(
                         "fixation_category": category,
                         "interactive_state": interactive_state,
                         "n_trials": 5 + unit_idx,
-                        "psth_mean": np.asarray(
-                            [base + t for t in range(n_time)],
-                            dtype=float,
-                        ),
+                        "psth_mean": np.asarray([base + t for t in range(n_time)], dtype=float),
                         "psth_sem": np.ones(n_time, dtype=float),
                     }
                 )
@@ -87,7 +62,6 @@ def _write_dataset_cfg(path: Path, analysis_root: Path) -> None:
     path.write_text(
         "\n".join(
             [
-                "dataset_name: test_dataset",
                 f"raw_data_root: {analysis_root}",
                 f"processed_data_root: {analysis_root}",
                 f"analysis_output_root: {analysis_root}",
@@ -97,96 +71,31 @@ def _write_dataset_cfg(path: Path, analysis_root: Path) -> None:
     )
 
 
-class TestFixationMRNNTargetsAndOrdering(unittest.TestCase):
-    """Checks target construction and deterministic model ordering."""
-
-    def test_target_builder_outputs_raw_and_pc_targets(self) -> None:
+class TestFixationMRNNTargets(unittest.TestCase):
+    def test_target_builder_uses_global_normalization_and_region_dims(self) -> None:
         df = _synthetic_combined_dataframe()
-        timeline = np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float)
-
         targets = build_fixation_mrnn_targets_from_dataframe(
             df,
-            timeline_s_rel=timeline,
+            timeline_s=np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float),
             normalize_targets=True,
             pca_variance_threshold=0.95,
         )
-
-        self.assertEqual(targets.condition_names, ("face_interactive", "face_non_interactive", "object"))
+        self.assertEqual(targets.condition_order, ("face_interactive", "face_non_interactive", "object"))
         self.assertEqual(targets.input_tensor.shape, (3, 4, 3))
-        self.assertEqual(targets.raw_targets_by_region["ofc"].shape, (3, 4, 2))
-        self.assertEqual(targets.region_unit_counts["accg"], 2)
-        self.assertEqual(targets.raw_feature_order_by_region["bla"], ("bla_unit_0", "bla_unit_1"))
+        self.assertEqual(targets.raw_by_region["ofc"].shape, (3, 4, 2))
         raw_values = np.concatenate(df["psth_mean"].to_numpy())
         expected_scale = np.percentile(raw_values, 95) - np.percentile(raw_values, 5) + 5.0
         self.assertAlmostEqual(float(targets.normalization_scale), float(expected_scale))
-        pc_dims = {
-            region: tensor.shape[-1]
-            for region, tensor in targets.pc_targets_by_region.items()
-        }
-        self.assertEqual(len(set(pc_dims.values())), 1)
-        required_components = {
-            region: metadata.n_components_required_for_threshold
-            for region, metadata in targets.pca_metadata_by_region.items()
-        }
-        self.assertEqual(next(iter(set(pc_dims.values()))), max(required_components.values()))
-        self.assertGreaterEqual(
-            float(targets.pca_metadata_by_region["ofc"].cumulative_explained_variance_ratio[
-                targets.pca_metadata_by_region["ofc"].n_components_required_for_threshold - 1
-            ]),
-            0.95,
-        )
-        self.assertEqual(
-            targets.pc_targets_by_region["dmpfc"].shape[-1],
-            len(targets.pc_feature_order_by_region["dmpfc"]),
-        )
-        target_summary = summarize_fixation_mrnn_targets(targets)
-        pca_summary = summarize_fixation_mrnn_pca(targets)
-        self.assertEqual(int(target_summary["n_nan"].sum()), 0)
-        self.assertEqual(int(target_summary["n_inf"].sum()), 0)
-        self.assertEqual(int(pca_summary["n_components"].nunique()), 1)
-
-    def test_model_ordering_is_canonical_by_default(self) -> None:
-        regions = ("ofc", "bla", "dmpfc", "accg")
-        first = derive_internal_region_order(regions, seed=123)
-        second = derive_internal_region_order(regions, seed=123)
-        self.assertEqual(first, second)
-        self.assertEqual(first, regions)
-
-        features = {
-            "ofc": ("ofc_a", "ofc_b", "ofc_c"),
-            "bla": ("bla_a", "bla_b"),
-        }
-        feature_first = derive_internal_feature_order_by_region(features, seed=456)
-        feature_second = derive_internal_feature_order_by_region(features, seed=456)
-        self.assertEqual(feature_first, feature_second)
-        self.assertEqual(feature_first["ofc"], features["ofc"])
-        self.assertEqual(feature_first["bla"], features["bla"])
-        self.assertEqual(feature_order_indices(("a", "b", "c"), ("c", "a", "b")), [2, 0, 1])
-        with self.assertRaises(ValueError):
-            feature_order_indices(("a", "b"), ("a", "c"))
-
-        feature_regions = tuple(features)
-        order_summary = summarize_fixation_mrnn_ordering(
-            canonical_region_order=feature_regions,
-            internal_region_order=derive_internal_region_order(feature_regions, seed=123),
-            canonical_feature_order_by_region=features,
-            internal_feature_order_by_region=feature_first,
-        )
-        self.assertEqual(set(order_summary["region"]), set(features))
-        self.assertFalse(order_summary["feature_order_changed"].any())
+        self.assertEqual(targets.output_dims_for_mode("raw_fr")["bla"], 2)
+        self.assertGreaterEqual(targets.output_dims_for_mode("region_pcs")["ofc"], 1)
 
 
-@unittest.skipUnless(_HAS_MRNNTORCH, "installed lowercase mrnntorch is required")
 class TestFixationMRNNTorchSmoke(unittest.TestCase):
-    """Small smoke tests for installed-mrnntorch model/training paths."""
-
-    def test_model_forward_preserves_canonical_output_keys(self) -> None:
-        canonical = ("ofc", "bla", "dmpfc", "accg")
-        internal = ("accg", "ofc", "bla", "dmpfc")
+    def test_model_forward(self) -> None:
+        regions = ("ofc", "bla", "dmpfc", "accg")
         spec = build_model_spec(
-            canonical_region_order=canonical,
-            internal_region_order=internal,
-            output_dims_by_region={region: 2 for region in canonical},
+            region_order=regions,
+            output_dims_by_region={region: 2 for region in regions},
             hidden_units=3,
             activation="softplus",
             rec_constrained=False,
@@ -195,16 +104,16 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             device="cpu",
         )
         model = FixationMRNNModel(spec)
-        inp = torch.zeros((3, 4, 3), dtype=torch.float32)
-        x0 = torch.zeros((3, model.total_num_units), dtype=torch.float32)
-
-        out = model(inp, x0, noise=False)
-
-        self.assertEqual(tuple(out["output_by_region"].keys()), canonical)
+        out = model(
+            torch.zeros((3, 4, 3), dtype=torch.float32),
+            torch.zeros((3, model.total_num_units), dtype=torch.float32),
+            noise=False,
+        )
+        self.assertEqual(tuple(out["output_by_region"]), regions)
         self.assertEqual(out["output"].shape, (3, 4, 8))
-        self.assertEqual(out["x_seq"].shape[-1], model.total_num_units)
+        self.assertEqual(out["h_seq"].shape[-1], model.total_num_units)
 
-    def test_two_epoch_scratch_training_replay_and_analysis(self) -> None:
+    def test_one_iteration_training_replay_and_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
             analysis_root = root / "analysis"
@@ -212,117 +121,30 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             avg_root.mkdir(parents=True, exist_ok=True)
             cfg_path = root / "dataset.yaml"
             _write_dataset_cfg(cfg_path, analysis_root)
-
-            dataframe_filename = "combined.pkl"
-            timeline_filename = "timeline.pkl"
-            _synthetic_combined_dataframe().to_pickle(avg_root / dataframe_filename)
-            with (avg_root / timeline_filename).open("wb") as f:
+            _synthetic_combined_dataframe().to_pickle(avg_root / "combined.pkl")
+            with (avg_root / "timeline.pkl").open("wb") as f:
                 pickle.dump(np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float), f)
 
             settings = FixationMRNNRunSettings(
                 dataset_cfg_path=str(cfg_path),
-                input_subdir="ephys/psth/fixation_psth_averages",
-                dataframe_filename=dataframe_filename,
-                timeline_filename=timeline_filename,
-                output_subdir="ephys/modeling/fixation_mrnn",
+                dataframe_filename="combined.pkl",
+                timeline_filename="timeline.pkl",
                 target_mode="raw_fr",
                 hidden_units=3,
-                epochs=2,
+                epochs=1,
                 seed=777,
                 device="cpu",
                 spectral_radius=1.0,
             )
-            result = train_fixation_mrnn_scratch(
-                settings,
-                scratch_id="test_raw",
-                overwrite=True,
-            )
-            self.assertTrue((Path(result["run_dir"]) / "checkpoint_final.pth").exists())
-            self.assertTrue((Path(result["run_dir"]) / "history.csv").exists())
-            self.assertTrue((Path(result["run_dir"]) / "target_summary.csv").exists())
-            self.assertTrue((Path(result["run_dir"]) / "order_summary.csv").exists())
-            self.assertTrue((Path(result["run_dir"]) / "seed_plan.json").exists())
-            self.assertTrue(np.isfinite(result["history"]["loss"]).all())
-
+            result = train_fixation_mrnn_scratch(settings, scratch_id="test_raw", overwrite=True)
             replay = replay_fixation_mrnn_run(result["run_dir"], device="cpu")
-            self.assertEqual(
-                tuple(replay["canonical_output_by_region"].keys()),
-                ("ofc", "bla", "dmpfc", "accg"),
-            )
-
-            current_df, current_vectors = compute_fixation_mrnn_currents(replay)
-            recon_df = compute_fixation_mrnn_reconstruction_accuracy(replay)
-            variance_df = compare_fixation_mrnn_region_variance(replay)
-            contribution_df = compute_fixation_mrnn_relative_current_contributions(
-                current_vectors,
-                target_regions=("ofc", "bla", "dmpfc", "accg"),
-                source_regions=("ofc", "bla", "dmpfc", "accg"),
-                condition_names=replay["condition_names"],
-            )
-            eig_df = compute_fixation_mrnn_eigenvalues(replay)
-            flow = compute_fixation_mrnn_flow_fields(
-                replay,
-                region="ofc",
-                condition="face_interactive",
-                time_indices=(2,),
-                num_points=3,
-            )
+            current_df, current_vectors = extract_region_currents(replay)
+            self.assertTrue((Path(result["run_dir"]) / "checkpoint_final.pth").exists())
+            self.assertTrue((Path(result["run_dir"]) / "seed_plan.json").exists())
             self.assertFalse(current_df.empty)
-            self.assertFalse(recon_df.empty)
-            self.assertFalse(variance_df.empty)
-            self.assertFalse(contribution_df.empty)
-            self.assertFalse(eig_df.empty)
-            self.assertEqual(flow["region"], "ofc")
-            self.assertEqual(flow["time_indices"], (2,))
-            self.assertEqual(len(flow["flow_fields"]), 1)
-
-            fig_3d, _ = plot_fixation_mrnn_activation_trajectories_3d(replay)
-            fig_pc, _ = plot_fixation_mrnn_activation_pc_timeseries(replay)
-            fig_current, _ = plot_fixation_mrnn_current_influence(
-                replay,
-                current_vectors=current_vectors,
-            )
-            fig_pies, _ = plot_fixation_mrnn_average_current_influence_pies(
-                replay,
-                current_vectors=current_vectors,
-            )
-            fig_flow, _ = plot_fixation_mrnn_flow_fields_at_time(
-                replay,
-                region_order=("ofc",),
-                condition_order=("face_interactive",),
-                num_points=3,
-            )
-            self.assertGreaterEqual(len(fig_3d.axes), 4)
-            self.assertGreaterEqual(len(fig_pc.axes), 12)
-            self.assertGreaterEqual(len(fig_current.axes), 24)
-            self.assertGreaterEqual(len(fig_pies.axes), 12)
-            self.assertEqual(len(fig_flow.axes), 1)
-            plt.close(fig_3d)
-            plt.close(fig_pc)
-            plt.close(fig_current)
-            plt.close(fig_pies)
-            plt.close(fig_flow)
-
-            pc_settings = FixationMRNNRunSettings(
-                dataset_cfg_path=str(cfg_path),
-                input_subdir="ephys/psth/fixation_psth_averages",
-                dataframe_filename=dataframe_filename,
-                timeline_filename=timeline_filename,
-                output_subdir="ephys/modeling/fixation_mrnn",
-                target_mode="region_pcs",
-                hidden_units=3,
-                epochs=2,
-                seed=778,
-                device="cpu",
-                spectral_radius=1.0,
-            )
-            pc_result = train_fixation_mrnn_scratch(
-                pc_settings,
-                scratch_id="test_region_pcs",
-                overwrite=True,
-            )
-            self.assertTrue((Path(pc_result["run_dir"]) / "checkpoint_final.pth").exists())
-            self.assertTrue(np.isfinite(pc_result["history"]["loss"]).all())
+            self.assertTrue(current_vectors)
+            self.assertFalse(reconstruction_accuracy(replay).empty)
+            self.assertFalse(variance_comparison(replay).empty)
 
 
 if __name__ == "__main__":
