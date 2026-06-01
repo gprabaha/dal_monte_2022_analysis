@@ -58,7 +58,7 @@ class FixationMRNNDiagnosticPlotSettings:
     current_figsize: tuple[float, float] = (12.0, 10.0)
     pie_figsize: tuple[float, float] = (11.0, 8.5)
     flow_figsize: tuple[float, float] = (11.0, 8.5)
-    flow_arrow_scale: float = 1.6
+    flow_arrow_scale: float = 2
     line_width: float = 1.8
     marker_size: float = 22.0
     alpha: float = 0.94

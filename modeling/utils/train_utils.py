@@ -94,7 +94,7 @@ def train(hp=None):
     xn_0 = nn.Parameter(
         initial_state(
             hp["initial_state"],
-            (1, model.mrnn.total_num_units),
+            (3, model.mrnn.total_num_units),
             device="cuda",
             scale=hp["initial_state_scale"],
         )
