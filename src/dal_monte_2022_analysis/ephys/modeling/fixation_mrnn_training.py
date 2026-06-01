@@ -13,6 +13,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import yaml
+from tqdm.auto import tqdm
 
 from dal_monte_2022_analysis.config.load import load_config, resolve_repo_path
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_model import (
@@ -70,7 +71,7 @@ class FixationMRNNRunSettings:
     normalize_targets: bool = True
     normalization_stabilizer: float = 5.0
     pca_variance_threshold: float = 0.95
-    epochs: int = 500
+    epochs: int = 10_000
     lr: float = 1e-3
     loss_fn: str = "mse"
     l1_weight_scale: float = 1e-4
@@ -79,6 +80,10 @@ class FixationMRNNRunSettings:
     initial_state_scale: float = 0.01
     train_initial_state: bool = True
     seed: int = 123456
+    initialization_mode: str = "single"
+    n_initializations: int = 100
+    overwrite_seed_plan: bool = False
+    seed_plan_filename: str = "seed_plan.json"
     region_order_shuffle_seed: int | None = None
     feature_order_shuffle_seed: int | None = None
     device: str = "auto"
@@ -131,7 +136,7 @@ def derive_internal_region_order(
     canonical_region_order: Sequence[str],
     *,
     seed: int,
-    shuffle: bool = True,
+    shuffle: bool = False,
 ) -> tuple[str, ...]:
     """Derive a deterministic internal mRNN region construction order."""
     regions = tuple(str(region) for region in canonical_region_order)
@@ -145,7 +150,7 @@ def derive_internal_feature_order_by_region(
     canonical_feature_order_by_region: Mapping[str, Sequence[str]],
     *,
     seed: int,
-    shuffle: bool = True,
+    shuffle: bool = False,
 ) -> dict[str, tuple[str, ...]]:
     """Derive deterministic within-region feature orders."""
     rng = np.random.default_rng(int(seed))
@@ -180,6 +185,16 @@ def _json_loads(value: object) -> object:
     return value
 
 
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and np.isnan(value):
+        return None
+    if pd.isna(value):
+        return None
+    return int(value)
+
+
 def _make_targets(settings: FixationMRNNRunSettings) -> FixationMRNNTargets:
     return build_fixation_mrnn_targets(
         settings.dataset_cfg_path,
@@ -199,10 +214,10 @@ def prepare_fixation_mrnn_run_plan(
     *,
     experiment_id: str,
     n_runs: int,
-    seed_start: int,
+    seed_start: int | None = None,
     target_modes: Sequence[str] | None = None,
-    shuffle_region_order: bool = True,
-    shuffle_feature_order: bool = True,
+    shuffle_region_order: bool = False,
+    shuffle_feature_order: bool = False,
     overwrite: bool = False,
 ) -> Path:
     """Create an indexed run plan for a fixation mRNN experiment."""
@@ -215,6 +230,15 @@ def prepare_fixation_mrnn_run_plan(
             "Pass overwrite=True to replace the plan files."
         )
     experiment_dir.mkdir(parents=True, exist_ok=True)
+    seed_plan = load_or_create_fixation_mrnn_seed_plan(
+        experiment_dir,
+        settings,
+        mode="multiple",
+        n_initializations=int(n_runs),
+        seed_start=seed_start,
+        overwrite=bool(overwrite or settings.overwrite_seed_plan),
+    )
+    seeds = [int(seed) for seed in seed_plan["seeds"]]
 
     target_cache: dict[str, FixationMRNNTargets] = {}
     rows: list[dict[str, object]] = []
@@ -227,18 +251,17 @@ def prepare_fixation_mrnn_run_plan(
         canonical_features = targets.feature_order_for_mode(target_mode)
         output_dims = targets.output_dims_for_mode(target_mode)
 
-        for offset in range(int(n_runs)):
-            seed = int(seed_start) + int(offset)
-            region_seed = seed
-            feature_seed = seed + 1_000_003
+        for seed in seeds:
+            region_seed = None
+            feature_seed = None
             internal_region_order = derive_internal_region_order(
                 settings.canonical_region_order,
-                seed=region_seed,
+                seed=int(seed),
                 shuffle=shuffle_region_order,
             )
             internal_feature_order = derive_internal_feature_order_by_region(
                 canonical_features,
-                seed=feature_seed,
+                seed=int(seed) + 1_000_003,
                 shuffle=shuffle_feature_order,
             )
             hidden_units_by_region = _hidden_units_by_region(
@@ -278,7 +301,8 @@ def prepare_fixation_mrnn_run_plan(
         {
             "experiment_id": str(experiment_id),
             "n_runs": int(n_runs),
-            "seed_start": int(seed_start),
+            "seed_start": int(seed_start) if seed_start is not None else None,
+            "seed_plan_path": str(experiment_dir / settings.seed_plan_filename),
             "target_modes": [normalize_target_mode(mode) for mode in target_modes],
             "shuffle_region_order": bool(shuffle_region_order),
             "shuffle_feature_order": bool(shuffle_feature_order),
@@ -287,6 +311,85 @@ def prepare_fixation_mrnn_run_plan(
     with (experiment_dir / "experiment.yaml").open("w", encoding="utf-8") as f:
         yaml.safe_dump(experiment_payload, f, sort_keys=True)
     return experiment_dir / "run_plan.csv"
+
+
+def _normalize_initialization_mode(mode: str) -> str:
+    token = str(mode).strip().lower()
+    aliases = {
+        "single": "single",
+        "one": "single",
+        "multi": "multiple",
+        "multiple": "multiple",
+        "many": "multiple",
+    }
+    try:
+        return aliases[token]
+    except KeyError as exc:
+        raise ValueError("initialization_mode must be 'single' or 'multiple'.") from exc
+
+
+def _generate_seeds(
+    *,
+    base_seed: int,
+    n: int,
+    seed_start: int | None = None,
+) -> list[int]:
+    if seed_start is not None:
+        return [int(seed_start) + idx for idx in range(int(n))]
+    rng = np.random.default_rng(int(base_seed))
+    return [
+        int(seed)
+        for seed in rng.integers(1, np.iinfo(np.int32).max, size=int(n), dtype=np.int64)
+    ]
+
+
+def load_or_create_fixation_mrnn_seed_plan(
+    directory: str | Path,
+    settings: FixationMRNNRunSettings,
+    *,
+    mode: str | None = None,
+    n_initializations: int | None = None,
+    seed_start: int | None = None,
+    overwrite: bool = False,
+) -> dict[str, object]:
+    """Load or create the persistent initialization seed plan for a run directory."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / str(settings.seed_plan_filename)
+    requested_mode = _normalize_initialization_mode(mode or settings.initialization_mode)
+    requested_n = 1 if requested_mode == "single" else int(
+        n_initializations or settings.n_initializations
+    )
+    if path.exists() and not overwrite:
+        with path.open("r", encoding="utf-8") as f:
+            plan = json.load(f)
+        seeds = [int(seed) for seed in plan.get("seeds", [])]
+        if len(seeds) < requested_n:
+            raise ValueError(
+                f"Stored seed plan {path} has {len(seeds)} seeds, but "
+                f"{requested_n} were requested. Pass overwrite_seed_plan=True "
+                "or --overwrite-seed-plan to create a new plan."
+            )
+        plan["mode"] = requested_mode
+        plan["seeds"] = seeds[:requested_n]
+        return plan
+
+    seeds = _generate_seeds(
+        base_seed=int(settings.seed),
+        n=requested_n,
+        seed_start=seed_start,
+    )
+    plan = {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "mode": requested_mode,
+        "base_seed": int(settings.seed),
+        "seed_start": int(seed_start) if seed_start is not None else None,
+        "n_initializations": int(requested_n),
+        "seeds": seeds,
+    }
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(plan, f, indent=2, sort_keys=True)
+    return plan
 
 
 def read_fixation_mrnn_run_plan(path: str | Path) -> pd.DataFrame:
@@ -366,7 +469,7 @@ def summarize_fixation_mrnn_shuffles(
     internal_feature_order_by_region: Mapping[str, Sequence[str]],
     sample_features: int = 6,
 ) -> pd.DataFrame:
-    """Summarize deterministic region and within-region feature shuffles."""
+    """Summarize canonical and internal model ordering."""
     canonical_regions = tuple(str(region) for region in canonical_region_order)
     internal_regions = tuple(str(region) for region in internal_region_order)
     if set(canonical_regions) != set(internal_regions):
@@ -405,6 +508,24 @@ def summarize_fixation_mrnn_shuffles(
             }
         )
     return pd.DataFrame(rows)
+
+
+def summarize_fixation_mrnn_ordering(
+    *,
+    canonical_region_order: Sequence[str],
+    internal_region_order: Sequence[str],
+    canonical_feature_order_by_region: Mapping[str, Sequence[str]],
+    internal_feature_order_by_region: Mapping[str, Sequence[str]],
+    sample_features: int = 6,
+) -> pd.DataFrame:
+    """Alias for the current non-shuffling model order summary."""
+    return summarize_fixation_mrnn_shuffles(
+        canonical_region_order=canonical_region_order,
+        internal_region_order=internal_region_order,
+        canonical_feature_order_by_region=canonical_feature_order_by_region,
+        internal_feature_order_by_region=internal_feature_order_by_region,
+        sample_features=sample_features,
+    )
 
 
 def _tensor_targets_for_training(
@@ -524,6 +645,8 @@ def _run_manifest(
         "dataframe_path": str(targets.dataframe_path) if targets.dataframe_path else None,
         "timeline_path": str(targets.timeline_path) if targets.timeline_path else None,
         "condition_names": list(targets.condition_names),
+        "normalization_scale": targets.normalization_scale,
+        "normalization_stabilizer": targets.normalization_stabilizer,
         "canonical_region_order": list(targets.canonical_region_order),
         "internal_region_order": list(model_spec.internal_region_order),
         "canonical_feature_order_by_region": {
@@ -555,6 +678,15 @@ def train_fixation_mrnn_run(
         if (run_dir / "checkpoint_final.pth").exists():
             raise FileExistsError(f"Run already has a final checkpoint: {run_dir}")
     run_dir.mkdir(parents=True, exist_ok=True)
+    seed_plan = load_or_create_fixation_mrnn_seed_plan(
+        run_dir,
+        settings,
+        mode="single",
+        n_initializations=1,
+        seed_start=int(settings.seed) if run_idx is not None else None,
+        overwrite=bool(settings.overwrite_seed_plan),
+    )
+    settings.seed = int(seed_plan["seeds"][0])
 
     torch.manual_seed(int(settings.seed))
     np.random.seed(int(settings.seed) % (2**32 - 1))
@@ -564,30 +696,21 @@ def train_fixation_mrnn_run(
     canonical_features = targets.feature_order_for_mode(target_mode)
 
     internal_region_order = settings.internal_region_order
-    region_seed = settings.region_order_shuffle_seed
     if internal_region_order is None:
-        region_seed = int(settings.seed) if region_seed is None else int(region_seed)
-        internal_region_order = derive_internal_region_order(
-            settings.canonical_region_order,
-            seed=region_seed,
-            shuffle=True,
-        )
+        internal_region_order = tuple(settings.canonical_region_order)
 
     internal_feature_order = settings.internal_feature_order_by_region
-    feature_seed = settings.feature_order_shuffle_seed
     if internal_feature_order is None:
-        feature_seed = int(settings.seed) + 1_000_003 if feature_seed is None else int(feature_seed)
-        internal_feature_order = derive_internal_feature_order_by_region(
-            canonical_features,
-            seed=feature_seed,
-            shuffle=True,
-        )
+        internal_feature_order = {
+            region: tuple(features)
+            for region, features in canonical_features.items()
+        }
     internal_feature_order = {
         region: tuple(features) for region, features in internal_feature_order.items()
     }
 
-    settings.region_order_shuffle_seed = region_seed
-    settings.feature_order_shuffle_seed = feature_seed
+    settings.region_order_shuffle_seed = None
+    settings.feature_order_shuffle_seed = None
     settings.internal_region_order = tuple(internal_region_order)
     settings.internal_feature_order_by_region = dict(internal_feature_order)
 
@@ -629,7 +752,7 @@ def train_fixation_mrnn_run(
     try:
         target_summary = summarize_fixation_mrnn_targets(targets)
         pca_summary = summarize_fixation_mrnn_pca(targets)
-        shuffle_summary = summarize_fixation_mrnn_shuffles(
+        order_summary = summarize_fixation_mrnn_ordering(
             canonical_region_order=settings.canonical_region_order,
             internal_region_order=internal_region_order,
             canonical_feature_order_by_region=canonical_features,
@@ -637,7 +760,7 @@ def train_fixation_mrnn_run(
         )
         target_summary.to_csv(run_dir / "target_summary.csv", index=False)
         pca_summary.to_csv(run_dir / "pca_summary.csv", index=False)
-        shuffle_summary.to_csv(run_dir / "shuffle_summary.csv", index=False)
+        order_summary.to_csv(run_dir / "order_summary.csv", index=False)
 
         model = FixationMRNNModel(model_spec).to(device)
         _assert_model_parameters_finite(model)
@@ -670,7 +793,12 @@ def train_fixation_mrnn_run(
         history: list[dict[str, float | int]] = []
         batch_size = int(inp.shape[0])
 
-        for epoch in range(1, int(settings.epochs) + 1):
+        progress = tqdm(
+            range(1, int(settings.epochs) + 1),
+            desc=f"fixation mRNN {target_mode}",
+            unit="iter",
+        )
+        for epoch in progress:
             model.train()
             optimizer.zero_grad()
             x0_batch = x0_param.expand(batch_size, -1)
@@ -691,6 +819,10 @@ def train_fixation_mrnn_run(
                 "weight_loss": float(weight_loss.detach().cpu()),
             }
             history.append(record)
+            progress.set_postfix(
+                loss=f"{record['loss']:.4g}",
+                mse=f"{record['mse_loss']:.4g}",
+            )
 
             if settings.checkpoint_every and epoch % int(settings.checkpoint_every) == 0:
                 checkpoint_dir = run_dir / "checkpoints"
@@ -743,6 +875,10 @@ def train_fixation_mrnn_run(
                 "condition_names": list(targets.condition_names),
                 "timeline_s_rel": targets.timeline_s_rel,
                 "input_tensor": targets.input_tensor,
+                "target_by_region": {
+                    region: np.asarray(targets.targets_for_mode(target_mode)[region])
+                    for region in settings.canonical_region_order
+                },
                 "target_mode": target_mode,
                 "canonical_region_order": list(settings.canonical_region_order),
                 "internal_region_order": list(internal_region_order),
@@ -754,6 +890,8 @@ def train_fixation_mrnn_run(
                     for region, features in internal_feature_order.items()
                 },
                 "pca_metadata_by_region": serialize_pca_metadata(targets.pca_metadata_by_region),
+                "normalization_scale": targets.normalization_scale,
+                "normalization_stabilizer": targets.normalization_stabilizer,
             },
             run_dir / "checkpoint_final.pth",
         )
@@ -824,8 +962,8 @@ def settings_for_experiment_run(
         str(region): tuple(features)
         for region, features in dict(row["internal_feature_order_by_region"]).items()
     }
-    settings.region_order_shuffle_seed = int(row["region_order_shuffle_seed"])
-    settings.feature_order_shuffle_seed = int(row["feature_order_shuffle_seed"])
+    settings.region_order_shuffle_seed = _optional_int(row.get("region_order_shuffle_seed"))
+    settings.feature_order_shuffle_seed = _optional_int(row.get("feature_order_shuffle_seed"))
     return settings
 
 
@@ -907,6 +1045,7 @@ __all__ = [
     "derive_internal_feature_order_by_region",
     "derive_internal_region_order",
     "load_fixation_mrnn_config",
+    "load_or_create_fixation_mrnn_seed_plan",
     "prepare_fixation_mrnn_run_plan",
     "read_fixation_mrnn_run_plan",
     "rebuild_fixation_mrnn_experiment_index",
@@ -914,6 +1053,7 @@ __all__ = [
     "resolve_fixation_mrnn_output_root",
     "settings_for_experiment_run",
     "settings_from_config",
+    "summarize_fixation_mrnn_ordering",
     "train_fixation_mrnn_experiment_run",
     "train_fixation_mrnn_run",
     "train_fixation_mrnn_scratch",

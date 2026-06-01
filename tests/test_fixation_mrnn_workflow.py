@@ -18,15 +18,18 @@ from dal_monte_2022_analysis.ephys.modeling import (
     FixationMRNNModel,
     build_fixation_mrnn_targets_from_dataframe,
     build_model_spec,
+    compare_fixation_mrnn_region_variance,
     compute_fixation_mrnn_currents,
     compute_fixation_mrnn_eigenvalues,
     compute_fixation_mrnn_flow_fields,
+    compute_fixation_mrnn_reconstruction_accuracy,
+    compute_fixation_mrnn_relative_current_contributions,
     derive_internal_feature_order_by_region,
     derive_internal_region_order,
     feature_order_indices,
     replay_fixation_mrnn_run,
     summarize_fixation_mrnn_pca,
-    summarize_fixation_mrnn_shuffles,
+    summarize_fixation_mrnn_ordering,
     summarize_fixation_mrnn_targets,
     train_fixation_mrnn_scratch,
 )
@@ -94,8 +97,8 @@ def _write_dataset_cfg(path: Path, analysis_root: Path) -> None:
     )
 
 
-class TestFixationMRNNTargetsAndShuffling(unittest.TestCase):
-    """Checks target construction and deterministic shuffle behavior."""
+class TestFixationMRNNTargetsAndOrdering(unittest.TestCase):
+    """Checks target construction and deterministic model ordering."""
 
     def test_target_builder_outputs_raw_and_pc_targets(self) -> None:
         df = _synthetic_combined_dataframe()
@@ -113,6 +116,9 @@ class TestFixationMRNNTargetsAndShuffling(unittest.TestCase):
         self.assertEqual(targets.raw_targets_by_region["ofc"].shape, (3, 4, 2))
         self.assertEqual(targets.region_unit_counts["accg"], 2)
         self.assertEqual(targets.raw_feature_order_by_region["bla"], ("bla_unit_0", "bla_unit_1"))
+        raw_values = np.concatenate(df["psth_mean"].to_numpy())
+        expected_scale = np.percentile(raw_values, 95) - np.percentile(raw_values, 5) + 5.0
+        self.assertAlmostEqual(float(targets.normalization_scale), float(expected_scale))
         pc_dims = {
             region: tensor.shape[-1]
             for region, tensor in targets.pc_targets_by_region.items()
@@ -139,16 +145,12 @@ class TestFixationMRNNTargetsAndShuffling(unittest.TestCase):
         self.assertEqual(int(target_summary["n_inf"].sum()), 0)
         self.assertEqual(int(pca_summary["n_components"].nunique()), 1)
 
-    def test_seed_derived_shuffles_are_deterministic_and_within_region(self) -> None:
+    def test_model_ordering_is_canonical_by_default(self) -> None:
         regions = ("ofc", "bla", "dmpfc", "accg")
         first = derive_internal_region_order(regions, seed=123)
         second = derive_internal_region_order(regions, seed=123)
         self.assertEqual(first, second)
-        self.assertEqual(set(first), set(regions))
-        self.assertEqual(derive_internal_region_order(regions, seed=123, shuffle=False), regions)
-        self.assertTrue(
-            any(derive_internal_region_order(regions, seed=seed) != regions for seed in range(20))
-        )
+        self.assertEqual(first, regions)
 
         features = {
             "ofc": ("ofc_a", "ofc_b", "ofc_c"),
@@ -157,28 +159,21 @@ class TestFixationMRNNTargetsAndShuffling(unittest.TestCase):
         feature_first = derive_internal_feature_order_by_region(features, seed=456)
         feature_second = derive_internal_feature_order_by_region(features, seed=456)
         self.assertEqual(feature_first, feature_second)
-        self.assertEqual(set(feature_first["ofc"]), set(features["ofc"]))
-        self.assertEqual(set(feature_first["bla"]), set(features["bla"]))
-        self.assertTrue(
-            any(
-                derive_internal_feature_order_by_region(features, seed=seed)["ofc"]
-                != features["ofc"]
-                for seed in range(20)
-            )
-        )
+        self.assertEqual(feature_first["ofc"], features["ofc"])
+        self.assertEqual(feature_first["bla"], features["bla"])
         self.assertEqual(feature_order_indices(("a", "b", "c"), ("c", "a", "b")), [2, 0, 1])
         with self.assertRaises(ValueError):
             feature_order_indices(("a", "b"), ("a", "c"))
 
         feature_regions = tuple(features)
-        shuffle_summary = summarize_fixation_mrnn_shuffles(
+        order_summary = summarize_fixation_mrnn_ordering(
             canonical_region_order=feature_regions,
             internal_region_order=derive_internal_region_order(feature_regions, seed=123),
             canonical_feature_order_by_region=features,
             internal_feature_order_by_region=feature_first,
         )
-        self.assertEqual(set(shuffle_summary["region"]), set(features))
-        self.assertTrue(shuffle_summary["feature_order_changed"].any())
+        self.assertEqual(set(order_summary["region"]), set(features))
+        self.assertFalse(order_summary["feature_order_changed"].any())
 
 
 @unittest.skipUnless(_HAS_MRNNTORCH, "installed lowercase mrnntorch is required")
@@ -245,7 +240,8 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             self.assertTrue((Path(result["run_dir"]) / "checkpoint_final.pth").exists())
             self.assertTrue((Path(result["run_dir"]) / "history.csv").exists())
             self.assertTrue((Path(result["run_dir"]) / "target_summary.csv").exists())
-            self.assertTrue((Path(result["run_dir"]) / "shuffle_summary.csv").exists())
+            self.assertTrue((Path(result["run_dir"]) / "order_summary.csv").exists())
+            self.assertTrue((Path(result["run_dir"]) / "seed_plan.json").exists())
             self.assertTrue(np.isfinite(result["history"]["loss"]).all())
 
             replay = replay_fixation_mrnn_run(result["run_dir"], device="cpu")
@@ -255,6 +251,14 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             )
 
             current_df, current_vectors = compute_fixation_mrnn_currents(replay)
+            recon_df = compute_fixation_mrnn_reconstruction_accuracy(replay)
+            variance_df = compare_fixation_mrnn_region_variance(replay)
+            contribution_df = compute_fixation_mrnn_relative_current_contributions(
+                current_vectors,
+                target_regions=("ofc", "bla", "dmpfc", "accg"),
+                source_regions=("ofc", "bla", "dmpfc", "accg"),
+                condition_names=replay["condition_names"],
+            )
             eig_df = compute_fixation_mrnn_eigenvalues(replay)
             flow = compute_fixation_mrnn_flow_fields(
                 replay,
@@ -264,6 +268,9 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
                 num_points=3,
             )
             self.assertFalse(current_df.empty)
+            self.assertFalse(recon_df.empty)
+            self.assertFalse(variance_df.empty)
+            self.assertFalse(contribution_df.empty)
             self.assertFalse(eig_df.empty)
             self.assertEqual(flow["region"], "ofc")
             self.assertEqual(flow["time_indices"], (2,))

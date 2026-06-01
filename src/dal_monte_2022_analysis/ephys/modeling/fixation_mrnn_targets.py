@@ -71,6 +71,8 @@ class FixationMRNNTargets:
     canonical_region_order: tuple[str, ...]
     timeline_s_rel: np.ndarray
     training_dataframe: pd.DataFrame
+    normalization_scale: float | None = None
+    normalization_stabilizer: float | None = None
     dataframe_path: Path | None = None
     timeline_path: Path | None = None
 
@@ -113,12 +115,20 @@ def normalize_target_mode(target_mode: str) -> str:
 
 
 def robust_normalize(values: np.ndarray, *, stabilizer: float = 5.0) -> np.ndarray:
-    """Normalize values using the old mRNN robust percentile scale."""
+    """Normalize values using one robust percentile scale."""
     arr = np.asarray(values, dtype=float)
     if not np.isfinite(arr).all():
         raise ValueError("Cannot normalize arrays containing NaN or infinite values.")
-    scale = float(np.percentile(arr, 95) - np.percentile(arr, 5))
-    return arr / (scale + float(stabilizer))
+    scale = robust_normalization_scale(arr, stabilizer=stabilizer)
+    return arr / scale
+
+
+def robust_normalization_scale(values: np.ndarray, *, stabilizer: float = 5.0) -> float:
+    """Return a robust global scale shared by all neural signals."""
+    arr = np.asarray(values, dtype=float)
+    if not np.isfinite(arr).all():
+        raise ValueError("Cannot compute a scale for NaN or infinite values.")
+    return float(np.percentile(arr, 95) - np.percentile(arr, 5) + float(stabilizer))
 
 
 def build_condition_input(
@@ -172,8 +182,6 @@ def _condition_matrix_for_region(
     *,
     region: str,
     condition: str,
-    normalize: bool,
-    stabilizer: float,
 ) -> np.ndarray:
     legacy_condition = CANONICAL_TO_LEGACY_CONDITION[condition]
     region_frame = frame.loc[frame["region"].astype(str) == region]
@@ -197,8 +205,6 @@ def _condition_matrix_for_region(
             f"Region {region!r}, condition {condition!r} contains non-finite "
             f"values before normalization: nan={nan_count}, inf={inf_count}."
         )
-    if normalize:
-        matrix = robust_normalize(matrix, stabilizer=stabilizer)
     return matrix.astype(np.float32, copy=False)
 
 
@@ -319,6 +325,7 @@ def build_fixation_mrnn_targets_from_dataframe(
     region_unit_counts: dict[str, int] = {}
     condition_matrices_by_region: dict[str, list[np.ndarray]] = {}
     pca_fits_by_region: dict[str, _RegionPCAFit] = {}
+    normalization_scale: float | None = None
 
     for region in canonical_region_order:
         region_frame = training_df.loc[training_df["region"].astype(str) == region]
@@ -331,17 +338,37 @@ def build_fixation_mrnn_targets_from_dataframe(
                 training_df,
                 region=region,
                 condition=condition,
-                normalize=bool(normalize_targets),
-                stabilizer=float(normalization_stabilizer),
             )
             for condition in condition_names
         ]
-        raw_targets_by_region[region] = np.stack(condition_matrices, axis=0)
         condition_matrices_by_region[region] = condition_matrices
+
+    if normalize_targets:
+        all_values = np.concatenate(
+            [
+                matrix.reshape(-1)
+                for matrices in condition_matrices_by_region.values()
+                for matrix in matrices
+            ]
+        )
+        normalization_scale = robust_normalization_scale(
+            all_values,
+            stabilizer=float(normalization_stabilizer),
+        )
+
+    for region in canonical_region_order:
+        condition_matrices = condition_matrices_by_region[region]
+        if normalization_scale is not None:
+            condition_matrices = [
+                (matrix / normalization_scale).astype(np.float32, copy=False)
+                for matrix in condition_matrices
+            ]
+            condition_matrices_by_region[region] = condition_matrices
+        raw_targets_by_region[region] = np.stack(condition_matrices, axis=0)
         pca_fits_by_region[region] = _fit_region_pca_full(
             condition_matrices,
             region=region,
-            feature_order=feature_order,
+            feature_order=raw_feature_order_by_region[region],
             variance_threshold=float(pca_variance_threshold),
         )
 
@@ -382,6 +409,10 @@ def build_fixation_mrnn_targets_from_dataframe(
         canonical_region_order=canonical_region_order,
         timeline_s_rel=timeline,
         training_dataframe=training_df,
+        normalization_scale=normalization_scale,
+        normalization_stabilizer=float(normalization_stabilizer)
+        if normalize_targets
+        else None,
     )
 
 
@@ -539,6 +570,7 @@ __all__ = [
     "build_fixation_mrnn_targets",
     "build_fixation_mrnn_targets_from_dataframe",
     "normalize_target_mode",
+    "robust_normalization_scale",
     "robust_normalize",
     "serialize_pca_metadata",
     "summarize_fixation_mrnn_pca",

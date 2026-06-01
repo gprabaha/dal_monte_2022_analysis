@@ -52,7 +52,7 @@ class FixationMRNNDiagnosticPlotSettings:
     region_colors: dict[str, str] = field(
         default_factory=lambda: dict(DEFAULT_MRNN_REGION_COLORS)
     )
-    activation_state: str = "h"
+    activation_state: str = "output"
     activation_figsize: tuple[float, float] = (9.5, 7.2)
     pc_timeseries_figsize: tuple[float, float] = (12.0, 8.2)
     current_figsize: tuple[float, float] = (12.0, 10.0)
@@ -110,6 +110,14 @@ def _region_activity_np(
     *,
     state: str,
 ) -> np.ndarray:
+    if str(state).strip().lower() in {"output", "readout", "reconstruction"}:
+        return (
+            replay["canonical_output_by_region"][str(region)]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(float, copy=False)
+        )
     model = replay["model"]
     seq = _state_sequence(replay, state)
     activity = model.mrnn.get_region_activity(seq, str(region))
@@ -172,7 +180,7 @@ def plot_fixation_mrnn_activation_trajectories_3d(
     region_order: Sequence[str] | None = None,
     condition_order: Sequence[str] | None = None,
 ):
-    """Plot per-region hidden activation trajectories in the first three PCs."""
+    """Plot per-region model output trajectories in the first three PCs."""
     settings = settings or FixationMRNNDiagnosticPlotSettings()
     regions = tuple(region_order or checkpoint_region_order(replay))
     conditions = tuple(condition_order or replay["condition_names"])
@@ -247,7 +255,7 @@ def plot_fixation_mrnn_activation_trajectories_3d(
         for condition in conditions
     ]
     fig.legend(handles=handles, loc="upper center", ncol=len(handles), frameon=False)
-    fig.suptitle("mRNN Activation Trajectories", y=0.985, fontsize=13)
+    fig.suptitle("mRNN Output Trajectories", y=0.985, fontsize=13)
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.95))
     return fig, axes
 
@@ -289,7 +297,7 @@ def plot_fixation_mrnn_activation_pc_timeseries(
     region_order: Sequence[str] | None = None,
     condition_order: Sequence[str] | None = None,
 ):
-    """Plot PC1-PC3 activation scores over time for each region and condition."""
+    """Plot PC1-PC3 model output scores over time for each region and condition."""
     settings = settings or FixationMRNNDiagnosticPlotSettings()
     regions = tuple(region_order or checkpoint_region_order(replay))
     conditions = tuple(condition_order or replay["condition_names"])
@@ -334,7 +342,7 @@ def plot_fixation_mrnn_activation_pc_timeseries(
                 ax.set_ylabel(f"{_region_display(str(region))}\nPC score", fontsize=8)
             if row_idx == n_rows - 1:
                 ax.set_xlabel("Time (s)", fontsize=8)
-    fig.suptitle("mRNN Activation PC Timecourses", y=0.995, fontsize=13)
+    fig.suptitle("mRNN Output PC Timecourses", y=0.995, fontsize=13)
     fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.965))
     return fig, axes
 

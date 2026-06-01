@@ -37,7 +37,7 @@ input_region_name: input
 
 # Training defaults.
 target_mode: raw_fr
-epochs: 500
+epochs: 10000
 lr: 0.001
 loss_fn: mse
 l1_weight_scale: 0.0001
@@ -46,6 +46,10 @@ initial_state: zeros
 initial_state_scale: 0.01
 train_initial_state: true
 seed: 123456
+initialization_mode: single
+n_initializations: 100
+overwrite_seed_plan: false
+seed_plan_filename: seed_plan.json
 device: auto
 checkpoint_every: 0
 
@@ -53,5 +57,5 @@ checkpoint_every: 0
 experiment_id: raw_fr_100init_v1
 n_runs: 100
 seed_start: 123456
-shuffle_region_order: true
-shuffle_feature_order: true
+shuffle_region_order: false
+shuffle_feature_order: false

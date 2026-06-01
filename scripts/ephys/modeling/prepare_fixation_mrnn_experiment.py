@@ -29,19 +29,20 @@ def main() -> None:
     parser.add_argument("--experiment-id", default=None)
     parser.add_argument("--n-runs", type=int, default=None)
     parser.add_argument("--seed-start", type=int, default=None)
+    parser.add_argument("--overwrite-seed-plan", action="store_true")
     parser.add_argument(
         "--target-mode",
         action="append",
         default=None,
         help="Target mode to include. May be repeated. Defaults to config target_mode.",
     )
-    parser.add_argument("--no-region-shuffle", action="store_true")
-    parser.add_argument("--no-feature-shuffle", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     args = parser.parse_args()
 
     cfg = load_fixation_mrnn_config(args.mrnn_cfg)
     settings = settings_from_config(cfg)
+    if args.overwrite_seed_plan:
+        settings.overwrite_seed_plan = True
     experiment_id = args.experiment_id or str(cfg.get("experiment_id", "fixation_mrnn_experiment"))
     n_runs = int(args.n_runs if args.n_runs is not None else cfg.get("n_runs", 100))
     seed_start = int(
@@ -55,8 +56,8 @@ def main() -> None:
         n_runs=n_runs,
         seed_start=seed_start,
         target_modes=target_modes,
-        shuffle_region_order=not args.no_region_shuffle,
-        shuffle_feature_order=not args.no_feature_shuffle,
+        shuffle_region_order=False,
+        shuffle_feature_order=False,
         overwrite=bool(args.overwrite),
     )
     print(f"[modeling] wrote run plan: {run_plan_path}")

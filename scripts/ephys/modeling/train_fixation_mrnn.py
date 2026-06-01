@@ -25,6 +25,9 @@ def _override_dict(args: argparse.Namespace) -> dict[str, object]:
         "epochs": args.epochs,
         "lr": args.lr,
         "seed": args.seed,
+        "initialization_mode": args.initialization_mode,
+        "n_initializations": args.n_initializations,
+        "overwrite_seed_plan": True if args.overwrite_seed_plan else None,
         "device": args.device,
         "hidden_units": args.hidden_units,
         "initial_state": args.initial_state,
@@ -47,6 +50,13 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--lr", type=float, default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--initialization-mode",
+        choices=("single", "multiple"),
+        default=None,
+    )
+    parser.add_argument("--n-initializations", type=int, default=None)
+    parser.add_argument("--overwrite-seed-plan", action="store_true")
     parser.add_argument("--device", default=None)
     parser.add_argument("--hidden-units", type=int, default=None)
     parser.add_argument(

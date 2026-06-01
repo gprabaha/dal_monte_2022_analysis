@@ -49,7 +49,6 @@ class FixationMRNNModel(nn.Module):
 
         try:
             from mrnntorch import mRNN
-            from mrnntorch import ElmanmRNN
         except ModuleNotFoundError as exc:
             raise ModuleNotFoundError(
                 "The installed lowercase 'mrnntorch' package is required for "
@@ -67,16 +66,6 @@ class FixationMRNNModel(nn.Module):
             device=str(spec.device),
             dt=float(spec.dt),
             tau=float(spec.tau),
-        )
-        self.mrnn_elman = ElmanmRNN(
-            activation=spec.activation,
-            noise_level_act=float(spec.act_noise),
-            noise_level_inp=float(spec.inp_noise),
-            rec_constrained=bool(spec.rec_constrained),
-            inp_constrained=bool(spec.inp_constrained),
-            batch_first=bool(spec.batch_first),
-            spectral_radius=spec.spectral_radius,
-            device=str(spec.device),
         )
         for region in self.internal_region_order:
             self.mrnn.add_recurrent_region(

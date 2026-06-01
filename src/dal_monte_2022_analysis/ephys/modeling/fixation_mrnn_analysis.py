@@ -136,6 +136,87 @@ def replay_fixation_mrnn_run(
     return replay
 
 
+def compute_fixation_mrnn_reconstruction_accuracy(
+    replay: Mapping[str, object],
+) -> pd.DataFrame:
+    """Compare saved training targets with canonical mRNN readout reconstructions."""
+    checkpoint = replay["checkpoint"]
+    if "target_by_region" not in checkpoint:
+        raise KeyError(
+            "checkpoint_final.pth does not contain target_by_region. Retrain the model "
+            "with the current training code to compute reconstruction accuracy."
+        )
+    rows: list[dict[str, object]] = []
+    condition_names = tuple(replay["condition_names"])
+    for region in checkpoint_region_order(replay):
+        observed = np.asarray(checkpoint["target_by_region"][region], dtype=float)
+        reconstructed = (
+            replay["canonical_output_by_region"][region]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(float, copy=False)
+        )
+        residual = observed - reconstructed
+        for cond_idx, condition in enumerate(condition_names):
+            y = observed[cond_idx].reshape(-1)
+            y_hat = reconstructed[cond_idx].reshape(-1)
+            err = residual[cond_idx].reshape(-1)
+            ss_res = float(np.sum(err**2))
+            ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+            rows.append(
+                {
+                    "target_mode": checkpoint.get("target_mode"),
+                    "region": region,
+                    "condition": str(condition),
+                    "mse": float(np.mean(err**2)),
+                    "rmse": float(np.sqrt(np.mean(err**2))),
+                    "mae": float(np.mean(np.abs(err))),
+                    "r2": float(1.0 - ss_res / ss_tot) if ss_tot > 0 else np.nan,
+                    "correlation": float(np.corrcoef(y, y_hat)[0, 1])
+                    if np.std(y) > 0 and np.std(y_hat) > 0
+                    else np.nan,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def compare_fixation_mrnn_region_variance(
+    replay: Mapping[str, object],
+) -> pd.DataFrame:
+    """Compare total target variance with mRNN reconstructed variance by region."""
+    checkpoint = replay["checkpoint"]
+    if "target_by_region" not in checkpoint:
+        raise KeyError(
+            "checkpoint_final.pth does not contain target_by_region. Retrain the model "
+            "with the current training code to compare variance."
+        )
+    rows: list[dict[str, object]] = []
+    for region in checkpoint_region_order(replay):
+        observed = np.asarray(checkpoint["target_by_region"][region], dtype=float)
+        reconstructed = (
+            replay["canonical_output_by_region"][region]
+            .detach()
+            .cpu()
+            .numpy()
+            .astype(float, copy=False)
+        )
+        observed_var = float(np.var(observed))
+        reconstructed_var = float(np.var(reconstructed))
+        rows.append(
+            {
+                "target_mode": checkpoint.get("target_mode"),
+                "region": region,
+                "observed_total_variance": observed_var,
+                "reconstructed_total_variance": reconstructed_var,
+                "reconstructed_to_observed_variance_ratio": (
+                    reconstructed_var / observed_var if observed_var > 0 else np.nan
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _effective_recurrent_weight(model: FixationMRNNModel) -> torch.Tensor:
     mrnn = model.mrnn
     if mrnn.rec_constrained:
@@ -213,6 +294,50 @@ def compute_fixation_mrnn_currents(replay: Mapping[str, object]) -> tuple[pd.Dat
                 )
             )
     return pd.DataFrame(rows), vectors
+
+
+def compute_fixation_mrnn_relative_current_contributions(
+    current_vectors: Mapping[tuple[str, str], torch.Tensor],
+    *,
+    target_regions: Sequence[str],
+    source_regions: Sequence[str],
+    condition_names: Sequence[str],
+) -> pd.DataFrame:
+    """Compute relative recurrent current contribution by source region.
+
+    For target region r, source region s, condition c, and time t:
+    contribution(s -> r, c, t) = ||I_{s -> r}(c, t)||_2 /
+    sum_q ||I_{q -> r}(c, t)||_2.
+    """
+    rows: list[dict[str, object]] = []
+    for target_region in target_regions:
+        for cond_idx, condition in enumerate(condition_names):
+            norms = []
+            for source_region in source_regions:
+                vector = current_vectors[(str(target_region), str(source_region))]
+                norms.append(torch.linalg.vector_norm(vector[cond_idx], dim=-1))
+            norm_tensor = torch.stack(norms, dim=0)
+            denom = torch.sum(norm_tensor, dim=0, keepdim=True)
+            relative = torch.divide(
+                norm_tensor,
+                torch.where(denom > 0, denom, torch.ones_like(denom)),
+            )
+            relative = torch.where(denom > 0, relative, torch.zeros_like(relative))
+            for source_idx, source_region in enumerate(source_regions):
+                for time_idx in range(relative.shape[1]):
+                    rows.append(
+                        {
+                            "target_region": str(target_region),
+                            "source_region": str(source_region),
+                            "condition": str(condition),
+                            "time_idx": int(time_idx),
+                            "current_norm": float(norm_tensor[source_idx, time_idx].cpu()),
+                            "relative_contribution": float(
+                                relative[source_idx, time_idx].cpu()
+                            ),
+                        }
+                    )
+    return pd.DataFrame(rows)
 
 
 def checkpoint_region_order(replay: Mapping[str, object]) -> tuple[str, ...]:
@@ -464,6 +589,9 @@ __all__ = [
     "compute_fixation_mrnn_currents",
     "compute_fixation_mrnn_eigenvalues",
     "compute_fixation_mrnn_flow_fields",
+    "compute_fixation_mrnn_reconstruction_accuracy",
+    "compute_fixation_mrnn_relative_current_contributions",
+    "compare_fixation_mrnn_region_variance",
     "load_fixation_mrnn_checkpoint",
     "replay_fixation_mrnn_run",
 ]
