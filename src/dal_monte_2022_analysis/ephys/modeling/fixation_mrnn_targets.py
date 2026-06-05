@@ -76,6 +76,13 @@ class FixationMRNNTargets:
             for region, values in self.targets_for_mode(target_mode).items()
         }
 
+    def pc_reconstructed_raw_by_region(self) -> dict[str, np.ndarray]:
+        """Back-project saved region PCs into normalized firing-rate space."""
+        return {
+            region: backproject_region_pcs(self.pcs_by_region[region], self.pca_by_region[region])
+            for region in self.region_order
+        }
+
 
 def normalize_target_mode(target_mode: str) -> str:
     """Normalize target mode aliases."""
@@ -209,6 +216,36 @@ def _project_region_pca(fit: _RegionPCAFit, *, n_components: int) -> tuple[np.nd
         source_features=fit.source_features,
     )
     return pcs, metadata
+
+
+def backproject_region_pcs(pcs: np.ndarray, pca: PCAMetadata | Mapping[str, object]) -> np.ndarray:
+    """Project region PC scores back into normalized firing-rate space.
+
+    This reconstructs the firing-rate trajectories represented by the retained
+    PCs. It intentionally does not restore discarded PCs, so it should be used
+    as the firing-rate target when the model itself is trained in PC space.
+    """
+    scores = np.asarray(pcs, dtype=float)
+    if isinstance(pca, PCAMetadata):
+        mean = np.asarray(pca.mean, dtype=float)
+        components = np.asarray(pca.components, dtype=float)
+    else:
+        mean = np.asarray(pca["mean"], dtype=float)
+        components = np.asarray(pca["components"], dtype=float)
+    n_components = min(scores.shape[-1], components.shape[0])
+    reconstructed = scores[..., :n_components] @ components[:n_components] + mean
+    return reconstructed.astype(np.float32, copy=False)
+
+
+def backproject_region_pcs_by_region(
+    pcs_by_region: Mapping[str, np.ndarray],
+    pca_by_region: Mapping[str, PCAMetadata | Mapping[str, object]],
+) -> dict[str, np.ndarray]:
+    """Back-project region PC score tensors for every region."""
+    return {
+        region: backproject_region_pcs(pcs, pca_by_region[region])
+        for region, pcs in pcs_by_region.items()
+    }
 
 
 def build_fixation_mrnn_targets_from_dataframe(
@@ -390,6 +427,8 @@ __all__ = [
     "build_condition_input",
     "build_fixation_mrnn_targets",
     "build_fixation_mrnn_targets_from_dataframe",
+    "backproject_region_pcs",
+    "backproject_region_pcs_by_region",
     "global_robust_scale",
     "normalize_target_mode",
     "serialize_pca_metadata",

@@ -46,10 +46,10 @@ class FixationMRNNRunSettings:
     normalize_targets: bool = True
     normalization_stabilizer: float = 5.0
     pca_variance_threshold: float = 0.95
-    temporal_basis_count: int = 20
-    hidden_units: int | dict[str, int] = 100
+    temporal_basis_count: int = 0
+    hidden_units: int | dict[str, int] = 50
     activation: str = "softplus"
-    spectral_radius: float | None = 1.3
+    spectral_radius: float | None = 1.2
     rec_constrained: bool = False
     inp_constrained: bool = False
     batch_first: bool = True
@@ -59,11 +59,19 @@ class FixationMRNNRunSettings:
     lr: float = 1e-3
     loss_fn: str = "mse"
     temporal_derivative_loss_scale: float = 1.0
-    temporal_curvature_loss_scale: float = 0.0
+    temporal_curvature_loss_scale: float = 1.0
+    correlation_loss_scale: float = 0.0
+    variance_loss_scale: float = 0.0
+    fr_reconstruction_loss_scale: float = 0.0
+    fr_temporal_derivative_loss_scale: float = 0.0
+    fr_temporal_curvature_loss_scale: float = 0.0
     pre_fixation_loss_weight: float = 1.0
     post_fixation_loss_weight: float = 1.0
     l1_weight_scale: float = 0.0
     l1_rate_scale: float = 0.0
+    l2_weight_scale: float = 0.0
+    l2_rate_scale: float = 0.0
+    gradient_clip_norm: float | None = None
     train_initial_state: bool = True
     initial_state_scale: float = 0.01
     seed: int = 123456
@@ -263,6 +271,95 @@ def _l1(parameters: Sequence[torch.Tensor], scale: float) -> torch.Tensor:
     return penalty * float(scale)
 
 
+def _l2(parameters: Sequence[torch.Tensor], scale: float) -> torch.Tensor:
+    if not parameters:
+        return torch.zeros(())
+    penalty = torch.zeros((), device=parameters[0].device)
+    for param in parameters:
+        penalty = penalty + torch.mean(param**2)
+    return penalty * float(scale)
+
+
+def _temporal_correlation_loss(prediction: torch.Tensor, target: torch.Tensor, *, eps: float = 1e-8) -> torch.Tensor:
+    pred_centered = prediction - torch.mean(prediction, dim=1, keepdim=True)
+    target_centered = target - torch.mean(target, dim=1, keepdim=True)
+    numerator = torch.sum(pred_centered * target_centered, dim=1)
+    denominator = torch.sqrt(torch.sum(pred_centered**2, dim=1) * torch.sum(target_centered**2, dim=1) + eps)
+    correlation = numerator / torch.clamp(denominator, min=eps)
+    return torch.mean(1.0 - correlation)
+
+
+def _variance_loss(prediction: torch.Tensor, target: torch.Tensor, *, eps: float = 1e-8) -> torch.Tensor:
+    pred_var = torch.var(prediction, dim=(0, 1), unbiased=False)
+    target_var = torch.var(target, dim=(0, 1), unbiased=False)
+    return torch.mean((torch.log(pred_var + eps) - torch.log(target_var + eps)) ** 2)
+
+
+def _pc_to_firing_rate_tensor(
+    pcs: torch.Tensor,
+    *,
+    components: torch.Tensor,
+    mean: torch.Tensor,
+) -> torch.Tensor:
+    n_components = min(int(pcs.shape[-1]), int(components.shape[0]))
+    return pcs[..., :n_components] @ components[:n_components] + mean
+
+
+def _pc_backprojection_tensors(
+    targets: FixationMRNNTargets,
+    *,
+    device: str,
+) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+    raw_from_pcs = targets.pc_reconstructed_raw_by_region()
+    target_fr = {
+        region: torch.as_tensor(raw_from_pcs[region], dtype=torch.float32, device=device)
+        for region in targets.region_order
+    }
+    components = {
+        region: torch.as_tensor(targets.pca_by_region[region].components, dtype=torch.float32, device=device)
+        for region in targets.region_order
+    }
+    means = {
+        region: torch.as_tensor(targets.pca_by_region[region].mean, dtype=torch.float32, device=device)
+        for region in targets.region_order
+    }
+    return target_fr, components, means
+
+
+def _firing_rate_reconstruction_loss(
+    settings: FixationMRNNRunSettings,
+    output_by_region: Mapping[str, torch.Tensor],
+    target_fr_by_region: Mapping[str, torch.Tensor],
+    components_by_region: Mapping[str, torch.Tensor],
+    means_by_region: Mapping[str, torch.Tensor],
+    *,
+    region_order: Sequence[str],
+    time_weights: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    reconstruction_losses = []
+    derivative_losses = []
+    curvature_losses = []
+    for region in region_order:
+        pred_fr = _pc_to_firing_rate_tensor(
+            output_by_region[region],
+            components=components_by_region[region],
+            mean=means_by_region[region],
+        )
+        target_fr = target_fr_by_region[region]
+        reconstruction_losses.append(_weighted_loss(settings.loss_fn, pred_fr, target_fr, weights=time_weights))
+        derivative_losses.append(
+            _temporal_difference_loss(settings.loss_fn, pred_fr, target_fr, order=1, weights=time_weights)
+        )
+        curvature_losses.append(
+            _temporal_difference_loss(settings.loss_fn, pred_fr, target_fr, order=2, weights=time_weights)
+        )
+    return (
+        torch.mean(torch.stack(reconstruction_losses)),
+        torch.mean(torch.stack(derivative_losses)),
+        torch.mean(torch.stack(curvature_losses)),
+    )
+
+
 def train_one_initialization(
     settings: FixationMRNNRunSettings,
     *,
@@ -283,6 +380,10 @@ def train_one_initialization(
     target_mode = normalize_target_mode(settings.target_mode)
     targets = make_targets(settings)
     targets_by_region, target = _target_tensors(targets, target_mode=target_mode, device=device)
+    target_fr_by_region, fr_components_by_region, fr_means_by_region = _pc_backprojection_tensors(
+        targets,
+        device=device,
+    )
     inp = torch.as_tensor(targets.input_tensor, dtype=torch.float32, device=device)
     output_dims = targets.output_dims_for_mode(target_mode)
     model_spec = build_model_spec(
@@ -333,16 +434,43 @@ def train_one_initialization(
             order=2,
             weights=time_weights,
         )
+        correlation = _temporal_correlation_loss(out["output"], target)
+        variance = _variance_loss(out["output"], target)
+        if target_mode == "region_pcs":
+            fr_reconstruction, fr_derivative, fr_curvature = _firing_rate_reconstruction_loss(
+                settings,
+                out["output_by_region"],
+                target_fr_by_region,
+                fr_components_by_region,
+                fr_means_by_region,
+                region_order=targets.region_order,
+                time_weights=time_weights,
+            )
+        else:
+            fr_reconstruction = torch.zeros((), dtype=target.dtype, device=device)
+            fr_derivative = torch.zeros((), dtype=target.dtype, device=device)
+            fr_curvature = torch.zeros((), dtype=target.dtype, device=device)
         rate = torch.mean(torch.abs(out["h_seq"])) * float(settings.l1_rate_scale)
+        l2_rate = torch.mean(out["h_seq"] ** 2) * float(settings.l2_rate_scale)
         weight = _l1([param for param in model.mrnn.parameters()], settings.l1_weight_scale)
+        l2_weight = _l2([param for param in model.mrnn.parameters()], settings.l2_weight_scale)
         loss = (
             reconstruction
             + float(settings.temporal_derivative_loss_scale) * derivative
             + float(settings.temporal_curvature_loss_scale) * curvature
+            + float(settings.correlation_loss_scale) * correlation
+            + float(settings.variance_loss_scale) * variance
+            + float(settings.fr_reconstruction_loss_scale) * fr_reconstruction
+            + float(settings.fr_temporal_derivative_loss_scale) * fr_derivative
+            + float(settings.fr_temporal_curvature_loss_scale) * fr_curvature
             + rate
             + weight
+            + l2_rate
+            + l2_weight
         )
         loss.backward()
+        if settings.gradient_clip_norm is not None and float(settings.gradient_clip_norm) > 0:
+            torch.nn.utils.clip_grad_norm_(opt_params, max_norm=float(settings.gradient_clip_norm))
         optimizer.step()
         row = {
             "iteration": iteration,
@@ -351,8 +479,15 @@ def train_one_initialization(
             "mse_loss": float(reconstruction.detach().cpu()),
             "temporal_derivative_loss": float(derivative.detach().cpu()),
             "temporal_curvature_loss": float(curvature.detach().cpu()),
+            "correlation_loss": float(correlation.detach().cpu()),
+            "variance_loss": float(variance.detach().cpu()),
+            "fr_reconstruction_loss": float(fr_reconstruction.detach().cpu()),
+            "fr_temporal_derivative_loss": float(fr_derivative.detach().cpu()),
+            "fr_temporal_curvature_loss": float(fr_curvature.detach().cpu()),
             "rate_loss": float(rate.detach().cpu()),
             "weight_loss": float(weight.detach().cpu()),
+            "l2_rate_loss": float(l2_rate.detach().cpu()),
+            "l2_weight_loss": float(l2_weight.detach().cpu()),
         }
         history.append(row)
 
@@ -375,6 +510,10 @@ def train_one_initialization(
         "timeline_s": targets.timeline_s,
         "input_tensor": targets.input_tensor,
         "target_by_region": target_payload,
+        "pc_reconstructed_raw_by_region": {
+            region: values
+            for region, values in targets.pc_reconstructed_raw_by_region().items()
+        },
         "features_by_region": {
             region: list(features)
             for region, features in targets.features_for_mode(target_mode).items()

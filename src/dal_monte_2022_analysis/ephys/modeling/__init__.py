@@ -1,13 +1,16 @@
 """Minimal ephys mRNN modeling API."""
 
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import (
+    backproject_replay_outputs_to_firing_rates,
     compute_global_flow_field,
     compute_region_flow_field,
     extract_region_currents,
     load_fixation_mrnn_checkpoint,
     output_pc_scores,
+    pc_reconstructed_firing_rate_accuracy,
     reconstruction_accuracy,
     replay_fixation_mrnn_run,
+    replay_fixation_mrnn_run_with_ablations,
     variance_comparison,
 )
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_bridge import (
@@ -28,6 +31,8 @@ from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_targets import (
     CONDITION_TO_COLUMN,
     FixationMRNNTargets,
     PCAMetadata,
+    backproject_region_pcs,
+    backproject_region_pcs_by_region,
     build_condition_input,
     build_fixation_mrnn_targets,
     build_fixation_mrnn_targets_from_dataframe,
@@ -60,6 +65,9 @@ __all__ = [
     "MRNN_CONDITION_LABELS",
     "MRNN_REGION_ORDER",
     "PCAMetadata",
+    "backproject_region_pcs",
+    "backproject_region_pcs_by_region",
+    "backproject_replay_outputs_to_firing_rates",
     "build_condition_input",
     "build_fixation_mrnn_targets",
     "build_fixation_mrnn_targets_from_dataframe",
@@ -76,8 +84,10 @@ __all__ = [
     "make_targets",
     "normalize_target_mode",
     "output_pc_scores",
+    "pc_reconstructed_firing_rate_accuracy",
     "reconstruction_accuracy",
     "replay_fixation_mrnn_run",
+    "replay_fixation_mrnn_run_with_ablations",
     "resolve_combined_fixation_psth_paths",
     "resolve_device",
     "resolve_fixation_mrnn_output_root",

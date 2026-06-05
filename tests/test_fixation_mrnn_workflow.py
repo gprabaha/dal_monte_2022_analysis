@@ -14,12 +14,15 @@ import torch
 from dal_monte_2022_analysis.ephys.modeling import (
     FixationMRNNRunSettings,
     FixationMRNNModel,
+    backproject_region_pcs,
     build_fixation_mrnn_targets_from_dataframe,
     build_model_spec,
     compute_region_flow_field,
     extract_region_currents,
+    pc_reconstructed_firing_rate_accuracy,
     reconstruction_accuracy,
     replay_fixation_mrnn_run,
+    replay_fixation_mrnn_run_with_ablations,
     train_fixation_mrnn_scratch,
     variance_comparison,
 )
@@ -91,6 +94,8 @@ class TestFixationMRNNTargets(unittest.TestCase):
         pc_dims = targets.output_dims_for_mode("region_pcs")
         self.assertEqual(len(set(pc_dims.values())), 1)
         self.assertGreaterEqual(pc_dims["ofc"], 1)
+        backprojected = backproject_region_pcs(targets.pcs_by_region["ofc"], targets.pca_by_region["ofc"])
+        self.assertEqual(backprojected.shape, targets.raw_by_region["ofc"].shape)
 
 
 class TestFixationMRNNTorchSmoke(unittest.TestCase):
@@ -139,6 +144,10 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
                 device="cpu",
                 spectral_radius=1.0,
                 temporal_basis_count=0,
+                l2_weight_scale=1e-6,
+                l2_rate_scale=1e-6,
+                correlation_loss_scale=0.1,
+                variance_loss_scale=0.1,
             )
             result = train_fixation_mrnn_scratch(settings, scratch_id="test_raw", overwrite=True)
             replay = replay_fixation_mrnn_run(result["run_dir"], device="cpu")
@@ -146,6 +155,9 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             self.assertTrue((Path(result["run_dir"]) / "checkpoint_final.pth").exists())
             self.assertTrue((Path(result["run_dir"]) / "seed_plan.json").exists())
             self.assertIn("temporal_derivative_loss", result["history"].columns)
+            self.assertIn("correlation_loss", result["history"].columns)
+            self.assertIn("variance_loss", result["history"].columns)
+            self.assertIn("l2_weight_loss", result["history"].columns)
             self.assertFalse(current_df.empty)
             self.assertIn("signed_projection", current_df.columns)
             self.assertTrue((current_df["relative_contribution"].abs() <= 1.0 + 1e-6).all())
@@ -162,6 +174,47 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             self.assertEqual(flow["region"], "ofc")
             self.assertEqual(flow["u"].shape, (3, 3))
             self.assertEqual(flow["v"].shape, (3, 3))
+
+    def test_pc_training_backprojected_fr_metrics_and_ablation_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            analysis_root = root / "analysis"
+            avg_root = analysis_root / "ephys/psth/fixation_psth_averages"
+            avg_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, analysis_root)
+            _synthetic_combined_dataframe(n_units_per_region=3).to_pickle(avg_root / "combined.pkl")
+            with (avg_root / "timeline.pkl").open("wb") as f:
+                pickle.dump(np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float), f)
+
+            settings = FixationMRNNRunSettings(
+                dataset_cfg_path=str(cfg_path),
+                dataframe_filename="combined.pkl",
+                timeline_filename="timeline.pkl",
+                target_mode="region_pcs",
+                hidden_units=3,
+                epochs=1,
+                seed=778,
+                device="cpu",
+                spectral_radius=1.0,
+                temporal_basis_count=0,
+                fr_reconstruction_loss_scale=0.1,
+                fr_temporal_derivative_loss_scale=0.1,
+                fr_temporal_curvature_loss_scale=0.1,
+            )
+            result = train_fixation_mrnn_scratch(settings, scratch_id="test_pc", overwrite=True)
+            replay = replay_fixation_mrnn_run(result["run_dir"], device="cpu")
+            self.assertIn("fr_reconstruction_loss", result["history"].columns)
+            self.assertIn("pc_reconstructed_raw_by_region", replay["checkpoint"])
+            self.assertFalse(pc_reconstructed_firing_rate_accuracy(replay).empty)
+
+            ablated = replay_fixation_mrnn_run_with_ablations(
+                result["run_dir"],
+                ablations=[("ofc", "bla")],
+                device="cpu",
+            )
+            self.assertEqual(ablated["ablated_connections"], (("ofc", "bla"),))
+            self.assertEqual(ablated["output"].shape, replay["output"].shape)
 
 
 if __name__ == "__main__":

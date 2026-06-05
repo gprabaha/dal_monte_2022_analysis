@@ -13,6 +13,7 @@ from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_model import (
     FixationMRNNModel,
     FixationMRNNModelSpec,
 )
+from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_targets import backproject_region_pcs
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_training import resolve_device
 
 
@@ -66,6 +67,106 @@ def replay_fixation_mrnn_run(
         "region_order": tuple(checkpoint["region_order"]),
         "output_by_region": out["output_by_region"],
     }
+
+
+def _run_model_replay(
+    model: FixationMRNNModel,
+    checkpoint: Mapping[str, object],
+    *,
+    noise: bool = False,
+) -> dict[str, object]:
+    resolved_device = next(model.parameters()).device
+    inp = torch.as_tensor(checkpoint["input_tensor"], dtype=torch.float32, device=resolved_device)
+    h0 = checkpoint["h0"].to(resolved_device)
+    with torch.no_grad():
+        out = model(inp, h0, noise=noise)
+    return {
+        **out,
+        "model": model,
+        "checkpoint": checkpoint,
+        "inp": inp,
+        "h0": h0,
+        "condition_order": tuple(checkpoint["condition_order"]),
+        "region_order": tuple(checkpoint["region_order"]),
+        "output_by_region": out["output_by_region"],
+    }
+
+
+def replay_fixation_mrnn_run_with_ablations(
+    run_dir: str | Path,
+    *,
+    ablations: Sequence[tuple[str, str]],
+    device: str = "cpu",
+    noise: bool = False,
+) -> dict[str, object]:
+    """Replay a checkpoint after zeroing selected recurrent region blocks.
+
+    Each ablation is a ``(source_region, target_region)`` tuple. The
+    corresponding n_source x n_target recurrent block is set to zero before
+    replay, deleting that directed source-to-target current.
+    """
+    model, checkpoint = load_fixation_mrnn_checkpoint(run_dir, device=device)
+    mrnn = model.mrnn
+    with torch.no_grad():
+        for source_region, target_region in ablations:
+            source_start, source_stop = mrnn.get_region_indices(source_region)
+            target_start, target_stop = mrnn.get_region_indices(target_region)
+            mrnn.W_rec[target_start:target_stop, source_start:source_stop] = 0.0
+    replay = _run_model_replay(model, checkpoint, noise=noise)
+    replay["ablated_connections"] = tuple((str(source), str(target)) for source, target in ablations)
+    return replay
+
+
+def backproject_replay_outputs_to_firing_rates(replay: Mapping[str, object]) -> dict[str, np.ndarray]:
+    """Back-project PC-space model outputs into normalized firing-rate space."""
+    checkpoint = replay["checkpoint"]
+    if checkpoint.get("target_mode") != "region_pcs":
+        raise ValueError("Firing-rate backprojection is only defined for region_pcs checkpoints.")
+    return {
+        region: backproject_region_pcs(
+            replay["output_by_region"][region].detach().cpu().numpy().astype(float, copy=False),
+            checkpoint["pca_by_region"][region],
+        )
+        for region in replay["region_order"]
+    }
+
+
+def pc_reconstructed_firing_rate_accuracy(replay: Mapping[str, object]) -> pd.DataFrame:
+    """Compare predicted and target PC-backprojected firing-rate trajectories."""
+    checkpoint = replay["checkpoint"]
+    target_fr = checkpoint.get("pc_reconstructed_raw_by_region")
+    if target_fr is None:
+        target_fr = {
+            region: backproject_region_pcs(
+                np.asarray(checkpoint["target_by_region"][region], dtype=float),
+                checkpoint["pca_by_region"][region],
+            )
+            for region in replay["region_order"]
+        }
+    predicted_fr = backproject_replay_outputs_to_firing_rates(replay)
+    rows = []
+    for region in replay["region_order"]:
+        observed = np.asarray(target_fr[region], dtype=float)
+        predicted = np.asarray(predicted_fr[region], dtype=float)
+        for cond_idx, condition in enumerate(replay["condition_order"]):
+            y = observed[cond_idx].reshape(-1)
+            yhat = predicted[cond_idx].reshape(-1)
+            err = y - yhat
+            ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+            ss_res = float(np.sum(err**2))
+            rows.append(
+                {
+                    "region": region,
+                    "condition": condition,
+                    "mse": float(np.mean(err**2)),
+                    "mae": float(np.mean(np.abs(err))),
+                    "r2": float(1.0 - ss_res / ss_tot) if ss_tot > 0 else np.nan,
+                    "correlation": float(np.corrcoef(y, yhat)[0, 1])
+                    if np.std(y) > 0 and np.std(yhat) > 0
+                    else np.nan,
+                }
+            )
+    return pd.DataFrame(rows)
 
 
 def reconstruction_accuracy(replay: Mapping[str, object]) -> pd.DataFrame:
@@ -394,9 +495,12 @@ __all__ = [
     "extract_region_currents",
     "compute_global_flow_field",
     "compute_region_flow_field",
+    "backproject_replay_outputs_to_firing_rates",
     "load_fixation_mrnn_checkpoint",
     "output_pc_scores",
+    "pc_reconstructed_firing_rate_accuracy",
     "reconstruction_accuracy",
     "replay_fixation_mrnn_run",
+    "replay_fixation_mrnn_run_with_ablations",
     "variance_comparison",
 ]
