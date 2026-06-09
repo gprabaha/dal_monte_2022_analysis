@@ -85,6 +85,48 @@ class FixationMRNNModel(nn.Module):
     def total_num_units(self) -> int:
         return int(self.mrnn.total_num_units)
 
+    def hidden_region_slices(self) -> dict[str, slice]:
+        """Return hidden-state slices for each recurrent region."""
+        slices = {}
+        for region in self.region_order:
+            start, stop = self.mrnn.get_region_indices(region)
+            slices[region] = slice(int(start), int(stop))
+        return slices
+
+    def output_region_slices(self) -> dict[str, slice]:
+        """Return concatenated-output slices for each readout region."""
+        slices = {}
+        start = 0
+        for region in self.region_order:
+            stop = start + int(self.spec.output_dims_by_region[region])
+            slices[region] = slice(start, stop)
+            start = stop
+        return slices
+
+    def readout_weight_matrix(self) -> torch.Tensor:
+        """Return the explicit block-local hidden-to-output readout matrix.
+
+        The forward path uses one linear head per region. This helper exposes
+        the equivalent concatenated matrix, with zeros outside each
+        region's own hidden-to-output block.
+        """
+        first_weight = next(iter(self.output_heads.values())).weight
+        weight = torch.zeros(
+            sum(int(self.spec.output_dims_by_region[region]) for region in self.region_order),
+            self.total_num_units,
+            dtype=first_weight.dtype,
+            device=first_weight.device,
+        )
+        hidden_slices = self.hidden_region_slices()
+        output_slices = self.output_region_slices()
+        for region in self.region_order:
+            weight[output_slices[region], hidden_slices[region]] = self.output_heads[region].weight
+        return weight
+
+    def readout_bias_vector(self) -> torch.Tensor:
+        """Return the concatenated output bias ordered by region."""
+        return torch.cat([self.output_heads[region].bias for region in self.region_order], dim=0)
+
     def forward(
         self,
         inp: torch.Tensor,

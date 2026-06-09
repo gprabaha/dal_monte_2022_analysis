@@ -18,7 +18,9 @@ from dal_monte_2022_analysis.ephys.modeling import (
     build_fixation_mrnn_targets_from_dataframe,
     build_model_spec,
     compute_region_flow_field,
+    extract_fixation_latent_dynamics,
     extract_region_currents,
+    extract_region_current_vectors,
     pc_reconstructed_firing_rate_accuracy,
     reconstruction_accuracy,
     replay_fixation_mrnn_run,
@@ -120,6 +122,18 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
         self.assertEqual(tuple(out["output_by_region"]), regions)
         self.assertEqual(out["output"].shape, (3, 4, 8))
         self.assertEqual(out["h_seq"].shape[-1], model.total_num_units)
+        readout = model.readout_weight_matrix()
+        self.assertEqual(readout.shape, (8, model.total_num_units))
+        hidden_slices = model.hidden_region_slices()
+        output_slices = model.output_region_slices()
+        for output_region in regions:
+            for hidden_region in regions:
+                block = readout[output_slices[output_region], hidden_slices[hidden_region]]
+                if output_region == hidden_region:
+                    self.assertTrue(torch.equal(block, model.output_heads[output_region].weight))
+                else:
+                    self.assertTrue(torch.count_nonzero(block).item() == 0)
+        self.assertTrue(torch.equal(model.readout_bias_vector()[:2], model.output_heads["ofc"].bias))
 
     def test_one_iteration_training_replay_and_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -152,6 +166,8 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             result = train_fixation_mrnn_scratch(settings, scratch_id="test_raw", overwrite=True)
             replay = replay_fixation_mrnn_run(result["run_dir"], device="cpu")
             current_df, current_vectors = extract_region_currents(replay)
+            latent = extract_fixation_latent_dynamics(replay)
+            recurrent_vectors = extract_region_current_vectors(replay)
             self.assertTrue((Path(result["run_dir"]) / "checkpoint_final.pth").exists())
             self.assertTrue((Path(result["run_dir"]) / "seed_plan.json").exists())
             self.assertIn("temporal_derivative_loss", result["history"].columns)
@@ -162,6 +178,20 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             self.assertIn("signed_projection", current_df.columns)
             self.assertTrue((current_df["relative_contribution"].abs() <= 1.0 + 1e-6).all())
             self.assertTrue(current_vectors)
+            self.assertEqual(tuple(latent), replay["condition_order"])
+            self.assertIn("hidden_state", latent["face_interactive"])
+            self.assertIn("recurrent_drive", latent["face_interactive"])
+            self.assertEqual(latent["face_interactive"]["hidden_state"].shape, replay["h_seq"][0].shape)
+            self.assertEqual(latent["face_interactive"]["recurrent_drive"].shape, replay["h_seq"][0].shape)
+            self.assertIn(("ofc", "bla"), recurrent_vectors)
+            self.assertEqual(
+                recurrent_vectors[("ofc", "bla")].shape,
+                (
+                    len(replay["condition_order"]),
+                    len(replay["checkpoint"]["timeline_s"]),
+                    settings.hidden_units,
+                ),
+            )
             self.assertFalse(reconstruction_accuracy(replay).empty)
             self.assertFalse(variance_comparison(replay).empty)
             flow = compute_region_flow_field(

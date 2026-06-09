@@ -231,6 +231,91 @@ def _effective_input_weight(model: FixationMRNNModel) -> torch.Tensor:
     return mrnn.W_inp * mrnn.W_inp_mask
 
 
+def replay_hidden_state_for_update(replay: Mapping[str, object]) -> torch.Tensor:
+    """Return h_t states used to compute each replayed h_{t+1}.
+
+    The returned tensor has the same condition and time axes as ``h_seq``.
+    Its first time bin is the saved initial state h0; later bins are the
+    previous replayed hidden states.
+    """
+    h_seq = replay["h_seq"]
+    h0 = replay["h0"].to(h_seq.device)
+    return torch.cat([h0.unsqueeze(1), h_seq[:, :-1]], dim=1)
+
+
+def extract_fixation_latent_dynamics(
+    replay: Mapping[str, object],
+    *,
+    detach_cpu: bool = True,
+) -> dict[str, dict[str, torch.Tensor]]:
+    """Extract condition-wise h_t, W_rec h_t, and related Elman drives.
+
+    The tensors are keyed by fixation condition. ``hidden_state`` is h_t, the
+    state that drives the next update at that time bin. ``next_hidden_state``
+    is h_{t+1}, i.e. the replayed hidden activity returned by the model.
+    ``recurrent_drive`` is W_rec h_t before nonlinearity and before adding
+    input drive or tonic bias.
+    """
+    model = replay["model"]
+    mrnn = model.mrnn
+    h_t = replay_hidden_state_for_update(replay)
+    h_next = replay["h_seq"]
+    inp = replay["inp"]
+    w_rec = _effective_recurrent_weight(model)
+    w_inp = _effective_input_weight(model)
+    recurrent_drive = torch.einsum("ij,btj->bti", w_rec, h_t)
+    input_drive = torch.einsum("ij,btj->bti", w_inp, inp)
+    bias = mrnn.tonic_inp.reshape(1, 1, -1).expand_as(recurrent_drive)
+    preactivation = recurrent_drive + input_drive + bias
+
+    payload = {}
+    for cond_idx, condition in enumerate(tuple(replay["condition_order"])):
+        condition_payload = {
+            "hidden_state": h_t[cond_idx],
+            "recurrent_drive": recurrent_drive[cond_idx],
+            "input_drive": input_drive[cond_idx],
+            "bias": bias[cond_idx],
+            "preactivation": preactivation[cond_idx],
+            "next_hidden_state": h_next[cond_idx],
+        }
+        if detach_cpu:
+            condition_payload = {
+                key: value.detach().cpu()
+                for key, value in condition_payload.items()
+            }
+        payload[str(condition)] = condition_payload
+    return payload
+
+
+def extract_region_current_vectors(
+    replay: Mapping[str, object],
+    *,
+    detach_cpu: bool = True,
+) -> dict[tuple[str, str], torch.Tensor]:
+    """Return source-to-target recurrent current vectors by region pair.
+
+    Each tensor is shaped ``(condition, time, target_region_hidden_units)`` and
+    contains W_rec[target_region, source_region] @ h_t[source_region]. Keys
+    are ordered as ``(source_region, target_region)``.
+    """
+    model = replay["model"]
+    mrnn = model.mrnn
+    h_t = replay_hidden_state_for_update(replay)
+    w_rec = _effective_recurrent_weight(model)
+    vectors: dict[tuple[str, str], torch.Tensor] = {}
+    for target_region in tuple(replay["region_order"]):
+        target_start, target_stop = mrnn.get_region_indices(target_region)
+        target_slice = slice(target_start, target_stop)
+        for source_region in tuple(replay["region_order"]):
+            source_start, source_stop = mrnn.get_region_indices(source_region)
+            source_slice = slice(source_start, source_stop)
+            block = w_rec[target_slice, source_slice]
+            source_h = h_t[..., source_slice]
+            current = torch.einsum("ij,btj->bti", block, source_h)
+            vectors[(source_region, target_region)] = current.detach().cpu() if detach_cpu else current
+    return vectors
+
+
 def extract_region_currents(replay: Mapping[str, object]) -> tuple[pd.DataFrame, dict[tuple[str, str], torch.Tensor]]:
     """Extract Elman recurrent currents.
 
@@ -248,8 +333,7 @@ def extract_region_currents(replay: Mapping[str, object]) -> tuple[pd.DataFrame,
     model = replay["model"]
     mrnn = model.mrnn
     h_seq = replay["h_seq"]
-    h0 = replay["h0"]
-    h_prev = torch.cat([h0.unsqueeze(1), h_seq[:, :-1]], dim=1)
+    h_prev = replay_hidden_state_for_update(replay)
     inp = replay["inp"]
     w_rec = _effective_recurrent_weight(model)
     w_inp = _effective_input_weight(model)
@@ -492,7 +576,9 @@ def output_pc_scores(
 
 
 __all__ = [
+    "extract_fixation_latent_dynamics",
     "extract_region_currents",
+    "extract_region_current_vectors",
     "compute_global_flow_field",
     "compute_region_flow_field",
     "backproject_replay_outputs_to_firing_rates",
@@ -500,6 +586,7 @@ __all__ = [
     "output_pc_scores",
     "pc_reconstructed_firing_rate_accuracy",
     "reconstruction_accuracy",
+    "replay_hidden_state_for_update",
     "replay_fixation_mrnn_run",
     "replay_fixation_mrnn_run_with_ablations",
     "variance_comparison",
