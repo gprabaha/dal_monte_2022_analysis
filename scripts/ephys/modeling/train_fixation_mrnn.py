@@ -29,6 +29,18 @@ def _override_dict(args: argparse.Namespace) -> dict[str, object]:
         "overwrite_seed_plan": True if args.overwrite_seed_plan else None,
         "device": args.device,
         "hidden_units": args.hidden_units,
+        "temporal_basis_count": args.temporal_basis_count,
+        "temporal_derivative_loss_scale": args.temporal_derivative_loss_scale,
+        "temporal_curvature_loss_scale": args.temporal_curvature_loss_scale,
+        "correlation_loss_scale": args.correlation_loss_scale,
+        "variance_loss_scale": args.variance_loss_scale,
+        "fr_reconstruction_loss_scale": args.fr_reconstruction_loss_scale,
+        "fr_temporal_derivative_loss_scale": args.fr_temporal_derivative_loss_scale,
+        "fr_temporal_curvature_loss_scale": args.fr_temporal_curvature_loss_scale,
+        "l1_weight_scale": args.l1_weight_scale,
+        "l1_rate_scale": args.l1_rate_scale,
+        "l2_weight_scale": args.l2_weight_scale,
+        "l2_rate_scale": args.l2_rate_scale,
         "initial_state": args.initial_state,
     }
 
@@ -55,6 +67,18 @@ def main() -> None:
     parser.add_argument("--overwrite-seed-plan", action="store_true")
     parser.add_argument("--device", default=None)
     parser.add_argument("--hidden-units", type=int, default=None)
+    parser.add_argument("--temporal-basis-count", type=int, default=None)
+    parser.add_argument("--temporal-derivative-loss-scale", type=float, default=None)
+    parser.add_argument("--temporal-curvature-loss-scale", type=float, default=None)
+    parser.add_argument("--correlation-loss-scale", type=float, default=None)
+    parser.add_argument("--variance-loss-scale", type=float, default=None)
+    parser.add_argument("--fr-reconstruction-loss-scale", type=float, default=None)
+    parser.add_argument("--fr-temporal-derivative-loss-scale", type=float, default=None)
+    parser.add_argument("--fr-temporal-curvature-loss-scale", type=float, default=None)
+    parser.add_argument("--l1-weight-scale", type=float, default=None)
+    parser.add_argument("--l1-rate-scale", type=float, default=None)
+    parser.add_argument("--l2-weight-scale", type=float, default=None)
+    parser.add_argument("--l2-rate-scale", type=float, default=None)
     parser.add_argument(
         "--initial-state",
         choices=("zeros", "normal", "uniform"),
