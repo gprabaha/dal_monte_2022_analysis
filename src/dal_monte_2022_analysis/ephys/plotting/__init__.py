@@ -74,6 +74,16 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_population_pca import (
     plot_fixation_population_pca_pairwise_geometry_violins,
     plot_fixation_population_pca_trajectories,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_mrnn import (
+    FixationMRNNDiagnosticPlotSettings,
+    plot_fixation_mrnn_activation_pc_timeseries,
+    plot_fixation_mrnn_activation_trajectories_3d,
+    plot_fixation_mrnn_average_current_influence_bars,
+    plot_fixation_mrnn_average_current_influence_pies,
+    plot_fixation_mrnn_current_influence,
+    plot_fixation_mrnn_flow_fields_at_time,
+    plot_fixation_mrnn_signal_evolution,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_psth_variability import (
     FixationPSTHVariabilityPlotSettings,
     plot_fixation_psth_variability_violins,
@@ -131,6 +141,14 @@ __all__ = [
     "plot_fixation_population_pca_explained_variance_bars",
     "plot_fixation_population_pca_explained_variance_cumulative",
     "plot_fixation_population_pca_pairwise_geometry_violins",
+    "FixationMRNNDiagnosticPlotSettings",
+    "plot_fixation_mrnn_activation_pc_timeseries",
+    "plot_fixation_mrnn_activation_trajectories_3d",
+    "plot_fixation_mrnn_average_current_influence_bars",
+    "plot_fixation_mrnn_average_current_influence_pies",
+    "plot_fixation_mrnn_current_influence",
+    "plot_fixation_mrnn_flow_fields_at_time",
+    "plot_fixation_mrnn_signal_evolution",
     "FixationPSTHVariabilityPlotSettings",
     "plot_fixation_psth_variability_violins",
     "FixationROIVsPeriodFactorialPlotSettings",
