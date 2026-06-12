@@ -16,6 +16,7 @@ from dal_monte_2022_analysis.ephys.modeling import (
     settings_from_config,
     train_fixation_mrnn_scratch,
 )
+from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_training import TrainingDivergedError
 
 
 def _override_dict(args: argparse.Namespace) -> dict[str, object]:
@@ -41,6 +42,10 @@ def _override_dict(args: argparse.Namespace) -> dict[str, object]:
         "l1_rate_scale": args.l1_rate_scale,
         "l2_weight_scale": args.l2_weight_scale,
         "l2_rate_scale": args.l2_rate_scale,
+        "gradient_clip_norm": args.gradient_clip_norm,
+        "divergence_loss_threshold": args.divergence_loss_threshold,
+        "divergence_patience": args.divergence_patience,
+        "divergence_min_iteration": args.divergence_min_iteration,
         "initial_state": args.initial_state,
     }
 
@@ -79,6 +84,11 @@ def main() -> None:
     parser.add_argument("--l1-rate-scale", type=float, default=None)
     parser.add_argument("--l2-weight-scale", type=float, default=None)
     parser.add_argument("--l2-rate-scale", type=float, default=None)
+    parser.add_argument("--gradient-clip-norm", type=float, default=None)
+    parser.add_argument("--divergence-loss-threshold", type=float, default=None)
+    parser.add_argument("--divergence-patience", type=int, default=None)
+    parser.add_argument("--divergence-min-iteration", type=int, default=None)
+    parser.add_argument("--max-divergence-retries", type=int, default=0)
     parser.add_argument(
         "--initial-state",
         choices=("zeros", "normal", "uniform"),
@@ -88,14 +98,38 @@ def main() -> None:
     args = parser.parse_args()
 
     cfg = load_fixation_mrnn_config(args.mrnn_cfg)
-    settings = settings_from_config(cfg, overrides=_override_dict(args))
-
     scratch_id = args.scratch_id or str(cfg.get("scratch_id", "latest"))
-    result = train_fixation_mrnn_scratch(
-        settings,
-        scratch_id=scratch_id,
-        overwrite=bool(args.overwrite),
-    )
+    base_seed = int(args.seed if args.seed is not None else cfg.get("seed", 123456))
+    retry_rng = None
+    result = None
+    max_retries = max(0, int(args.max_divergence_retries))
+    for attempt_idx in range(max_retries + 1):
+        if attempt_idx == 0:
+            attempt_seed = base_seed
+        else:
+            if retry_rng is None:
+                import numpy as np
+
+                retry_rng = np.random.default_rng(base_seed)
+            attempt_seed = int(retry_rng.integers(1, np.iinfo(np.int32).max))
+            print(
+                f"[modeling] retrying diverged run with seed={attempt_seed} "
+                f"(attempt {attempt_idx + 1}/{max_retries + 1})"
+            )
+        overrides = {**_override_dict(args), "seed": attempt_seed}
+        settings = settings_from_config(cfg, overrides=overrides)
+        try:
+            result = train_fixation_mrnn_scratch(
+                settings,
+                scratch_id=scratch_id,
+                overwrite=bool(args.overwrite),
+            )
+            break
+        except TrainingDivergedError:
+            if attempt_idx >= max_retries:
+                raise
+    if result is None:
+        raise RuntimeError("Training did not produce a result.")
 
     print(f"[modeling] run dir: {result['run_dir']}")
     if "checkpoint_path" in result:

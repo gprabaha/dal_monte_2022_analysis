@@ -31,6 +31,10 @@ from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_targets import (
 from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
 
 
+class TrainingDivergedError(RuntimeError):
+    """Raised when a training run exceeds the configured divergence guardrails."""
+
+
 @dataclass
 class FixationMRNNRunSettings:
     """Settings for target creation, model construction, and training."""
@@ -72,6 +76,9 @@ class FixationMRNNRunSettings:
     l2_weight_scale: float = 0.0
     l2_rate_scale: float = 0.0
     gradient_clip_norm: float | None = None
+    divergence_loss_threshold: float | None = None
+    divergence_patience: int = 100
+    divergence_min_iteration: int = 100
     train_initial_state: bool = True
     initial_state_scale: float = 0.01
     seed: int = 123456
@@ -360,6 +367,37 @@ def _firing_rate_reconstruction_loss(
     )
 
 
+def _write_failed_training_manifest(
+    *,
+    run_dir: Path,
+    settings: FixationMRNNRunSettings,
+    seed: int,
+    target_mode: str,
+    history: Sequence[Mapping[str, object]],
+    reason: str,
+    iteration: int,
+    loss_value: float,
+) -> None:
+    """Persist a failed run record without writing a usable checkpoint."""
+    history_df = pd.DataFrame(history)
+    if not history_df.empty:
+        history_df.to_csv(run_dir / "history.csv", index=False)
+    payload = {
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "status": "failed",
+        "failure_reason": str(reason),
+        "failure_iteration": int(iteration),
+        "failure_loss": float(loss_value),
+        "seed": int(seed),
+        "target_mode": str(target_mode),
+        "run_dir": str(run_dir),
+        "settings": asdict(settings),
+    }
+    for filename in ("manifest.json", "training_failed.json"):
+        with (run_dir / filename).open("w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, sort_keys=True)
+
+
 def train_one_initialization(
     settings: FixationMRNNRunSettings,
     *,
@@ -415,6 +453,7 @@ def train_one_initialization(
         device=device,
     )
     history = []
+    divergence_count = 0
 
     for iteration in tqdm(range(1, int(settings.epochs) + 1), desc=f"{target_mode} seed={seed}", unit="iter"):
         optimizer.zero_grad()
@@ -468,10 +507,6 @@ def train_one_initialization(
             + l2_rate
             + l2_weight
         )
-        loss.backward()
-        if settings.gradient_clip_norm is not None and float(settings.gradient_clip_norm) > 0:
-            torch.nn.utils.clip_grad_norm_(opt_params, max_norm=float(settings.gradient_clip_norm))
-        optimizer.step()
         row = {
             "iteration": iteration,
             "loss": float(loss.detach().cpu()),
@@ -490,6 +525,39 @@ def train_one_initialization(
             "l2_weight_loss": float(l2_weight.detach().cpu()),
         }
         history.append(row)
+
+        loss_value = float(row["loss"])
+        loss_is_finite = bool(np.isfinite(loss_value))
+        threshold = settings.divergence_loss_threshold
+        threshold_hit = (
+            threshold is not None
+            and int(iteration) >= int(settings.divergence_min_iteration)
+            and loss_value > float(threshold)
+        )
+        if not loss_is_finite or threshold_hit:
+            divergence_count += 1
+        else:
+            divergence_count = 0
+        if not loss_is_finite or divergence_count >= int(settings.divergence_patience):
+            reason = "non_finite_loss" if not loss_is_finite else "loss_above_divergence_threshold"
+            _write_failed_training_manifest(
+                run_dir=run_dir,
+                settings=settings,
+                seed=int(seed),
+                target_mode=target_mode,
+                history=history,
+                reason=reason,
+                iteration=int(iteration),
+                loss_value=loss_value,
+            )
+            raise TrainingDivergedError(
+                f"Training diverged for seed={seed} at iteration={iteration}: "
+                f"{reason}, loss={loss_value:g}."
+            )
+        loss.backward()
+        if settings.gradient_clip_norm is not None and float(settings.gradient_clip_norm) > 0:
+            torch.nn.utils.clip_grad_norm_(opt_params, max_norm=float(settings.gradient_clip_norm))
+        optimizer.step()
 
     history_df = pd.DataFrame(history)
     history_df.to_csv(run_dir / "history.csv", index=False)
@@ -593,6 +661,7 @@ def train_fixation_mrnn_scratch(
 
 __all__ = [
     "FixationMRNNRunSettings",
+    "TrainingDivergedError",
     "load_fixation_mrnn_config",
     "load_or_create_seed_plan",
     "make_targets",

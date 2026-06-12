@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import pickle
 import tempfile
 import unittest
@@ -245,6 +246,45 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             )
             self.assertEqual(ablated["ablated_connections"], (("ofc", "bla"),))
             self.assertEqual(ablated["output"].shape, replay["output"].shape)
+
+    def test_training_divergence_threshold_writes_failed_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            analysis_root = root / "analysis"
+            avg_root = analysis_root / "ephys/psth/fixation_psth_averages"
+            avg_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, analysis_root)
+            _synthetic_combined_dataframe().to_pickle(avg_root / "combined.pkl")
+            with (avg_root / "timeline.pkl").open("wb") as f:
+                pickle.dump(np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float), f)
+
+            settings = FixationMRNNRunSettings(
+                dataset_cfg_path=str(cfg_path),
+                dataframe_filename="combined.pkl",
+                timeline_filename="timeline.pkl",
+                target_mode="raw_fr",
+                hidden_units=3,
+                epochs=2,
+                seed=779,
+                device="cpu",
+                spectral_radius=1.0,
+                temporal_basis_count=0,
+                divergence_loss_threshold=0.0,
+                divergence_patience=1,
+                divergence_min_iteration=1,
+            )
+
+            with self.assertRaisesRegex(RuntimeError, "Training diverged"):
+                train_fixation_mrnn_scratch(settings, scratch_id="test_diverged", overwrite=True)
+
+            run_dir = analysis_root / "ephys/modeling/fixation_mrnn/scratch/test_diverged"
+            self.assertFalse((run_dir / "checkpoint_final.pth").exists())
+            self.assertTrue((run_dir / "training_failed.json").exists())
+            with (run_dir / "manifest.json").open("r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            self.assertEqual(manifest["status"], "failed")
+            self.assertEqual(manifest["failure_reason"], "loss_above_divergence_threshold")
 
 
 if __name__ == "__main__":
