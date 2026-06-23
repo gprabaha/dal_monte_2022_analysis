@@ -257,6 +257,7 @@ def build_fixation_mrnn_targets_from_dataframe(
     normalize_targets: bool = True,
     normalization_stabilizer: float = 5.0,
     pca_variance_threshold: float = 0.95,
+    pca_n_components: int | None = None,
     temporal_basis_count: int = 20,
 ) -> FixationMRNNTargets:
     """Build raw firing-rate and region-PC targets from combined PSTH rows."""
@@ -310,7 +311,12 @@ def build_fixation_mrnn_targets_from_dataframe(
             variance_threshold=float(pca_variance_threshold),
         )
 
-    shared_n_components = max(fit.n_components_required for fit in pca_fits_by_region.values())
+    if pca_n_components is None:
+        shared_n_components = max(fit.n_components_required for fit in pca_fits_by_region.values())
+    else:
+        shared_n_components = int(pca_n_components)
+        if shared_n_components <= 0:
+            raise ValueError("pca_n_components must be positive when provided.")
     for region in region_order:
         pcs, pca = _project_region_pca(
             pca_fits_by_region[region],
@@ -355,6 +361,7 @@ def build_fixation_mrnn_targets(
     normalize_targets: bool = True,
     normalization_stabilizer: float = 5.0,
     pca_variance_threshold: float = 0.95,
+    pca_n_components: int | None = None,
     temporal_basis_count: int = 20,
 ) -> FixationMRNNTargets:
     """Load combined PSTH files and build targets."""
@@ -372,6 +379,7 @@ def build_fixation_mrnn_targets(
         normalize_targets=normalize_targets,
         normalization_stabilizer=normalization_stabilizer,
         pca_variance_threshold=pca_variance_threshold,
+        pca_n_components=pca_n_components,
         temporal_basis_count=temporal_basis_count,
     )
     return FixationMRNNTargets(

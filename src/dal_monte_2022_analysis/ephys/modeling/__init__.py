@@ -24,10 +24,15 @@ from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_bridge import (
     load_combined_fixation_psth,
     resolve_combined_fixation_psth_paths,
 )
+from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_cca import (
+    compute_pairwise_regional_pc_cca,
+    plot_pairwise_cca_variance,
+)
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_model import (
     FixationMRNNModel,
     FixationMRNNModelSpec,
     build_model_spec,
+    normalize_recurrent_connectivity,
 )
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_targets import (
     CONDITION_ORDER,
@@ -77,6 +82,7 @@ __all__ = [
     "build_model_spec",
     "build_mrnn_training_dataframe",
     "compute_global_flow_field",
+    "compute_pairwise_regional_pc_cca",
     "compute_region_flow_field",
     "extract_fixation_latent_dynamics",
     "extract_region_currents",
@@ -88,8 +94,10 @@ __all__ = [
     "load_or_create_seed_plan",
     "make_targets",
     "normalize_target_mode",
+    "normalize_recurrent_connectivity",
     "output_pc_scores",
     "pc_reconstructed_firing_rate_accuracy",
+    "plot_pairwise_cca_variance",
     "reconstruction_accuracy",
     "replay_hidden_state_for_update",
     "replay_fixation_mrnn_run",

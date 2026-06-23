@@ -21,6 +21,7 @@ class FixationMRNNModelSpec:
     spectral_radius: float | None = 1.3
     rec_constrained: bool = False
     inp_constrained: bool = False
+    recurrent_connectivity: str = "full"
     batch_first: bool = True
     inp_noise: float = 0.0
     act_noise: float = 0.0
@@ -66,10 +67,13 @@ class FixationMRNNModel(nn.Module):
         )
         for source in self.region_order:
             for target in self.region_order:
-                self.mrnn.add_recurrent_connection(source, target)
+                if _region_pair_connected(source, target, spec.recurrent_connectivity):
+                    self.mrnn.add_recurrent_connection(source, target)
         for target in self.region_order:
             self.mrnn.add_input_connection(spec.input_region_name, target)
         self.mrnn.finalize_connectivity()
+        if normalize_recurrent_connectivity(spec.recurrent_connectivity) == "cross_region_with_self_diagonal":
+            self._enable_self_diagonal_recurrent_mask()
 
         self.output_heads = nn.ModuleDict(
             {
@@ -92,6 +96,19 @@ class FixationMRNNModel(nn.Module):
             start, stop = self.mrnn.get_region_indices(region)
             slices[region] = slice(int(start), int(stop))
         return slices
+
+    def _enable_self_diagonal_recurrent_mask(self) -> None:
+        """Enable only matched-unit self dynamics inside each region block."""
+        with torch.no_grad():
+            for region in self.region_order:
+                region_slice = self.hidden_region_slices()[region]
+                block = self.mrnn.W_rec_mask[region_slice, region_slice]
+                block.zero_()
+                diagonal_count = min(block.shape)
+                idx = torch.arange(diagonal_count, device=block.device)
+                block[idx, idx] = 1.0
+                sign_block = self.mrnn.W_rec_sign_matrix[region_slice, region_slice]
+                sign_block[idx, idx] = 1.0
 
     def output_region_slices(self) -> dict[str, slice]:
         """Return concatenated-output slices for each readout region."""
@@ -171,4 +188,50 @@ def build_model_spec(
     )
 
 
-__all__ = ["FixationMRNNModel", "FixationMRNNModelSpec", "build_model_spec"]
+RECURRENT_CONNECTIVITY_ALIASES = {
+    "full": "full",
+    "all": "full",
+    "all_region": "full",
+    "all_region_to_region": "full",
+    "all_regions": "full",
+    "within": "within_region",
+    "within_region": "within_region",
+    "internal": "within_region",
+    "internal_only": "within_region",
+    "cross": "cross_region_with_self_diagonal",
+    "cross_region": "cross_region_with_self_diagonal",
+    "cross_region_only": "cross_region_with_self_diagonal",
+    "cross_region_with_self_diagonal": "cross_region_with_self_diagonal",
+    "cross_plus_diagonal": "cross_region_with_self_diagonal",
+}
+
+
+def normalize_recurrent_connectivity(connectivity: str) -> str:
+    """Normalize recurrent connectivity aliases."""
+    token = str(connectivity).strip().lower().replace("-", "_")
+    try:
+        return RECURRENT_CONNECTIVITY_ALIASES[token]
+    except KeyError as exc:
+        raise ValueError(
+            "recurrent_connectivity must be one of: "
+            "'full', 'within_region', or 'cross_region_with_self_diagonal'."
+        ) from exc
+
+
+def _region_pair_connected(source: str, target: str, connectivity: str) -> bool:
+    mode = normalize_recurrent_connectivity(connectivity)
+    if mode == "full":
+        return True
+    if mode == "within_region":
+        return source == target
+    if mode == "cross_region_with_self_diagonal":
+        return source != target
+    raise ValueError(f"Unsupported recurrent connectivity: {connectivity!r}")
+
+
+__all__ = [
+    "FixationMRNNModel",
+    "FixationMRNNModelSpec",
+    "build_model_spec",
+    "normalize_recurrent_connectivity",
+]

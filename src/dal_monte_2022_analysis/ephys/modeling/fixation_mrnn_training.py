@@ -19,6 +19,7 @@ from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_model import (
     FixationMRNNModel,
     build_model_spec,
+    normalize_recurrent_connectivity,
 )
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_targets import (
     CONDITION_ORDER,
@@ -50,12 +51,14 @@ class FixationMRNNRunSettings:
     normalize_targets: bool = True
     normalization_stabilizer: float = 5.0
     pca_variance_threshold: float = 0.95
+    pca_n_components: int | None = None
     temporal_basis_count: int = 0
     hidden_units: int | dict[str, int] = 50
     activation: str = "softplus"
     spectral_radius: float | None = 1.2
     rec_constrained: bool = False
     inp_constrained: bool = False
+    recurrent_connectivity: str = "full"
     batch_first: bool = True
     inp_noise: float = 0.0
     act_noise: float = 0.0
@@ -142,6 +145,7 @@ def make_targets(settings: FixationMRNNRunSettings) -> FixationMRNNTargets:
         normalize_targets=bool(settings.normalize_targets),
         normalization_stabilizer=float(settings.normalization_stabilizer),
         pca_variance_threshold=float(settings.pca_variance_threshold),
+        pca_n_components=settings.pca_n_components,
         temporal_basis_count=int(settings.temporal_basis_count),
     )
 
@@ -434,6 +438,7 @@ def train_one_initialization(
         spectral_radius=settings.spectral_radius,
         rec_constrained=settings.rec_constrained,
         inp_constrained=settings.inp_constrained,
+        recurrent_connectivity=normalize_recurrent_connectivity(settings.recurrent_connectivity),
         batch_first=settings.batch_first,
         inp_noise=settings.inp_noise,
         act_noise=settings.act_noise,

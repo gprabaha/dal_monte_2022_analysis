@@ -18,6 +18,7 @@ from dal_monte_2022_analysis.ephys.modeling import (
     backproject_region_pcs,
     build_fixation_mrnn_targets_from_dataframe,
     build_model_spec,
+    compute_pairwise_regional_pc_cca,
     compute_region_flow_field,
     extract_fixation_latent_dynamics,
     extract_region_currents,
@@ -100,6 +101,37 @@ class TestFixationMRNNTargets(unittest.TestCase):
         backprojected = backproject_region_pcs(targets.pcs_by_region["ofc"], targets.pca_by_region["ofc"])
         self.assertEqual(backprojected.shape, targets.raw_by_region["ofc"].shape)
 
+    def test_target_builder_can_force_shared_pc_count(self) -> None:
+        df = _synthetic_combined_dataframe(n_units_per_region=2)
+        targets = build_fixation_mrnn_targets_from_dataframe(
+            df,
+            timeline_s=np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float),
+            normalize_targets=True,
+            pca_n_components=4,
+            temporal_basis_count=0,
+        )
+        self.assertEqual(targets.pcs_by_region["ofc"].shape, (3, 4, 4))
+        self.assertEqual(targets.pca_by_region["ofc"].components.shape, (4, 2))
+        self.assertEqual(targets.output_dims_for_mode("region_pcs")["bla"], 4)
+
+    def test_pairwise_cca_reports_region_pairs(self) -> None:
+        df = _synthetic_combined_dataframe(n_units_per_region=3)
+        targets = build_fixation_mrnn_targets_from_dataframe(
+            df,
+            timeline_s=np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float),
+            normalize_targets=True,
+            pca_n_components=3,
+            temporal_basis_count=0,
+        )
+        cca_df, payloads = compute_pairwise_regional_pc_cca(
+            targets.pcs_by_region,
+            region_order=("ofc", "bla", "dmpfc", "accg"),
+            max_components=3,
+        )
+        self.assertEqual(len(payloads), 6)
+        self.assertEqual(set(cca_df["cca_dimension"].astype(int)), {1, 2, 3})
+        self.assertTrue((cca_df["canonical_correlation"] <= 1.0 + 1e-5).all())
+
 
 class TestFixationMRNNTorchSmoke(unittest.TestCase):
     def test_model_forward(self) -> None:
@@ -135,6 +167,43 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
                 else:
                     self.assertTrue(torch.count_nonzero(block).item() == 0)
         self.assertTrue(torch.equal(model.readout_bias_vector()[:2], model.output_heads["ofc"].bias))
+
+    def test_recurrent_connectivity_masks(self) -> None:
+        regions = ("ofc", "bla", "dmpfc", "accg")
+        within = FixationMRNNModel(
+            build_model_spec(
+                region_order=regions,
+                output_dims_by_region={region: 2 for region in regions},
+                hidden_units=3,
+                recurrent_connectivity="within_region",
+                spectral_radius=1.0,
+                device="cpu",
+            )
+        )
+        cross = FixationMRNNModel(
+            build_model_spec(
+                region_order=regions,
+                output_dims_by_region={region: 2 for region in regions},
+                hidden_units=3,
+                recurrent_connectivity="cross_region_with_self_diagonal",
+                spectral_radius=1.0,
+                device="cpu",
+            )
+        )
+        for model, mode in [(within, "within"), (cross, "cross")]:
+            slices = model.hidden_region_slices()
+            mask = model.mrnn.W_rec_mask.detach().cpu()
+            for target_region in regions:
+                for source_region in regions:
+                    block = mask[slices[target_region], slices[source_region]]
+                    if mode == "within" and target_region == source_region:
+                        self.assertTrue(torch.equal(block, torch.ones_like(block)))
+                    elif mode == "within":
+                        self.assertEqual(torch.count_nonzero(block).item(), 0)
+                    elif target_region != source_region:
+                        self.assertTrue(torch.equal(block, torch.ones_like(block)))
+                    else:
+                        self.assertTrue(torch.equal(block, torch.eye(block.shape[0])))
 
     def test_one_iteration_training_replay_and_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
