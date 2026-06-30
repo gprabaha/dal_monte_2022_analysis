@@ -24,6 +24,7 @@ temporal_basis_count: 20
 hidden_units: 100
 activation: softplus
 spectral_radius: 1.3
+recurrent_bottleneck_dim: 10
 batch_first: true
 rec_constrained: false
 inp_constrained: false

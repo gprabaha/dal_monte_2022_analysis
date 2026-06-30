@@ -59,6 +59,7 @@ class FixationMRNNRunSettings:
     rec_constrained: bool = False
     inp_constrained: bool = False
     recurrent_connectivity: str = "full"
+    recurrent_bottleneck_dim: int = 10
     batch_first: bool = True
     inp_noise: float = 0.0
     act_noise: float = 0.0
@@ -439,6 +440,7 @@ def train_one_initialization(
         rec_constrained=settings.rec_constrained,
         inp_constrained=settings.inp_constrained,
         recurrent_connectivity=normalize_recurrent_connectivity(settings.recurrent_connectivity),
+        recurrent_bottleneck_dim=settings.recurrent_bottleneck_dim,
         batch_first=settings.batch_first,
         inp_noise=settings.inp_noise,
         act_noise=settings.act_noise,
@@ -496,7 +498,7 @@ def train_one_initialization(
             fr_curvature = torch.zeros((), dtype=target.dtype, device=device)
         rate = torch.mean(torch.abs(out["h_seq"])) * float(settings.l1_rate_scale)
         l2_rate = torch.mean(out["h_seq"] ** 2) * float(settings.l2_rate_scale)
-        weight = _l1([param for param in model.mrnn.parameters()], settings.l1_weight_scale)
+        weight = model.within_region_recurrent_l1_penalty(scale=settings.l1_weight_scale)
         l2_weight = _l2([param for param in model.mrnn.parameters()], settings.l2_weight_scale)
         loss = (
             reconstruction

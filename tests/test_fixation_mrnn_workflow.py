@@ -205,6 +205,28 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
                     else:
                         self.assertTrue(torch.equal(block, torch.eye(block.shape[0])))
 
+    def test_inter_region_connections_use_low_rank_factors(self) -> None:
+        regions = ("ofc", "bla")
+        model = FixationMRNNModel(
+            build_model_spec(
+                region_order=regions,
+                output_dims_by_region={region: 2 for region in regions},
+                hidden_units=3,
+                recurrent_connectivity="cross_region_with_self_diagonal",
+                recurrent_bottleneck_dim=4,
+                spectral_radius=1.0,
+                device="cpu",
+            )
+        )
+        self.assertGreater(len(model.inter_region_recurrent_parameters()), 0)
+        for left, right in model.inter_region_recurrent_parameters():
+            self.assertEqual(left.shape[1], 4)
+            self.assertEqual(right.shape[0], 4)
+        w_rec = model.recurrent_weight_matrix()
+        slices = model.hidden_region_slices()
+        self.assertGreater(torch.count_nonzero(w_rec[slices["ofc"], slices["bla"]]).item(), 0)
+        self.assertEqual(len(model.within_region_recurrent_parameters()), len(regions))
+
     def test_one_iteration_training_replay_and_analysis(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
