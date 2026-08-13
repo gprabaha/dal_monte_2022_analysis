@@ -45,8 +45,22 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_roi_vs_period_factorial imp
     FixationROIVsPeriodFactorialSettings,
     run_fixation_roi_vs_period_factorial_analysis,
 )
+from dal_monte_2022_analysis.ephys.analysis.fixation_temporal_specificity import (
+    METRIC_AXES,
+    METRIC_LABELS,
+    METRIC_NAMES,
+    METRIC_SPECS,
+    FixationTemporalSpecificitySettings,
+    run_fixation_temporal_specificity_analysis,
+)
 
 __all__ = [
+    "METRIC_AXES",
+    "METRIC_LABELS",
+    "METRIC_NAMES",
+    "METRIC_SPECS",
+    "FixationTemporalSpecificitySettings",
+    "run_fixation_temporal_specificity_analysis",
     "FixationPSTHSelectivitySettings",
     "run_fixation_selectivity_analysis",
     "FixationPSTHPreferenceIndexSettings",
