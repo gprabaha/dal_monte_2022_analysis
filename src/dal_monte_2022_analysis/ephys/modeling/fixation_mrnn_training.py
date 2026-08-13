@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -462,7 +463,23 @@ def train_one_initialization(
     history = []
     divergence_count = 0
 
-    for iteration in tqdm(range(1, int(settings.epochs) + 1), desc=f"{target_mode} seed={seed}", unit="iter"):
+    # Throttle the tqdm refresh rate so redirected (non-TTY) logs, e.g. SLURM
+    # .err files, do not accumulate one progress segment every few iterations.
+    # ``FIXATION_MRNN_PROGRESS_SECONDS`` sets the minimum seconds between
+    # refreshes (default 30) and ``FIXATION_MRNN_PROGRESS=off`` disables the bar.
+    progress_seconds = float(os.environ.get("FIXATION_MRNN_PROGRESS_SECONDS", "30"))
+    progress_disabled = os.environ.get("FIXATION_MRNN_PROGRESS", "on").strip().lower() in {
+        "0", "off", "false", "no", "none",
+    }
+    progress = tqdm(
+        range(1, int(settings.epochs) + 1),
+        desc=f"{target_mode} seed={seed}",
+        unit="iter",
+        mininterval=progress_seconds,
+        maxinterval=max(progress_seconds, 10.0),
+        disable=progress_disabled,
+    )
+    for iteration in progress:
         optimizer.zero_grad()
         out = model(inp, h0, noise=False)
         reconstruction = _weighted_loss(settings.loss_fn, out["output"], target, weights=time_weights)
