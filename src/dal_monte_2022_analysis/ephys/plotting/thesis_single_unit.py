@@ -76,6 +76,7 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     condition_legend_handles,
     nice_axis,
     ordinal,
+    readable_text_color,
     region_label,
     window_legend_handles,
 )
@@ -1025,21 +1026,25 @@ def plot_preferred_condition_panel(
         ax.set_ylim(0, 0.80)
         nice_axis(ax, y_ticks=4)
 
-        inset = ax.inset_axes([0.60, 0.62, 0.42, 0.42])
-        inset.pie(
+        # The bars already carry counts and proportions; what the pie uniquely
+        # adds is share-of-whole, so it is labelled with percentages.
+        inset = ax.inset_axes([0.575, 0.60, 0.46, 0.46])
+        wedge_colors = [CONDITION_COLORS[condition] for condition in conditions]
+        wedges, _, autotexts = inset.pie(
             region_table["fraction"].to_numpy(),
-            colors=[CONDITION_COLORS[condition] for condition in conditions],
+            colors=wedge_colors,
             startangle=90,
             counterclock=False,
             wedgeprops={"edgecolor": "white", "linewidth": 1.0},
+            autopct="%1.0f%%",
+            pctdistance=0.62,
+            textprops={"fontsize": 4.8, "fontweight": "bold"},
         )
+        for autotext, face_color in zip(autotexts, wedge_colors):
+            autotext.set_color(readable_text_color(face_color))
         inset.set_aspect("equal")
 
     axes[0].set_ylabel("Fraction of modulated units", fontsize=7.5)
-    axes[-1].text(
-        len(conditions) - 0.45, 1 / 3 + 0.016, "chance", fontsize=6,
-        color=MUTED_INK, ha="right", va="bottom",
-    )
     fig.legend(
         handles=[
             Patch(
@@ -1048,8 +1053,12 @@ def plot_preferred_condition_panel(
                 label=CONDITION_LABELS[condition],
             )
             for condition in conditions
+        ]
+        + [
+            Line2D([0], [0], color=MUTED_INK, linestyle="--", linewidth=0.8,
+                   label="Chance (1/3)")
         ],
-        ncol=3,
+        ncol=4,
         loc="lower center",
         bbox_to_anchor=(0.5, -0.015),
         fontsize=7,

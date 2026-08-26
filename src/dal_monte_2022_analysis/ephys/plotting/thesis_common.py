@@ -162,6 +162,27 @@ def region_label(region: object) -> str:
     return REGION_LABELS.get(str(region).strip().lower(), str(region).upper())
 
 
+def readable_text_color(
+    face_color: str,
+    *,
+    light: str = "#ffffff",
+    dark: str = "#1f1f1f",
+) -> str:
+    """Pick white or ink for text drawn on top of ``face_color``.
+
+    The condition palette spans a dark magenta, a light yellow-green and a dark
+    brown, so a single fixed label colour is unreadable on at least one of them.
+    Chooses by WCAG relative luminance rather than by eye.
+    """
+    red, green, blue = mpl.colors.to_rgb(face_color)
+
+    def _linear(channel: float) -> float:
+        return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+
+    luminance = 0.2126 * _linear(red) + 0.7152 * _linear(green) + 0.0722 * _linear(blue)
+    return dark if luminance > 0.42 else light
+
+
 def ordinal(value: float) -> str:
     """English ordinal for a percentile, e.g. 22 -> ``22nd``, 71 -> ``71st``."""
     number = int(round(float(value)))
