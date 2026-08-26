@@ -4,12 +4,12 @@ The chapter describes each unit's response with two orthogonal quantities rather
 than one composite score:
 
 ``response_duration_ms``
-    Main-peak halfwidth: the full width at half maximum of the excess response.
+    Dominant-peak width: the full width at half maximum of the excess response.
 ``peak_isolation``
-    ``1 - P2/P1``, where P1 is the main peak's prominence and P2 the largest
-    prominence at least 250 ms away. High values mean the main peak clearly
-    dominates its strongest rival; low values mean a second peak of comparable
-    prominence exists.
+    Dominant-peak prominence, ``1 - P2/P1``, where P1 is the dominant peak's
+    topographic prominence and P2 the largest prominence at least 250 ms away.
+    High values mean a single clear peak; low values mean the trace carries
+    several peaks of comparable prominence.
 
 They are near-independent (Spearman rho about -0.26 among selective units), and
 both are essentially insensitive to trial count -- rho(log N, .) = +0.12 and
@@ -48,28 +48,32 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     region_label,
 )
 
-HALFWIDTH_LABEL = "Main-peak halfwidth (ms)"
+WIDTH_LABEL = "Dominant-peak width (ms)"
+HALFWIDTH_LABEL = WIDTH_LABEL  # backwards-compatible alias
 DURATION_LABEL = HALFWIDTH_LABEL  # backwards-compatible alias
-ISOLATION_LABEL = "Peak isolation  $1 - P_2/P_1$"
-#: Plain-language poles of each axis, used for the corner labels. The
-#: halfwidth axis runs narrow-to-wide; the isolation axis runs from a main
-#: peak rivalled by a comparable second peak to one that clearly dominates it.
-HALFWIDTH_POLES: tuple[str, str] = ("Narrow", "Wide")
-ISOLATION_POLES: tuple[str, str] = ("rivalled", "dominant")
+PROMINENCE_LABEL = "Dominant-peak prominence  $1 - P_2/P_1$"
+ISOLATION_LABEL = PROMINENCE_LABEL  # backwards-compatible alias
+#: Plain-language poles of each axis, used for the corner labels. Width runs
+#: narrow-to-wide. Prominence runs from a trace carrying several peaks of
+#: comparable prominence to one carrying a single clear peak -- hence
+#: multi-peak / single-peak, which say what the trace looks like rather than
+#: re-using "dominant", the word already in the metric's own name.
+WIDTH_POLES: tuple[str, str] = ("Narrow", "Wide")
+PROMINENCE_POLES: tuple[str, str] = ("multi-peak", "single-peak")
 
 #: Corner roles in the duration x isolation space, as (label, duration side,
 #: isolation side) where +1 means high.
 CORNER_ROLES: tuple[tuple[str, int, int], ...] = (
-    ("Narrow, dominant", -1, +1),
-    ("Narrow, rivalled", -1, -1),
-    ("Wide, dominant", +1, +1),
-    ("Wide, rivalled", +1, -1),
+    ("Narrow, single-peak", -1, +1),
+    ("Narrow, multi-peak", -1, -1),
+    ("Wide, single-peak", +1, +1),
+    ("Wide, multi-peak", +1, -1),
 )
 CORNER_COLORS: dict[str, str] = {
-    "Narrow, dominant": "#c03a2b",
-    "Narrow, rivalled": "#e6a817",
-    "Wide, dominant": "#2878b5",
-    "Wide, rivalled": "#3f9c45",
+    "Narrow, single-peak": "#c03a2b",
+    "Narrow, multi-peak": "#e6a817",
+    "Wide, single-peak": "#2878b5",
+    "Wide, multi-peak": "#3f9c45",
 }
 
 
@@ -140,7 +144,7 @@ def plot_isolation_schematic(
     # Duration: half-max line across the excess response.
     lines = [f"$P_1$ = {decomposition.primary_prominence:.2f}",
              f"$P_2$ = {decomposition.secondary_prominence:.2f}",
-             f"isolation = {1.0 - decomposition.competition_ratio:.2f}"]
+             f"prominence = {1.0 - decomposition.competition_ratio:.2f}"]
     if duration_ms is not None and np.isfinite(duration_ms):
         in_window = (decomposition.centers_ms >= -500.0) & (decomposition.centers_ms <= 500.0)
         windowed = values[in_window]
@@ -168,7 +172,7 @@ def plot_isolation_schematic(
                 xytext=(0, -8), textcoords="offset points",
                 ha="center", va="top", fontsize=6.6, color="#2f4b6e", zorder=9,
             )
-        lines.append(f"halfwidth = {duration_ms:.0f} ms")
+        lines.append(f"width = {duration_ms:.0f} ms")
 
     ax.text(
         0.015, 0.975, "\n".join(lines), transform=ax.transAxes, ha="left", va="top",
@@ -248,7 +252,8 @@ def plot_metric_space_panel(
     """Halfwidth x isolation scatter per region, with corner exemplars.
 
     Presented as a space rather than two histograms because the population is
-    unimodal on both axes: there is no narrow/wide dichotomy to threshold,
+    unimodal on both axes: there is no narrow/wide or single/multi-peak
+    dichotomy to threshold,
     and a scatter says so honestly while still letting extreme units be named.
 
     When ``condition_traces`` is supplied each corner unit's own firing-rate
@@ -272,10 +277,10 @@ def plot_metric_space_panel(
     # Inset corners are placed away from the data centroid so they do not sit on
     # top of the cloud they are annotating.
     inset_anchor = {
-        "Narrow, dominant": (0.015, 0.735),
-        "Narrow, rivalled": (0.015, 0.02),
-        "Wide, dominant": (0.75, 0.735),
-        "Wide, rivalled": (0.75, 0.02),
+        "Narrow, single-peak": (0.015, 0.735),
+        "Narrow, multi-peak": (0.015, 0.02),
+        "Wide, single-peak": (0.75, 0.735),
+        "Wide, multi-peak": (0.75, 0.02),
     }
 
     summary = []
@@ -334,7 +339,7 @@ def plot_metric_space_panel(
             {
                 "region": region_label(region),
                 "n_units": int(len(region_units)),
-                "halfwidth_median_ms": float(region_units[duration_column].median()),
+                "width_median_ms": float(region_units[duration_column].median()),
                 "isolation_median": float(region_units[isolation_column].median()),
                 "spearman_rho": float(
                     region_units[[duration_column, isolation_column]]
@@ -342,7 +347,7 @@ def plot_metric_space_panel(
                 ),
             }
         )
-    axes[0].set_ylabel(ISOLATION_LABEL, fontsize=7.2)
+    axes[0].set_ylabel(PROMINENCE_LABEL, fontsize=7.2)
     if corners is not None:
         fig.legend(
             handles=[
@@ -355,7 +360,7 @@ def plot_metric_space_panel(
         )
     # supxlabel without an explicit y: matplotlib reserves the strip once during
     # tight_layout, and the legend then sits below it in figure coordinates.
-    fig.supxlabel(HALFWIDTH_LABEL, fontsize=7.8)
+    fig.supxlabel(WIDTH_LABEL, fontsize=7.8)
     fig.tight_layout()
     return fig, pd.DataFrame(summary)
 

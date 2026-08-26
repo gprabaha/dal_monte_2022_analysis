@@ -17,12 +17,16 @@ trace of its preferred fixation category:
 
 | Metric | Definition | Meaning |
 |---|---|---|
-| **Main-peak halfwidth** | FWHM of the excess response (ms) | how long the response is held |
-| **Peak isolation** | `1 - P₂/P₁` | how far the main peak stands above its strongest rival |
+| **Dominant-peak width** | FWHM of the excess response (ms) | how narrow or wide the dominant peak is |
+| **Dominant-peak prominence** | `1 - P₂/P₁` | 1 = a single clear peak; 0 = a second peak of equal prominence |
 
-Corners of that space are labelled **narrow / wide** × **dominant / rivalled** —
-the plain-language poles of the two axes: halfwidth says how narrow or wide the main
-peak is, isolation says whether it dominates or is rivalled by a second peak.
+Corners of that space are labelled **narrow / wide** × **single-peak / multi-peak** —
+the plain-language poles of the two axes. The prominence poles avoid re-using
+"dominant", which is already in the metric's own name.
+
+The stored columns keep their original names (`response_duration_ms`,
+`peak_isolation`); `thesis_metric_space` holds the display labels, with
+`HALFWIDTH_LABEL` / `ISOLATION_LABEL` kept as aliases.
 
 where **P₁** is the largest topographic peak prominence of the √-rate-normalised
 trace and **P₂** the largest prominence at least 250 ms away.
@@ -75,7 +79,8 @@ minutes rather than a full sweep.
 |---|---|
 | `ephys/plotting/thesis_common.py` | Figure style, region/condition vocabulary, DPP naming, analysis-window bars, significance brackets, dual PDF+PNG export. |
 | `ephys/plotting/thesis_single_unit.py` | Unit yield, UpSet, example-unit rows, preferred category, per-condition metric comparison. |
-| `ephys/plotting/thesis_metric_space.py` | Metric schematic, duration × isolation space, corner examples, CV control. |
+| `ephys/plotting/thesis_metric_space.py` | Metric schematic, width × prominence space with inset traces, CV control. |
+| `ephys/plotting/thesis_chapter_text.py` | Builds the chapter's numbers-and-methods block from the persisted tables. |
 | `ephys/plotting/thesis_single_unit_data.py` | Table joins, exemplar resolution, trial loading for the example panels. |
 | `ephys/plotting/thesis_trace_metrics.py` | Appendix metric panels. |
 | `ephys/analysis/fixation_peakiness.py` | `decompose_dominant_peak_prominence` — recomputes a trace's P₁/P₂ keeping peak positions and prominence reference levels, so the schematic draws exactly what the stored numbers describe. |

@@ -32,6 +32,7 @@ from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.plotting import thesis_common as style
 from dal_monte_2022_analysis.ephys.plotting import thesis_single_unit as figs
 from dal_monte_2022_analysis.ephys.plotting import thesis_single_unit_data as data
+from dal_monte_2022_analysis.ephys.plotting import thesis_chapter_text as text
 from dal_monte_2022_analysis.ephys.plotting import thesis_metric_space as space
 from dal_monte_2022_analysis.ephys.plotting import thesis_trace_metrics as metrics
 from dal_monte_2022_analysis.ephys.analysis.fixation_peakiness import (
@@ -124,9 +125,9 @@ The argument, in order:
 | 2 | Individual neurons are selective for interactive face fixations. |
 | 3 | Interactive face is the most frequently preferred category across the population. |
 | 4 | But different subpopulations differentiate different fixation pairs — selectivity is not one thing. |
-| 5 | Two metrics describe the firing-rate profile: **main-peak halfwidth** and **peak isolation**. |
+| 5 | Two metrics describe the firing-rate profile: **dominant-peak width** and **dominant-peak prominence**. |
 | 6 | Selective neurons occupy a continuum in that space, not discrete types. |
-| 7 | Halfwidth differs by fixation category (supplementary). |
+| 7 | Dominant-peak width differs by fixation category (supplementary). |
 
 Every figure is one row of four region panels, saved as an Illustrator-editable
 PDF (embedded TrueType, no clipping masks) plus a 400 dpi PNG. All plotting lives
@@ -297,15 +298,15 @@ Selective units differ in *how* their rate changes, not only in which category t
 prefer. Two quantities, both measured on the trace of the unit's preferred category,
 capture the two things that vary:
 
-- **Main-peak halfwidth** — full width at half maximum of the excess response (ms).
-  How long the response is held.
-- **Peak isolation** — $1 - P_2/P_1$, where $P_1$ is the main peak's topographic
-  prominence and $P_2$ the largest prominence at least 250 ms away. High values mean
-  the main peak clearly **dominates** its strongest rival; low values mean it is
-  **rivalled** by a second peak of comparable prominence.
+- **Dominant-peak width** — full width at half maximum of the excess response (ms).
+  How narrow or wide the dominant peak is.
+- **Dominant-peak prominence** — $1 - P_2/P_1$, where $P_1$ is the dominant peak's
+  topographic prominence and $P_2$ the largest prominence at least 250 ms away.
+  **1** means a single clear peak; **0** means a second peak of equal prominence
+  exists.
 
-The two axes therefore read as *narrow versus wide* (halfwidth) and *dominant versus
-rivalled* (isolation), and the corner labels in §6 use exactly those words.
+The two axes therefore read as *narrow versus wide* and *single-peak versus
+multi-peak*, and the corner labels in §6 use exactly those words.
 
 They replace the single composite score used previously. That composite,
 $P_1/(1+\\lambda P_2/P_1)$, correlates **0.99 with $P_1$ alone** — the discount term
@@ -327,11 +328,11 @@ schematic_decomposition = decompose_dominant_peak_prominence(
     np.asarray(schematic_row["bin_centers_s_rel"], dtype=float),
     peakiness_settings,
 )
-schematic_halfwidth = float(
+schematic_width = float(
     trace_shape.loc[trace_shape["uuid"] == "600", "response_duration_ms"].iloc[0]
 )
 fig = space.plot_isolation_schematic(
-    schematic_decomposition, unit_label="BLA unit 600", duration_ms=schematic_halfwidth
+    schematic_decomposition, unit_label="BLA unit 600", duration_ms=schematic_width
 )
 FIGURE_MANIFEST["fig05_metric_schematic"] = style.save_thesis_figure(
     fig, FIGURE_SETTINGS, "fig05_metric_schematic"
@@ -345,7 +346,7 @@ md(
 ## 6 · Selective units occupy a continuum, not discrete types
 
 Plotted against each other, the modulated population forms a **single unimodal
-cloud** in every region. There is no narrow/wide or dominant/rivalled dichotomy to
+cloud** in every region. There is no narrow/wide or single/multi-peak dichotomy to
 threshold — which is why these are treated as descriptive axes rather than a
 taxonomy. Naming the corners is still useful, and each corner unit's own firing-rate
 trace (its preferred category only) is inset beside its point so a coordinate in
@@ -378,7 +379,7 @@ display(
 
 md(
     """
-## 7 · Halfwidth by fixation category — supplementary
+## 7 · Dominant-peak width by fixation category — supplementary
 
 Within unit, is the response to one category held longer than to another? Violins
 follow the project's behavioural convention (seaborn, quartile lines inside, kernel
@@ -389,17 +390,17 @@ region × comparison family.
 
 code(
     '''
-fig, halfwidth_table = figs.plot_condition_metric_panel(
+fig, width_table = figs.plot_condition_metric_panel(
     trace_shape_all.loc[trace_shape_all["is_selective"]],
     metric="response_duration_ms",
-    metric_label=space.HALFWIDTH_LABEL,
+    metric_label=space.WIDTH_LABEL,
 )
-FIGURE_MANIFEST["fig07_halfwidth_by_condition"] = style.save_thesis_figure(
-    fig, FIGURE_SETTINGS, "fig07_halfwidth_by_condition"
+FIGURE_MANIFEST["fig07_width_by_condition"] = style.save_thesis_figure(
+    fig, FIGURE_SETTINGS, "fig07_width_by_condition"
 )
 display(Image(data=style.figure_to_png_bytes(fig)))
 display(
-    halfwidth_table.loc[
+    width_table.loc[
         :, ["region_label", "condition_b", "n_units", "median_a", "median_b",
             "statistic", "p_adj", "stars"]
     ].round(3)
@@ -409,7 +410,7 @@ display(
 
 md(
     """
-### Methods note: why halfwidth and not the coefficient of variation
+### Methods note: why dominant-peak width and not the coefficient of variation
 
 The obvious alternative — the CV of the mean firing-rate trace across time bins —
 is **not usable for comparing fixation categories here**. Interactive-face fixations
@@ -425,7 +426,7 @@ estimation noise alone. Equalising trial counts within unit and recomputing from
 matched subsamples removes the apparent interactive-face advantage entirely. The
 right panel shows the mechanism: subsampling interactive-face trials, holding
 condition and neural signal fixed, inflates that condition's own CV by up to 2.4×.
-Halfwidth is a width rather than an amplitude and is not affected.
+Dominant-peak width is a width rather than an amplitude and is not affected.
 """
 )
 
@@ -446,7 +447,35 @@ display(
 '''
 )
 
-md("## 8 · Persist tables and figure manifest")
+md(
+    """
+## 8 · Numbers and methods for the chapter text
+
+Everything the prose needs, read back from the persisted tables so the written
+chapter cannot drift from the figures.
+"""
+)
+
+code(
+    '''
+chapter_text = text.build_chapter_text_summary(
+    units=units,
+    yield_table=yield_table,
+    preference_table=preference_table,
+    upset_counts=upset_counts,
+    trace_shape=trace_shape_all,
+    metric_space_summary=metric_space_summary,
+    width_table=width_table,
+    matched_cv_stats=matched_cv_stats,
+    cv_inflation=cv_inflation,
+    psth_cfg=psth_cfg,
+)
+(FIGURE_SETTINGS.output_dir / "chapter_text_numbers.md").write_text(chapter_text, encoding="utf-8")
+display(Markdown(chapter_text))
+'''
+)
+
+md("## 9 · Persist tables and figure manifest")
 
 code(
     '''
@@ -459,7 +488,7 @@ exports = {
         :, ["region", "corner", "uuid", "date", "condition", "response_duration_ms",
             "peak_isolation"]
     ],
-    "halfwidth_by_condition.csv": halfwidth_table,
+    "width_by_condition.csv": width_table,
     "cv_trial_matched_stats.csv": matched_cv_stats,
 }
 for filename, frame in exports.items():
@@ -480,11 +509,11 @@ Here are neurons selective for interactive face fixations (§2), and interactive
 is the preferred category across the modulated population (§3) — but there are other
 kinds of selectivity too (§4). Across that population, selective neurons express
 their selectivity through a range of firing-rate profiles, which two metrics
-elucidate (§5–§6): **main-peak halfwidth** and **peak isolation**. Those axes are
+elucidate (§5–§6): **dominant-peak width** and **dominant-peak prominence**. Those axes are
 independent and continuous, so the corner labels are descriptive convenience rather
 than cell types.
 
-Halfwidth also differs modestly by fixation category (§7), interactive-face
+Dominant-peak width also differs modestly by fixation category (§7), interactive-face
 responses being held longer in BLA and OFC. The coefficient of variation appears to
 show a far larger effect but is an artefact of unequal trial counts and is not used.
 
