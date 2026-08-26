@@ -18,11 +18,11 @@ trace of its preferred fixation category:
 | Metric | Definition | Meaning |
 |---|---|---|
 | **Main-peak halfwidth** | FWHM of the excess response (ms) | how long the response is held |
-| **Peak isolation** | `1 - P₂/P₁` | 1 = the dominant peak has no rival; 0 = an equally strong second peak exists |
+| **Peak isolation** | `1 - P₂/P₁` | how far the main peak stands above its strongest rival |
 
-Corners of that space are labelled *brief/prolonged* × *isolated/fragmented*.
-"Prolonged" rather than "sustained", which already denotes a specific response type
-in the firing-rate literature.
+Corners of that space are labelled **narrow / wide** × **dominant / rivalled** —
+the plain-language poles of the two axes: halfwidth says how narrow or wide the main
+peak is, isolation says whether it dominates or is rivalled by a second peak.
 
 where **P₁** is the largest topographic peak prominence of the √-rate-normalised
 trace and **P₂** the largest prominence at least 250 ms away.

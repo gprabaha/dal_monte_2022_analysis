@@ -6,8 +6,10 @@ than one composite score:
 ``response_duration_ms``
     Main-peak halfwidth: the full width at half maximum of the excess response.
 ``peak_isolation``
-    ``1 - P2/P1``, where P1 is the dominant peak's prominence and P2 the largest
-    prominence at least 250 ms away.
+    ``1 - P2/P1``, where P1 is the main peak's prominence and P2 the largest
+    prominence at least 250 ms away. High values mean the main peak clearly
+    dominates its strongest rival; low values mean a second peak of comparable
+    prominence exists.
 
 They are near-independent (Spearman rho about -0.26 among selective units), and
 both are essentially insensitive to trial count -- rho(log N, .) = +0.12 and
@@ -49,20 +51,25 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
 HALFWIDTH_LABEL = "Main-peak halfwidth (ms)"
 DURATION_LABEL = HALFWIDTH_LABEL  # backwards-compatible alias
 ISOLATION_LABEL = "Peak isolation  $1 - P_2/P_1$"
+#: Plain-language poles of each axis, used for the corner labels. The
+#: halfwidth axis runs narrow-to-wide; the isolation axis runs from a main
+#: peak rivalled by a comparable second peak to one that clearly dominates it.
+HALFWIDTH_POLES: tuple[str, str] = ("Narrow", "Wide")
+ISOLATION_POLES: tuple[str, str] = ("rivalled", "dominant")
 
 #: Corner roles in the duration x isolation space, as (label, duration side,
 #: isolation side) where +1 means high.
 CORNER_ROLES: tuple[tuple[str, int, int], ...] = (
-    ("Brief, isolated", -1, +1),
-    ("Brief, fragmented", -1, -1),
-    ("Prolonged, isolated", +1, +1),
-    ("Prolonged, fragmented", +1, -1),
+    ("Narrow, dominant", -1, +1),
+    ("Narrow, rivalled", -1, -1),
+    ("Wide, dominant", +1, +1),
+    ("Wide, rivalled", +1, -1),
 )
 CORNER_COLORS: dict[str, str] = {
-    "Brief, isolated": "#c03a2b",
-    "Brief, fragmented": "#e6a817",
-    "Prolonged, isolated": "#2878b5",
-    "Prolonged, fragmented": "#3f9c45",
+    "Narrow, dominant": "#c03a2b",
+    "Narrow, rivalled": "#e6a817",
+    "Wide, dominant": "#2878b5",
+    "Wide, rivalled": "#3f9c45",
 }
 
 
@@ -241,7 +248,7 @@ def plot_metric_space_panel(
     """Halfwidth x isolation scatter per region, with corner exemplars.
 
     Presented as a space rather than two histograms because the population is
-    unimodal on both axes: there is no brief/prolonged dichotomy to threshold,
+    unimodal on both axes: there is no narrow/wide dichotomy to threshold,
     and a scatter says so honestly while still letting extreme units be named.
 
     When ``condition_traces`` is supplied each corner unit's own firing-rate
@@ -265,10 +272,10 @@ def plot_metric_space_panel(
     # Inset corners are placed away from the data centroid so they do not sit on
     # top of the cloud they are annotating.
     inset_anchor = {
-        "Brief, isolated": (0.015, 0.735),
-        "Brief, fragmented": (0.015, 0.02),
-        "Prolonged, isolated": (0.75, 0.735),
-        "Prolonged, fragmented": (0.75, 0.02),
+        "Narrow, dominant": (0.015, 0.735),
+        "Narrow, rivalled": (0.015, 0.02),
+        "Wide, dominant": (0.75, 0.735),
+        "Wide, rivalled": (0.75, 0.02),
     }
 
     summary = []

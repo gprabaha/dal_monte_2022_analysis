@@ -299,9 +299,13 @@ capture the two things that vary:
 
 - **Main-peak halfwidth** — full width at half maximum of the excess response (ms).
   How long the response is held.
-- **Peak isolation** — $1 - P_2/P_1$, where $P_1$ is the dominant peak's topographic
-  prominence and $P_2$ the largest prominence at least 250 ms away. 1 means the peak
-  has no rival; 0 means an equally strong second peak exists.
+- **Peak isolation** — $1 - P_2/P_1$, where $P_1$ is the main peak's topographic
+  prominence and $P_2$ the largest prominence at least 250 ms away. High values mean
+  the main peak clearly **dominates** its strongest rival; low values mean it is
+  **rivalled** by a second peak of comparable prominence.
+
+The two axes therefore read as *narrow versus wide* (halfwidth) and *dominant versus
+rivalled* (isolation), and the corner labels in §6 use exactly those words.
 
 They replace the single composite score used previously. That composite,
 $P_1/(1+\\lambda P_2/P_1)$, correlates **0.99 with $P_1$ alone** — the discount term
@@ -341,11 +345,11 @@ md(
 ## 6 · Selective units occupy a continuum, not discrete types
 
 Plotted against each other, the modulated population forms a **single unimodal
-cloud** in every region. There is no brief/prolonged dichotomy to threshold — which
-is why these are treated as descriptive axes rather than a taxonomy. Naming the
-corners is still useful, and each corner unit's own firing-rate trace (its preferred
-category only) is inset beside its point so a coordinate in this space can be read
-directly as a response shape.
+cloud** in every region. There is no narrow/wide or dominant/rivalled dichotomy to
+threshold — which is why these are treated as descriptive axes rather than a
+taxonomy. Naming the corners is still useful, and each corner unit's own firing-rate
+trace (its preferred category only) is inset beside its point so a coordinate in
+this space can be read directly as a response shape.
 """
 )
 

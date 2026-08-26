@@ -298,8 +298,8 @@ def plot_pair_selectivity_upset_panel(
             for xi, height, count in zip(x + offset, heights, values):
                 ax_bars.text(
                     xi, height + 0.004, str(int(count)),
-                    ha="center", va="bottom", fontsize=5.2,
-                    color=REGION_COLORS.get(str(region), INK), rotation=90,
+                    ha="center", va="bottom", fontsize=4.8,
+                    color=REGION_COLORS.get(str(region), INK),
                 )
     ax_bars.set_ylabel(
         "Fraction of selective units" if as_fraction else "Units", fontsize=7.5
@@ -307,7 +307,7 @@ def plot_pair_selectivity_upset_panel(
     ax_bars.set_title(
         "Fixation-category pairs each selective unit separates", fontsize=8.5, pad=18
     )
-    ax_bars.set_ylim(0, ax_bars.get_ylim()[1] * 1.14)
+    ax_bars.set_ylim(0, ax_bars.get_ylim()[1] * 1.09)
     ax_bars.legend(
         ncol=4, fontsize=6.4, loc="lower center", bbox_to_anchor=(0.5, 1.02),
         columnspacing=1.0, handlelength=1.2,
