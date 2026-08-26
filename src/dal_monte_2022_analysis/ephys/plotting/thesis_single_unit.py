@@ -1123,7 +1123,7 @@ def plot_condition_metric_panel(
     )
     axes = np.atleast_1d(axes)
     all_values = pd.to_numeric(trace_shape[metric], errors="coerce").dropna()
-    y_max = float(np.quantile(all_values, 0.99))
+    y_max = float(all_values.max())
 
     for ax, region in zip(axes, regions):
         region_wide = wide.loc[wide["region"].astype(str) == str(region)]
@@ -1148,15 +1148,25 @@ def plot_condition_metric_panel(
             cut=0,
             linewidth=0.8,
             density_norm="width",
+            # Seaborn desaturates palettes to 0.75 by default; the condition
+            # colours are shared with the bars and traces and must match them.
+            saturation=1.0,
         )
-        for body in [c for c in ax.collections if isinstance(c, PolyCollection)]:
+        bodies = [c for c in ax.collections if isinstance(c, PolyCollection)]
+        for body in bodies:
             body.set_edgecolor("#1f1f1f")
-            body.set_alpha(0.85)
-        for line in ax.lines:
-            line.set_color("#1f1f1f")
-            line.set_alpha(0.9)
+            body.set_alpha(1.0)
+        # inner="quart" draws three lines per violin. Colour them for contrast
+        # against their own fill -- dark lines vanish on the brown, light lines
+        # vanish on the yellow-green.
+        lines_per_violin = len(ax.lines) // max(len(conditions), 1)
+        for index, line in enumerate(ax.lines):
+            condition = conditions[min(index // max(lines_per_violin, 1), len(conditions) - 1)]
+            line.set_color(readable_text_color(CONDITION_COLORS[condition]))
+            line.set_alpha(0.95)
+            line.set_linewidth(0.9)
 
-        step = y_max * 0.075
+        step = y_max * 0.062
         region_stats = table.loc[table["region"] == region]
         for level, condition in enumerate(
             [c for c in conditions if c != reference_condition]
@@ -1172,7 +1182,7 @@ def plot_condition_metric_panel(
                 match.iloc[0]["stars"],
                 fontsize=6.6,
             )
-        ax.set_ylim(0, y_max + step * 3.2)
+        ax.set_ylim(0, y_max + step * 3.0)
         ax.set_xlabel("")
         ax.set_xticks(range(len(conditions)))
         ax.set_xticklabels(
