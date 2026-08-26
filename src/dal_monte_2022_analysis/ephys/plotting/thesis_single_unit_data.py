@@ -174,6 +174,89 @@ def load_trace_metric_table(
     return merged
 
 
+def load_trace_shape_table(
+    analysis_root: Path,
+    units: pd.DataFrame,
+    *,
+    condition: str = "dominant",
+) -> pd.DataFrame:
+    """Response duration and Peak Isolation Index per unit.
+
+    The chapter describes each unit with two orthogonal, separately drawable
+    quantities rather than one composite:
+
+    ``response_duration_ms``
+        Time the excess response stays at or above half its peak (FWHM). Being a
+        width, it is amplitude-invariant and therefore far less sensitive to
+        trial count than any prominence-based statistic.
+    ``peak_isolation``
+        ``1 - P2/P1``: 1 when the dominant peak has no rival at least 250 ms
+        away, 0 when an equally strong second peak exists. This is the isolation
+        term of the old composite with the amplitude factor removed -- the
+        composite ``peakiness_score`` correlates 0.99 with ``P1`` alone, so it
+        measured peak height while being described as measuring isolation.
+
+    ``condition="dominant"`` scores each unit on the fixation category it fires
+    most for, which is the trace the chapter's example panels show.
+    """
+    peakiness = pd.read_csv(
+        analysis_root / "fixation_peakiness" / "unit_condition_peakiness.csv"
+    )
+    specificity = pd.read_csv(
+        analysis_root / "fixation_temporal_specificity" / "unit_condition_temporal_specificity.csv"
+    )
+    merged = peakiness.loc[
+        :,
+        [
+            "unit_key",
+            "condition",
+            "n_trials",
+            "mean_fr_hz",
+            "best_peak_prominence",
+            "second_peak_prominence",
+            "competition_ratio",
+            "best_peak_latency_ms",
+            "peakiness_score",
+        ],
+    ].merge(
+        specificity.loc[
+            :,
+            ["unit_key", "condition", "fwhm_frac", "sustained_frac", "roughness",
+             "peak_z", "n_prominent_peaks", "window_duration_ms"],
+        ],
+        on=["unit_key", "condition"],
+        how="inner",
+    )
+    merged["peak_isolation"] = 1.0 - merged["competition_ratio"].astype(float)
+    merged["response_duration_ms"] = (
+        merged["fwhm_frac"].astype(float) * merged["window_duration_ms"].astype(float)
+    )
+
+    keep = units.loc[
+        :, ["unit_key", "region", "uuid", "date", "is_selective", "dominant_condition"]
+    ]
+    merged = merged.merge(keep, on="unit_key", how="inner")
+    if condition == "dominant":
+        merged = merged.loc[
+            merged["condition"].astype(str) == merged["dominant_condition"].astype(str)
+        ].copy()
+    elif condition != "all":
+        merged = merged.loc[merged["condition"].astype(str) == str(condition)].copy()
+    return merged.reset_index(drop=True)
+
+
+def load_trial_matched_cv(analysis_root: Path) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Trial-count-matched CV table, its within-region tests, and the inflation curve."""
+    directory = analysis_root / "fixation_cv_trial_matched"
+    unit_cv = pd.read_csv(directory / "unit_condition_cv_trial_matched.csv")
+    stats_table = pd.read_csv(directory / "within_region_cv_trial_matched_stats.csv")
+    inflation = pd.read_csv(directory / "cv_trial_count_inflation.csv")
+    for frame in (unit_cv, stats_table, inflation):
+        if "region" in frame.columns:
+            frame["region"] = frame["region"].astype(str).str.strip().str.lower()
+    return unit_cv, stats_table, inflation
+
+
 def load_condition_traces(analysis_root: Path) -> pd.DataFrame:
     """Windowed condition-average traces, used for the DPP decomposition."""
     return load_pickle_path(
