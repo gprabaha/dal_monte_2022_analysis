@@ -6,7 +6,7 @@ streamlined, figure-first versions written for the chapter itself.
 
 | File | Role |
 |---|---|
-| `single_unit_thesis_chapter_results.ipynb` | Main chapter results: interactive-face example units, unit yield, an UpSet plot of fixation-pair selectivity, preferred-category bars with pie insets, the trial-matched CV control, response duration by category, and the duration × isolation metric space with a standalone schematic. |
+| `single_unit_thesis_chapter_results.ipynb` | Main chapter results, in narrative order: interactive-face example units → preferred-category distribution → UpSet of fixation-pair selectivity → the two metrics and their schematic → the halfwidth × isolation space with example traces inset → halfwidth by category (supplementary) and the trial-matched CV control. |
 | `single_unit_trace_metrics_appendix.ipynb` | Appendix: the full set of mean firing-rate trace metrics, their distributions across the modulated subpopulation, which are redundant, and what DPP does and does not capture. |
 | `_build_notebooks.py` | Authors both notebooks from plain-Python source strings. |
 
@@ -17,8 +17,12 @@ trace of its preferred fixation category:
 
 | Metric | Definition | Meaning |
 |---|---|---|
-| **Response duration** | FWHM of the excess response (ms) | how long the response is held |
+| **Main-peak halfwidth** | FWHM of the excess response (ms) | how long the response is held |
 | **Peak isolation** | `1 - P₂/P₁` | 1 = the dominant peak has no rival; 0 = an equally strong second peak exists |
+
+Corners of that space are labelled *brief/prolonged* × *isolated/fragmented*.
+"Prolonged" rather than "sustained", which already denotes a specific response type
+in the firing-rate literature.
 
 where **P₁** is the largest topographic peak prominence of the √-rate-normalised
 trace and **P₂** the largest prominence at least 250 ms away.
@@ -89,5 +93,10 @@ minutes rather than a full sweep.
   rectangles — the old rectangles spanned the panel height and read as data.
 - **UpSet, not Venn**, for set intersections: three-set Venns cannot in general be
   drawn area-proportionally, and per-region scaling would break cross-region
-  comparison.
+  comparison. Region is the series there and uses the prominent colourblind-safe
+  `REGION_COLORS` palette; unit counts are printed on each bar. Sized to work both
+  standalone and as one panel row of a larger paper figure.
+- **Violins follow the behavioural convention** — seaborn, `inner="quart"`,
+  `cut=0`, so quartile lines sit inside the body and the kernel is truncated at
+  the observed range.
 - **Fixation category is the only categorical colour**; region is encoded on the axis.

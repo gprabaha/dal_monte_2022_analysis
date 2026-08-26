@@ -4,7 +4,7 @@ The chapter describes each unit's response with two orthogonal quantities rather
 than one composite score:
 
 ``response_duration_ms``
-    Full width at half maximum of the excess response.
+    Main-peak halfwidth: the full width at half maximum of the excess response.
 ``peak_isolation``
     ``1 - P2/P1``, where P1 is the dominant peak's prominence and P2 the largest
     prominence at least 250 ms away.
@@ -46,7 +46,8 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     region_label,
 )
 
-DURATION_LABEL = "Response duration (ms, FWHM)"
+HALFWIDTH_LABEL = "Main-peak halfwidth (ms)"
+DURATION_LABEL = HALFWIDTH_LABEL  # backwards-compatible alias
 ISOLATION_LABEL = "Peak isolation  $1 - P_2/P_1$"
 
 #: Corner roles in the duration x isolation space, as (label, duration side,
@@ -54,14 +55,14 @@ ISOLATION_LABEL = "Peak isolation  $1 - P_2/P_1$"
 CORNER_ROLES: tuple[tuple[str, int, int], ...] = (
     ("Brief, isolated", -1, +1),
     ("Brief, fragmented", -1, -1),
-    ("Sustained, isolated", +1, +1),
-    ("Sustained, fragmented", +1, -1),
+    ("Prolonged, isolated", +1, +1),
+    ("Prolonged, fragmented", +1, -1),
 )
 CORNER_COLORS: dict[str, str] = {
     "Brief, isolated": "#c03a2b",
-    "Brief, fragmented": "#e08214",
-    "Sustained, isolated": "#2878b5",
-    "Sustained, fragmented": "#5aa02c",
+    "Brief, fragmented": "#e6a817",
+    "Prolonged, isolated": "#2878b5",
+    "Prolonged, fragmented": "#3f9c45",
 }
 
 
@@ -160,7 +161,7 @@ def plot_isolation_schematic(
                 xytext=(0, -8), textcoords="offset points",
                 ha="center", va="top", fontsize=6.6, color="#2f4b6e", zorder=9,
             )
-        lines.append(f"duration = {duration_ms:.0f} ms")
+        lines.append(f"halfwidth = {duration_ms:.0f} ms")
 
     ax.text(
         0.015, 0.975, "\n".join(lines), transform=ax.transAxes, ha="left", va="top",
@@ -228,23 +229,47 @@ def plot_metric_space_panel(
     trace_shape: pd.DataFrame,
     *,
     corners: Optional[pd.DataFrame] = None,
+    condition_traces: Optional[pd.DataFrame] = None,
     regions: Sequence[str] = REGION_ORDER,
     duration_column: str = "response_duration_ms",
     isolation_column: str = "peak_isolation",
     figure_width_in: float = 7.2,
-    figure_height_in: float = 2.4,
+    figure_height_in: float = 2.6,
+    inset_size: float = 0.235,
+    display_window_ms: tuple[float, float] = (-500.0, 500.0),
 ) -> tuple[plt.Figure, pd.DataFrame]:
-    """Duration x isolation scatter per region, with corner exemplars marked.
+    """Halfwidth x isolation scatter per region, with corner exemplars.
 
     Presented as a space rather than two histograms because the population is
-    unimodal on both axes: there is no peaky/sustained dichotomy to threshold,
+    unimodal on both axes: there is no brief/prolonged dichotomy to threshold,
     and a scatter says so honestly while still letting extreme units be named.
+
+    When ``condition_traces`` is supplied each corner unit's own firing-rate
+    trace -- for its preferred fixation category only -- is inset next to its
+    point, so the reader can see what a coordinate in this space looks like
+    without leaving the panel.
     """
     selective = trace_shape.loc[trace_shape["is_selective"]]
     fig, axes = plt.subplots(
         1, len(regions), figsize=(figure_width_in, figure_height_in), sharex=True, sharey=True
     )
     axes = np.atleast_1d(axes)
+
+    lookup = {}
+    if condition_traces is not None:
+        lookup = {
+            (row.unit_key, row.condition): (row.bin_centers_s_rel, row.trace_hz)
+            for row in condition_traces.itertuples()
+        }
+
+    # Inset corners are placed away from the data centroid so they do not sit on
+    # top of the cloud they are annotating.
+    inset_anchor = {
+        "Brief, isolated": (0.015, 0.735),
+        "Brief, fragmented": (0.015, 0.02),
+        "Prolonged, isolated": (0.75, 0.735),
+        "Prolonged, fragmented": (0.75, 0.02),
+    }
 
     summary = []
     for ax, region in zip(axes, regions):
@@ -260,10 +285,41 @@ def plot_metric_space_panel(
         if corners is not None:
             marked = corners.loc[corners["region"].astype(str) == str(region)]
             for _, unit in marked.iterrows():
+                corner = str(unit["corner"])
+                color = CORNER_COLORS.get(corner, INK)
                 ax.scatter(
                     [unit[duration_column]], [unit[isolation_column]],
-                    s=44, color=CORNER_COLORS.get(str(unit["corner"]), INK),
-                    edgecolor="white", linewidth=0.9, zorder=6,
+                    s=40, color=color, edgecolor="white", linewidth=0.9, zorder=7,
+                )
+                entry = lookup.get((unit["unit_key"], unit.get("condition")))
+                if entry is None:
+                    continue
+                anchor = inset_anchor.get(corner)
+                if anchor is None:
+                    continue
+                inset = ax.inset_axes([anchor[0], anchor[1], inset_size, inset_size])
+                centers_ms = np.asarray(entry[0], dtype=float) * 1000.0
+                trace = np.asarray(entry[1], dtype=float)
+                mask = (
+                    (centers_ms >= display_window_ms[0]) & (centers_ms <= display_window_ms[1])
+                )
+                inset.plot(centers_ms[mask], trace[mask], color=color, linewidth=0.9)
+                inset.axvline(0.0, color=MUTED_INK, linestyle="--", linewidth=0.5)
+                inset.set_xticks([])
+                inset.set_yticks([])
+                inset.patch.set_alpha(0.85)
+                for spine in inset.spines.values():
+                    spine.set_color(color)
+                    spine.set_linewidth(0.7)
+                # Connect the inset to the point it describes.
+                ax.annotate(
+                    "",
+                    xy=(unit[duration_column], unit[isolation_column]),
+                    xytext=(anchor[0] + inset_size / 2, anchor[1] + inset_size / 2),
+                    textcoords=ax.transAxes,
+                    arrowprops={"arrowstyle": "-", "color": color, "linewidth": 0.6,
+                                "alpha": 0.7, "shrinkA": 0, "shrinkB": 3},
+                    zorder=4,
                 )
         ax.set_title(f"{region_label(region)}  (n={len(region_units)})", fontsize=8.2)
         nice_axis(ax, y_ticks=4)
@@ -271,7 +327,7 @@ def plot_metric_space_panel(
             {
                 "region": region_label(region),
                 "n_units": int(len(region_units)),
-                "duration_median_ms": float(region_units[duration_column].median()),
+                "halfwidth_median_ms": float(region_units[duration_column].median()),
                 "isolation_median": float(region_units[isolation_column].median()),
                 "spearman_rho": float(
                     region_units[[duration_column, isolation_column]]
@@ -280,7 +336,6 @@ def plot_metric_space_panel(
             }
         )
     axes[0].set_ylabel(ISOLATION_LABEL, fontsize=7.2)
-    fig.supxlabel(DURATION_LABEL, fontsize=7.8)
     if corners is not None:
         fig.legend(
             handles=[
@@ -289,8 +344,11 @@ def plot_metric_space_panel(
                        label=label)
                 for label, _, _ in CORNER_ROLES
             ],
-            ncol=4, loc="lower center", bbox_to_anchor=(0.5, -0.02), fontsize=6.6,
+            ncol=4, loc="upper center", bbox_to_anchor=(0.5, -0.075), fontsize=6.6,
         )
+    # supxlabel without an explicit y: matplotlib reserves the strip once during
+    # tight_layout, and the legend then sits below it in figure coordinates.
+    fig.supxlabel(HALFWIDTH_LABEL, fontsize=7.8)
     fig.tight_layout()
     return fig, pd.DataFrame(summary)
 

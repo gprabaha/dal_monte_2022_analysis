@@ -40,6 +40,16 @@ REGION_LABELS: dict[str, str] = {
     "ofc": "OFC",
 }
 
+#: Prominent, colourblind-safe palette used wherever region is the series
+#: (currently only the UpSet panel). Distinct from the condition palette,
+#: which the two never share a figure with.
+REGION_COLORS: dict[str, str] = {
+    "bla": "#0072B2",
+    "accg": "#E69F00",
+    "dmpfc": "#009E73",
+    "ofc": "#CC79A7",
+}
+
 CONDITION_ORDER: tuple[str, ...] = ("face_interactive", "face_non_interactive", "object")
 CONDITION_LABELS: dict[str, str] = {
     "face_interactive": "Interactive face",

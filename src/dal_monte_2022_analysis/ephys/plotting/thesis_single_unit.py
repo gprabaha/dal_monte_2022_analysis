@@ -35,7 +35,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
+from matplotlib.collections import PolyCollection
 from matplotlib.patches import FancyArrowPatch, Patch
+import seaborn as sns
 
 from scipy import stats
 
@@ -67,6 +69,7 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     NEUTRAL_FILL,
     PAIR_LABELS,
     PAIR_ORDER,
+    REGION_COLORS,
     REGION_ORDER,
     add_analysis_window_bars,
     add_significance_bracket,
@@ -191,7 +194,6 @@ def plot_unit_yield_panel(
 #: for a set-intersection plot.
 UPSET_SUBSET_ORDER: tuple[str, ...] = ("100", "010", "001", "110", "101", "011", "111")
 
-_REGION_BAR_COLORS: tuple[str, ...] = ("#2f4b6e", "#4f81b8", "#84a9d0", "#bcd0e2")
 
 
 def compute_pair_selectivity_membership(
@@ -231,8 +233,9 @@ def plot_pair_selectivity_upset_panel(
     pairs: Sequence[str] = PAIR_ORDER,
     region_totals: Optional[Mapping[str, int]] = None,
     figure_width_in: float = 7.2,
-    figure_height_in: float = 3.1,
+    figure_height_in: float = 2.7,
     as_fraction: bool = True,
+    annotate_counts: bool = True,
 ) -> tuple[plt.Figure, pd.DataFrame]:
     """UpSet-style view of which fixation-category pairs each unit separates.
 
@@ -281,22 +284,30 @@ def plot_pair_selectivity_upset_panel(
         values = np.array([row[bits] for bits in UPSET_SUBSET_ORDER], dtype=float)
         denominator = float(row["n_selective"]) if as_fraction and row["n_selective"] else 1.0
         offset = (index - (len(regions) - 1) / 2.0) * width
+        heights = values / denominator
         ax_bars.bar(
             x + offset,
-            values / denominator,
+            heights,
             width=width * 0.92,
-            color=_REGION_BAR_COLORS[index % len(_REGION_BAR_COLORS)],
+            color=REGION_COLORS.get(str(region), INK),
             edgecolor="white",
             linewidth=0.5,
             label=f"{region_label(region)} (n={int(row['n_selective'])})",
         )
+        if annotate_counts:
+            for xi, height, count in zip(x + offset, heights, values):
+                ax_bars.text(
+                    xi, height + 0.004, str(int(count)),
+                    ha="center", va="bottom", fontsize=5.2,
+                    color=REGION_COLORS.get(str(region), INK), rotation=90,
+                )
     ax_bars.set_ylabel(
         "Fraction of selective units" if as_fraction else "Units", fontsize=7.5
     )
     ax_bars.set_title(
         "Fixation-category pairs each selective unit separates", fontsize=8.5, pad=18
     )
-    ax_bars.set_ylim(0, ax_bars.get_ylim()[1] * 1.06)
+    ax_bars.set_ylim(0, ax_bars.get_ylim()[1] * 1.14)
     ax_bars.legend(
         ncol=4, fontsize=6.4, loc="lower center", bbox_to_anchor=(0.5, 1.02),
         columnspacing=1.0, handlelength=1.2,
@@ -548,7 +559,7 @@ def plot_example_unit_panel(
     title: Optional[str] = None,
     figure_width_in: float = 7.2,
     figure_height_in: float = 2.9,
-    raster_height_ratio: float = 0.85,
+    raster_height_ratio: float = 0.52,
     show_window_legend: bool = False,
     max_raster_trials_per_condition: int = 70,
 ) -> plt.Figure:
@@ -599,19 +610,12 @@ def plot_example_unit_panel(
             highlight_condition=schematic_condition if is_schematic else None,
         )
 
-        subtitle = spec.subtitle
-        if subtitle is None:
-            subtitle = (
-                f"{DPP_ABBREV} = {spec.dpp_score:.2f} "
-                f"({ordinal(spec.dpp_percentile * 100)} pct)"
-            )
-        ax_raster.set_title(
-            f"{region_label(spec.region)} unit {spec.unit_uuid}\n{subtitle}",
-            fontsize=7.4,
-            pad=3,
-        )
+        panel_title = f"{region_label(spec.region)} unit {spec.unit_uuid}"
+        if spec.subtitle:
+            panel_title += f"\n{spec.subtitle}"
+        ax_raster.set_title(panel_title, fontsize=8.0, pad=3)
         if index == 0:
-            ax_raster.set_ylabel(f"Trials\n({n_rows} shown)", fontsize=7, linespacing=1.1)
+            ax_raster.set_ylabel("Trials", fontsize=7.5)
             ax_rate.set_ylabel("Firing rate (Hz)", fontsize=7.5)
 
         if is_schematic and spec.decomposition is not None:
@@ -1022,15 +1026,13 @@ def plot_preferred_condition_panel(
         nice_axis(ax, y_ticks=4)
 
         inset = ax.inset_axes([0.60, 0.62, 0.42, 0.42])
-        wedges, _ = inset.pie(
+        inset.pie(
             region_table["fraction"].to_numpy(),
             colors=[CONDITION_COLORS[condition] for condition in conditions],
             startangle=90,
             counterclock=False,
             wedgeprops={"edgecolor": "white", "linewidth": 1.0},
         )
-        for wedge, condition in zip(wedges, conditions):
-            wedge.set_hatch(CONDITION_HATCHES[condition])
         inset.set_aspect("equal")
 
     axes[0].set_ylabel("Fraction of modulated units", fontsize=7.5)
@@ -1043,7 +1045,6 @@ def plot_preferred_condition_panel(
             Patch(
                 facecolor=CONDITION_COLORS[condition],
                 edgecolor="white",
-                hatch=CONDITION_HATCHES[condition],
                 label=CONDITION_LABELS[condition],
             )
             for condition in conditions
@@ -1113,29 +1114,40 @@ def plot_condition_metric_panel(
     )
     axes = np.atleast_1d(axes)
     all_values = pd.to_numeric(trace_shape[metric], errors="coerce").dropna()
-    y_max = float(np.quantile(all_values, 0.97))
+    y_max = float(np.quantile(all_values, 0.99))
 
     for ax, region in zip(axes, regions):
         region_wide = wide.loc[wide["region"].astype(str) == str(region)]
-        datasets = [region_wide[condition].to_numpy(dtype=float) for condition in conditions]
-        positions = np.arange(len(conditions)) + 1
-        parts = ax.violinplot(
-            datasets, positions=positions, widths=0.8, showextrema=False, showmedians=False
+        long_frame = region_wide.melt(
+            id_vars=["unit_key"], value_vars=list(conditions),
+            var_name="condition", value_name="value",
         )
-        for body, condition in zip(parts["bodies"], conditions):
-            body.set_facecolor(CONDITION_COLORS[condition])
-            body.set_edgecolor(INK)
-            body.set_linewidth(0.6)
-            body.set_alpha(0.80)
-        # Median with a bootstrap-free IQR box, drawn thin so the violin reads first.
-        for position, values in zip(positions, datasets):
-            q25, median, q75 = np.percentile(values, [25, 50, 75])
-            ax.plot([position, position], [q25, q75], color=INK, linewidth=2.6,
-                    solid_capstyle="butt", zorder=5)
-            ax.plot([position], [median], marker="o", markersize=3.0, color="white",
-                    markeredgecolor=INK, markeredgewidth=0.6, zorder=6)
+        # Seaborn with inner="quart" and cut=0, matching the behavioural violins:
+        # quartile lines inside the body, and no kernel tail extending past the
+        # observed range.
+        sns.violinplot(
+            ax=ax,
+            data=long_frame,
+            x="condition",
+            y="value",
+            hue="condition",
+            order=list(conditions),
+            palette=[CONDITION_COLORS[condition] for condition in conditions],
+            legend=False,
+            width=0.72,
+            inner="quart",
+            cut=0,
+            linewidth=0.8,
+            density_norm="width",
+        )
+        for body in [c for c in ax.collections if isinstance(c, PolyCollection)]:
+            body.set_edgecolor("#1f1f1f")
+            body.set_alpha(0.85)
+        for line in ax.lines:
+            line.set_color("#1f1f1f")
+            line.set_alpha(0.9)
 
-        step = y_max * 0.085
+        step = y_max * 0.075
         region_stats = table.loc[table["region"] == region]
         for level, condition in enumerate(
             [c for c in conditions if c != reference_condition]
@@ -1143,14 +1155,17 @@ def plot_condition_metric_panel(
             match = region_stats.loc[region_stats["condition_b"] == condition]
             if match.empty:
                 continue
-            x_a = conditions.index(reference_condition) + 1
-            x_b = conditions.index(condition) + 1
             add_significance_bracket(
-                ax, x_a, x_b, y_max + step * (level * 1.6 + 0.5), match.iloc[0]["stars"],
+                ax,
+                conditions.index(reference_condition),
+                conditions.index(condition),
+                y_max + step * (level * 1.5 + 0.6),
+                match.iloc[0]["stars"],
                 fontsize=6.6,
             )
-        ax.set_ylim(0, y_max + step * 3.4)
-        ax.set_xticks(positions)
+        ax.set_ylim(0, y_max + step * 3.2)
+        ax.set_xlabel("")
+        ax.set_xticks(range(len(conditions)))
         ax.set_xticklabels(
             [CONDITION_SHORT_LABELS[condition] for condition in conditions],
             rotation=22, ha="right",
