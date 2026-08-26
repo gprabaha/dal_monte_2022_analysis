@@ -56,6 +56,12 @@ CONDITION_COLORS: dict[str, str] = {
     "face_non_interactive": "#97ca3d",
     "object": "#754c29",
 }
+#: Secondary encoding so category identity never rests on hue alone in fills.
+CONDITION_HATCHES: dict[str, str] = {
+    "face_interactive": "",
+    "face_non_interactive": "///",
+    "object": "...",
+}
 
 PAIR_ORDER: tuple[str, ...] = (
     "face_interactive__vs__face_non_interactive",

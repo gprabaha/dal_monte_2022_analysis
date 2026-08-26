@@ -35,9 +35,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.lines import Line2D
-from matplotlib.patches import Circle, FancyArrowPatch, Patch
+from matplotlib.patches import FancyArrowPatch, Patch
+
+from scipy import stats
 
 from dal_monte_2022_analysis.core.stats import (
+    adjust_pvalues,
+    safe_paired_ttest,
     significance_stars,
     wilson_score_interval,
 )
@@ -47,6 +51,8 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_peakiness import (
 from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     ANALYSIS_WINDOWS_MS,
     CONDITION_COLORS,
+    CONDITION_HATCHES,
+    CONDITION_LABELS,
     CONDITION_ORDER,
     CONDITION_SHORT_LABELS,
     DPP_ABBREV,
@@ -85,6 +91,9 @@ class ExampleUnitPanelSpec:
     dpp_percentile: float
     #: Only the schematic column needs this.
     decomposition: Optional[DominantPeakDecomposition] = None
+    #: Overrides the default score subtitle when the panel is making a different
+    #: point (e.g. category preference rather than temporal structure).
+    subtitle: Optional[str] = None
 
 
 # --------------------------------------------------------------------------- #
@@ -177,24 +186,12 @@ def plot_unit_yield_panel(
 # 2 - Fixation-pair selectivity Venn                                           #
 # --------------------------------------------------------------------------- #
 
-# Fixed unit-circle geometry, shared by all four region panels. Area-scaled
-# circles (matplotlib-venn) would give each region a different shape and defeat
-# the point of putting the regions side by side.
-_VENN_CENTERS = ((-0.34, 0.20), (0.34, 0.20), (0.0, -0.38))
-_VENN_RADIUS = 0.62
-_VENN_LABEL_POSITIONS = {
-    "100": (-0.66, 0.42),
-    "010": (0.66, 0.42),
-    "001": (0.0, -0.72),
-    "110": (0.0, 0.50),
-    "101": (-0.40, -0.20),
-    "011": (0.40, -0.20),
-    "111": (0.0, 0.02),
-}
-#: Pair identity is carried by a shared color key below the row rather than by
-#: per-circle text. With four panels side by side the set labels of adjacent
-#: regions overlap, and repeating the same three labels four times is noise.
-_VENN_FILL_COLORS = ("#4f81b8", "#c0554a", "#6f9e52")
+#: Intersection subsets in UpSet order, as 3-bit strings over ``PAIR_ORDER``.
+#: Singles first, then doubles, then the triple -- the conventional reading order
+#: for a set-intersection plot.
+UPSET_SUBSET_ORDER: tuple[str, ...] = ("100", "010", "001", "110", "101", "011", "111")
+
+_REGION_BAR_COLORS: tuple[str, ...] = ("#2f4b6e", "#4f81b8", "#84a9d0", "#bcd0e2")
 
 
 def compute_pair_selectivity_membership(
@@ -204,7 +201,7 @@ def compute_pair_selectivity_membership(
     pairs: Sequence[str] = PAIR_ORDER,
     selective_column: str = "is_selective_pair_corrected",
 ) -> pd.DataFrame:
-    """Per region, count units in each of the seven Venn subsets.
+    """Per region, assign each selective unit to one of the seven subsets.
 
     ``subset`` is a 3-bit string ordered as ``pairs``; ``'101'`` means the unit
     separates the first and third pair but not the second.
@@ -224,26 +221,38 @@ def compute_pair_selectivity_membership(
         for unit_key in union:
             bits = "".join("1" if unit_key in members[pair] else "0" for pair in pairs)
             rows.append({"region": region, "unit_key": unit_key, "subset": bits})
-    membership = pd.DataFrame(rows, columns=["region", "unit_key", "subset"])
-    return membership
+    return pd.DataFrame(rows, columns=["region", "unit_key", "subset"])
 
 
-def plot_pair_selectivity_venn_panel(
+def plot_pair_selectivity_upset_panel(
     membership: pd.DataFrame,
     *,
     regions: Sequence[str] = REGION_ORDER,
     pairs: Sequence[str] = PAIR_ORDER,
     region_totals: Optional[Mapping[str, int]] = None,
     figure_width_in: float = 7.2,
-    figure_height_in: float = 2.15,
+    figure_height_in: float = 3.1,
+    as_fraction: bool = True,
 ) -> tuple[plt.Figure, pd.DataFrame]:
-    """Fixed-geometry three-set Venn of fixation-pair selectivity, one per region."""
+    """UpSet-style view of which fixation-category pairs each unit separates.
+
+    Preferred over a Venn here for two reasons. Three-set Venns cannot in general
+    be drawn area-proportionally -- some combinations of the seven subset sizes
+    have no valid circle geometry -- and per-region area scaling would give each
+    of the four panels a different shape, which is the opposite of what a
+    four-region comparison needs. An UpSet reads the same information off an
+    ordinary bar chart with an explicit membership matrix beneath it.
+
+    Bars are the fraction of each region's *selective* units, so the four regions
+    are comparable despite differing yields; raw counts are in the returned table
+    and annotated above each bar.
+    """
     counts_rows = []
     for region in regions:
         region_membership = membership.loc[membership["region"].astype(str) == str(region)]
         counts = region_membership["subset"].value_counts().to_dict()
         entry = {"region": region, "region_label": region_label(region)}
-        for bits in _VENN_LABEL_POSITIONS:
+        for bits in UPSET_SUBSET_ORDER:
             entry[bits] = int(counts.get(bits, 0))
         entry["n_selective"] = int(len(region_membership))
         if region_totals is not None:
@@ -251,65 +260,89 @@ def plot_pair_selectivity_venn_panel(
         counts_rows.append(entry)
     counts_table = pd.DataFrame(counts_rows)
 
-    fig, axes = plt.subplots(
+    fig = plt.figure(figsize=(figure_width_in, figure_height_in))
+    grid = fig.add_gridspec(
+        2,
         1,
-        len(regions),
-        figsize=(figure_width_in, figure_height_in),
+        height_ratios=[3.0, 1.0],
+        hspace=0.06,
+        left=0.085,
+        right=0.995,
+        top=0.90,
+        bottom=0.20,
     )
-    axes = np.atleast_1d(axes)
-    for ax, (_, row) in zip(axes, counts_table.iterrows()):
-        for center, color in zip(_VENN_CENTERS, _VENN_FILL_COLORS):
-            ax.add_patch(
-                Circle(
-                    center,
-                    _VENN_RADIUS,
-                    facecolor=color,
-                    edgecolor=color,
-                    alpha=0.30,
-                    linewidth=1.0,
-                    zorder=2,
-                )
-            )
-        for bits, (x, y) in _VENN_LABEL_POSITIONS.items():
-            value = int(row[bits])
-            ax.text(
-                x,
-                y,
-                str(value),
-                ha="center",
-                va="center",
-                fontsize=7.6,
-                color=INK if value else MUTED_INK,
-                fontweight="bold" if bits == "111" else "normal",
-                zorder=4,
-            )
-        title = f"{row['region_label']}"
-        if "n_units" in counts_table.columns:
-            title += f"\n{int(row['n_selective'])}/{int(row['n_units'])} units"
-        ax.set_title(title, fontsize=8.5)
-        ax.set_xlim(-1.12, 1.12)
-        ax.set_ylim(-1.12, 0.92)
-        ax.set_aspect("equal")
-        ax.axis("off")
+    ax_bars = fig.add_subplot(grid[0])
+    ax_matrix = fig.add_subplot(grid[1], sharex=ax_bars)
 
-    fig.legend(
-        handles=[
-            Patch(
-                facecolor=color,
-                edgecolor=color,
-                alpha=0.45,
-                label=PAIR_LABELS[pair].replace("\n", " "),
-            )
-            for pair, color in zip(pairs, _VENN_FILL_COLORS)
-        ],
-        ncol=3,
-        loc="lower center",
-        bbox_to_anchor=(0.5, 0.005),
-        fontsize=6.8,
-        handlelength=1.3,
-        columnspacing=1.4,
+    x = np.arange(len(UPSET_SUBSET_ORDER))
+    width = 0.78 / len(regions)
+    for index, region in enumerate(regions):
+        row = counts_table.loc[counts_table["region"] == region].iloc[0]
+        values = np.array([row[bits] for bits in UPSET_SUBSET_ORDER], dtype=float)
+        denominator = float(row["n_selective"]) if as_fraction and row["n_selective"] else 1.0
+        offset = (index - (len(regions) - 1) / 2.0) * width
+        ax_bars.bar(
+            x + offset,
+            values / denominator,
+            width=width * 0.92,
+            color=_REGION_BAR_COLORS[index % len(_REGION_BAR_COLORS)],
+            edgecolor="white",
+            linewidth=0.5,
+            label=f"{region_label(region)} (n={int(row['n_selective'])})",
+        )
+    ax_bars.set_ylabel(
+        "Fraction of selective units" if as_fraction else "Units", fontsize=7.5
     )
-    fig.tight_layout(rect=(0, 0.12, 1, 1))
+    ax_bars.set_title(
+        "Fixation-category pairs each selective unit separates", fontsize=8.5, pad=18
+    )
+    ax_bars.set_ylim(0, ax_bars.get_ylim()[1] * 1.06)
+    ax_bars.legend(
+        ncol=4, fontsize=6.4, loc="lower center", bbox_to_anchor=(0.5, 1.02),
+        columnspacing=1.0, handlelength=1.2,
+    )
+    ax_bars.tick_params(axis="x", length=0)
+    plt.setp(ax_bars.get_xticklabels(), visible=False)
+    nice_axis(ax_bars, y_ticks=4)
+
+    # Membership matrix: filled dot = pair is separated in this combination.
+    for row_index, pair in enumerate(pairs):
+        y = len(pairs) - 1 - row_index
+        ax_matrix.axhline(y, color="#eeeeee", linewidth=6.0, zorder=0)
+        for column_index, bits in enumerate(UPSET_SUBSET_ORDER):
+            filled = bits[row_index] == "1"
+            ax_matrix.plot(
+                [column_index],
+                [y],
+                marker="o",
+                markersize=5.0,
+                color=INK if filled else "#cccccc",
+                markeredgecolor="none",
+                zorder=3,
+            )
+        # Vertical connector through the filled dots of each combination.
+    for column_index, bits in enumerate(UPSET_SUBSET_ORDER):
+        filled_rows = [len(pairs) - 1 - i for i, ch in enumerate(bits) if ch == "1"]
+        if len(filled_rows) > 1:
+            ax_matrix.plot(
+                [column_index, column_index],
+                [min(filled_rows), max(filled_rows)],
+                color=INK,
+                linewidth=1.1,
+                zorder=2,
+            )
+    ax_matrix.set_yticks(range(len(pairs)))
+    ax_matrix.set_yticklabels(
+        [PAIR_LABELS[pair].replace("\n", " ") for pair in reversed(pairs)], fontsize=6.4
+    )
+    ax_matrix.set_xticks(x)
+    ax_matrix.set_xticklabels([])
+    ax_matrix.set_ylim(-0.6, len(pairs) - 0.4)
+    ax_matrix.set_xlim(-0.6, len(UPSET_SUBSET_ORDER) - 0.4)
+    ax_matrix.tick_params(length=0)
+    for spine in ax_matrix.spines.values():
+        spine.set_visible(False)
+
     return fig, counts_table
 
 
@@ -467,7 +500,7 @@ def _annotate_dpp_schematic(
         )
         ax.annotate(
             symbol,
-            xy=(t_s, 0.5 * (base + top)),
+            xy=(t_s, base + 0.74 * (top - base)),
             xytext=(6 if side > 0 else -6, 0),
             textcoords="offset points",
             ha="left" if side > 0 else "right",
@@ -566,9 +599,14 @@ def plot_example_unit_panel(
             highlight_condition=schematic_condition if is_schematic else None,
         )
 
+        subtitle = spec.subtitle
+        if subtitle is None:
+            subtitle = (
+                f"{DPP_ABBREV} = {spec.dpp_score:.2f} "
+                f"({ordinal(spec.dpp_percentile * 100)} pct)"
+            )
         ax_raster.set_title(
-            f"{region_label(spec.region)} unit {spec.unit_uuid}\n"
-            f"{DPP_ABBREV} = {spec.dpp_score:.2f} ({ordinal(spec.dpp_percentile * 100)} pct)",
+            f"{region_label(spec.region)} unit {spec.unit_uuid}\n{subtitle}",
             fontsize=7.4,
             pad=3,
         )
@@ -884,9 +922,17 @@ def plot_preferred_condition_panel(
     conditions: Sequence[str] = CONDITION_ORDER,
     preference_column: str = "dominant_condition",
     figure_width_in: float = 7.2,
-    figure_height_in: float = 2.5,
+    figure_height_in: float = 2.9,
+    alpha: float = 0.05,
+    pvalue_correction: str = "fdr_bh",
 ) -> tuple[plt.Figure, pd.DataFrame]:
-    """Fraction of modulated units preferring each fixation category, by region."""
+    """Preferred fixation category among modulated units, by region.
+
+    Bars carry the proportion with a Wilson interval and a per-category binomial
+    test against chance (1/3), FDR corrected across the region x category family.
+    The pie inset shows the same composition at a glance -- it cannot show
+    uncertainty, which is why the bars remain the primary encoding.
+    """
     rows = []
     for region in regions:
         region_units = units.loc[units["region"].astype(str) == str(region)]
@@ -894,6 +940,11 @@ def plot_preferred_condition_panel(
         for condition in conditions:
             k = int((region_units[preference_column].astype(str) == condition).sum())
             low, high = wilson_score_interval(k, n_total)
+            p_value = (
+                float(stats.binomtest(k, n_total, 1.0 / len(conditions)).pvalue)
+                if n_total
+                else np.nan
+            )
             rows.append(
                 {
                     "region": region,
@@ -904,9 +955,12 @@ def plot_preferred_condition_panel(
                     "fraction": (k / n_total) if n_total else np.nan,
                     "ci_low": low,
                     "ci_high": high,
+                    "p_vs_chance": p_value,
                 }
             )
     table = pd.DataFrame(rows)
+    table["p_adj"] = adjust_pvalues(table["p_vs_chance"].to_numpy(dtype=float), pvalue_correction)
+    table["stars"] = [significance_stars(p, alpha=alpha) for p in table["p_adj"]]
 
     fig, axes = plt.subplots(
         1,
@@ -916,15 +970,18 @@ def plot_preferred_condition_panel(
     )
     axes = np.atleast_1d(axes)
     for ax, region in zip(axes, regions):
-        region_table = table.loc[table["region"] == region].set_index("condition").loc[list(conditions)]
+        region_table = (
+            table.loc[table["region"] == region].set_index("condition").loc[list(conditions)]
+        )
         x = np.arange(len(conditions))
         ax.bar(
             x,
             region_table["fraction"],
             width=0.66,
             color=[CONDITION_COLORS[condition] for condition in conditions],
-            edgecolor=INK,
-            linewidth=0.7,
+            edgecolor="white",
+            linewidth=1.2,
+            zorder=3,
         )
         ax.errorbar(
             x,
@@ -937,27 +994,169 @@ def plot_preferred_condition_panel(
             ecolor=INK,
             elinewidth=0.9,
             capsize=2.0,
+            zorder=4,
         )
         ax.axhline(1 / 3, color=MUTED_INK, linestyle="--", linewidth=0.8, zorder=1)
         for xi, row in zip(x, region_table.itertuples()):
-            ax.text(xi, 0.018, str(int(row.k)), ha="center", va="bottom", fontsize=6, color="white")
+            ax.text(
+                xi,
+                row.ci_high + 0.022,
+                row.stars,
+                ha="center",
+                va="bottom",
+                fontsize=7,
+                color=INK,
+            )
+            ax.text(
+                xi, 0.016, str(int(row.k)), ha="center", va="bottom", fontsize=6, color="white",
+                zorder=5,
+            )
         ax.set_xticks(x)
         ax.set_xticklabels(
             [CONDITION_SHORT_LABELS[condition] for condition in conditions],
             rotation=22,
             ha="right",
         )
-        ax.set_title(f"{region_label(region)}\nn = {int(region_table['n'].iloc[0])}", fontsize=8.2)
-        ax.set_ylim(0, 0.72)
+        ax.set_title(f"{region_label(region)}  (n = {int(region_table['n'].iloc[0])})", fontsize=8.2)
+        ax.set_ylim(0, 0.80)
         nice_axis(ax, y_ticks=4)
+
+        inset = ax.inset_axes([0.60, 0.62, 0.42, 0.42])
+        wedges, _ = inset.pie(
+            region_table["fraction"].to_numpy(),
+            colors=[CONDITION_COLORS[condition] for condition in conditions],
+            startangle=90,
+            counterclock=False,
+            wedgeprops={"edgecolor": "white", "linewidth": 1.0},
+        )
+        for wedge, condition in zip(wedges, conditions):
+            wedge.set_hatch(CONDITION_HATCHES[condition])
+        inset.set_aspect("equal")
+
     axes[0].set_ylabel("Fraction of modulated units", fontsize=7.5)
     axes[-1].text(
-        len(conditions) - 0.45,
-        1 / 3 + 0.012,
-        "chance",
-        fontsize=6,
-        color=MUTED_INK,
-        ha="right",
+        len(conditions) - 0.45, 1 / 3 + 0.016, "chance", fontsize=6,
+        color=MUTED_INK, ha="right", va="bottom",
     )
+    fig.legend(
+        handles=[
+            Patch(
+                facecolor=CONDITION_COLORS[condition],
+                edgecolor="white",
+                hatch=CONDITION_HATCHES[condition],
+                label=CONDITION_LABELS[condition],
+            )
+            for condition in conditions
+        ],
+        ncol=3,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.015),
+        fontsize=7,
+    )
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
+    return fig, table
+
+
+def plot_condition_metric_panel(
+    trace_shape: pd.DataFrame,
+    *,
+    metric: str,
+    metric_label: str,
+    regions: Sequence[str] = REGION_ORDER,
+    conditions: Sequence[str] = CONDITION_ORDER,
+    figure_width_in: float = 7.2,
+    figure_height_in: float = 2.9,
+    alpha: float = 0.05,
+    pvalue_correction: str = "fdr_bh",
+    reference_condition: str = "face_interactive",
+) -> tuple[plt.Figure, pd.DataFrame]:
+    """Compare one trace metric across fixation categories, paired within unit.
+
+    Takes the long ``condition='all'`` trace-shape table so each unit contributes
+    all three categories, and tests the reference category against the other two
+    with paired t-tests, FDR corrected across the whole region x comparison
+    family.
+    """
+    rows = []
+    wide = trace_shape.pivot_table(
+        index=["unit_key", "region"], columns="condition", values=metric
+    ).dropna().reset_index()
+    for region in regions:
+        region_wide = wide.loc[wide["region"].astype(str) == str(region)]
+        for condition in conditions:
+            if condition == reference_condition:
+                continue
+            statistic, p_value, n_pairs = safe_paired_ttest(
+                region_wide[reference_condition].to_numpy(dtype=float),
+                region_wide[condition].to_numpy(dtype=float),
+            )
+            rows.append(
+                {
+                    "region": region,
+                    "region_label": region_label(region),
+                    "condition_a": reference_condition,
+                    "condition_b": condition,
+                    "n_units": int(n_pairs),
+                    "median_a": float(region_wide[reference_condition].median()),
+                    "median_b": float(region_wide[condition].median()),
+                    "statistic": float(statistic),
+                    "p_value": float(p_value),
+                }
+            )
+    table = pd.DataFrame(rows)
+    table["p_adj"] = adjust_pvalues(table["p_value"].to_numpy(dtype=float), pvalue_correction)
+    table["stars"] = [significance_stars(p, alpha=alpha) for p in table["p_adj"]]
+    table["significant"] = table["p_adj"] < alpha
+
+    fig, axes = plt.subplots(
+        1, len(regions), figsize=(figure_width_in, figure_height_in), sharey=True
+    )
+    axes = np.atleast_1d(axes)
+    all_values = pd.to_numeric(trace_shape[metric], errors="coerce").dropna()
+    y_max = float(np.quantile(all_values, 0.97))
+
+    for ax, region in zip(axes, regions):
+        region_wide = wide.loc[wide["region"].astype(str) == str(region)]
+        datasets = [region_wide[condition].to_numpy(dtype=float) for condition in conditions]
+        positions = np.arange(len(conditions)) + 1
+        parts = ax.violinplot(
+            datasets, positions=positions, widths=0.8, showextrema=False, showmedians=False
+        )
+        for body, condition in zip(parts["bodies"], conditions):
+            body.set_facecolor(CONDITION_COLORS[condition])
+            body.set_edgecolor(INK)
+            body.set_linewidth(0.6)
+            body.set_alpha(0.80)
+        # Median with a bootstrap-free IQR box, drawn thin so the violin reads first.
+        for position, values in zip(positions, datasets):
+            q25, median, q75 = np.percentile(values, [25, 50, 75])
+            ax.plot([position, position], [q25, q75], color=INK, linewidth=2.6,
+                    solid_capstyle="butt", zorder=5)
+            ax.plot([position], [median], marker="o", markersize=3.0, color="white",
+                    markeredgecolor=INK, markeredgewidth=0.6, zorder=6)
+
+        step = y_max * 0.085
+        region_stats = table.loc[table["region"] == region]
+        for level, condition in enumerate(
+            [c for c in conditions if c != reference_condition]
+        ):
+            match = region_stats.loc[region_stats["condition_b"] == condition]
+            if match.empty:
+                continue
+            x_a = conditions.index(reference_condition) + 1
+            x_b = conditions.index(condition) + 1
+            add_significance_bracket(
+                ax, x_a, x_b, y_max + step * (level * 1.6 + 0.5), match.iloc[0]["stars"],
+                fontsize=6.6,
+            )
+        ax.set_ylim(0, y_max + step * 3.4)
+        ax.set_xticks(positions)
+        ax.set_xticklabels(
+            [CONDITION_SHORT_LABELS[condition] for condition in conditions],
+            rotation=22, ha="right",
+        )
+        ax.set_title(region_label(region), fontsize=8.5)
+        nice_axis(ax, y_ticks=4)
+    axes[0].set_ylabel(metric_label, fontsize=7.5)
     fig.tight_layout()
     return fig, table

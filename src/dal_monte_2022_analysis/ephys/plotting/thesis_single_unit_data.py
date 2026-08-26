@@ -396,6 +396,7 @@ def build_example_unit_panel_specs(
     regions: Sequence[str] = REGION_ORDER,
     schematic_region: Optional[str] = None,
     schematic_condition: str = "face_interactive",
+    subtitle_column: Optional[str] = None,
 ) -> list[ExampleUnitPanelSpec]:
     """Load trials for one exemplar row and package them for plotting.
 
@@ -460,6 +461,11 @@ def build_example_unit_panel_specs(
                 dpp_score=float(unit[DPP_COLUMN]),
                 dpp_percentile=float(unit["dpp_percentile"]),
                 decomposition=decomposition,
+                subtitle=(
+                    str(unit[subtitle_column])
+                    if subtitle_column is not None and subtitle_column in unit
+                    else None
+                ),
             )
         )
     return specs
