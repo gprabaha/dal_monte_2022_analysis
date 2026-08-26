@@ -850,3 +850,144 @@ def run_fixation_peakiness_analysis(
 
     save_pickle_path(result, result_path)
     return result
+
+
+@dataclass(frozen=True)
+class DominantPeakDecomposition:
+    """Everything needed to draw or audit one trace's Dominant-Peak Prominence.
+
+    ``_score_trace`` returns only the scalar summaries it persists, which is
+    enough to rank units but not enough to *show* how the score was reached: the
+    time of the runner-up peak and the prominence reference levels are discarded.
+    This carries them, so a schematic can draw the same P1 and P2 the stored
+    score was computed from rather than re-deriving them with slightly different
+    conventions.
+    """
+
+    centers_ms: np.ndarray
+    values_hz: np.ndarray
+    norm_values: np.ndarray
+    normalization_scale: float
+    mean_fr_hz: float
+    peak_indices: np.ndarray
+    peak_prominences: np.ndarray
+    peak_left_bases: np.ndarray
+    peak_right_bases: np.ndarray
+    primary_index: Optional[int]
+    primary_prominence: float
+    primary_reference_norm: float
+    secondary_index: Optional[int]
+    secondary_prominence: float
+    secondary_reference_norm: float
+    competition_ratio: float
+    competition_penalty_lambda: float
+    competition_exclusion_window_ms: float
+    dominant_peak_prominence: float
+
+
+def decompose_dominant_peak_prominence(
+    trace_hz: np.ndarray,
+    centers_s: np.ndarray,
+    settings: FixationPeakinessSettings,
+) -> DominantPeakDecomposition:
+    """Recompute the Dominant-Peak Prominence of one trace, keeping its geometry.
+
+    Mirrors ``_score_trace`` exactly -- same normalization, same
+    ``find_peaks`` call, same exclusion-window rule for the runner-up -- but also
+    returns peak positions and prominence reference levels so the decomposition
+    can be plotted.
+    """
+    values_hz = np.asarray(trace_hz, dtype=float).reshape(-1)
+    centers = np.asarray(centers_s, dtype=float).reshape(-1)
+    if values_hz.size != centers.size:
+        raise ValueError(
+            "Trace length must match bin centers when decomposing peak prominence. "
+            f"n_values={values_hz.size}, n_centers={centers.size}"
+        )
+
+    finite_mask = np.isfinite(values_hz)
+    mean_fr_hz = float(np.mean(values_hz[finite_mask])) if np.any(finite_mask) else np.nan
+    _, normalization_scale = _resolve_rate_normalization_scale(
+        mean_fr_hz=mean_fr_hz,
+        settings=settings,
+    )
+    fill_value = float(np.min(values_hz[finite_mask])) if np.any(finite_mask) else 0.0
+    safe_values_hz = np.where(finite_mask, values_hz, fill_value)
+    norm_values = safe_values_hz / max(normalization_scale, float(settings.prominence_epsilon))
+
+    bin_step_ms = _resolve_bin_step_ms(centers, settings)
+    distance_bins = max(1, int(round(float(settings.peak_distance_ms) / max(bin_step_ms, 1.0e-12))))
+    peaks, props = find_peaks(
+        norm_values,
+        distance=distance_bins,
+        prominence=max(float(settings.peak_prominence_floor), 0.0),
+    )
+    prominences = np.asarray(props.get("prominences", []), dtype=float).reshape(-1)
+    left_bases = np.asarray(props.get("left_bases", []), dtype=int).reshape(-1)
+    right_bases = np.asarray(props.get("right_bases", []), dtype=int).reshape(-1)
+    centers_ms = centers * 1000.0
+    exclusion_window_ms = max(float(settings.competition_exclusion_window_ms), 0.0)
+    eps = float(settings.prominence_epsilon)
+
+    base = dict(
+        centers_ms=centers_ms,
+        values_hz=values_hz,
+        norm_values=norm_values,
+        normalization_scale=float(normalization_scale),
+        mean_fr_hz=mean_fr_hz,
+        peak_indices=peaks,
+        peak_prominences=prominences,
+        peak_left_bases=left_bases,
+        peak_right_bases=right_bases,
+        competition_penalty_lambda=float(settings.competition_penalty_lambda),
+        competition_exclusion_window_ms=exclusion_window_ms,
+    )
+    if peaks.size == 0 or prominences.size == 0:
+        return DominantPeakDecomposition(
+            **base,
+            primary_index=None,
+            primary_prominence=0.0,
+            primary_reference_norm=np.nan,
+            secondary_index=None,
+            secondary_prominence=0.0,
+            secondary_reference_norm=np.nan,
+            competition_ratio=0.0,
+            dominant_peak_prominence=0.0,
+        )
+
+    order = np.argsort(-prominences)
+    best_rank = int(order[0])
+    primary_index = int(peaks[best_rank])
+    p1 = float(prominences[best_rank])
+    primary_latency_ms = float(centers_ms[primary_index])
+
+    secondary_index: Optional[int] = None
+    p2 = 0.0
+    secondary_rank: Optional[int] = None
+    for candidate_rank in order[1:]:
+        candidate_index = int(peaks[int(candidate_rank)])
+        if abs(float(centers_ms[candidate_index]) - primary_latency_ms) >= exclusion_window_ms:
+            secondary_rank = int(candidate_rank)
+            secondary_index = candidate_index
+            p2 = float(prominences[secondary_rank])
+            break
+
+    competition_ratio = float(p2 / (p1 + eps)) if p1 > 0.0 else 0.0
+    score = (
+        float(p1 / (1.0 + float(settings.competition_penalty_lambda) * competition_ratio))
+        if p1 > 0.0
+        else 0.0
+    )
+    return DominantPeakDecomposition(
+        **base,
+        primary_index=primary_index,
+        primary_prominence=p1,
+        primary_reference_norm=float(norm_values[primary_index] - p1),
+        secondary_index=secondary_index,
+        secondary_prominence=p2,
+        secondary_reference_norm=(
+            float(norm_values[secondary_index] - p2) if secondary_index is not None else np.nan
+        ),
+        competition_ratio=competition_ratio,
+        dominant_peak_prominence=score,
+    )
