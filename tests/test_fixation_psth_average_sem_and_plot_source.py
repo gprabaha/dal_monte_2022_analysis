@@ -167,7 +167,7 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
                 [
                     {
                         "date": "20990101",
-                        "unit_uuid": "u1",
+                        "unit_uuid": "unit_uuid__u1",
                         "fixation_category": "face",
                         "interactive_state": "interactive",
                         "n_trials": 10,
@@ -176,7 +176,7 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
                     },
                     {
                         "date": "20990101",
-                        "unit_uuid": "u1",
+                        "unit_uuid": "unit_uuid__u1",
                         "fixation_category": "face",
                         "interactive_state": "non_interactive",
                         "n_trials": 8,
@@ -185,7 +185,7 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
                     },
                     {
                         "date": "20990101",
-                        "unit_uuid": "u1",
+                        "unit_uuid": "unit_uuid__u1",
                         "fixation_category": "object",
                         "interactive_state": "non_interactive",
                         "n_trials": 6,
@@ -198,7 +198,7 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
                 [
                     {
                         "date": "20990101",
-                        "unit_uuid": "u1",
+                        "unit_uuid": "unit_uuid__u1",
                         "fixation_category": "face",
                         "n_trials": 9,
                         "psth_mean": np.asarray([99.0, 99.0, 99.0], dtype=float),
@@ -206,7 +206,7 @@ class TestFixationPSTHAverageSemAndPlotSource(unittest.TestCase):
                     },
                     {
                         "date": "20990101",
-                        "unit_uuid": "u1",
+                        "unit_uuid": "unit_uuid__u1",
                         "fixation_category": "object",
                         "n_trials": 6,
                         "psth_mean": np.asarray([12.0, 22.0, 32.0], dtype=float),

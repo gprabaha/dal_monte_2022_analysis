@@ -1,0 +1,20 @@
+# configs/face_fixation_gap_distribution.yaml
+fixations_modality: fixations
+interactive_modality: interactive_periods
+fixation_label: face
+output_subdir: face_fixation_gap_distributions
+
+m1_output_filename: within_session_m1_face_fixation_gap_distribution.csv
+m1_m2_output_filename: within_session_interactive_m1_m2_face_fixation_gap_distribution.csv
+filter_summary_filename: face_fixation_gap_distribution_filter_summary.csv
+
+m1_plot_filename: m1_face_fixation_gap_distributions.pdf
+m1_m2_plot_filename: interactive_m1_m2_face_fixation_gap_distributions.pdf
+
+interactive_state_label: interactive
+non_interactive_state_label: non_interactive
+
+max_pair_gap_ms: 5000.0
+sample_rate_hz: 1000.0
+histogram_bins: 60
+test_single: false

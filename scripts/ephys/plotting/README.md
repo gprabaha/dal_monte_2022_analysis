@@ -201,6 +201,31 @@ Config:
   - `selective_region_comparison_plot_pvalue_floor`
   - `selective_region_comparison_plot_annotation_max_regions`
 
+- `plot_fixation_condition_dominance.py`
+  Plots broad-window dominance counts from
+  `region_condition_dominance_summary.csv`.
+  The default figure uses:
+  - rows = all units, raw selective units, corrected selective units
+  - columns = regions
+  - bars = dominant condition counts for interactive face, non-interactive
+    face, and object
+
+  Config:
+  - `condition_dominance_plot_input_subdir`
+  - `condition_dominance_plot_region_summary_filename`
+  - `condition_dominance_plot_output_subdir`
+  - `condition_dominance_plot_output_filename`
+  - `condition_dominance_plot_output_extension`
+  - `condition_dominance_plot_output_dpi`
+  - `condition_dominance_plot_region_order`
+  - `condition_dominance_plot_condition_order`
+  - `condition_dominance_plot_unit_subset_order`
+  - `condition_dominance_plot_condition_labels`
+  - `condition_dominance_plot_condition_colors`
+  - `condition_dominance_plot_subset_labels`
+  - `condition_dominance_plot_figure_width_in`
+  - `condition_dominance_plot_figure_height_in`
+
 - `plot_fixation_preference_index_heatmaps.py`
   Plots fixation-pair preference index heatmaps using
   `preference_index_timeseries.csv` from the preference-index analysis.

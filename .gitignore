@@ -4,6 +4,10 @@
 .codex
 .codex/
 
+# Manuscript
+manuscript/
+
+
 # Data
 *.mat
 *.bin

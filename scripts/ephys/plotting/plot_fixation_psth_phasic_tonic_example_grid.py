@@ -1,0 +1,302 @@
+"""Plot a 2x4 phasic/tonic example-unit fixation PSTH grid."""
+
+import argparse
+
+from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.ephys.plotting.fixation_psth import (
+    DEFAULT_CONDITION_COLORS,
+    FixationPSTHUnitPlotSettings,
+)
+from dal_monte_2022_analysis.ephys.plotting.fixation_psth_example_grid import (
+    FixationPSTHExampleGridPlotSettings,
+)
+from dal_monte_2022_analysis.ephys.plotting.fixation_psth_phasic_tonic_example_grid import (
+    DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_REGIONS,
+    DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_LABELS,
+    DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_STYLES,
+    normalize_example_response_style,
+    parse_phasic_tonic_example_grid_unit_specs,
+    plot_fixation_psth_phasic_tonic_example_grid,
+)
+
+
+def _normalize_row_labels(raw: object) -> dict[str, str]:
+    out: dict[str, str] = {}
+    if not isinstance(raw, dict):
+        return out
+    for key, value in raw.items():
+        try:
+            row_style = normalize_example_response_style(key)
+        except ValueError:
+            continue
+        label = str(value).strip()
+        if label:
+            out[row_style] = label
+    return out
+
+
+def _resolve_example_grid_rate_windows_s(
+    cfg: dict,
+    *,
+    cfg_key: str,
+) -> list[tuple[float, float]]:
+    raw = cfg.get(cfg_key)
+    out: list[tuple[float, float]] = []
+    if isinstance(raw, (list, tuple)):
+        for bounds in raw:
+            if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                continue
+            try:
+                start_s = float(bounds[0]) / 1000.0
+                end_s = float(bounds[1]) / 1000.0
+            except Exception:
+                continue
+            if start_s > end_s:
+                start_s, end_s = end_s, start_s
+            out.append((start_s, end_s))
+    if out:
+        return out
+
+    windows_ms = cfg.get("selective_windows_ms", {})
+    if isinstance(windows_ms, dict):
+        for key in ("pre_fix", "peri_fix", "post_fix"):
+            bounds = windows_ms.get(key)
+            if not isinstance(bounds, (list, tuple)) or len(bounds) != 2:
+                continue
+            try:
+                start_s = float(bounds[0]) / 1000.0
+                end_s = float(bounds[1]) / 1000.0
+            except Exception:
+                continue
+            if start_s > end_s:
+                start_s, end_s = end_s, start_s
+            out.append((start_s, end_s))
+    if out:
+        return out
+    return [(-0.5, 0.0), (-0.25, 0.25), (0.0, 0.5)]
+
+
+def _normalize_color_list(raw: object, *, default: list[str]) -> list[str]:
+    if not isinstance(raw, (list, tuple)):
+        return list(default)
+    out: list[str] = []
+    for item in raw:
+        token = str(item).strip()
+        if token:
+            out.append(token)
+    return out if out else list(default)
+
+
+def _resolve_display_window_s(
+    cfg: dict,
+    *,
+    cfg_key: str,
+    default: tuple[float, float],
+) -> tuple[float, float]:
+    raw = cfg.get(cfg_key)
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        return default
+    try:
+        start_s = float(raw[0]) / 1000.0
+        stop_s = float(raw[1]) / 1000.0
+    except Exception:
+        return default
+    if start_s > stop_s:
+        start_s, stop_s = stop_s, start_s
+    return (start_s, stop_s)
+
+
+def _base_plot_settings(dataset_cfg_path: str, plotting_cfg_path: str, cfg: dict) -> FixationPSTHUnitPlotSettings:
+    return FixationPSTHUnitPlotSettings(
+        cfg_path=dataset_cfg_path,
+        plotting_cfg_path=plotting_cfg_path,
+        trial_input_modality=cfg.get("plot_trial_input_modality", cfg.get("trial_output_modality", "psth")),
+        trial_input_filename=cfg.get("plot_trial_input_filename", "fixations_psth_10ms.pkl"),
+        raster_trial_input_modality=cfg.get(
+            "plot_raster_trial_input_modality",
+            cfg.get("plot_trial_input_modality", cfg.get("trial_output_modality", "psth")),
+        ),
+        raster_trial_input_filename=cfg.get("plot_raster_trial_input_filename", "fixations_spike_train_1ms.pkl"),
+        use_precomputed_average_traces=cfg.get(
+            "phasic_tonic_example_grid_use_precomputed_average_traces",
+            cfg.get("plot_use_precomputed_average_traces", True),
+        ),
+        average_trace_input_subdir=cfg.get("plot_average_input_subdir", "ephys/psth/fixation_psth_averages"),
+        average_trace_input_filename=cfg.get(
+            "plot_average_input_filename_split",
+            cfg.get("plot_average_input_filename", "fixations_psth_10ms.pkl"),
+        ),
+        average_trace_object_input_subdir=cfg.get(
+            "plot_average_object_input_subdir",
+            cfg.get("plot_average_input_subdir", "ephys/psth/fixation_psth_averages"),
+        ),
+        average_trace_object_input_filename=cfg.get(
+            "plot_average_object_input_filename",
+            cfg.get("plot_average_input_filename_unsplit", "fixations_psth_10ms.pkl"),
+        ),
+        allow_trial_trace_fallback=cfg.get(
+            "phasic_tonic_example_grid_allow_trial_trace_fallback",
+            cfg.get("plot_allow_trial_trace_fallback", True),
+        ),
+        output_subdir=cfg.get("plot_output_subdir", "ephys/psth/fixation_psth_unit_plots"),
+        output_extension=cfg.get("plot_output_extension", "pdf"),
+        output_dpi=cfg.get("plot_output_dpi", 220),
+        interactive_label=cfg.get("interactive_high_label", "interactive"),
+        use_parallel=False,
+        parallelize_units=False,
+        unit_parallel_min_units=cfg.get("plot_unit_parallel_min_units", 2),
+        max_procs=cfg.get("max_procs", 16),
+        test_single=False,
+        max_trials_per_condition=cfg.get("plot_max_trials_per_condition", 300),
+        random_seed=cfg.get("plot_random_seed", 42),
+        condition_colors=cfg.get("plot_condition_colors", DEFAULT_CONDITION_COLORS),
+        smooth_before_average=cfg.get("plot_smooth_before_average", True),
+        smoothing_sigma_ms=cfg.get("plot_smoothing_sigma_ms", 20.0),
+        raster_jitter_within_bin=cfg.get("plot_raster_jitter_within_bin", True),
+        raster_linelength=cfg.get("plot_raster_linelength", 1.0),
+        raster_linewidth=cfg.get("plot_raster_linewidth", 2.0),
+        raster_alpha=cfg.get("plot_raster_alpha", 1.0),
+        raster_darkening_factor=cfg.get("plot_raster_darkening_factor", 0.65),
+        raster_show_condition_background=cfg.get("plot_raster_show_condition_background", False),
+        panel_raster_height_ratio=cfg.get("plot_panel_raster_height_ratio", 1.2),
+        panel_rate_height_ratio=cfg.get("plot_panel_rate_height_ratio", 2.0),
+        bin_size_ms_fallback=cfg.get("bin_size_ms", 10.0),
+        window_pre_s=cfg.get("window_pre_s", 1.0),
+        window_post_s=cfg.get("window_post_s", 1.0),
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Build one phasic/tonic example-unit fixation PSTH grid with "
+            "rows=response style and columns=region."
+        ),
+    )
+    parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
+    parser.add_argument("--plotting-cfg", default="configs/plotting.yaml")
+    parser.add_argument("--ephys-fixation-psth-cfg", default="configs/ephys_fixation_psth.yaml")
+    parser.add_argument("--session", action="append", default=None)
+    parser.add_argument("--region", action="append", default=None)
+    parser.add_argument("--row-style", action="append", default=None)
+    parser.add_argument("--output-subdir", default=None)
+    parser.add_argument("--output-filename", default=None)
+    parser.add_argument("--output-extension", default=None)
+    parser.add_argument("--dpi", type=int, default=None)
+    parser.add_argument("--figure-width-in", type=float, default=None)
+    parser.add_argument("--figure-height-in", type=float, default=None)
+    parser.add_argument("--max-trials-per-condition", type=int, default=None)
+    parser.add_argument("--no-smooth", action="store_true")
+    parser.add_argument("--smoothing-sigma-ms", type=float, default=None)
+    parser.add_argument("--allow-missing", action="store_true")
+    args = parser.parse_args()
+
+    cfg = load_config(args.ephys_fixation_psth_cfg)
+    unit_settings = _base_plot_settings(args.dataset_cfg, args.plotting_cfg, cfg)
+    if args.max_trials_per_condition is not None:
+        unit_settings.max_trials_per_condition = int(args.max_trials_per_condition)
+    if args.no_smooth:
+        unit_settings.smooth_before_average = False
+    if args.smoothing_sigma_ms is not None:
+        unit_settings.smoothing_sigma_ms = float(args.smoothing_sigma_ms)
+
+    regions = args.region if args.region else cfg.get(
+        "phasic_tonic_example_grid_regions",
+        list(DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_REGIONS),
+    )
+    row_styles = args.row_style if args.row_style else cfg.get(
+        "phasic_tonic_example_grid_row_styles",
+        list(DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_STYLES),
+    )
+    row_labels = dict(DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_LABELS)
+    row_labels.update(_normalize_row_labels(cfg.get("phasic_tonic_example_grid_row_labels", {})))
+    rate_windows_s = _resolve_example_grid_rate_windows_s(
+        cfg,
+        cfg_key="phasic_tonic_example_grid_rate_windows_ms",
+    )
+    rate_window_colors = _normalize_color_list(
+        cfg.get("phasic_tonic_example_grid_rate_window_colors"),
+        default=["#bdbdbd", "#8f8f8f", "#636363"],
+    )
+    display_window_s = _resolve_display_window_s(
+        cfg,
+        cfg_key="phasic_tonic_example_grid_display_window_ms",
+        default=(-1.0, 1.0),
+    )
+
+    unit_specs = parse_phasic_tonic_example_grid_unit_specs(
+        cfg,
+        regions=regions,
+        row_styles=row_styles,
+    )
+    if not unit_specs:
+        print("[plot] no phasic/tonic example-unit entries parsed from phasic_tonic_example_grid_units")
+        return
+
+    grid_settings = FixationPSTHExampleGridPlotSettings(
+        unit_plot_settings=unit_settings,
+        output_subdir=cfg.get(
+            "phasic_tonic_example_grid_output_subdir",
+            cfg.get("selective_example_grid_output_subdir", "ephys/psth/fixation_psth_selective_unit_plots"),
+        ),
+        output_filename=cfg.get("phasic_tonic_example_grid_output_filename", "phasic_tonic_example_grid_2x4"),
+        output_extension=cfg.get("phasic_tonic_example_grid_output_extension", "pdf"),
+        output_dpi=cfg.get("phasic_tonic_example_grid_output_dpi", cfg.get("plot_output_dpi", 220)),
+        figure_width_in=cfg.get("phasic_tonic_example_grid_figure_width_in", 8.1),
+        figure_height_in=cfg.get("phasic_tonic_example_grid_figure_height_in", 3.2),
+        column_regions=regions,
+        row_preferences=row_styles,
+        row_labels=row_labels,
+        left_margin=cfg.get("phasic_tonic_example_grid_left_margin", 0.075),
+        right_margin=cfg.get("phasic_tonic_example_grid_right_margin", 0.995),
+        top_margin=cfg.get("phasic_tonic_example_grid_top_margin", 0.865),
+        bottom_margin=cfg.get("phasic_tonic_example_grid_bottom_margin", 0.15),
+        panel_wspace=cfg.get("phasic_tonic_example_grid_panel_wspace", 0.18),
+        panel_hspace=cfg.get("phasic_tonic_example_grid_panel_hspace", 0.20),
+        inner_hspace=cfg.get("phasic_tonic_example_grid_inner_hspace", 0.06),
+        show_global_legend=cfg.get("phasic_tonic_example_grid_show_legend", True),
+        legend_ncol=cfg.get("phasic_tonic_example_grid_legend_ncol", 3),
+        pdf_compression=cfg.get("phasic_tonic_example_grid_pdf_compression", 0),
+        display_window_s=display_window_s,
+        show_rate_window_rectangles=cfg.get("phasic_tonic_example_grid_show_rate_windows", True),
+        rate_window_rectangles_s=rate_windows_s,
+        rate_window_rectangle_colors=rate_window_colors,
+        rate_window_rectangle_linestyle=cfg.get("phasic_tonic_example_grid_rate_window_linestyle", ":"),
+        rate_window_rectangle_linewidth=cfg.get("phasic_tonic_example_grid_rate_window_linewidth", 0.8),
+    )
+
+    if args.output_subdir:
+        grid_settings.output_subdir = args.output_subdir
+    if args.output_filename:
+        grid_settings.output_filename = args.output_filename
+    if args.output_extension:
+        grid_settings.output_extension = args.output_extension
+    if args.dpi is not None:
+        grid_settings.output_dpi = int(args.dpi)
+    if args.figure_width_in is not None:
+        grid_settings.figure_width_in = float(args.figure_width_in)
+    if args.figure_height_in is not None:
+        grid_settings.figure_height_in = float(args.figure_height_in)
+
+    allow_missing = bool(cfg.get("phasic_tonic_example_grid_allow_missing", False) or args.allow_missing)
+    result = plot_fixation_psth_phasic_tonic_example_grid(
+        grid_settings,
+        unit_specs=unit_specs,
+        sessions=args.session,
+        allow_missing=allow_missing,
+    )
+    print(
+        "[plot] wrote phasic/tonic example grid: "
+        f"{result.get('output_path')} "
+        f"(resolved {result.get('resolved_cells')}/{result.get('expected_cells')} cells)"
+    )
+    missing = result.get("missing_specs", [])
+    unresolved = result.get("unresolved_specs", [])
+    if missing:
+        print(f"[plot] missing configured cells: {missing}")
+    if unresolved:
+        print(f"[plot] unresolved cells: {unresolved}")
+
+
+if __name__ == "__main__":
+    main()

@@ -623,6 +623,15 @@ def _resolve_n_trials_for_average_row(row) -> int:
     return n_trials if n_trials > 0 else 1
 
 
+def _normalize_unit_uuid_token(value: object) -> str:
+    token = str(value).strip()
+    if token.startswith("unit_uuid__"):
+        token = token[len("unit_uuid__"):]
+    if token.endswith(".0"):
+        token = token[:-2]
+    return token
+
+
 def _combine_average_records(
     records: list[dict[str, np.ndarray | int]],
 ) -> Optional[tuple[np.ndarray, np.ndarray, int]]:
@@ -680,9 +689,9 @@ def _build_precomputed_trace_overrides(
     if average_df.empty or "unit_uuid" not in average_df.columns:
         return {}
 
-    unit_token = str(unit_uuid).strip()
+    unit_token = _normalize_unit_uuid_token(unit_uuid)
     subset = average_df.loc[
-        average_df["unit_uuid"].astype(str).map(lambda value: value.strip()) == unit_token
+        average_df["unit_uuid"].astype(str).map(_normalize_unit_uuid_token) == unit_token
     ].copy()
     if subset.empty:
         return {}
@@ -895,6 +904,11 @@ def _build_unit_condition_payloads(
                 payload["trace_n_trials"] = int(override["trace_n_trials"])
 
         if not bool(settings.allow_trial_trace_fallback):
+            if not resolved_overrides:
+                print(
+                    "[plot] no precomputed average PSTH trace matched "
+                    f"unit={unit_token} date={date_token}; mean trace will be blank."
+                )
             for payload in payloads:
                 if str(payload["key"]) in resolved_overrides:
                     continue

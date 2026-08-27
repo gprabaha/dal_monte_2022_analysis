@@ -201,6 +201,7 @@ def submit_dsq_array_job(
     cpus_per_task: int,
     mem_per_cpu: str,
     time_limit: str,
+    gres: str | None = None,
 ) -> str:
     """Submit a dSQ array job and return the job ID.
 
@@ -213,6 +214,7 @@ def submit_dsq_array_job(
         cpus_per_task: CPU count requested per task.
         mem_per_cpu: Memory per CPU (e.g., "4G").
         time_limit: SLURM time limit (e.g., "02:00:00").
+        gres: Optional generic resource request, e.g. "gpu:1".
 
     Returns:
         The SLURM job ID string.
@@ -240,6 +242,8 @@ def submit_dsq_array_job(
         "--mail-type",
         "FAIL",
     ]
+    if gres:
+        dsq_cmd.extend(["--gres", str(gres)])
     subprocess.run(
         ["bash", "-lc", f"module load dSQ && {shlex.join(dsq_cmd)}"],
         check=True,

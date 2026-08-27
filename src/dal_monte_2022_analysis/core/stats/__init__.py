@@ -15,6 +15,12 @@ from .permutation import (
     permutation_label_statistic_test,
     permutation_mean_difference_test,
 )
+from .proportions import (
+    multinomial_uniform_pvalue,
+    significance_stars,
+    two_proportion_pvalue,
+    wilson_score_interval,
+)
 from .tests import (
     mannwhitneyu_pvalues_per_column,
     one_sample_ttest,
@@ -30,6 +36,10 @@ from .tests import (
 )
 
 __all__ = [
+    "wilson_score_interval",
+    "two_proportion_pvalue",
+    "multinomial_uniform_pvalue",
+    "significance_stars",
     "ALLOWED_PVALUE_CORRECTIONS",
     "normalize_pvalue_correction",
     "adjust_pvalues",

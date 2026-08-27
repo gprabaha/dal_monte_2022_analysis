@@ -28,8 +28,8 @@ spike_train_bin_size_ms: 1.0
 # Gaussian smoothing applied to the saved 1 ms spike train. Sigma is expressed
 # in 1 ms bins, so the default of 2.0 corresponds to a 2 ms standard deviation.
 spike_train_smoothing_sigma_bins: 2.0
-window_pre_s: 5.0
-window_post_s: 5.0
+window_pre_s: 1.0
+window_post_s: 1.0
 include_interactive_state: true
 interactive_high_label: interactive
 
@@ -102,6 +102,10 @@ selective_output_pickle_filename: results.pkl
 selective_smooth_before_window_average: true
 selective_smoothing_sigma_ms: 20.0
 selective_alpha: 0.05
+# Corrected selectivity calls are computed across the configured
+# selective_significance_windows for each unit/comparison family. Use `none`
+# to make corrected calls identical to raw calls.
+selective_pvalue_correction: fdr_bh
 selective_test: welch_ttest
 selective_min_trials_per_condition: 2
 selective_use_parallel: true
@@ -457,6 +461,113 @@ fano_factor_plot_time_window_ms: [-500.0, 500.0]
 fano_factor_plot_x_label: Time from fixation onset (ms)
 fano_factor_plot_y_label: Fano Factor
 
+# Peakiness scoring from average fixation PSTHs.
+peakiness_average_input_subdir: ephys/psth/fixation_psth_averages
+peakiness_average_input_filename: fixations_psth_10ms.pkl
+peakiness_output_subdir: ephys/psth/fixation_peakiness
+peakiness_unit_output_filename: unit_peakiness.csv
+peakiness_condition_output_filename: unit_condition_peakiness.csv
+peakiness_region_summary_filename: region_peakiness_summary.csv
+peakiness_output_pickle_filename: results.pkl
+peakiness_condition_order: [face_interactive, face_non_interactive, object]
+peakiness_min_trials_per_condition: 1
+peakiness_rate_normalization_mode: sqrt_mean
+peakiness_mean_rate_floor_hz: 0.5
+peakiness_peak_distance_ms: 30.0
+peakiness_peak_prominence_floor: 0.0
+peakiness_competition_penalty_lambda: 0.5
+peakiness_competition_exclusion_window_ms: 250.0
+peakiness_prominence_epsilon: 1.0e-12
+peakiness_region_order: [bla, accg, dmpfc, ofc]
+
+peakiness_plot_input_subdir: ephys/psth/fixation_peakiness
+peakiness_plot_unit_output_filename: unit_peakiness.csv
+peakiness_plot_output_subdir: ephys/psth/fixation_peakiness/plots
+peakiness_plot_output_filename: fixation_peakiness_by_region
+peakiness_plot_output_extension: pdf
+peakiness_plot_output_dpi: 220
+peakiness_plot_region_order: [bla, accg, dmpfc, ofc]
+peakiness_plot_region_labels:
+  bla: BLA
+  accg: ACCg
+  dmpfc: dmPFC
+  ofc: OFC
+peakiness_plot_show_points: false
+peakiness_plot_point_color: "#7a7a7a"
+peakiness_plot_point_alpha: 0.28
+peakiness_plot_point_size: 10.0
+peakiness_plot_violin_facecolor: "#d2d7df"
+peakiness_plot_violin_edgecolor: "#3b3f47"
+peakiness_plot_violin_alpha: 0.92
+peakiness_plot_violin_width: 0.86
+peakiness_plot_show_highlight_units: true
+peakiness_plot_highlight_style_order: [phasic, tonic]
+peakiness_plot_highlight_style_labels:
+  phasic: Peaky
+  tonic: Tonic
+peakiness_plot_highlight_style_colors:
+  phasic: "#c03a2b"
+  tonic: "#2878b5"
+peakiness_plot_highlight_style_markers:
+  phasic: "o"
+  tonic: "s"
+peakiness_plot_highlight_marker_size: 42.0
+peakiness_plot_highlight_annotation_fontsize: 6.8
+peakiness_plot_figure_width_in: 7.8
+peakiness_plot_figure_height_in: 2.45
+peakiness_plot_left_margin: 0.08
+peakiness_plot_right_margin: 0.995
+peakiness_plot_top_margin: 0.84
+peakiness_plot_bottom_margin: 0.26
+peakiness_plot_panel_wspace: 0.12
+peakiness_plot_y_label: Peakiness Score
+
+peakiness_condition_plot_input_subdir: ephys/psth/fixation_peakiness
+peakiness_condition_plot_unit_output_filename: unit_peakiness.csv
+peakiness_condition_plot_output_subdir: ephys/psth/fixation_peakiness/plots
+peakiness_condition_plot_output_extension: pdf
+peakiness_condition_plot_output_dpi: 220
+peakiness_condition_plot_condition_order: [face_interactive, face_non_interactive, object]
+peakiness_condition_plot_condition_labels:
+  face_interactive: Int Face
+  face_non_interactive: Non-Int Face
+  object: Object
+peakiness_condition_plot_condition_colors:
+  face_interactive: "#b64198"
+  face_non_interactive: "#97ca3d"
+  object: "#754c29"
+peakiness_condition_plot_region_order: [bla, accg, dmpfc, ofc]
+peakiness_condition_plot_region_labels:
+  bla: BLA
+  accg: ACCg
+  dmpfc: dmPFC
+  ofc: OFC
+peakiness_condition_plot_violin_by_region_output_filename: fixation_peakiness_condition_comparison_by_region_violin
+peakiness_condition_plot_density_by_region_output_filename: fixation_peakiness_condition_comparison_by_region_density
+peakiness_condition_plot_stats_output_filename: fixation_peakiness_condition_comparison_by_region_stats.csv
+peakiness_condition_plot_figure_width_in: 7.8
+peakiness_condition_plot_figure_height_in: 2.8
+peakiness_condition_plot_left_margin: 0.08
+peakiness_condition_plot_right_margin: 0.995
+peakiness_condition_plot_top_margin: 0.86
+peakiness_condition_plot_bottom_margin: 0.22
+peakiness_condition_plot_panel_wspace: 0.22
+peakiness_condition_plot_violin_width: 0.82
+peakiness_condition_plot_violin_alpha: 0.72
+peakiness_condition_plot_violin_edgecolor: "#2f3136"
+peakiness_condition_plot_show_violin_points: false
+peakiness_condition_plot_violin_point_color: "#6f6f6f"
+peakiness_condition_plot_violin_point_alpha: 0.22
+peakiness_condition_plot_violin_point_size: 9.0
+peakiness_condition_plot_density_alpha: 0.24
+peakiness_condition_plot_density_linewidth: 1.6
+peakiness_condition_plot_density_grid_n: 400
+peakiness_condition_plot_score_label: Peakiness Score
+peakiness_condition_plot_density_label: Density
+peakiness_condition_plot_pvalue_correction: fdr_bh
+peakiness_condition_plot_alpha: 0.05
+peakiness_condition_plot_min_paired_units_per_region: 2
+
 # Preference-index heatmap plotting.
 # Default footprint for combined 3x4 output: letter width x <= 2/5 letter height.
 selective_index_plot_output_subdir: ephys/fixation_preference_index/plots
@@ -606,6 +717,56 @@ selective_region_comparison_plot_output_dpi: 220
 selective_region_comparison_plot_pvalue_floor: 1e-6
 selective_region_comparison_plot_annotation_max_regions: 10
 
+# Region-level dominance of broad-window fixation responses.
+# This is descriptive: selectivity remains defined by pre/peri/post subwindows.
+condition_dominance_average_input_subdir: ephys/psth/fixation_psth_averages
+condition_dominance_average_input_filename: fixations_psth_10ms.pkl
+condition_dominance_selectivity_input_subdir: ephys/psth/fixation_psth_selectivity
+condition_dominance_selectivity_unit_summary_filename: unit_selectivity.csv
+condition_dominance_output_subdir: ephys/psth/fixation_condition_dominance
+condition_dominance_unit_output_filename: unit_condition_dominance.csv
+condition_dominance_region_summary_filename: region_condition_dominance_summary.csv
+condition_dominance_output_pickle_filename: results.pkl
+condition_dominance_window_ms: [-500.0, 500.0]
+condition_dominance_min_trials_per_condition: 1
+condition_dominance_tie_tolerance_hz: 1.0e-12
+condition_dominance_condition_order: [face_interactive, face_non_interactive, object]
+condition_dominance_unit_subset_order: [all_units, raw_selective_units, corrected_selective_units]
+condition_dominance_region_order: [bla, accg, dmpfc, ofc]
+
+# Dominance plotting
+condition_dominance_plot_input_subdir: ephys/psth/fixation_condition_dominance
+condition_dominance_plot_region_summary_filename: region_condition_dominance_summary.csv
+condition_dominance_plot_output_subdir: ephys/psth/fixation_condition_dominance/plots
+condition_dominance_plot_output_filename: condition_dominance_by_region
+condition_dominance_plot_output_extension: pdf
+condition_dominance_plot_output_dpi: 220
+condition_dominance_plot_region_order: [bla, accg, dmpfc, ofc]
+condition_dominance_plot_condition_order: [face_interactive, face_non_interactive, object]
+condition_dominance_plot_unit_subset_order: [all_units, raw_selective_units, corrected_selective_units]
+condition_dominance_plot_condition_labels:
+  face_interactive: Int Face
+  face_non_interactive: Non-Int Face
+  object: Object
+condition_dominance_plot_condition_colors:
+  face_interactive: "#b64198"
+  face_non_interactive: "#97ca3d"
+  object: "#754c29"
+condition_dominance_plot_subset_labels:
+  all_units: All Units
+  raw_selective_units: Raw Selective
+  corrected_selective_units: Corrected Selective
+condition_dominance_plot_figure_width_in: 8.5
+condition_dominance_plot_figure_height_in: 4.8
+condition_dominance_plot_show_suptitle: false
+condition_dominance_plot_left_margin: 0.06
+condition_dominance_plot_right_margin: 0.995
+condition_dominance_plot_top_margin: 0.88
+condition_dominance_plot_bottom_margin: 0.20
+condition_dominance_plot_panel_wspace: 0.18
+condition_dominance_plot_panel_hspace: 0.34
+condition_dominance_plot_bar_width: 0.72
+
 # Selective-unit firing-rate plotting
 selective_plot_output_subdir: ephys/psth/fixation_psth_unit_plots_multiscale_5s
 selective_plot_output_extension: png
@@ -664,6 +825,40 @@ selective_example_grid_units:
     face_interactive: {unit_uuid: "1091"} #1032, 1097
     face_non_interactive: {unit_uuid: "1304"}
     object: {unit_uuid: "1255"}
+
+# Phasic/tonic example grid plotting (2 rows x 4 columns)
+# Intended layout footprint: near-letter width with height <= 1/3 letter page.
+phasic_tonic_example_grid_output_subdir: ephys/psth/fixation_psth_selective_unit_plots
+phasic_tonic_example_grid_output_filename: phasic_tonic_example_grid_2x4
+phasic_tonic_example_grid_output_extension: pdf
+phasic_tonic_example_grid_output_dpi: 220
+phasic_tonic_example_grid_pdf_compression: 0
+phasic_tonic_example_grid_allow_missing: false
+phasic_tonic_example_grid_figure_width_in: 8.1
+phasic_tonic_example_grid_figure_height_in: 3.2
+phasic_tonic_example_grid_display_window_ms: [-1000.0, 1000.0]
+phasic_tonic_example_grid_regions: [BLA, ACCg, dmPFC, OFC]
+phasic_tonic_example_grid_row_styles: [phasic, tonic]
+phasic_tonic_example_grid_row_labels:
+  phasic: "Phasic"
+  tonic: "Tonic"
+# Primary source remains the stored 10 ms average PSTH mean/SEM tables.
+phasic_tonic_example_grid_use_precomputed_average_traces: true
+phasic_tonic_example_grid_allow_trial_trace_fallback: false
+phasic_tonic_example_grid_show_rate_windows: true
+phasic_tonic_example_grid_units:
+  BLA:
+    phasic: {unit_uuid: "600"}
+    tonic: {unit_uuid: "591"}
+  ACCg:
+    phasic: {unit_uuid: "145"}
+    tonic: {unit_uuid: "118"}
+  dmPFC:
+    phasic: {unit_uuid: "1796"}
+    tonic: {unit_uuid: "1516"}
+  OFC:
+    phasic: {unit_uuid: "1091"}
+    tonic: {unit_uuid: "1011"}
 
 # Per-unit fixation PSTH plotting (stored in analysis_output_root)
 # Route multiscale figures to a separate folder so older single-timescale plots remain intact.

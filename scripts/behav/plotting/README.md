@@ -3,6 +3,8 @@
 CLI entrypoints for plotting analysis outputs.
 
 Scripts:
+- `plot_face_fixation_gap_distributions.py`
+  Two 2-panel histogram figures: m1 face-fixation gaps split by interactive vs non-interactive state, and interactive cross-monkey m1/m2 face-fixation gaps.
 - `plot_face_fixation_probability.py`
   Violin plots for within-session and cross-session face fixation probabilities.
 - `plot_interactive_face_fixation_probability.py`

@@ -104,6 +104,7 @@ def main() -> None:
             cfg.get("smoothing_sigma_ms", 20.0),
         ),
         alpha=cfg.get("selective_alpha", 0.05),
+        pvalue_correction=cfg.get("selective_pvalue_correction", "fdr_bh"),
         test_name=cfg.get("selective_test", "welch_ttest"),
         min_trials_per_condition=cfg.get("selective_min_trials_per_condition", 2),
         use_parallel=cfg.get("selective_use_parallel", True),

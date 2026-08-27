@@ -33,6 +33,9 @@ class InteractivePeriodDurationDistributionPlotSettings:
     aggregate_output_filename: str = (
         "interactive_period_duration_distributions_histogram_all_pairs_aggregate.pdf"
     )
+    compact_output_filename: str = (
+        "interactive_period_duration_distributions_histogram_compact.pdf"
+    )
     interactive_periods_modality: str = "interactive_periods"
     high_label: str = "interactive"
     low_label: str = "non_interactive"
@@ -278,6 +281,157 @@ def _plot_histogram_with_stats(
         )
 
 
+def _draw_editable_histogram(
+    *,
+    ax,
+    values: np.ndarray,
+    bins: np.ndarray,
+    facecolor: str,
+    edgecolor: str,
+    linewidth: float,
+    fill: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Draw histogram bars as individual vector rectangles for PDF editing."""
+    arr = np.asarray(values, dtype=float).reshape(-1)
+    arr = arr[np.isfinite(arr) & (arr > 0)]
+    counts, edges = np.histogram(arr, bins=bins)
+    widths = np.diff(edges)
+    for idx, (left, width, height) in enumerate(zip(edges[:-1], widths, counts)):
+        if height <= 0:
+            continue
+        bars = ax.bar(
+            float(left),
+            int(height),
+            width=float(width),
+            align="edge",
+            facecolor=facecolor if fill else "none",
+            edgecolor=edgecolor,
+            linewidth=float(linewidth),
+            alpha=1.0,
+            clip_on=False,
+            rasterized=False,
+            zorder=2,
+        )
+        for patch in bars.patches:
+            patch.set_gid(f"duration_histogram_bar_{idx}")
+            patch.set_clip_on(False)
+            patch.set_clip_path(None)
+    return counts, edges
+
+
+def _plot_compact_aggregate_histograms(
+    *,
+    durations_df: pd.DataFrame,
+    duration_column: str,
+    high_label: str,
+    low_label: str,
+    bins: np.ndarray,
+    x_max: float,
+    dpi: int | None,
+    x_label: str,
+    y_label: str,
+) -> plt.Figure:
+    """Plot compact stacked aggregate histograms for publication layout."""
+    purple = "#6A3D9A"
+    line_dark = "#1A1A1A"
+    mean_color = "#C62828"
+    median_color = "#111111"
+    figsize = [3.35, 2.475]
+    compact_x_max = min(float(x_max), 100.0)
+    compact_bins = bins[bins <= compact_x_max]
+    if compact_bins.size < 2 or not np.isclose(float(compact_bins[-1]), compact_x_max):
+        compact_bins = np.r_[compact_bins, compact_x_max]
+    fig, axes = plt.subplots(
+        1,
+        2,
+        figsize=figsize,
+        dpi=dpi,
+        sharex=True,
+        sharey=True,
+        constrained_layout=False,
+    )
+    panel_specs = [
+        (axes[0], high_label, True),
+        (axes[1], low_label, False),
+    ]
+    for ax, state_label, fill in panel_specs:
+        values = durations_df.loc[
+            durations_df["state"] == state_label,
+            duration_column,
+        ].to_numpy(dtype=float)
+        arr = np.asarray(values, dtype=float).reshape(-1)
+        arr = arr[np.isfinite(arr) & (arr > 0)]
+        plot_arr = arr[arr <= compact_x_max]
+        _draw_editable_histogram(
+            ax=ax,
+            values=plot_arr,
+            bins=compact_bins,
+            facecolor=purple,
+            edgecolor=purple if fill else line_dark,
+            linewidth=0.35 if fill else 0.45,
+            fill=fill,
+        )
+        stats = _summary_stats(arr)
+        for name, x_val, color, linestyle, width in [
+            ("mean", stats["mean"], mean_color, "-", 0.9),
+            ("median", stats["median"], median_color, "--", 0.85),
+        ]:
+            line = ax.axvline(
+                x=x_val,
+                color=color,
+                linestyle=linestyle,
+                linewidth=width,
+                alpha=1.0,
+                clip_on=False,
+                zorder=4,
+            )
+            line.set_gid(f"{state_label}_{name}_duration_line")
+            line.set_clip_on(False)
+            line.set_clip_path(None)
+
+        ax.set_title(
+            state_label.replace("_", "-"),
+            fontsize=7.2,
+            pad=2.0,
+        )
+        ax.text(
+            0.98,
+            0.92,
+            f"mean {stats['mean']:.1f}s | median {stats['median']:.1f}s",
+            transform=ax.transAxes,
+            ha="right",
+            va="top",
+            fontsize=5.9,
+            color=line_dark,
+        )
+        ax.set_xlim(0.0, compact_x_max)
+        ax.grid(axis="y", alpha=0.22, linewidth=0.35)
+        ax.tick_params(axis="both", length=2.0, width=0.5, labelsize=6.5, pad=1.5)
+        for spine in ("top", "right"):
+            ax.spines[spine].set_visible(False)
+        for spine in ("left", "bottom"):
+            ax.spines[spine].set_linewidth(0.55)
+
+    legend_handles = [
+        plt.Line2D([0], [0], color=mean_color, linewidth=0.9, linestyle="-", label="mean"),
+        plt.Line2D([0], [0], color=median_color, linewidth=0.85, linestyle="--", label="median"),
+    ]
+    fig.legend(
+        handles=legend_handles,
+        loc="upper center",
+        bbox_to_anchor=(0.55, 1.03),
+        ncol=2,
+        frameon=False,
+        fontsize=6.2,
+        handlelength=1.5,
+        columnspacing=0.9,
+    )
+    fig.supxlabel(x_label, fontsize=7.2, y=0.02)
+    fig.supylabel(y_label, fontsize=7.2, x=0.015)
+    fig.subplots_adjust(left=0.14, right=0.985, bottom=0.22, top=0.82, wspace=0.12)
+    return fig
+
+
 def _resolve_common_bins(values: np.ndarray, n_bins: int) -> tuple[np.ndarray, float]:
     """Resolve shared histogram bins and x-axis maximum."""
     arr = np.asarray(values, dtype=float).reshape(-1)
@@ -396,6 +550,7 @@ def plot_interactive_period_duration_distributions(
         output_filename=settings.output_filename,
         m1_output_filename=settings.m1_output_filename,
         aggregate_output_filename=settings.aggregate_output_filename,
+        compact_output_filename=settings.compact_output_filename,
         interactive_periods_modality=modality,
         high_label=high_label,
         low_label=low_label,
@@ -530,4 +685,20 @@ def plot_interactive_period_duration_distributions(
     aggregate_out_path.parent.mkdir(parents=True, exist_ok=True)
     save_figure(fig_agg, aggregate_out_path, ext="pdf")
     plt.close(fig_agg)
-    return [out_path, m1_out_path, aggregate_out_path]
+
+    fig_compact = _plot_compact_aggregate_histograms(
+        durations_df=durations_df,
+        duration_column=resolved_settings.duration_column,
+        high_label=resolved_settings.high_label,
+        low_label=resolved_settings.low_label,
+        bins=bins,
+        x_max=x_max,
+        dpi=dpi,
+        x_label=resolved_settings.x_label,
+        y_label=resolved_settings.y_label,
+    )
+    compact_out_path = out_dir / resolved_settings.compact_output_filename
+    compact_out_path.parent.mkdir(parents=True, exist_ok=True)
+    save_figure(fig_compact, compact_out_path, ext="pdf")
+    plt.close(fig_compact)
+    return [out_path, m1_out_path, aggregate_out_path, compact_out_path]

@@ -20,7 +20,12 @@ from dal_monte_2022_analysis.core.ephys.analysis_primitives import (
     extract_trials_df_and_meta as _extract_trials_df_and_meta,
     resolve_bin_centers_from_meta as _resolve_bin_centers_from_meta,
 )
-from dal_monte_2022_analysis.core.stats import safe_mannwhitneyu, safe_welch_ttest
+from dal_monte_2022_analysis.core.stats import (
+    adjust_pvalues,
+    normalize_pvalue_correction,
+    safe_mannwhitneyu,
+    safe_welch_ttest,
+)
 from dal_monte_2022_analysis.runtime.execution.task_runner import run_tasks
 from dal_monte_2022_analysis.runtime.io.processed_data import (
     load_pickle_path,
@@ -132,6 +137,7 @@ class FixationPSTHSelectivitySettings:
     smooth_before_window_average: bool = True
     smoothing_sigma_ms: float = 20.0
     alpha: float = 0.05
+    pvalue_correction: str = "fdr_bh"
     test_name: str = "welch_ttest"
     min_trials_per_condition: int = 2
     use_parallel: bool = True
@@ -587,8 +593,14 @@ def _evaluate_pairs_for_comparison(
                     "p_value": p_value,
                     "alpha": float(settings.alpha),
                     "significant": bool(significant),
+                    "significant_raw": bool(significant),
                     "counts_toward_selectivity": bool(counts_toward_selectivity),
                     "significant_for_selectivity": bool(significant and counts_toward_selectivity),
+                    "significant_for_selectivity_raw": bool(significant and counts_toward_selectivity),
+                    "p_value_corrected": np.nan,
+                    "pvalue_correction": normalize_pvalue_correction(settings.pvalue_correction),
+                    "significant_corrected": False,
+                    "significant_for_selectivity_corrected": False,
                     "tested": bool(tested),
                     "test_name": settings.test_name,
                 }
@@ -610,14 +622,24 @@ def _evaluate_pairs_for_comparison(
                 "condition_a": cond_a,
                 "condition_b": cond_b,
                 "is_selective_pair": bool(len(pair_sig_windows_selective) > 0),
+                "is_selective_pair_raw": bool(len(pair_sig_windows_selective) > 0),
+                "is_selective_pair_corrected": False,
                 "n_significant_windows": int(len(pair_sig_windows_selective)),
+                "n_significant_windows_raw": int(len(pair_sig_windows_selective)),
+                "n_significant_windows_corrected": 0,
                 "n_tested_windows": int(pair_testable_windows_selective),
+                "n_tested_windows_corrected": int(pair_testable_windows_selective),
                 "significant_windows": "|".join(pair_sig_windows_selective),
+                "significant_windows_raw": "|".join(pair_sig_windows_selective),
+                "significant_windows_corrected": "",
                 "min_p_value": float(min_p_value) if np.isfinite(min_p_value) else np.nan,
+                "min_p_value_raw": float(min_p_value) if np.isfinite(min_p_value) else np.nan,
+                "min_p_value_corrected": np.nan,
                 "n_significant_windows_all": int(len(pair_sig_windows_all)),
                 "n_tested_windows_all": int(pair_testable_windows_all),
                 "significant_windows_all": "|".join(pair_sig_windows_all),
                 "min_p_value_all": float(min_p_value_all) if np.isfinite(min_p_value_all) else np.nan,
+                "pvalue_correction": normalize_pvalue_correction(settings.pvalue_correction),
             }
         )
 
@@ -641,9 +663,17 @@ def _evaluate_pairs_for_comparison(
         "area": area,
         "n_sessions": n_sessions,
         "is_selective_unit": bool(n_selective_pairs > 0),
+        "is_selective_unit_raw": bool(n_selective_pairs > 0),
+        "is_selective_unit_corrected": False,
         "n_selective_pairs": n_selective_pairs,
+        "n_selective_pairs_raw": n_selective_pairs,
+        "n_selective_pairs_corrected": 0,
         "n_tested_pairs": n_tested_pairs,
+        "n_tested_pairs_corrected": n_tested_pairs,
         "selective_pairs": "|".join(selective_labels),
+        "selective_pairs_raw": "|".join(selective_labels),
+        "selective_pairs_corrected": "",
+        "pvalue_correction": normalize_pvalue_correction(settings.pvalue_correction),
     }
     return window_rows, pair_rows, unit_row
 
@@ -707,6 +737,174 @@ def _unit_worker(args):
         pair_rows.extend(comp_pair_rows)
         unit_rows.append(comp_unit_row)
     return window_rows, pair_rows, unit_rows, condition_rows
+
+
+def _coerce_bool_flag(value) -> bool:
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)):
+        return int(value) != 0
+    if isinstance(value, (float, np.floating)):
+        if not np.isfinite(value):
+            return False
+        return float(value) != 0.0
+    if value is None:
+        return False
+    token = str(value).strip().lower()
+    return token in {"1", "true", "t", "yes", "y"}
+
+
+def _bool_mask(df: pd.DataFrame, column: str) -> pd.Series:
+    if column not in df.columns:
+        return pd.Series(False, index=df.index, dtype=bool)
+    return df[column].map(_coerce_bool_flag).astype(bool)
+
+
+def _ordered_window_rows(df: pd.DataFrame) -> pd.DataFrame:
+    sort_cols = [
+        col
+        for col in ("window_start_ms", "window_stop_ms", "window_name")
+        if col in df.columns
+    ]
+    if not sort_cols:
+        return df
+    return df.sort_values(sort_cols, na_position="last", kind="stable")
+
+
+def _append_corrected_selectivity_columns(
+    window_df: pd.DataFrame,
+    pair_df: pd.DataFrame,
+    unit_df: pd.DataFrame,
+    *,
+    settings: FixationPSTHSelectivitySettings,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Append raw/corrected selectivity calls without changing legacy raw columns."""
+    correction = normalize_pvalue_correction(settings.pvalue_correction)
+
+    window_out = window_df.copy()
+    if not window_out.empty:
+        window_out["significant_raw"] = _bool_mask(window_out, "significant")
+        window_out["significant_for_selectivity_raw"] = _bool_mask(
+            window_out,
+            "significant_for_selectivity",
+        )
+        window_out["p_value_corrected"] = np.nan
+        window_out["pvalue_correction"] = correction
+        window_out["significant_corrected"] = False
+        window_out["significant_for_selectivity_corrected"] = False
+
+        selectivity_mask = _bool_mask(window_out, "counts_toward_selectivity")
+        tested_mask = _bool_mask(window_out, "tested")
+        for _, idx in window_out.groupby(["comparison_label", "unit_key"], dropna=False).groups.items():
+            idx_list = list(idx)
+            idx_selected = window_out.loc[idx_list].index[
+                selectivity_mask.loc[idx_list].to_numpy(dtype=bool)
+                & tested_mask.loc[idx_list].to_numpy(dtype=bool)
+            ]
+            if idx_selected.empty:
+                continue
+            adjusted = adjust_pvalues(
+                window_out.loc[idx_selected, "p_value"].to_numpy(dtype=float),
+                correction,
+            )
+            window_out.loc[idx_selected, "p_value_corrected"] = adjusted
+
+        corrected_sig = (
+            pd.to_numeric(window_out["p_value_corrected"], errors="coerce")
+            .to_numpy(dtype=float)
+            < float(settings.alpha)
+        )
+        corrected_sig = np.asarray(corrected_sig, dtype=bool)
+        window_out["significant_corrected"] = corrected_sig
+        window_out["significant_for_selectivity_corrected"] = corrected_sig & selectivity_mask.to_numpy(dtype=bool)
+
+    pair_out = pair_df.copy()
+    if not pair_out.empty:
+        pair_out["is_selective_pair_raw"] = _bool_mask(pair_out, "is_selective_pair")
+        if "n_significant_windows" in pair_out.columns:
+            pair_out["n_significant_windows_raw"] = pair_out["n_significant_windows"]
+        if "significant_windows" in pair_out.columns:
+            pair_out["significant_windows_raw"] = pair_out["significant_windows"].fillna("").astype(str)
+        if "min_p_value" in pair_out.columns:
+            pair_out["min_p_value_raw"] = pair_out["min_p_value"]
+        pair_out["is_selective_pair_corrected"] = False
+        pair_out["n_significant_windows_corrected"] = 0
+        pair_out["n_tested_windows_corrected"] = 0
+        pair_out["significant_windows_corrected"] = ""
+        pair_out["min_p_value_corrected"] = np.nan
+        pair_out["pvalue_correction"] = correction
+
+        window_groups = (
+            window_out.groupby(["comparison_label", "unit_key", "pair_label"], dropna=False)
+            if not window_out.empty
+            else None
+        )
+        for idx, row in pair_out.iterrows():
+            if window_groups is None:
+                continue
+            key = (row.get("comparison_label"), row.get("unit_key"), row.get("pair_label"))
+            if key not in window_groups.groups:
+                continue
+            sub = window_groups.get_group(key).copy()
+            sub = sub.loc[_bool_mask(sub, "counts_toward_selectivity")].copy()
+            if sub.empty:
+                continue
+            sub = _ordered_window_rows(sub)
+            tested = _bool_mask(sub, "tested")
+            sig = _bool_mask(sub, "significant_for_selectivity_corrected")
+            sig_df = sub.loc[sig].copy()
+            pair_out.at[idx, "n_tested_windows_corrected"] = int(tested.sum())
+            pair_out.at[idx, "n_significant_windows_corrected"] = int(sig.sum())
+            pair_out.at[idx, "is_selective_pair_corrected"] = bool(sig.any())
+            pair_out.at[idx, "significant_windows_corrected"] = "|".join(
+                sig_df["window_name"].astype(str).tolist()
+            )
+            pvals_corrected = pd.to_numeric(
+                sub["p_value_corrected"],
+                errors="coerce",
+            ).to_numpy(dtype=float)
+            finite = np.isfinite(pvals_corrected)
+            if np.any(finite):
+                pair_out.at[idx, "min_p_value_corrected"] = float(np.min(pvals_corrected[finite]))
+
+    unit_out = unit_df.copy()
+    if not unit_out.empty:
+        unit_out["is_selective_unit_raw"] = _bool_mask(unit_out, "is_selective_unit")
+        if "n_selective_pairs" in unit_out.columns:
+            unit_out["n_selective_pairs_raw"] = unit_out["n_selective_pairs"]
+        if "n_tested_pairs" in unit_out.columns:
+            unit_out["n_tested_pairs_raw"] = unit_out["n_tested_pairs"]
+        if "selective_pairs" in unit_out.columns:
+            unit_out["selective_pairs_raw"] = unit_out["selective_pairs"].fillna("").astype(str)
+        unit_out["is_selective_unit_corrected"] = False
+        unit_out["n_selective_pairs_corrected"] = 0
+        unit_out["n_tested_pairs_corrected"] = 0
+        unit_out["selective_pairs_corrected"] = ""
+        unit_out["pvalue_correction"] = correction
+
+        pair_groups = (
+            pair_out.groupby(["comparison_label", "unit_key"], dropna=False)
+            if not pair_out.empty
+            else None
+        )
+        for idx, row in unit_out.iterrows():
+            if pair_groups is None:
+                continue
+            key = (row.get("comparison_label"), row.get("unit_key"))
+            if key not in pair_groups.groups:
+                continue
+            sub = pair_groups.get_group(key).copy()
+            tested = pd.to_numeric(sub["n_tested_windows_corrected"], errors="coerce").fillna(0).to_numpy(dtype=int) > 0
+            sig = _bool_mask(sub, "is_selective_pair_corrected")
+            sig_df = sub.loc[sig].copy()
+            unit_out.at[idx, "n_tested_pairs_corrected"] = int(np.sum(tested))
+            unit_out.at[idx, "n_selective_pairs_corrected"] = int(sig.sum())
+            unit_out.at[idx, "is_selective_unit_corrected"] = bool(sig.any())
+            unit_out.at[idx, "selective_pairs_corrected"] = "|".join(
+                sig_df["pair_label"].astype(str).tolist()
+            )
+
+    return window_out, pair_out, unit_out
 
 
 def _comparison_label_token(label: str) -> str:
@@ -966,6 +1164,12 @@ def run_fixation_selectivity_analysis(
     pair_df = pd.DataFrame(pair_rows_all)
     unit_df = pd.DataFrame(unit_rows_all)
     condition_df = pd.DataFrame(condition_rows_all)
+    window_df, pair_df, unit_df = _append_corrected_selectivity_columns(
+        window_df,
+        pair_df,
+        unit_df,
+        settings=settings,
+    )
 
     if not window_df.empty:
         window_df = window_df.sort_values(
@@ -1049,6 +1253,7 @@ def run_fixation_selectivity_analysis(
     result_obj = {
         "meta": {
             "alpha": float(settings.alpha),
+            "pvalue_correction": normalize_pvalue_correction(settings.pvalue_correction),
             "test_name": settings.test_name,
             "min_trials_per_condition": int(settings.min_trials_per_condition),
             "windows_ms": windows_ms,
@@ -1065,6 +1270,16 @@ def run_fixation_selectivity_analysis(
             "trial_input_filename": _ensure_filename(settings.trial_input_filename, ".pkl"),
             "n_units": int(len(primary_unit_df)),
             "n_selective_units": int(primary_unit_df["is_selective_unit"].sum()) if not primary_unit_df.empty else 0,
+            "n_selective_units_raw": (
+                int(primary_unit_df["is_selective_unit_raw"].sum())
+                if not primary_unit_df.empty and "is_selective_unit_raw" in primary_unit_df.columns
+                else 0
+            ),
+            "n_selective_units_corrected": (
+                int(primary_unit_df["is_selective_unit_corrected"].sum())
+                if not primary_unit_df.empty and "is_selective_unit_corrected" in primary_unit_df.columns
+                else 0
+            ),
         },
         "window_stats": primary_window_df,
         "pair_summary": primary_pair_df,

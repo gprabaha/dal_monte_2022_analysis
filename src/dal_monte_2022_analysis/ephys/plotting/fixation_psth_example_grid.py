@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 import matplotlib as mpl
 
@@ -27,6 +27,7 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_psth import (
     _ensure_ext as _ensure_ext_shared,
     _iter_trial_rows as _iter_trial_rows_shared,
     _load_trials_for_date as _load_trials_for_date_shared,
+    _resolve_raster_trial_input as _resolve_raster_trial_input_shared,
 )
 from dal_monte_2022_analysis.runtime.io.plot_output import save_figure
 from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_output_dir
@@ -105,6 +106,7 @@ class FixationPSTHExampleGridPlotSettings:
     show_global_legend: bool = True
     legend_ncol: int = 3
     pdf_compression: Optional[int] = 0
+    display_window_s: Optional[tuple[float, float]] = None
     show_rate_window_rectangles: bool = True
     rate_window_rectangles_s: Sequence[tuple[float, float]] = field(
         default_factory=lambda: [(-0.5, 0.0), (-0.25, 0.25), (0.0, 0.5)],
@@ -122,6 +124,23 @@ class _ResolvedCell:
     date: str
     bin_centers: np.ndarray
     payloads: list[dict]
+
+
+def _resolve_display_window_s(
+    settings: FixationPSTHExampleGridPlotSettings,
+) -> Optional[tuple[float, float]]:
+    raw = settings.display_window_s
+    if raw is None:
+        return None
+    if not isinstance(raw, (list, tuple)) or len(raw) != 2:
+        raise ValueError("display_window_s must be a two-value sequence when provided.")
+    start_s = float(raw[0])
+    stop_s = float(raw[1])
+    if not np.isfinite(start_s) or not np.isfinite(stop_s):
+        raise ValueError("display_window_s values must be finite.")
+    if np.isclose(start_s, stop_s):
+        raise ValueError("display_window_s must span a non-zero interval.")
+    return (min(start_s, stop_s), max(start_s, stop_s))
 
 
 def _normalize_date_str(val) -> str:
@@ -152,16 +171,29 @@ def _normalize_unit_uuid_key(unit_uuid: object) -> str:
     return token
 
 
-def normalize_example_preference(preference: object) -> str:
-    """Normalize a user preference token to one of three canonical keys."""
-    token = str(preference).strip().lower().replace("-", "_").replace(" ", "_")
-    resolved = _PREFERENCE_ALIASES.get(token)
+def _normalize_example_row_key(
+    row_key: object,
+    *,
+    aliases: dict[str, str],
+    supported: Sequence[str],
+) -> str:
+    token = str(row_key).strip().lower().replace("-", "_").replace(" ", "_")
+    resolved = aliases.get(token)
     if resolved is None:
-        supported = ", ".join(DEFAULT_EXAMPLE_GRID_ROW_PREFERENCES)
+        supported_text = ", ".join(str(item) for item in supported)
         raise ValueError(
-            f"Unsupported preference '{preference}'. Expected one of: {supported}.",
+            f"Unsupported row key '{row_key}'. Expected one of: {supported_text}.",
         )
     return resolved
+
+
+def normalize_example_preference(preference: object) -> str:
+    """Normalize a user preference token to one of three canonical keys."""
+    return _normalize_example_row_key(
+        preference,
+        aliases=_PREFERENCE_ALIASES,
+        supported=DEFAULT_EXAMPLE_GRID_ROW_PREFERENCES,
+    )
 
 
 def _canonical_regions(regions: Sequence[str]) -> list[str]:
@@ -179,11 +211,15 @@ def _canonical_regions(regions: Sequence[str]) -> list[str]:
     return out
 
 
-def _canonical_preferences(preferences: Sequence[str]) -> list[str]:
+def _canonical_row_keys(
+    row_keys: Sequence[str],
+    *,
+    row_key_normalizer: Callable[[object], str],
+) -> list[str]:
     out: list[str] = []
     seen: set[str] = set()
-    for pref in preferences:
-        canon = normalize_example_preference(pref)
+    for pref in row_keys:
+        canon = row_key_normalizer(pref)
         if canon in seen:
             continue
         seen.add(canon)
@@ -191,10 +227,17 @@ def _canonical_preferences(preferences: Sequence[str]) -> list[str]:
     return out
 
 
+def _canonical_preferences(preferences: Sequence[str]) -> list[str]:
+    return _canonical_row_keys(
+        preferences,
+        row_key_normalizer=normalize_example_preference,
+    )
+
+
 def _parse_unit_entry(
     *,
     region: str,
-    preference: str,
+    row_key: str,
     entry: object,
 ) -> Optional[FixationPSTHExampleUnitSpec]:
     if entry is None:
@@ -218,7 +261,7 @@ def _parse_unit_entry(
 
     return FixationPSTHExampleUnitSpec(
         region=str(region).strip(),
-        preference=normalize_example_preference(preference),
+        preference=str(row_key).strip(),
         unit_uuid=unit_uuid,
         date=date,
     )
@@ -230,11 +273,17 @@ def parse_example_grid_unit_specs(
     regions: Sequence[str],
     row_preferences: Sequence[str],
     cfg_key: str = "selective_example_grid_units",
+    row_key_normalizer: Optional[Callable[[object], str]] = None,
 ) -> list[FixationPSTHExampleUnitSpec]:
     """Parse manual example-unit selections from config."""
+    if row_key_normalizer is None:
+        row_key_normalizer = normalize_example_preference
     raw = cfg.get(cfg_key, {})
     regions_canon = _canonical_regions(regions)
-    prefs_canon = _canonical_preferences(row_preferences)
+    prefs_canon = _canonical_row_keys(
+        row_preferences,
+        row_key_normalizer=row_key_normalizer,
+    )
 
     if not regions_canon or not prefs_canon:
         return []
@@ -256,12 +305,12 @@ def parse_example_grid_unit_specs(
             region_key = _normalize_region_key(region_raw)
             if region_key not in region_lookup:
                 continue
-            preference = normalize_example_preference(preference_raw)
+            preference = row_key_normalizer(preference_raw)
             if preference not in pref_lookup:
                 continue
             parsed = _parse_unit_entry(
                 region=region_lookup[region_key],
-                preference=preference,
+                row_key=preference,
                 entry=item,
             )
             if parsed is not None:
@@ -282,13 +331,13 @@ def parse_example_grid_unit_specs(
         if isinstance(block, dict):
             for pref_key, entry in block.items():
                 try:
-                    pref_entries[normalize_example_preference(pref_key)] = entry
+                    pref_entries[row_key_normalizer(pref_key)] = entry
                 except ValueError:
                     continue
         for preference in prefs_canon:
             parsed = _parse_unit_entry(
                 region=region,
-                preference=preference,
+                row_key=preference,
                 entry=pref_entries.get(preference),
             )
             if parsed is not None:
@@ -299,10 +348,14 @@ def parse_example_grid_unit_specs(
 
 def _spec_map(
     unit_specs: Sequence[FixationPSTHExampleUnitSpec],
+    *,
+    row_key_normalizer: Optional[Callable[[object], str]] = None,
 ) -> dict[tuple[str, str], FixationPSTHExampleUnitSpec]:
+    if row_key_normalizer is None:
+        row_key_normalizer = normalize_example_preference
     out: dict[tuple[str, str], FixationPSTHExampleUnitSpec] = {}
     for spec in unit_specs:
-        canon_pref = normalize_example_preference(spec.preference)
+        canon_pref = row_key_normalizer(spec.preference)
         region = str(spec.region).strip()
         unit_uuid = str(spec.unit_uuid).strip()
         if not region or not unit_uuid:
@@ -351,10 +404,31 @@ def _load_trials_by_date(
             date = "unknown"
         grouped.setdefault(date, []).append(Path(row["path"]))
 
+    raster_grouped: dict[str, list[Path]] = {}
+    raster_input = _resolve_raster_trial_input_shared(unit_settings)
+    if raster_input is not None:
+        raster_modality, raster_filename = raster_input
+        raster_rows = _iter_trial_rows_shared(
+            cfg,
+            unit_settings,
+            dates=date_filter,
+            sessions=sessions,
+            modality=raster_modality,
+            filename=raster_filename,
+        )
+        for row in raster_rows:
+            date = _normalize_date_str(row.get("date"))
+            if not date:
+                date = str(row.get("date", "")).strip()
+            if not date:
+                date = "unknown"
+            raster_grouped.setdefault(date, []).append(Path(row["path"]))
+
     out: dict[str, dict[str, object]] = {}
     for date, paths in sorted(grouped.items(), key=lambda item: item[0]):
-        df, bin_centers = _load_trials_for_date_shared(
+        df, bin_centers, raster_bin_centers = _load_trials_for_date_shared(
             paths,
+            raster_paths=raster_grouped.get(date),
             date=date,
             settings=unit_settings,
         )
@@ -369,6 +443,7 @@ def _load_trials_by_date(
         out[date] = {
             "df": local,
             "bin_centers": np.asarray(bin_centers, dtype=float),
+            "raster_bin_centers": np.asarray(raster_bin_centers, dtype=float),
         }
     return out
 
@@ -384,7 +459,7 @@ def _resolve_cell(
     date_hint = _normalize_date_str(spec.date) if spec.date not in (None, "") else None
 
     candidate_dates = [date_hint] if date_hint else sorted(by_date.keys())
-    matches: list[tuple[str, pd.DataFrame, np.ndarray]] = []
+    matches: list[tuple[str, pd.DataFrame, np.ndarray, np.ndarray]] = []
 
     for date in candidate_dates:
         blob = by_date.get(date)
@@ -401,7 +476,14 @@ def _resolve_cell(
         df_unit = df.loc[mask].copy()
         if df_unit.empty:
             continue
-        matches.append((date, df_unit, np.asarray(blob["bin_centers"], dtype=float)))
+        matches.append(
+            (
+                date,
+                df_unit,
+                np.asarray(blob["bin_centers"], dtype=float),
+                np.asarray(blob.get("raster_bin_centers", blob["bin_centers"]), dtype=float),
+            )
+        )
 
     if not matches:
         if date_hint:
@@ -421,24 +503,31 @@ def _resolve_cell(
             f"{spec.preference} | {spec.region}: unit_uuid={unit_uuid} matched multiple dates [{dates}]. Set date explicitly.",
         )
 
-    date, df_unit, bin_centers = matches[0]
+    date, df_unit, bin_centers, raster_bin_centers = matches[0]
     if bin_centers.size < 2:
         return (
             None,
             f"{spec.preference} | {spec.region}: invalid bin centers for unit_uuid={unit_uuid}.",
         )
-    bin_size_s = float(np.mean(np.diff(bin_centers)))
-    if not np.isfinite(bin_size_s) or bin_size_s <= 0:
+    trace_bin_size_s = float(np.mean(np.diff(bin_centers)))
+    if not np.isfinite(trace_bin_size_s) or trace_bin_size_s <= 0:
         return (
             None,
             f"{spec.preference} | {spec.region}: unable to infer positive bin size for unit_uuid={unit_uuid}.",
         )
+    raster_bin_size_s = trace_bin_size_s
+    if raster_bin_centers.size >= 2:
+        inferred_raster_bin_size_s = float(np.mean(np.diff(raster_bin_centers)))
+        if np.isfinite(inferred_raster_bin_size_s) and inferred_raster_bin_size_s > 0:
+            raster_bin_size_s = inferred_raster_bin_size_s
 
     payloads = _build_unit_condition_payloads_shared(
         df_unit,
         unit_key=f"{date}|{unit_uuid}",
-        bin_centers=bin_centers,
-        bin_size_s=bin_size_s,
+        trace_bin_centers=bin_centers,
+        trace_bin_size_s=trace_bin_size_s,
+        raster_bin_centers=raster_bin_centers,
+        raster_bin_size_s=raster_bin_size_s,
         settings=unit_settings,
     )
     if not any(int(payload["n_trials"]) > 0 for payload in payloads):
@@ -490,14 +579,31 @@ def _draw_resolved_cell(
     show_rate_ylabel: bool,
     show_x_axis: bool,
 ) -> None:
+    display_window_s = _resolve_display_window_s(grid_settings)
     y_cursor = 1
     for payload in resolved.payloads:
         n_trials = int(payload["n_trials"])
         if n_trials <= 0:
             continue
         line_offsets = np.arange(y_cursor, y_cursor + n_trials, dtype=float)
+        spike_rows = payload["spike_rows"]
+        if display_window_s is not None:
+            clipped_rows: list[np.ndarray] = []
+            x_min_s, x_max_s = display_window_s
+            for row in spike_rows:
+                spikes = np.asarray(row, dtype=float).reshape(-1)
+                if spikes.size == 0:
+                    clipped_rows.append(spikes)
+                    continue
+                mask = (
+                    np.isfinite(spikes)
+                    & (spikes >= float(x_min_s))
+                    & (spikes <= float(x_max_s))
+                )
+                clipped_rows.append(spikes[mask])
+            spike_rows = clipped_rows
         ax_raster.eventplot(
-            payload["spike_rows"],
+            spike_rows,
             lineoffsets=line_offsets,
             linelengths=float(unit_settings.raster_linelength),
             linewidths=float(unit_settings.raster_linewidth),
@@ -528,6 +634,29 @@ def _draw_resolved_cell(
     if y_cursor > 1:
         ax_raster.set_ylim(float(y_cursor) - 0.5, 0.5)
 
+    trace_min = float(resolved.bin_centers[0])
+    trace_max = float(resolved.bin_centers[-1])
+    for payload in resolved.payloads:
+        centers = np.asarray(payload.get("trace_bin_centers", resolved.bin_centers), dtype=float).reshape(-1)
+        if centers.size == 0:
+            continue
+        finite = centers[np.isfinite(centers)]
+        if finite.size == 0:
+            continue
+        trace_min = min(trace_min, float(np.min(finite)))
+        trace_max = max(trace_max, float(np.max(finite)))
+
+    x_min = trace_min
+    x_max = trace_max
+    if display_window_s is not None:
+        x_min = max(float(x_min), float(display_window_s[0]))
+        x_max = min(float(x_max), float(display_window_s[1]))
+    if x_max <= x_min:
+        x_min, x_max = (
+            display_window_s if display_window_s is not None else (trace_min, trace_max)
+        )
+    ax_raster.set_xlim(x_min, x_max)
+
     for payload in resolved.payloads:
         if int(payload["n_trials"]) <= 0:
             continue
@@ -539,6 +668,17 @@ def _draw_resolved_cell(
         sem_hz = np.asarray(payload["sem_hz"], dtype=float)
         if trace_bin_centers.size != mean_hz.size or sem_hz.size != mean_hz.size:
             continue
+        if display_window_s is not None:
+            mask = (
+                np.isfinite(trace_bin_centers)
+                & (trace_bin_centers >= float(x_min))
+                & (trace_bin_centers <= float(x_max))
+            )
+            trace_bin_centers = trace_bin_centers[mask]
+            mean_hz = mean_hz[mask]
+            sem_hz = sem_hz[mask]
+            if trace_bin_centers.size == 0:
+                continue
         ax_rate.plot(
             trace_bin_centers,
             mean_hz,
@@ -554,20 +694,6 @@ def _draw_resolved_cell(
             linewidth=0.0,
         )
 
-    trace_min = float(resolved.bin_centers[0])
-    trace_max = float(resolved.bin_centers[-1])
-    for payload in resolved.payloads:
-        centers = np.asarray(payload.get("trace_bin_centers", resolved.bin_centers), dtype=float).reshape(-1)
-        if centers.size == 0:
-            continue
-        finite = centers[np.isfinite(centers)]
-        if finite.size == 0:
-            continue
-        trace_min = min(trace_min, float(np.min(finite)))
-        trace_max = max(trace_max, float(np.max(finite)))
-
-    x_min = trace_min
-    x_max = trace_max
     ax_rate.axvline(0.0, color="#333333", linestyle="--", linewidth=0.7, zorder=3.2)
     ax_rate.set_xlim(x_min, x_max)
 
@@ -664,17 +790,26 @@ def plot_fixation_psth_example_grid(
     unit_specs: Sequence[FixationPSTHExampleUnitSpec],
     sessions: Optional[Sequence[str]] = None,
     allow_missing: bool = False,
+    row_key_normalizer: Optional[Callable[[object], str]] = None,
 ) -> dict[str, object]:
-    """Render one 3x4 selective example-unit PSTH grid figure."""
+    """Render one example-unit fixation PSTH grid figure."""
+    if row_key_normalizer is None:
+        row_key_normalizer = normalize_example_preference
     unit_settings = settings.unit_plot_settings
-    row_preferences = _canonical_preferences(settings.row_preferences)
+    row_preferences = _canonical_row_keys(
+        settings.row_preferences,
+        row_key_normalizer=row_key_normalizer,
+    )
     column_regions = _canonical_regions(settings.column_regions)
     if not row_preferences:
         raise ValueError("At least one row preference must be provided.")
     if not column_regions:
         raise ValueError("At least one column region must be provided.")
 
-    by_cell = _spec_map(unit_specs)
+    by_cell = _spec_map(
+        unit_specs,
+        row_key_normalizer=row_key_normalizer,
+    )
     expected_cells = [
         (pref, _normalize_region_key(region), region)
         for pref in row_preferences
@@ -859,4 +994,5 @@ def plot_fixation_psth_example_grid(
         "unresolved_specs": unresolved_specs,
         "row_preferences": row_preferences,
         "column_regions": column_regions,
+        "display_window_s": _resolve_display_window_s(settings),
     }

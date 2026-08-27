@@ -10,6 +10,14 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_psth_example_grid import (
     parse_example_grid_unit_specs,
     plot_fixation_psth_example_grid,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_psth_phasic_tonic_example_grid import (
+    DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_REGIONS,
+    DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_LABELS,
+    DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_STYLES,
+    normalize_example_response_style,
+    parse_phasic_tonic_example_grid_unit_specs,
+    plot_fixation_psth_phasic_tonic_example_grid,
+)
 from dal_monte_2022_analysis.ephys.plotting.period_psth import (
     PeriodPSTHUnitPlotSettings,
     plot_period_psth_units,
@@ -29,6 +37,19 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_three_way_selectivity_trian
 from dal_monte_2022_analysis.ephys.plotting.fixation_three_way_region_comparison import (
     FixationThreeWayRegionComparisonPlotSettings,
     plot_fixation_three_way_region_comparison_heatmaps,
+)
+from dal_monte_2022_analysis.ephys.plotting.fixation_condition_dominance import (
+    FixationConditionDominancePlotSettings,
+    plot_fixation_condition_dominance_by_region,
+)
+from dal_monte_2022_analysis.ephys.plotting.fixation_peakiness import (
+    FixationPeakinessPlotSettings,
+    plot_fixation_peakiness_by_region,
+)
+from dal_monte_2022_analysis.ephys.plotting.fixation_peakiness_condition_comparison import (
+    FixationPeakinessConditionComparisonPlotSettings,
+    plot_fixation_peakiness_condition_comparison,
+    plot_fixation_peakiness_condition_comparison_by_region,
 )
 from dal_monte_2022_analysis.ephys.plotting.fixation_preference_index_heatmap import (
     FixationPreferenceIndexHeatmapPlotSettings,
@@ -53,6 +74,16 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_population_pca import (
     plot_fixation_population_pca_pairwise_geometry_violins,
     plot_fixation_population_pca_trajectories,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_mrnn import (
+    FixationMRNNDiagnosticPlotSettings,
+    plot_fixation_mrnn_activation_pc_timeseries,
+    plot_fixation_mrnn_activation_trajectories_3d,
+    plot_fixation_mrnn_average_current_influence_bars,
+    plot_fixation_mrnn_average_current_influence_pies,
+    plot_fixation_mrnn_current_influence,
+    plot_fixation_mrnn_flow_fields_at_time,
+    plot_fixation_mrnn_signal_evolution,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_psth_variability import (
     FixationPSTHVariabilityPlotSettings,
     plot_fixation_psth_variability_violins,
@@ -72,6 +103,12 @@ __all__ = [
     "FixationPSTHExampleUnitSpec",
     "parse_example_grid_unit_specs",
     "plot_fixation_psth_example_grid",
+    "DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_REGIONS",
+    "DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_LABELS",
+    "DEFAULT_PHASIC_TONIC_EXAMPLE_GRID_ROW_STYLES",
+    "normalize_example_response_style",
+    "parse_phasic_tonic_example_grid_unit_specs",
+    "plot_fixation_psth_phasic_tonic_example_grid",
     "PeriodPSTHUnitPlotSettings",
     "plot_period_psth_units",
     "FixationSelectivityVennPlotSettings",
@@ -82,6 +119,13 @@ __all__ = [
     "plot_fixation_three_way_selectivity_triangular",
     "FixationThreeWayRegionComparisonPlotSettings",
     "plot_fixation_three_way_region_comparison_heatmaps",
+    "FixationConditionDominancePlotSettings",
+    "plot_fixation_condition_dominance_by_region",
+    "FixationPeakinessPlotSettings",
+    "plot_fixation_peakiness_by_region",
+    "FixationPeakinessConditionComparisonPlotSettings",
+    "plot_fixation_peakiness_condition_comparison",
+    "plot_fixation_peakiness_condition_comparison_by_region",
     "FixationPreferenceIndexHeatmapPlotSettings",
     "plot_fixation_preference_index_heatmaps",
     "FixationNeuralCrossCorrelationPlotSettings",
@@ -97,6 +141,14 @@ __all__ = [
     "plot_fixation_population_pca_explained_variance_bars",
     "plot_fixation_population_pca_explained_variance_cumulative",
     "plot_fixation_population_pca_pairwise_geometry_violins",
+    "FixationMRNNDiagnosticPlotSettings",
+    "plot_fixation_mrnn_activation_pc_timeseries",
+    "plot_fixation_mrnn_activation_trajectories_3d",
+    "plot_fixation_mrnn_average_current_influence_bars",
+    "plot_fixation_mrnn_average_current_influence_pies",
+    "plot_fixation_mrnn_current_influence",
+    "plot_fixation_mrnn_flow_fields_at_time",
+    "plot_fixation_mrnn_signal_evolution",
     "FixationPSTHVariabilityPlotSettings",
     "plot_fixation_psth_variability_violins",
     "FixationROIVsPeriodFactorialPlotSettings",

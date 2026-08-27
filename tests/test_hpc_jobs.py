@@ -195,6 +195,41 @@ class TestHpcJobs(unittest.TestCase):
             self.assertEqual(job_id, "4242")
             self.assertEqual(run_mock.call_count, 2)
 
+    def test_submit_dsq_array_job_can_request_gres(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            job_file = tmp_path / "jobs.txt"
+            sbatch_script = tmp_path / "submit.sbatch"
+            log_dir = tmp_path / "logs"
+            job_file.write_text("echo hi\n")
+            sbatch_script.write_text("#!/bin/bash\n")
+
+            first = subprocess.CompletedProcess(args="dsq", returncode=0, stdout="", stderr="")
+            second = subprocess.CompletedProcess(
+                args="sbatch",
+                returncode=0,
+                stdout="Submitted batch job 4242\n",
+                stderr="",
+            )
+            with patch(
+                "dal_monte_2022_analysis.runtime.hpc.jobs.subprocess.run",
+                side_effect=[first, second],
+            ) as run_mock:
+                submit_dsq_array_job(
+                    job_file_path=job_file,
+                    sbatch_script_path=sbatch_script,
+                    log_dir=log_dir,
+                    job_name="test_job",
+                    partition="gpu",
+                    cpus_per_task=2,
+                    mem_per_cpu="8G",
+                    time_limit="01:00:00",
+                    gres="gpu:1",
+                )
+
+            dsq_shell = run_mock.call_args_list[0].args[0]
+            self.assertIn("--gres gpu:1", dsq_shell[-1])
+
     def test_track_job_completion_polls_until_done(self) -> None:
         first = subprocess.CompletedProcess(args="squeue", returncode=0, stdout="PENDING\n", stderr="")
         second = subprocess.CompletedProcess(args="squeue", returncode=0, stdout="", stderr="")
