@@ -109,18 +109,39 @@ def plot_null_validation(
 
     ax = axes[0]
     errors = np.asarray(identities["max_abs_error"], dtype=float)
+    # The final row records a deliberate difference (the unpadded transform is
+    # not the linear one), so it is drawn in a contrasting colour: a *large*
+    # value there is the pass condition, unlike every other row.
+    is_difference = np.asarray(
+        identities["identity"].astype(str).str.contains("differs"), dtype=bool
+    )
+    labels = [
+        "mean over fixations",
+        "trial-shuffle draw",
+        "circular-shift draw",
+        "unpadded != linear",
+    ]
+    labels = (labels + [f"row {i}" for i in range(len(errors))])[: len(errors)]
     floor = 1e-18
     positions = np.arange(len(errors))
-    ax.barh(positions, np.maximum(errors, floor), color="#8fa8bf", edgecolor=INK, linewidth=0.5)
-    ax.set_yticks(positions)
-    ax.set_yticklabels(
-        ["mean identity", "trial-shuffle identity", "circular-shift identity"][: len(errors)],
-        fontsize=6,
+    ax.barh(
+        positions,
+        np.maximum(errors, floor),
+        color=list(np.where(is_difference, "#d95f0e", "#8fa8bf")),
+        edgecolor=INK,
+        linewidth=0.5,
     )
+    ax.set_yticks(positions)
+    ax.set_yticklabels(labels, fontsize=6)
+    ax.invert_yaxis()
     ax.set_xscale("log")
     ax.axvline(1e-9, color="#c0392b", linestyle="--", linewidth=0.8)
-    ax.text(1e-9, len(errors) - 0.4, " tolerance", fontsize=6, color="#c0392b", va="top")
-    _finish(ax, xlabel="Max absolute error vs brute force", title="Fast path is exact")
+    ax.text(1e-9, -0.45, " tolerance", fontsize=6, color="#c0392b", va="bottom")
+    _finish(
+        ax,
+        xlabel="Max absolute error vs brute-force linear",
+        title="Fast path is exact (orange: must differ)",
+    )
 
     ax = axes[1]
     order = ["independent", "shared_rate", "synchronous", "common_zero_lag"]

@@ -269,6 +269,28 @@ so every cross-correlation is computed on one fixation's two 1 ms trains and
 only then averaged. The trains are **unsmoothed** — smoothing before
 cross-correlation blurs exactly the fine timing this analysis exists to measure.
 
+## Linear correlation, everything inside ±500 ms
+
+The correlation is **linear** (zero-padded transform), the same statistic
+`scipy.signal.correlate` computes and the same one the behavioural
+cross-correlations use. At lag L only the `N − |L|` genuinely overlapping bins
+contribute, so no spike is ever paired with one a full window away. A wrapping
+(unpadded) transform would pair a spike at −500 ms with one at +500 ms and
+report it as a coincidence at lag L — arithmetically convenient, physically
+meaningless.
+
+Linear correlation does taper: fewer bins contribute as |lag| grows, so a raw
+correlation shrinks with lag for a purely mechanical reason. **This needs no
+correction** — both nulls carry the identical taper and it cancels in the excess
+and in every z-score. The per-lag overlap counts are stored with each output for
+figures that want raw magnitudes on a comparable scale.
+
+Widening the window is not an option: 95% of ±5 s surrounds contain at least one
+*other* analysed fixation (median 5), before counting out-of-ROI fixations. Data
+outside the window is not neutral baseline, so a shifted-window null would be a
+comparison against a different behavioural condition rather than a null.
+Everything — observed and both nulls — uses spikes inside ±500 ms.
+
 ## Reading the two nulls
 
 Coordination is only meaningful relative to a null, and the two nulls answer
@@ -278,6 +300,10 @@ different questions:
 |---|---|---|---|
 | **trial shuffle** | trial-by-trial covariation | each unit's fixation-locked rate profile | the two cells co-fluctuate from fixation to fixation |
 | **circular shift** | fine temporal alignment within a fixation | that fixation's spike count and slow envelope | coordination finer than the shift, beyond slow co-modulation |
+
+The circular shift rotates one train within the window, which does wrap. That is
+acceptable *here and only here*: destroying temporal alignment is what a null is
+for. It is the same reason wrapping is not acceptable in the observed statistic.
 
 Each null draw is a **derangement** of the fixation index, so it is built from
 exactly as many terms as the observed statistic. Estimating the null from all
@@ -332,9 +358,11 @@ what every test below uses.
     markdown("""
 ## 3. Do the nulls behave?
 
-Two checks, in order. The **identities** confirm the fast frequency-domain path
-returns exactly what brute-force cross-correlation would — the speed-ups are
-only worth having if they are provably the same number.
+Two checks, in order. The **identities** confirm the fast frequency-domain path returns exactly what a
+brute-force sum over overlapping bins would — the speed-ups are only worth
+having if they are provably the same number. The last row is deliberately *not*
+an identity: it records how far the unpadded (wrapping) transform sits from the
+linear one, so a silent loss of zero-padding would show up as a zero there.
 
 The **sensitivity** check is the one that matters for interpretation. Four
 synthetic pairs are pushed through the real computation:

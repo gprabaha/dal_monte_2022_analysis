@@ -17,12 +17,14 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination imp
     IDENTITY_TOLERANCE,
     PairSpikeCoordinationSettings,
     _cross_spectra_all_pairs,
+    _next_fast_length,
     _random_derangement,
     _to_traces,
     assign_condition,
     build_zero_lag_diagnostics,
     compare_conditions,
     compute_condition_coordination,
+    overlap_bins,
     summarize_coordination,
     test_against_null as run_test_against_null,
     verify_null_identities,
@@ -47,22 +49,84 @@ class TestNullConstruction(unittest.TestCase):
     def test_identities_match_brute_force(self):
         frame = verify_null_identities()
         self.assertTrue(frame["passes"].all(), frame.to_string(index=False))
-        self.assertLess(float(frame["max_abs_error"].max()), IDENTITY_TOLERANCE)
+        # The final row records a deliberate *difference* (the unpadded
+        # transform is not the linear one), so only the identity rows are held
+        # to the tolerance.
+        identity_rows = frame.loc[~frame["identity"].str.contains("differs")]
+        self.assertEqual(len(identity_rows), 3)
+        self.assertLess(float(identity_rows["max_abs_error"].max()), IDENTITY_TOLERANCE)
+
+    def test_observed_correlation_does_not_wrap(self):
+        """A spike near one window edge must never pair with one near the other.
+
+        This is the property that makes the observed statistic physical: at lag
+        L only genuinely overlapping bins contribute, so two spikes a full
+        window apart produce no coincidence at any short lag.
+        """
+        n_bins = 64
+        trains = np.zeros((2, 2, n_bins))
+        for fixation in range(2):
+            trains[0, fixation, 1] = 1.0            # near the start
+            trains[1, fixation, n_bins - 2] = 1.0   # near the end
+        result = compute_condition_coordination(
+            trains,
+            settings=_settings(n_trial_shuffle_draws=2, n_circular_shift_draws=2),
+            bin_size_ms=1.0,
+            rng=np.random.default_rng(0),
+        )
+        lags = result["lags_ms"]
+        observed = result["observed"][0, 1]
+        # The only coincidence is the true one, at lag -(n_bins - 3).
+        true_lag = -(n_bins - 3)
+        self.assertAlmostEqual(float(observed[np.argmin(np.abs(lags - true_lag))]), 1.0, places=9)
+        # Nothing at the short lags a wrapping correlation would have invented.
+        short = np.abs(lags) <= 5
+        np.testing.assert_allclose(observed[short], 0.0, atol=1e-9)
+
+    def test_overlap_vector_matches_the_linear_taper(self):
+        overlap = overlap_bins(64)
+        self.assertEqual(overlap.size, 2 * 64 - 1)
+        self.assertEqual(float(overlap.max()), 64.0)
+        self.assertEqual(float(overlap[0]), 1.0)
+        self.assertEqual(float(overlap[-1]), 1.0)
 
     def test_all_pairs_matmul_equals_per_pair_loop(self):
         rng = np.random.default_rng(0)
         n_units, n_fixations, n_bins = 4, 6, 64
+        n_fft = _next_fast_length(2 * n_bins - 1)
         trains = (rng.random((n_units, n_fixations, n_bins)) < 0.1).astype(float)
-        spectra = np.fft.rfft(trains, n=n_bins, axis=-1)
-        batched = _to_traces(_cross_spectra_all_pairs(spectra, spectra), n_bins)
+        spectra = np.fft.rfft(trains, n=n_fft, axis=-1)
+        batched = _to_traces(_cross_spectra_all_pairs(spectra, spectra), n_bins, n_fft)
         for first in range(n_units):
             for second in range(n_units):
-                expected = np.fft.fftshift(
-                    np.fft.irfft(
-                        (spectra[first] * spectra[second].conj()).mean(axis=0), n=n_bins
-                    )
+                expected = _to_traces(
+                    (spectra[first] * spectra[second].conj()).mean(axis=0), n_bins, n_fft
                 )
                 np.testing.assert_allclose(batched[first, second], expected, atol=1e-12)
+
+    def test_matches_scipy_linear_correlation(self):
+        """The observed path must equal what the repo's own primitive computes."""
+        from scipy.signal import correlate
+
+        rng = np.random.default_rng(11)
+        n_fixations, n_bins = 5, 64
+        trains = (rng.random((2, n_fixations, n_bins)) < 0.12).astype(float)
+        result = compute_condition_coordination(
+            trains,
+            settings=_settings(n_trial_shuffle_draws=2, n_circular_shift_draws=2),
+            bin_size_ms=1.0,
+            rng=np.random.default_rng(0),
+        )
+        reference = np.mean(
+            [
+                correlate(trains[0, f], trains[1, f], mode="full", method="fft")
+                for f in range(n_fixations)
+            ],
+            axis=0,
+        )
+        # scipy's "full" output runs from lag -(N-1) to (N-1), the same order
+        # and the same sign convention this module uses.
+        np.testing.assert_allclose(result["observed"][0, 1], reference, atol=1e-9)
 
     def test_derangement_has_no_fixed_point_and_is_a_permutation(self):
         rng = np.random.default_rng(1)

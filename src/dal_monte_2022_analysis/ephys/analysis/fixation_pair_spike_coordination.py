@@ -14,13 +14,26 @@ Cross-correlating condition-averaged PSTHs measures shared rate structure, not
 coordination, so every cross-correlation here is computed on one fixation's two
 1 ms spike trains and only then averaged.
 
-*Circular, not linear, cross-correlation.*  The analysis window is a fixed
-``[-500, 500] ms`` around fixation onset.  Treating that window as periodic
-makes every lag use all ``N`` bins instead of the triangular taper a linear
-correlation imposes, and -- more importantly -- it makes the circular-shift
-null exact rather than approximate: shifting one train by ``s`` rotates the
-cross-correlation by ``-s``, so a shift null is a rotation of a trace we have
-already computed.  See :func:`verify_null_identities`.
+*Linear cross-correlation, and everything inside one window.*  The analysis
+window is a fixed ``[-500, 500] ms`` around fixation onset, and every number
+here -- observed and null alike -- is computed from spikes inside it.  The
+correlation is linear (zero-padded transform), so at lag ``L`` only the
+``N - |L|`` genuinely overlapping bins contribute.  A wrapping (unpadded)
+transform would instead pair a spike at -500 ms with one at +500 ms and report
+it as a coincidence at lag ``L``; those events are a second apart and that is
+not a physical measurement, however convenient the arithmetic.
+
+Linear correlation does taper: the number of contributing bins falls as ``|L|``
+grows, so a raw correlation shrinks with lag for a purely mechanical reason.
+That needs no correction here, because **both nulls carry the identical
+taper** and it cancels in the excess and in every z-score.  :func:`overlap_bins`
+is stored with the output for figures that want raw magnitudes on a comparable
+scale across lags.
+
+Widening the window is not an option: 95% of ``+/-5 s`` surrounds contain at
+least one other analysed fixation (median 5), so data outside the window is not
+neutral baseline and a shifted-window null would be a comparison against a
+different behavioural condition rather than a null.
 
 *Two nulls, because they answer different questions.*
 
@@ -32,10 +45,14 @@ already computed.  See :func:`verify_null_identities`.
     It does not distinguish fast synchrony from slow shared drive.
 
 ``circular_shift``
-    Rotates unit B's train within the same fixation by a random offset.  This
-    keeps each fixation's own spike count and slow envelope but destroys the
-    fine temporal alignment, so an excess over this null means coordination at
-    a timescale finer than the shift, over and above slow co-modulation.
+    Rotates unit B's train within the same fixation by a random offset, then
+    correlates linearly.  This keeps each fixation's own spike count and slow
+    envelope but destroys the fine temporal alignment, so an excess over this
+    null means coordination at a timescale finer than the shift, over and above
+    slow co-modulation.  The wrap introduced by the rotation is acceptable
+    *here* precisely because destroying temporal structure is what a null is
+    for -- which is the same reason it is not acceptable in the observed
+    statistic.
 
 A sharp zero-lag peak that survives *both* nulls is not evidence of a synaptic
 connection -- for two randomly sampled cells that prior is near zero.  It is
@@ -369,13 +386,33 @@ def load_session_spike_trains(
 # :func:`verify_null_identities` checks all three against brute force.
 
 
+def _next_fast_length(target: int) -> int:
+    """Smallest power of two at least ``target``, for the zero-padded transform."""
+    return 1 << int(np.ceil(np.log2(max(int(target), 1))))
+
+
 def _lag_axis(n_bins: int, bin_size_ms: float) -> tuple[np.ndarray, np.ndarray]:
-    """Return (fftshift order index, lag in ms) for a circular correlation."""
-    raw = np.fft.fftfreq(int(n_bins)) * float(n_bins)
-    order = np.argsort(np.fft.fftshift(raw))
-    del order
-    lags_samples = np.fft.fftshift(raw).astype(np.int64)
+    """Lags of a linear correlation of two length-``n_bins`` signals.
+
+    Spans ``-(n_bins - 1) .. (n_bins - 1)``.  A positive lag means the first
+    unit fired that many bins *after* the second.
+    """
+    lags_samples = np.arange(-(int(n_bins) - 1), int(n_bins), dtype=np.int64)
     return lags_samples, lags_samples.astype(float) * float(bin_size_ms)
+
+
+def overlap_bins(n_bins: int) -> np.ndarray:
+    """Number of bin pairs contributing at each lag of a linear correlation.
+
+    Falls from ``n_bins`` at lag 0 to 1 at the extremes.  This taper is why a
+    raw linear correlation shrinks with ``|lag|`` for a purely mechanical
+    reason -- but both nulls carry the identical taper, so it cancels in the
+    excess and in every z-score built from it.  The vector is stored with the
+    output so a figure can divide it out if it wants raw magnitudes on a
+    comparable scale across lags.
+    """
+    lags = np.arange(-(int(n_bins) - 1), int(n_bins))
+    return (int(n_bins) - np.abs(lags)).astype(float)
 
 
 def _random_derangement(n: int, rng: np.random.Generator) -> np.ndarray:
@@ -415,21 +452,30 @@ def _cross_spectra_all_pairs(
 def _to_traces(
     cross_spectra: np.ndarray,
     n_bins: int,
+    n_fft: int,
     *,
     quantum: Optional[float] = None,
 ) -> np.ndarray:
-    """Inverse-transform a ``(..., n_freqs)`` cross-spectrum to centred lag traces.
+    """Inverse-transform a padded cross-spectrum into linear-correlation traces.
 
-    With integer spike counts every fixation's circular correlation is an
-    integer coincidence count, so the fixation mean is an exact multiple of
-    ``1 / n_fixations``.  Snapping to that grid removes FFT round-off, which
-    matters more than it sounds: without it a lag where every null draw is
-    identically zero acquires a spurious standard deviation of order 1e-17, and
-    dividing a round-off numerator by a round-off denominator manufactures
-    z-scores of 1e17.  Pass ``quantum=1 / n_fixations`` to enable it.
+    The transform is taken over ``n_fft >= 2 * n_bins - 1`` points, so the
+    result is the **linear** correlation: at lag ``L`` only the ``n_bins - |L|``
+    genuinely overlapping bins contribute, and no sample is ever paired with one
+    a full window away.  An unpadded transform would instead wrap, pairing a
+    spike at -500 ms with one at +500 ms and reporting it at lag ``L``, which is
+    not a physical coincidence.
+
+    With integer spike counts every fixation's correlation is an integer
+    coincidence count, so the fixation mean is an exact multiple of
+    ``1 / n_fixations``.  Snapping to that grid removes FFT round-off; without
+    it a lag where every null draw is identically zero acquires a spurious
+    standard deviation of order 1e-17, and dividing round-off by round-off
+    manufactures z-scores of 1e17.
     """
-    traces = np.fft.irfft(cross_spectra, n=int(n_bins), axis=-1)
-    traces = np.fft.fftshift(traces, axes=-1)
+    full = np.fft.irfft(cross_spectra, n=int(n_fft), axis=-1)
+    positive = full[..., : int(n_bins)]                 # lags 0 .. n_bins-1
+    negative = full[..., -(int(n_bins) - 1) :]          # lags -(n_bins-1) .. -1
+    traces = np.concatenate([negative, positive], axis=-1)
     if quantum is not None and quantum > 0:
         traces = np.round(traces / float(quantum)) * float(quantum)
     return traces
@@ -444,27 +490,33 @@ def compute_condition_coordination(
 ) -> dict[str, np.ndarray]:
     """Observed and null cross-correlations for every unit pair in one condition.
 
-    ``trains`` is ``(n_units, n_fixations, n_bins)`` of unsmoothed 1 ms counts.
+    ``trains`` is ``(n_units, n_fixations, n_bins)`` of unsmoothed 1 ms counts
+    covering the analysis window and nothing else.  Everything -- the observed
+    correlation and both nulls -- is computed from spikes inside that window.
 
     Returns arrays keyed by name, each ``(n_units, n_units, n_lags)`` except
-    ``lags_ms`` and the per-unit spike counts.  Both nulls are summarised by
-    their mean and standard deviation across draws; individual draws are not
-    retained because nothing downstream needs them.
+    ``lags_ms``, ``overlap_bins`` and the per-unit spike counts.  Both nulls are
+    summarised by their mean and standard deviation across draws; individual
+    draws are not retained because nothing downstream needs them.
     """
     n_units, n_fixations, n_bins = trains.shape
-    spectra = np.fft.rfft(trains.astype(np.float64), n=n_bins, axis=-1)
+    n_fft = _next_fast_length(2 * n_bins - 1)
+    trains = trains.astype(np.float64)
+    spectra = np.fft.rfft(trains, n=n_fft, axis=-1)
     # Only integer-count input has an exact quantum; smoothed input does not.
     integer_input = bool(np.array_equal(trains, np.round(trains)))
     quantum = (1.0 / float(n_fixations)) if integer_input else None
 
     observed = _to_traces(
-        _cross_spectra_all_pairs(spectra, spectra), n_bins, quantum=quantum
+        _cross_spectra_all_pairs(spectra, spectra), n_bins, n_fft, quantum=quantum
     )
 
     # --- trial-shuffle null -------------------------------------------------
     # Each draw deranges the fixation index on the second unit, so unit A's
     # train on fixation i meets unit B's train on some other fixation.  Rate
-    # profiles survive; trial-by-trial covariation does not.
+    # profiles survive; trial-by-trial covariation does not.  The derangement
+    # acts on the fixation axis only, so the already-computed spectra are
+    # reused and each draw costs one inverse transform.
     shuffle_sum = np.zeros_like(observed)
     shuffle_sumsq = np.zeros_like(observed)
     n_shuffle = int(settings.n_trial_shuffle_draws)
@@ -473,16 +525,23 @@ def compute_condition_coordination(
         draw = _to_traces(
             _cross_spectra_all_pairs(spectra, spectra[:, order, :]),
             n_bins,
+            n_fft,
             quantum=quantum,
         )
         shuffle_sum += draw
         shuffle_sumsq += np.square(draw)
 
     # --- circular-shift null ------------------------------------------------
-    # Each draw rotates the second unit's train within its own fixation, which
-    # in the frequency domain is a phase ramp.  Per-fixation spike counts and
-    # slow envelope survive; fine temporal alignment does not.
-    freqs = np.fft.rfftfreq(n_bins) * n_bins
+    # Each draw rotates the second unit's train *within its own analysis
+    # window*, then correlates linearly.  Per-fixation spike counts and the slow
+    # envelope survive; fine temporal alignment does not.
+    #
+    # The wrap belongs here and only here.  Rotating a train is a legitimate way
+    # to destroy alignment in a null, whereas letting the *observed*
+    # correlation wrap would pair a spike at -500 ms with one at +500 ms and
+    # report it as a coincidence -- which is why the observed path is linear.
+    # Because the rotation happens before zero-padding, it is not a phase ramp
+    # on the padded spectrum, so each draw re-transforms the rolled trains.
     min_shift = max(1, int(round(float(settings.min_circular_shift_ms) / float(bin_size_ms))))
     if 2 * min_shift >= n_bins:
         raise ValueError(
@@ -491,12 +550,19 @@ def compute_condition_coordination(
     shift_sum = np.zeros_like(observed)
     shift_sumsq = np.zeros_like(observed)
     n_shift = int(settings.n_circular_shift_draws)
+    time_index = np.arange(n_bins)
+    fixation_index = np.arange(n_fixations)[:, None]
     for _ in range(n_shift):
         shifts = rng.integers(min_shift, n_bins - min_shift, size=n_fixations)
-        phase = np.exp(-2j * np.pi * np.outer(shifts, freqs) / float(n_bins))
+        # One gather instead of a Python loop over fixations: entry (f, t) of
+        # the rolled train is the original at (t - shift_f) modulo the window.
+        gather = (time_index[None, :] - shifts[:, None]) % n_bins
+        rolled = trains[:, fixation_index, gather]
+        rolled_spectra = np.fft.rfft(rolled, n=n_fft, axis=-1)
         draw = _to_traces(
-            _cross_spectra_all_pairs(spectra, spectra * phase[None, :, :]),
+            _cross_spectra_all_pairs(spectra, rolled_spectra),
             n_bins,
+            n_fft,
             quantum=quantum,
         )
         shift_sum += draw
@@ -515,6 +581,7 @@ def compute_condition_coordination(
     _, lags_ms = _lag_axis(n_bins, bin_size_ms)
     return {
         "lags_ms": lags_ms,
+        "overlap_bins": overlap_bins(n_bins),
         "observed": observed,
         "trial_shuffle_mean": shuffle_mean,
         "trial_shuffle_sd": shuffle_sd,
@@ -531,65 +598,95 @@ def verify_null_identities(
     n_fixations: int = 6,
     seed: int = 0,
 ) -> pd.DataFrame:
-    """Check the three identities the fast path relies on, against brute force.
+    """Check the fast path against brute-force linear correlation.
 
     Cheap enough to run at the top of a notebook, which is the point: the
-    speed-ups are only worth having if they are provably the same number.
+    speed-ups are only worth having if they are provably the same number.  The
+    reference here is an explicit sum over genuinely overlapping bins only --
+    no wraparound -- which is what the observed statistic has to be.
     """
     rng = np.random.default_rng(seed)
     x = (rng.random((n_fixations, n_bins)) < 0.1).astype(float)
     y = (rng.random((n_fixations, n_bins)) < 0.1).astype(float)
+    n_fft = _next_fast_length(2 * n_bins - 1)
+    lags = np.arange(-(n_bins - 1), n_bins)
 
-    def brute_circular(a: np.ndarray, b: np.ndarray) -> np.ndarray:
-        # Index ``lag`` holds sum_t a[t] * b[t - lag], the same convention the
-        # transform produces: a positive lag means ``a`` fires after ``b``.
-        out = np.empty(n_bins)
-        for lag in range(n_bins):
-            out[lag] = float(np.sum(a * np.roll(b, lag)))
+    def brute_linear(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        """sum_t a[t] * b[t - lag], over overlapping bins only."""
+        out = np.empty(lags.size)
+        for index, lag in enumerate(lags):
+            total = 0.0
+            for t in range(n_bins):
+                source = t - lag
+                if 0 <= source < n_bins:
+                    total += a[t] * b[source]
+            out[index] = total
         return out
+
+    def fast(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+        spectrum = np.fft.rfft(a, n=n_fft, axis=-1) * np.fft.rfft(b, n=n_fft, axis=-1).conj()
+        return _to_traces(spectrum.mean(axis=0), n_bins, n_fft)
 
     rows: list[dict] = []
 
-    direct_mean = np.mean([brute_circular(x[i], y[i]) for i in range(n_fixations)], axis=0)
-    fx = np.fft.rfft(x, n=n_bins, axis=-1)
-    fy = np.fft.rfft(y, n=n_bins, axis=-1)
-    fast_mean = np.fft.irfft((fx * fy.conj()).mean(axis=0), n=n_bins)
+    direct = np.mean([brute_linear(x[i], y[i]) for i in range(n_fixations)], axis=0)
     rows.append(
         {
             "identity": "mean over fixations == inverse transform of mean cross-spectrum",
-            "max_abs_error": float(np.max(np.abs(direct_mean - fast_mean))),
+            "max_abs_error": float(np.max(np.abs(direct - fast(x, y)))),
         }
     )
 
     order = _random_derangement(n_fixations, rng)
-    direct_shuffle = np.mean(
-        [brute_circular(x[i], y[order[i]]) for i in range(n_fixations)], axis=0
-    )
-    fast_shuffle = np.fft.irfft((fx * fy[order].conj()).mean(axis=0), n=n_bins)
+    direct = np.mean([brute_linear(x[i], y[order[i]]) for i in range(n_fixations)], axis=0)
     rows.append(
         {
             "identity": "trial-shuffle draw == same transform with a deranged operand",
-            "max_abs_error": float(np.max(np.abs(direct_shuffle - fast_shuffle))),
+            "max_abs_error": float(np.max(np.abs(direct - fast(x, y[order])))),
         }
     )
 
     shifts = rng.integers(1, n_bins - 1, size=n_fixations)
-    direct_shift = np.mean(
-        [brute_circular(x[i], np.roll(y[i], int(shifts[i]))) for i in range(n_fixations)],
-        axis=0,
-    )
-    freqs = np.fft.rfftfreq(n_bins) * n_bins
-    phase = np.exp(-2j * np.pi * np.outer(shifts, freqs) / float(n_bins))
-    fast_shift = np.fft.irfft((fx * (fy * phase).conj()).mean(axis=0), n=n_bins)
+    rolled = np.stack([np.roll(y[i], int(shifts[i])) for i in range(n_fixations)])
+    direct = np.mean([brute_linear(x[i], rolled[i]) for i in range(n_fixations)], axis=0)
     rows.append(
         {
-            "identity": "circular-shift draw == phase ramp on the shifted operand",
-            "max_abs_error": float(np.max(np.abs(direct_shift - fast_shift))),
+            "identity": "circular-shift draw == linear correlation of the rolled operand",
+            "max_abs_error": float(np.max(np.abs(direct - fast(x, rolled)))),
+        }
+    )
+
+    # The observed path must not wrap: an unpadded transform is a different,
+    # non-physical statistic, and this records how different.
+    wrapped = np.fft.fftshift(
+        np.fft.irfft(
+            (
+                np.fft.rfft(x, n=n_bins, axis=-1)
+                * np.fft.rfft(y, n=n_bins, axis=-1).conj()
+            ).mean(axis=0),
+            n=n_bins,
+        )
+    )
+    linear = fast(x, y)
+    centre = {int(lag): value for lag, value in zip(lags, linear)}
+    wrapped_lags = np.fft.fftshift((np.fft.fftfreq(n_bins) * n_bins).astype(int))
+    gap = max(
+        abs(float(value) - centre[int(lag)]) for lag, value in zip(wrapped_lags, wrapped)
+    )
+    rows.append(
+        {
+            "identity": "unpadded (wrapping) transform differs from the linear one",
+            "max_abs_error": float(gap),
         }
     )
 
     frame = pd.DataFrame(rows)
     frame["passes"] = frame["max_abs_error"] < IDENTITY_TOLERANCE
+    # The last row documents a difference rather than an identity: it is
+    # expected to be non-zero, and a zero there would mean the padding was lost.
+    frame.loc[frame.index[-1], "passes"] = bool(
+        frame.loc[frame.index[-1], "max_abs_error"] > IDENTITY_TOLERANCE
+    )
     return frame
 
 
@@ -724,6 +821,7 @@ def build_session_pair_table(
 
     records: list[dict] = []
     lags_stored: Optional[np.ndarray] = None
+    overlap_stored: Optional[np.ndarray] = None
 
     for condition in settings.conditions:
         trains = session.trains.get(condition)
@@ -737,6 +835,7 @@ def build_session_pair_table(
         keep = _crop_lags(lags_ms, settings.store_max_lag_ms)
         if lags_stored is None:
             lags_stored = lags_ms[keep].astype(np.float32)
+            overlap_stored = result["overlap_bins"][keep].astype(np.float32)
 
         matched_result = None
         if matched_n is not None and matched_n <= trains.shape[1]:
@@ -837,6 +936,7 @@ def build_session_pair_table(
         return None
 
     return {
+        "overlap_bins": overlap_stored,
         "meta": {
             "date": session.date,
             "session": session.session,
@@ -848,7 +948,15 @@ def build_session_pair_table(
             "n_trial_shuffle_draws": settings.n_trial_shuffle_draws,
             "n_circular_shift_draws": settings.n_circular_shift_draws,
             "min_circular_shift_ms": settings.min_circular_shift_ms,
-            "correlation_kind": "circular",
+            # Linear: at every lag only genuinely overlapping bins contribute,
+            # so no spike is ever paired with one a full window away.  The wrap
+            # appears only inside the circular-shift null, where destroying
+            # alignment is the intent.
+            "correlation_kind": "linear",
+            "null_kinds": {
+                "trial_shuffle": "derangement of the fixation index",
+                "circular_shift": "rotation within the analysis window",
+            },
             "lag_sign_convention": "positive lag = unit_1 fires after unit_2",
             "selectivity_column": settings.selectivity_column,
             "trial_matched_n": matched_n,

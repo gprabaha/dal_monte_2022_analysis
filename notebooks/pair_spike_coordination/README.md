@@ -58,10 +58,20 @@ spike trains and only then averaged.
 the analysis exists to measure. Smooth the saved traces afterwards if a figure
 needs it.
 
-**Circular correlation.** The window is a fixed ±500 ms. Treating it as periodic
-makes every lag use all 1000 bins instead of a triangular taper, and makes the
-circular-shift null exact: shifting a train by `s` rotates the correlation by
-`-s`, so a shift null costs no extra transforms.
+**Linear correlation, everything inside ±500 ms.** The correlation is linear
+(zero-padded transform) — the same statistic `scipy.signal.correlate` computes
+and the one the behavioural cross-correlations use. At lag L only the `N − |L|`
+genuinely overlapping bins contribute, so no spike is ever paired with one a
+full window away. A wrapping transform would pair a spike at −500 ms with one at
++500 ms and call it a coincidence at lag L, which is not a physical measurement.
+
+The taper that linear correlation introduces needs no correction: both nulls
+carry it identically, so it cancels in the excess and in every z-score. Per-lag
+overlap counts are stored with each output for figures wanting comparable raw
+magnitudes.
+
+Widening the window is not an option: 95% of ±5 s surrounds contain at least one
+other analysed fixation (median 5). Outside the window is not baseline.
 
 **Two nulls, because they answer different questions.**
 
@@ -69,6 +79,10 @@ circular-shift null exact: shifting a train by `s` rotates the correlation by
 |---|---|---|---|
 | trial shuffle | trial-by-trial covariation | each unit's fixation-locked rate profile | the cells co-fluctuate across fixations |
 | circular shift | fine temporal alignment | that fixation's count and slow envelope | coordination finer than the shift |
+
+The shift null rotates a train within the window, which wraps. That is fine in a
+null — destroying alignment is the point — and is exactly why it is not fine in
+the observed statistic.
 
 **Count-matched nulls.** There are `F*(F-1)` possible cross-fixation pairings but
 only `F` real ones. A null estimated from all of them would have a far smaller
