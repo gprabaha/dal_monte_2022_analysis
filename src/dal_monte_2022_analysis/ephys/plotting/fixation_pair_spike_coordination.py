@@ -101,7 +101,7 @@ def plot_group_z_traces(
     scopes: Sequence[str] = SCOPE_ORDER,
     conditions: Sequence[str] = CONDITION_ORDER,
     max_lag_ms: float = 100.0,
-    stem: str = "fig01_group_z_traces",
+    stem: str = "fig06_group_z_traces",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Mean per-lag excess over the null, one panel per scope.
 
@@ -158,7 +158,7 @@ def plot_excess_vs_null(
     vs_null: pd.DataFrame,
     settings: PairCoordinationPlotSettings,
     *,
-    stem: str = "fig02_excess_vs_null",
+    stem: str = "fig07_excess_vs_null",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Per-group excess over null with its significance, answering "is anything there".
 
@@ -218,7 +218,7 @@ def plot_condition_effects(
     settings: PairCoordinationPlotSettings,
     *,
     group_column: str = "region_pair",
-    stem: str = "fig03_condition_effects",
+    stem: str = "fig04_condition_effects",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Condition effects broken out by region pair, with bootstrap intervals."""
     apply_thesis_plot_style()
@@ -272,7 +272,7 @@ def plot_condition_contrasts(
     settings: PairCoordinationPlotSettings,
     *,
     label: str = "All pairs",
-    stem: str = "fig04_condition_contrasts",
+    stem: str = "fig05_condition_contrasts",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Within-pair condition contrasts: the same two neurons, different fixations.
 
@@ -331,7 +331,7 @@ def plot_zero_lag_diagnostics(
     diagnostics: pd.DataFrame,
     settings: PairCoordinationPlotSettings,
     *,
-    stem: str = "fig05_zero_lag_diagnostics",
+    stem: str = "fig13_zero_lag_diagnostics",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Per-date zero-lag prevalence, for spotting a contaminated recording day.
 
@@ -393,7 +393,7 @@ def plot_selectivity_comparison(
     *,
     null_name: str = "trial_shuffle",
     max_lag_ms: float = 100.0,
-    stem: str = "fig06_selective_pairs",
+    stem: str = "fig11_selective_pairs",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """All pairs against pairs where both units are FDR-selective.
 
@@ -529,7 +529,7 @@ def plot_region_traces(
     scope: str = "within_region",
     max_lag_ms: float = 100.0,
     label: str = "",
-    stem: str = "fig03_region_traces",
+    stem: str = "fig02_region_traces",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Excess over one null, resolved per region (within) or region pair (across).
 
@@ -591,7 +591,7 @@ def plot_region_condition_tests(
     vs_null: pd.DataFrame,
     settings: PairCoordinationPlotSettings,
     *,
-    stem: str = "fig04_region_condition_tests",
+    stem: str = "fig03_region_condition_tests",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Per-region excess over null with significance, before any pooling."""
     apply_thesis_plot_style()

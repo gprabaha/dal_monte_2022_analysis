@@ -143,7 +143,7 @@ display(by_region_contrasts.round(4))
 
 fig, paths = viz.plot_condition_contrasts(
     by_region_contrasts, fig_settings,
-    label="All pairs, per region", stem="fig06_condition_contrasts_by_region",
+    label="All pairs, per region", stem="fig05_condition_contrasts_by_region",
 )
 display(Image(filename=str(paths["png"])))
 '''
@@ -159,7 +159,7 @@ display(Image(filename=str(paths["png"])))
 
 comparisons = pd.read_csv(SUMMARY_DIR / "condition_comparisons.csv")
 display(comparisons.round(4))
-fig, paths = viz.plot_condition_contrasts(comparisons, fig_settings, label="All pairs, pooled")
+fig, paths = viz.plot_condition_contrasts(comparisons, fig_settings, label="All pairs, pooled", stem="fig08_condition_contrasts_pooled")
 display(Image(filename=str(paths["png"])))
 '''
 
@@ -172,7 +172,7 @@ if matched_metric in pairs.columns and pairs[matched_metric].notna().any():
     display(matched.round(4))
     fig, paths = viz.plot_condition_contrasts(
         matched, fig_settings,
-        label="Trial-count matched, per region", stem="fig08_contrasts_matched",
+        label="Trial-count matched, per region", stem="fig09_contrasts_matched",
     )
     display(Image(filename=str(paths["png"])))
     merged = by_region_contrasts.merge(
@@ -202,12 +202,12 @@ sel_by_region = pd.read_pickle(SUMMARY_DIR / "group_traces_by_region_selective.p
 
 for scope in ("within_region", "cross_region"):
     fig, paths = viz.plot_observed_and_nulls(
-        sel_by_scope, fig_settings, scope=scope, stem="fig09_observed_and_nulls_selective"
+        sel_by_scope, fig_settings, scope=scope, stem="fig10_observed_and_nulls_selective"
     )
     display(Image(filename=str(paths["png"])))
     fig, paths = viz.plot_region_traces(
         sel_by_region, fig_settings, scope=scope, label="FDR-selective",
-        stem="fig09_region_traces_selective",
+        stem="fig11_region_traces_selective",
     )
     display(Image(filename=str(paths["png"])))
 '''
@@ -218,7 +218,7 @@ display(sel_contrasts.round(4))
 
 fig, paths = viz.plot_condition_contrasts(
     sel_contrasts, fig_settings,
-    label="Both units FDR-selective, per region", stem="fig10_contrasts_selective",
+    label="Both units FDR-selective, per region", stem="fig12_contrasts_selective",
 )
 display(Image(filename=str(paths["png"])))
 
