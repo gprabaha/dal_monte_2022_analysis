@@ -100,6 +100,19 @@ print(f"lag axis: {lags_ms.size} bins, {lags_ms.min():.0f} to {lags_ms.max():.0f
 
 inventory = psc.build_pair_inventory(pairs)
 display(inventory)
+
+# Which region and region-pair comparisons the recordings actually support.
+# A cross-region pair exists only where both regions were recorded in the same
+# session, and that was far from uniform.
+region_inventory = psc.build_region_pair_inventory(pairs)
+display(region_inventory)
+
+USABLE = psc.sufficient_region_pairs(pairs)
+MIN_PAIRS = psc.DEFAULT_MIN_PAIRS_FOR_REPORTING
+print(f"region pairs with >= {MIN_PAIRS} pairs in every condition: {USABLE}")
+thin = region_inventory.loc[~region_inventory["sufficient_pairs"], "region_pair"].tolist()
+if thin:
+    print(f"reported but not interpreted (too few pairs): {thin}")
 '''
 
 OBSERVED_AND_NULLS = '''
@@ -116,7 +129,8 @@ by_region = pd.read_pickle(SUMMARY_DIR / "group_traces_by_region.pkl")
 for scope in ("within_region", "cross_region"):
     for null_name in ("trial_shuffle", "circular_shift"):
         fig, paths = viz.plot_region_traces(
-            by_region, fig_settings, scope=scope, null_name=null_name
+            by_region, fig_settings, scope=scope, null_name=null_name,
+            min_pairs=MIN_PAIRS,
         )
         display(Image(filename=str(paths["png"])))
 '''
@@ -125,7 +139,9 @@ REGION_TESTS = '''
 vs_null_by_region = pd.read_csv(SUMMARY_DIR / "coordination_vs_null_by_region.csv")
 display(vs_null_by_region.round(4))
 
-fig, paths = viz.plot_region_condition_tests(vs_null_by_region, fig_settings)
+fig, paths = viz.plot_region_condition_tests(
+    vs_null_by_region, fig_settings, min_pairs=MIN_PAIRS
+)
 display(Image(filename=str(paths["png"])))
 '''
 
@@ -207,7 +223,7 @@ for scope in ("within_region", "cross_region"):
     display(Image(filename=str(paths["png"])))
     fig, paths = viz.plot_region_traces(
         sel_by_region, fig_settings, scope=scope, label="FDR-selective",
-        stem="fig11_region_traces_selective",
+        min_pairs=MIN_PAIRS, stem="fig11_region_traces_selective",
     )
     display(Image(filename=str(paths["png"])))
 '''
@@ -359,6 +375,11 @@ pairs, *before* any pooling. Pooling first would let one region with many pairs
 carry a conclusion that does not hold in the others. Pooled tables follow as a
 summary. Everything is run on all recorded pairs first, then repeated on pairs
 where both units are FDR-selective.
+
+Which comparisons are available is set by the recordings, not by choice — see
+the region-pair inventory in section 2. All four regions support within-region
+comparisons; across regions, only the combinations involving BLA are
+well populated.
 """),
     code(SETUP),
     markdown("""
@@ -377,6 +398,17 @@ reuse what is on disk.
     code(REBUILD_SUMMARY),
     markdown("""
 ## 2. What is in the analysis
+
+**Read the region-pair inventory before any result.** A cross-region pair exists
+only where both regions were recorded in the *same session*, and the recording
+configuration was far from uniform: every well-populated cross-region
+combination involves BLA, ACCg and OFC were never recorded together at all, and
+dmPFC × OFC comes from a handful of sessions. All four regions support
+within-region comparisons.
+
+Combinations below the pair threshold are reported in the tables but excluded
+from the region figures, so a hundred-pair curve is never drawn beside a
+thirty-thousand-pair one.
 """),
     code(LOAD),
     markdown("""

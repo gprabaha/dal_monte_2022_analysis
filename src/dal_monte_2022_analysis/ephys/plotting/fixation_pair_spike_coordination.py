@@ -529,6 +529,7 @@ def plot_region_traces(
     scope: str = "within_region",
     max_lag_ms: float = 100.0,
     label: str = "",
+    min_pairs: int = 0,
     stem: str = "fig02_region_traces",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Excess over one null, resolved per region (within) or region pair (across).
@@ -544,6 +545,21 @@ def plot_region_traces(
 
     subset = traces.loc[traces["scope"].astype(str) == scope]
     groups = sorted(subset["region_pair"].astype(str).unique()) if len(subset) else []
+    if min_pairs > 0 and groups:
+        # Not every region combination was recorded simultaneously often enough
+        # to interpret; drawing a hundred-pair curve beside a thirty-thousand
+        # one invites reading noise as a regional difference.
+        keep_groups = []
+        for group in groups:
+            counts = [
+                int(row["n_pairs"])
+                for condition in CONDITION_ORDER
+                if (row := _trace_row(traces, scope=scope, region_pair=group, condition=condition))
+                is not None
+            ]
+            if counts and min(counts) >= int(min_pairs):
+                keep_groups.append(group)
+        groups = keep_groups
     if not groups:
         fig, ax = plt.subplots(figsize=(3.0, 2.0))
         _finish(ax, title=f"No {scope_label(scope).lower()} pairs")
@@ -591,6 +607,7 @@ def plot_region_condition_tests(
     vs_null: pd.DataFrame,
     settings: PairCoordinationPlotSettings,
     *,
+    min_pairs: int = 0,
     stem: str = "fig03_region_condition_tests",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Per-region excess over null with significance, before any pooling."""
@@ -603,6 +620,11 @@ def plot_region_condition_tests(
     axes = np.atleast_1d(axes)
     for ax, scope in zip(axes, SCOPE_ORDER):
         subset = vs_null.loc[vs_null["scope"].astype(str) == scope]
+        if min_pairs > 0 and "n_pairs" in subset.columns:
+            counts = subset.groupby("region_pair", observed=True)["n_pairs"].min()
+            subset = subset.loc[
+                subset["region_pair"].isin(counts.loc[counts >= int(min_pairs)].index)
+            ]
         groups = sorted(subset["region_pair"].astype(str).unique())
         width = 0.8 / max(len(CONDITION_ORDER), 1)
         for index, condition in enumerate(CONDITION_ORDER):

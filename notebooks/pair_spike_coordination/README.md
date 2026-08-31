@@ -118,6 +118,27 @@ Input is `fixations_spike_train_1ms.pkl`, the same extraction that produces
 those used by the single-unit, population-PCA and mRNN analyses, so a pair
 result can be joined to a unit result without translation.
 
+## Which comparisons the recordings support
+
+A cross-region pair exists only where both regions were recorded in the **same
+session**, and that was far from uniform. Across all 417 sessions:
+
+| within region | pairs | | across regions | pairs |
+|---|---|---|---|---|
+| BLA | 49,172 | | BLA × dmPFC | 34,190 |
+| OFC | 23,820 | | ACCg × BLA | 25,154 |
+| ACCg | 19,893 | | BLA × OFC | 24,750 |
+| dmPFC | 16,130 | | ACCg × dmPFC | 5,690 |
+| | | | dmPFC × OFC | 140 |
+| | | | **ACCg × OFC** | **0** |
+
+All four regions support within-region comparisons. Across regions, every
+well-populated combination involves **BLA** — ACCg and OFC were never recorded
+together, and dmPFC × OFC comes from 10 sessions. `build_region_pair_inventory`
+reports this and flags combinations below the pair threshold; the region figures
+exclude them so a hundred-pair curve is never drawn beside a
+thirty-thousand-pair one. Nothing is dropped silently.
+
 ## How results are reported
 
 Per **region** for within-region pairs and per **region pair** for cross-region

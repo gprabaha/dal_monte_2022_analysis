@@ -23,8 +23,10 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination imp
     assign_condition,
     build_zero_lag_diagnostics,
     compare_conditions,
+    build_region_pair_inventory,
     compute_condition_coordination,
     overlap_bins,
+    sufficient_region_pairs,
     summarize_coordination,
     test_against_null as run_test_against_null,
     verify_null_identities,
@@ -299,6 +301,23 @@ class TestSummariesAndTests(unittest.TestCase):
         result = run_test_against_null(self.pairs)
         self.assertEqual(len(result), 2 * len(CONDITION_ORDER))
         self.assertIn("p_value", result.columns)
+
+    def test_region_pair_inventory_flags_underpowered_combinations(self):
+        """Not every region combination was recorded simultaneously enough to use."""
+        pairs = _synthetic_pairs(n_pairs=60)
+        # Add a region pair that barely exists, as dmPFC x OFC does in practice.
+        thin = pairs.loc[pairs["region_pair"] == "bla-accg"].head(3).copy()
+        thin["region_pair"] = "dmpfc-ofc"
+        thin["same_region"] = False
+        combined = pd.concat([pairs, thin], ignore_index=True)
+
+        inventory = build_region_pair_inventory(combined, min_pairs=20)
+        row = inventory.loc[inventory["region_pair"] == "dmpfc-ofc"]
+        self.assertEqual(len(row), 1)
+        self.assertFalse(bool(row["sufficient_pairs"].iloc[0]))
+        self.assertNotIn("dmpfc-ofc", sufficient_region_pairs(combined, min_pairs=20))
+        # Flagged, never silently dropped.
+        self.assertIn("dmpfc-ofc", set(inventory["region_pair"]))
 
     def test_zero_lag_diagnostics_flags_a_contaminated_day(self):
         pairs = _synthetic_pairs(n_pairs=120, seed=7)

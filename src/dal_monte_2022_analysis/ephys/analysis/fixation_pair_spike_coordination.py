@@ -1851,6 +1851,9 @@ def run_summary_build(
 
     outputs = {
         "pair_inventory": build_pair_inventory(pairs),
+        # Consult before the result tables: not every region combination was
+        # recorded simultaneously often enough to interpret.
+        "region_pair_inventory": build_region_pair_inventory(pairs),
         # Per region / region pair -- the primary tables.
         "coordination_summary_by_region": summarize_coordination(
             pairs, metric=metric, group_columns=("scope", "region_pair", "condition")
@@ -1901,3 +1904,72 @@ def run_summary_build(
         )
     print(f"summary tables written to {out_dir}")
     return outputs
+
+
+#: Below this many pairs a region-pair result is reported but not interpreted.
+#: Set from the recording configuration rather than a rule of thumb: the three
+#: well-populated cross-region combinations carry tens of thousands of pairs,
+#: while dmPFC x OFC has ~140 (from 10 sessions) and ACCg x OFC has none at all,
+#: because those regions were rarely or never recorded simultaneously.
+DEFAULT_MIN_PAIRS_FOR_REPORTING = 500
+
+
+def build_region_pair_inventory(
+    pairs: pd.DataFrame,
+    *,
+    min_pairs: int = DEFAULT_MIN_PAIRS_FOR_REPORTING,
+) -> pd.DataFrame:
+    """Which region and region-pair comparisons the recordings actually support.
+
+    A cross-region pair only exists when both regions were recorded in the same
+    session, and that was not true uniformly.  Every well-populated cross-region
+    combination in this dataset involves BLA; ACCg and OFC were never recorded
+    together, and dmPFC x OFC comes from a handful of sessions.  Reading a
+    condition effect off a combination with a hundred pairs would be reading
+    noise, so this table is meant to be consulted *before* the result tables.
+
+    ``sufficient_pairs`` flags rather than filters, so nothing disappears
+    silently.
+    """
+    frame = pairs.copy()
+    if "scope" not in frame.columns:
+        frame["scope"] = np.where(frame["same_region"], "within_region", "cross_region")
+
+    rows: list[dict] = []
+    for (scope, region_pair), group in frame.groupby(["scope", "region_pair"], observed=True):
+        per_condition = group.groupby("condition", observed=True).size()
+        row = {
+            "scope": str(scope),
+            "region_pair": str(region_pair),
+            "n_pairs": int(len(group)),
+            "n_pairs_both_selective": int(group["both_selective"].sum()),
+            "n_sessions": int(group.groupby(["date", "session"]).ngroups),
+            "n_dates": int(group["date"].nunique()),
+            "min_pairs_per_condition": int(per_condition.min()) if len(per_condition) else 0,
+            "n_conditions": int(len(per_condition)),
+        }
+        row["sufficient_pairs"] = bool(row["min_pairs_per_condition"] >= int(min_pairs))
+        row["sufficient_selective_pairs"] = bool(
+            row["n_pairs_both_selective"] >= int(min_pairs)
+        )
+        rows.append(row)
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    return result.sort_values(["scope", "n_pairs"], ascending=[True, False]).reset_index(
+        drop=True
+    )
+
+
+def sufficient_region_pairs(
+    pairs: pd.DataFrame,
+    *,
+    min_pairs: int = DEFAULT_MIN_PAIRS_FOR_REPORTING,
+    selective: bool = False,
+) -> list[str]:
+    """Region pairs with enough pairs in every condition to interpret."""
+    inventory = build_region_pair_inventory(pairs, min_pairs=min_pairs)
+    if inventory.empty:
+        return []
+    column = "sufficient_selective_pairs" if selective else "sufficient_pairs"
+    return sorted(inventory.loc[inventory[column], "region_pair"].astype(str))
