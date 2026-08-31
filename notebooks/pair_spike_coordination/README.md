@@ -11,7 +11,18 @@ and does that differ within a region versus across regions?
   never the `.ipynb`, then re-run it. Per `AGENTS.md` the notebook is a thin
   display layer; the analysis lives in `src/`.
 
-## Regenerating
+## Running it
+
+The notebook drives the whole pipeline. Section 1 reports which of the 42 dates
+are built and, with `SUBMIT_JOBS = True`, submits a SLURM array for **only the
+incomplete dates** and waits for it. Section 2 rebuilds the summary tables.
+Everything after reads those summaries.
+
+Submission is opt-in on purpose: the array costs real cluster time and a
+notebook cell is easy to re-run by accident. With `SUBMIT_JOBS = False` the cell
+only inspects and prints the `sbatch` line it would have run.
+
+The equivalent from a shell:
 
 ```bash
 # 1. Per-session pair tables (SLURM array over the 42 recording dates)
@@ -22,8 +33,11 @@ python scripts/ephys/analysis/build_fixation_pair_spike_coordination.py --date 0
 
 # 2. Aggregate into the tables the notebook reads
 python scripts/ephys/analysis/build_fixation_pair_spike_coordination_summary.py
+```
 
-# 3. Rebuild and run the notebook
+After editing `_build_notebook.py`, regenerate the `.ipynb`:
+
+```bash
 conda run -n gaze_processing python notebooks/pair_spike_coordination/_build_notebook.py
 ```
 

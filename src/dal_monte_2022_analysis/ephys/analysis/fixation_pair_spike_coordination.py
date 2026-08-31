@@ -1553,3 +1553,203 @@ def build_group_z_traces(
         "lags_ms": np.asarray(lags, dtype=float),
         "traces": pd.DataFrame(rows),
     }
+
+
+# ---------------------------------------------------------------------------
+# Build orchestration
+# ---------------------------------------------------------------------------
+#
+# The notebook drives the whole pipeline through these, so that "what is built"
+# is a question with a checkable answer rather than something to remember.
+# Submission is never implicit: :func:`ensure_pair_coordination_built` reports
+# what is missing and only submits when asked, because the array job costs real
+# cluster time and a notebook cell is easy to re-run by accident.
+
+DEFAULT_SBATCH_PATH = "hpc/ephys/run_fixation_pair_spike_coordination.sbatch"
+
+
+def build_status(settings: PairSpikeCoordinationSettings) -> pd.DataFrame:
+    """One row per session: whether its pair-coordination output exists.
+
+    Compares the sessions that *have* 1 ms spike trains against the outputs
+    already written, so a partially finished array job is visible as such.
+    """
+    rows: list[dict] = []
+    for row in iter_session_trial_paths(settings):
+        out_path = session_output_path(settings, str(row["date"]), str(row["session"]))
+        rows.append(
+            {
+                "date": str(row["date"]),
+                "session": str(row["session"]),
+                "output_path": out_path,
+                "exists": out_path.exists(),
+                "size_mb": (out_path.stat().st_size / 1e6) if out_path.exists() else 0.0,
+            }
+        )
+    return pd.DataFrame(rows).sort_values(["date", "session"]).reset_index(drop=True)
+
+
+def summarize_build_status(status: pd.DataFrame) -> pd.DataFrame:
+    """Per-date completion counts, for spotting a failed array task."""
+    if status.empty:
+        return status
+    grouped = status.groupby("date", observed=True).agg(
+        n_sessions=("session", "count"),
+        n_built=("exists", "sum"),
+        total_mb=("size_mb", "sum"),
+    )
+    grouped["complete"] = grouped["n_built"] == grouped["n_sessions"]
+    return grouped.reset_index()
+
+
+def ensure_pair_coordination_built(
+    settings: PairSpikeCoordinationSettings,
+    *,
+    submit: bool = False,
+    wait: bool = True,
+    sbatch_path: str | Path = DEFAULT_SBATCH_PATH,
+    repo_root: Optional[Path] = None,
+    poll_secs: int = 60,
+    extra_args: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    """Report build completeness and, if asked, submit the array job and wait.
+
+    With ``submit=False`` (the default) this only inspects and reports: nothing
+    is queued, so the notebook can be re-run freely.  With ``submit=True`` it
+    submits one array task per date that is not yet complete and, when ``wait``
+    is set, blocks until the array finishes before returning the refreshed
+    status.
+
+    Returns the per-date status after any submission completes.
+    """
+    status = build_status(settings)
+    per_date = summarize_build_status(status)
+    if per_date.empty:
+        raise FileNotFoundError(
+            "No sessions with 1 ms spike trains were found; check the dataset config."
+        )
+
+    incomplete = per_date.loc[~per_date["complete"]]
+    print(
+        f"dates: {len(per_date)} total, {int(per_date['complete'].sum())} complete, "
+        f"{len(incomplete)} incomplete"
+    )
+    print(
+        f"sessions: {int(status['exists'].sum())} of {len(status)} built "
+        f"({status['size_mb'].sum() / 1000:.2f} GB on disk)"
+    )
+    if incomplete.empty:
+        print("nothing to build.")
+        return per_date
+    print(f"incomplete dates: {list(incomplete['date'])}")
+
+    if not submit:
+        all_dates = list(per_date["date"])
+        indices = sorted(all_dates.index(date) for date in incomplete["date"])
+        spec = _compact_array_spec(indices)
+        print(
+            "\nsubmit=False, so nothing was queued. To build these, run:\n"
+            f"    sbatch --array={spec} {sbatch_path}\n"
+            "or call this again with submit=True."
+        )
+        return per_date
+
+    from dal_monte_2022_analysis.runtime.hpc import (
+        submit_sbatch_array_job,
+        track_job_completion,
+    )
+
+    all_dates = list(per_date["date"])
+    indices = sorted(all_dates.index(date) for date in incomplete["date"])
+    job_id = submit_sbatch_array_job(
+        Path(sbatch_path),
+        array_spec=_compact_array_spec(indices),
+        extra_args=extra_args,
+        repo_root=repo_root,
+    )
+    if wait:
+        track_job_completion(job_id, poll_secs=int(poll_secs))
+        refreshed = summarize_build_status(build_status(settings))
+        still_missing = refreshed.loc[~refreshed["complete"]]
+        if len(still_missing):
+            print(
+                f"WARNING: {len(still_missing)} date(s) still incomplete after the array "
+                f"finished: {list(still_missing['date'])}. Check hpc/ephys/logs/."
+            )
+        else:
+            print("all dates built.")
+        return refreshed
+    return per_date
+
+
+def _compact_array_spec(indices: Sequence[int]) -> str:
+    """Collapse task indices into SLURM's comma/range array syntax."""
+    values = sorted({int(value) for value in indices})
+    if not values:
+        return ""
+    parts: list[str] = []
+    start = previous = values[0]
+    for value in values[1:]:
+        if value == previous + 1:
+            previous = value
+            continue
+        parts.append(str(start) if start == previous else f"{start}-{previous}")
+        start = previous = value
+    parts.append(str(start) if start == previous else f"{start}-{previous}")
+    return ",".join(parts)
+
+
+def run_summary_build(
+    settings: PairSpikeCoordinationSettings,
+    *,
+    metric: str = "trial_shuffle_mean_effect_pm10ms",
+) -> dict[str, pd.DataFrame]:
+    """Build every summary table the notebook reads, and write them to disk.
+
+    Mirrors ``build_fixation_pair_spike_coordination_summary.py`` so the
+    notebook can regenerate summaries in-process after a build finishes,
+    instead of asking the reader to drop out to a shell.
+    """
+    cfg = load_config(settings.cfg_path)
+    out_dir = build_analysis_output_dir(cfg, settings.output_subdir) / "summary"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    pairs, _ = load_pair_coordination(
+        settings.cfg_path,
+        output_subdir=settings.output_subdir,
+        output_filename=settings.output_filename,
+    )
+    outputs = {
+        "pair_inventory": build_pair_inventory(pairs),
+        "coordination_summary": summarize_coordination(pairs, metric=metric),
+        "coordination_vs_null": test_against_null(pairs, metric=metric),
+        "condition_comparisons": compare_conditions(pairs, metric=metric),
+        "condition_comparisons_selective": compare_conditions(
+            pairs.loc[pairs["both_selective"]], metric=metric
+        ),
+        "zero_lag_diagnostics": build_zero_lag_diagnostics(pairs),
+    }
+    for name, frame in outputs.items():
+        frame.to_csv(out_dir / f"{name}.csv", index=False)
+
+    for stem, kwargs in {
+        "group_z_traces_by_scope": {"group_columns": ("scope", "condition")},
+        "group_z_traces_by_region_pair": {
+            "group_columns": ("scope", "region_pair", "condition")
+        },
+        "group_z_traces_selective": {
+            "group_columns": ("scope", "condition"),
+            "selective_only": True,
+        },
+    }.items():
+        pd.to_pickle(
+            build_group_z_traces(
+                settings.cfg_path,
+                output_subdir=settings.output_subdir,
+                output_filename=settings.output_filename,
+                **kwargs,
+            ),
+            out_dir / f"{stem}.pkl",
+        )
+    print(f"summary tables written to {out_dir}")
+    return outputs

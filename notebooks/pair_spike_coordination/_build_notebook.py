@@ -16,6 +16,40 @@ from pathlib import Path
 FILENAME = "pair_spike_coordination.ipynb"
 TITLE = "Spike coordination in simultaneously recorded neural pairs"
 
+
+ORCHESTRATE = '''
+settings = psc.build_pair_spike_coordination_settings_from_config(
+    dataset_cfg_path=str(DATASET_CFG_PATH),
+    coordination_cfg_path=str(repo_root / "configs" / "ephys_fixation_pair_spike_coordination.yaml"),
+)
+
+# Submission is opt-in. The array job costs real cluster time and a notebook
+# cell is easy to re-run by accident, so leaving this False only *reports* what
+# is missing and prints the sbatch line to run.
+SUBMIT_JOBS = False
+WAIT_FOR_JOBS = True
+
+per_date = psc.ensure_pair_coordination_built(
+    settings,
+    submit=SUBMIT_JOBS,
+    wait=WAIT_FOR_JOBS,
+    sbatch_path=repo_root / psc.DEFAULT_SBATCH_PATH,
+    repo_root=repo_root,
+)
+display(per_date)
+'''
+
+REBUILD_SUMMARY = '''
+# Regenerate the summary tables from whatever is on disk. Skip if they are
+# already current -- this reads every session file, so it is the slow step.
+REBUILD_SUMMARIES = True
+
+if REBUILD_SUMMARIES:
+    _ = psc.run_summary_build(settings, metric=EFFECT_METRIC)
+else:
+    display(Markdown("_Using the summary tables already on disk._"))
+'''
+
 SETUP = '''
 from __future__ import annotations
 
@@ -263,21 +297,40 @@ Two standardised quantities appear below and they are not interchangeable:
   about five to one, so ranking conditions by `z` would rank them largely by
   trial count.
 
-## Prerequisites
+## Running this notebook
+
+Section 1 checks what is built and can submit the SLURM array itself, then
+section 2 rebuilds the summary tables. Everything after that reads those
+summaries. The equivalent from a shell is:
 
     sbatch --array=0-41 hpc/ephys/run_fixation_pair_spike_coordination.sbatch
     python scripts/ephys/analysis/build_fixation_pair_spike_coordination_summary.py
 """),
     code(SETUP),
     markdown("""
-## 1. Load
+## 1. Build state
+
+The per-session pair tables are built by a SLURM array over the 42 recording
+dates. This reports what exists and what is missing; it does **not** queue
+anything unless `SUBMIT_JOBS` is set to `True`, in which case it submits only
+the incomplete dates and waits for the array to finish.
+"""),
+    code(ORCHESTRATE),
+    markdown("""
+Once every date is built, aggregate the per-session tables into the summary
+files the rest of the notebook reads. This is the slow step — it touches every
+session file — so set `REBUILD_SUMMARIES = False` to reuse what is on disk.
+"""),
+    code(REBUILD_SUMMARY),
+    markdown("""
+## 2. Load
 
 One row per (pair, condition). Traces stay on disk; the scalar summaries are
 what every test below uses.
 """),
     code(LOAD),
     markdown("""
-## 2. Do the nulls behave?
+## 3. Do the nulls behave?
 
 Two checks, in order. The **identities** confirm the fast frequency-domain path
 returns exactly what brute-force cross-correlation would — the speed-ups are
@@ -302,7 +355,7 @@ columns are not maxima and are what the tests use.
 """),
     code(VALIDATE),
     markdown("""
-## 3. Is there any coordination above null to begin with?
+## 4. Is there any coordination above null to begin with?
 
 Before asking whether conditions differ, ask whether there is anything to
 differ. A one-sample Wilcoxon signed-rank test of the per-pair excess against
@@ -310,7 +363,7 @@ zero — zero being the null's own expectation.
 """),
     code(ABOVE_NULL),
     markdown("""
-## 4. Where in lag does the coordination sit?
+## 5. Where in lag does the coordination sit?
 
 Mean per-lag excess across pairs, one panel per scope. Distance from zero *is*
 the coordination; bands are standard error across pairs.
@@ -321,14 +374,14 @@ synchrony.
 """),
     code(TRACES),
     markdown("""
-## 5. Condition effects, by region pair
+## 6. Condition effects, by region pair
 
 Bootstrap confidence intervals on the per-pair effect, broken out by region and
 region pair.
 """),
     code(EFFECTS),
     markdown("""
-## 6. Does interactive face change coordination?
+## 7. Does interactive face change coordination?
 
 The comparison is **paired within pair**: the same two neurons, the same
 electrodes, the same session, differing only in which fixations were used. That
@@ -338,7 +391,7 @@ Benjamini–Hochberg correction across the reported contrasts.
 """),
     code(CONTRASTS),
     markdown("""
-## 7. Control: trial-count matching
+## 8. Control: trial-count matching
 
 The `effect` metric is already constructed not to scale with trial count. This
 is the direct check on the same confound: every pair recomputed on a common
@@ -348,7 +401,7 @@ fixation count across conditions.
 """),
     code(MATCHED),
     markdown("""
-## 8. Restricting to FDR-selective units
+## 9. Restricting to FDR-selective units
 
 Pairs where **both** units are significantly selective for at least one
 fixation-condition contrast (FDR-corrected, `three_condition_core`).
@@ -360,7 +413,7 @@ selective subset or is distributed across the population.
 """),
     code(SELECTIVE),
     markdown("""
-## 9. The zero-lag artifact
+## 10. The zero-lag artifact
 
 Earlier runs showed a sharp zero-lag peak on some days. That is almost certainly
 **not** a pairwise interaction: the chance that two randomly sampled neurons are
@@ -375,7 +428,7 @@ else. This flags such days as outliers instead of averaging them in.
 """),
     code(ZERO_LAG),
     markdown("""
-## 10. Does the conclusion survive dropping flagged days?
+## 11. Does the conclusion survive dropping flagged days?
 
 The honest test of an artifact: remove the suspect days and see whether the
 condition effects hold.

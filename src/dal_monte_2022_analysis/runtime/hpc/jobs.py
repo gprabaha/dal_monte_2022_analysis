@@ -5,7 +5,7 @@ import subprocess
 import time
 import warnings
 from pathlib import Path
-from typing import Iterable, List, Optional
+from typing import Iterable, List, Optional, Sequence
 
 CONDA_INIT_SCRIPT = Path(
     "/gpfs/milgram/apps/avx2/software/miniconda/24.11.3/etc/profile.d/conda.sh"
@@ -303,3 +303,54 @@ def track_job_completion(job_id: str, poll_secs: int = 30, log_every_secs: int =
             last_log = time.time()
 
         time.sleep(poll_secs)
+
+
+def submit_sbatch_array_job(
+    sbatch_script_path: Path,
+    *,
+    array_spec: str,
+    extra_args: Optional[Sequence[str]] = None,
+    repo_root: Optional[Path] = None,
+) -> str:
+    """Submit a plain sbatch script as a job array and return its job ID.
+
+    Unlike :func:`submit_dsq_array_job` this takes an sbatch script that is
+    already written, so the array bounds are the only thing supplied at
+    submission time.
+
+    Args:
+        sbatch_script_path: Path to the sbatch script to submit.
+        array_spec: SLURM ``--array`` specification, for example ``"0-41"``.
+        extra_args: Arguments appended after the script path and forwarded to
+            the script's own ``"$@"``.
+        repo_root: Working directory for the submission, so ``SLURM_SUBMIT_DIR``
+            resolves to the repository root.
+
+    Returns:
+        The submitted array job ID.
+    """
+    script_path = Path(sbatch_script_path)
+    if not script_path.exists():
+        raise FileNotFoundError(f"sbatch script not found: {script_path}")
+
+    command = ["sbatch", f"--array={array_spec}", str(script_path)]
+    if extra_args:
+        command.extend(str(value) for value in extra_args)
+
+    result = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        cwd=None if repo_root is None else str(repo_root),
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"sbatch submission failed ({result.returncode}): {result.stderr.strip()}"
+        )
+    # sbatch prints "Submitted batch job <id>".
+    tokens = result.stdout.strip().split()
+    if not tokens:
+        raise RuntimeError(f"Could not parse sbatch output: {result.stdout!r}")
+    job_id = tokens[-1]
+    print(f"Submitted array job {job_id} ({script_path.name}, --array={array_spec})")
+    return job_id

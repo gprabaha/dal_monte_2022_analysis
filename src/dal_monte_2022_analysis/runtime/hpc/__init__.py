@@ -5,6 +5,7 @@ from .jobs import (
     generate_fixation_job_file,
     generate_gaze_event_job_file,
     submit_dsq_array_job,
+    submit_sbatch_array_job,
     track_job_completion,
     write_job_file,
 )
@@ -14,6 +15,7 @@ __all__ = [
     "generate_fixation_job_file",
     "generate_gaze_event_job_file",
     "submit_dsq_array_job",
+    "submit_sbatch_array_job",
     "track_job_completion",
     "write_job_file",
 ]
