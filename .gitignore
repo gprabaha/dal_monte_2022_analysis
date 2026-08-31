@@ -41,3 +41,10 @@ hpc/behav/*
 !hpc/behav/logs/
 hpc/behav/logs/*
 !hpc/behav/logs/.gitkeep
+# Same allowlist shape for the ephys launchers: keep the sbatch files, drop logs.
+!hpc/ephys/
+hpc/ephys/*
+!hpc/ephys/*.sbatch
+!hpc/ephys/logs/
+hpc/ephys/logs/*
+!hpc/ephys/logs/.gitkeep

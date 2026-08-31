@@ -328,3 +328,34 @@ Config:
   - `parallelize_across_sessions`
   - `max_procs`
   - `pair_chunk_size`
+
+- `build_fixation_pair_spike_coordination.py`
+  Computes spike coordination for every simultaneously recorded neural pair,
+  per fixation condition, within and across regions. Input is the unsmoothed
+  1 ms `spike_train_counts` from `fixations_spike_train_1ms.pkl`, windowed to
+  `[-500, 500] ms`. Cross-correlation is **circular** over that window, computed
+  per fixation and only then averaged.
+  Each pair-condition is scored against two count-matched nulls:
+  - `trial_shuffle` — deranges the fixation index, destroying trial-by-trial
+    covariation while keeping each unit's fixation-locked rate profile
+  - `circular_shift` — rotates one train within its own fixation, destroying
+    fine timing while keeping that fixation's count and slow envelope
+  Each null draw uses exactly as many fixation pairings as the observed
+  statistic, so z-scores are not inflated by a null with a smaller standard
+  error. Writes per session:
+  - `date=*/session=*/pair_coordination.pkl` (one row per pair per condition,
+    with observed and null mean/SD traces cropped to `store_max_lag_ms`)
+  `--verify-only` runs the null identity and sensitivity checks without touching
+  the data. Run on the cluster with
+  `hpc/ephys/run_fixation_pair_spike_coordination.sbatch` (array over dates).
+
+- `build_fixation_pair_spike_coordination_summary.py`
+  Aggregates the per-session pair tables into `summary/`:
+  - `pair_inventory.csv`, `coordination_summary.csv`, `coordination_vs_null.csv`
+  - `condition_comparisons.csv` and `condition_comparisons_selective.csv`
+    (within-pair Wilcoxon contrasts, FDR corrected)
+  - `zero_lag_diagnostics.csv` (per-date zero-lag prevalence and outlier flags)
+  - `group_z_traces_*.pkl` (group-mean lag traces, accumulated by streaming)
+  Condition comparisons use an `_effect` column, not `_z`: z scales with the
+  square root of the fixation count, and interactive-face fixations outnumber
+  non-interactive ones roughly five to one.

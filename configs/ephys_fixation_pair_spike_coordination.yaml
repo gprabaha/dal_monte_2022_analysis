@@ -1,0 +1,67 @@
+# configs/ephys_fixation_pair_spike_coordination.yaml
+# Spike coordination between simultaneously recorded neural pairs, per fixation
+# condition, within and across regions.
+
+# --- Input -------------------------------------------------------------------
+# The 1 ms fixation-aligned spike trains. This is the same extraction that
+# produces fixations_psth_10ms.pkl, so the fixations, units and trials here are
+# identical to the ones the single-unit, population-PCA and mRNN analyses use.
+trial_input_modality: psth
+trial_input_filename: fixations_spike_train_1ms.pkl
+
+# Unsmoothed counts, deliberately. Smoothing before cross-correlation blurs the
+# fine timing this analysis exists to measure; smooth the saved traces later if
+# a figure needs it.
+signal_input_column: spike_train_counts
+
+# Matches the window every other fixation analysis reports on.
+signal_window_ms: [-500.0, 500.0]
+
+# --- Conditions --------------------------------------------------------------
+# Identical to the single-unit / population condition set. Object fixations are
+# pooled across interactive state, matching the `unsplit` average partition.
+conditions: [face_interactive, face_non_interactive, object]
+
+# --- Inclusion ---------------------------------------------------------------
+min_fixations_per_condition: 8
+min_spikes_per_unit_condition: 10
+include_within_region: true
+include_cross_region: true
+
+# --- Nulls -------------------------------------------------------------------
+# Each draw is a derangement of the fixation index, so the null statistic is
+# built from exactly as many terms as the observed one. Estimating the null from
+# all F*(F-1) cross-fixation pairings instead would shrink its standard error
+# and inflate every z-score.
+n_trial_shuffle_draws: 50
+n_circular_shift_draws: 50
+
+# Shifts smaller than this would leave the coordination intact and make the
+# shift null too conservative.
+min_circular_shift_ms: 50.0
+
+# Recompute every pair on a common fixation count across conditions. Interactive
+# face fixations outnumber non-interactive ones roughly five to one, so this is
+# the direct control on trial-count-driven differences.
+trial_match_conditions: true
+
+# --- Selectivity -------------------------------------------------------------
+# FDR-corrected calls, per the project decision. Stored as a column, never used
+# as a filter at build time, so the notebook can slice either way.
+selectivity_subdir: ephys/psth/fixation_psth_selectivity
+selectivity_unit_filename: unit_selectivity__three_condition_core.csv
+selectivity_column: is_selective_unit_corrected
+
+# --- Output ------------------------------------------------------------------
+output_subdir: ephys/psth/fixation_pair_spike_coordination
+output_filename: pair_coordination.pkl
+# Saved traces are cropped to this half-width. The circular correlation is
+# defined over the full period; this only controls what reaches disk.
+store_max_lag_ms: 250.0
+
+summary_subdir: ephys/psth/fixation_pair_spike_coordination/summary
+
+# --- Runtime -----------------------------------------------------------------
+random_seed: 42
+use_parallel: true
+max_procs: 16

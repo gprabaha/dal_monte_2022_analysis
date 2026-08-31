@@ -85,6 +85,16 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_population_pc_subspace impo
     plot_subspace_distance_map,
     plot_time_resolved_separation,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_pair_spike_coordination import (
+    PairCoordinationPlotSettings,
+    plot_condition_contrasts,
+    plot_condition_effects,
+    plot_excess_vs_null,
+    plot_group_z_traces,
+    plot_null_validation,
+    plot_selectivity_comparison,
+    plot_zero_lag_diagnostics,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_mrnn import (
     FixationMRNNDiagnosticPlotSettings,
     plot_fixation_mrnn_activation_pc_timeseries,
@@ -161,6 +171,14 @@ __all__ = [
     "plot_principal_angle_spectra",
     "plot_subspace_distance_map",
     "plot_time_resolved_separation",
+    "PairCoordinationPlotSettings",
+    "plot_condition_contrasts",
+    "plot_condition_effects",
+    "plot_excess_vs_null",
+    "plot_group_z_traces",
+    "plot_null_validation",
+    "plot_selectivity_comparison",
+    "plot_zero_lag_diagnostics",
     "FixationMRNNDiagnosticPlotSettings",
     "plot_fixation_mrnn_activation_pc_timeseries",
     "plot_fixation_mrnn_activation_trajectories_3d",
