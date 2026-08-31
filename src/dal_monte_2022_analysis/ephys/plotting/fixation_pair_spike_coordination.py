@@ -4,10 +4,18 @@ Every panel here reads the aggregates written by
 ``build_fixation_pair_spike_coordination_summary.py``; nothing recomputes.  The
 figures are ordered the way the argument has to be made:
 
-1. the nulls behave (``plot_null_validation``),
-2. coordination exists at all (``plot_group_z_traces``, ``plot_excess_vs_null``),
-3. it differs by condition (``plot_condition_effects``, ``plot_condition_contrasts``),
-4. it is not a zero-lag artifact (``plot_zero_lag_diagnostics``).
+1. what the correlation and its two nulls actually look like
+   (``plot_observed_and_nulls``),
+2. how far observed sits above each null (``plot_group_z_traces``,
+   ``plot_excess_vs_null``),
+3. how that resolves per region and per region pair (``plot_region_traces``,
+   ``plot_condition_effects``),
+4. whether conditions differ (``plot_condition_contrasts``),
+5. whether it is a zero-lag artifact (``plot_zero_lag_diagnostics``).
+
+Region-resolved panels come before the pooled ones on purpose: pooling first
+would let one region with many pairs carry a conclusion that does not hold in
+the others.
 """
 
 from __future__ import annotations
@@ -85,93 +93,6 @@ def _finish(ax, *, xlabel: str = "", ylabel: str = "", title: str = "") -> None:
     nice_axis(ax)
 
 
-def plot_null_validation(
-    identities: pd.DataFrame,
-    sensitivity: pd.DataFrame,
-    settings: PairCoordinationPlotSettings,
-    *,
-    stem: str = "fig00_null_validation",
-) -> tuple[plt.Figure, dict[str, Path]]:
-    """Show that the fast null construction is exact and that each null is selective.
-
-    The right panel is the one that matters for interpretation: an uncoupled
-    pair sits at zero for both nulls, a pair sharing only a per-fixation gain
-    moves the trial-shuffle null but not the circular-shift null, and a pair
-    with genuine fine-timing structure moves both.
-    """
-    apply_thesis_plot_style()
-    fig, axes = plt.subplots(
-        1,
-        2,
-        figsize=(settings.summary_figure_width_in, settings.summary_figure_height_in),
-        gridspec_kw={"width_ratios": [1.0, 1.35]},
-    )
-
-    ax = axes[0]
-    errors = np.asarray(identities["max_abs_error"], dtype=float)
-    # The final row records a deliberate difference (the unpadded transform is
-    # not the linear one), so it is drawn in a contrasting colour: a *large*
-    # value there is the pass condition, unlike every other row.
-    is_difference = np.asarray(
-        identities["identity"].astype(str).str.contains("differs"), dtype=bool
-    )
-    labels = [
-        "mean over fixations",
-        "trial-shuffle draw",
-        "circular-shift draw",
-        "unpadded != linear",
-    ]
-    labels = (labels + [f"row {i}" for i in range(len(errors))])[: len(errors)]
-    floor = 1e-18
-    positions = np.arange(len(errors))
-    ax.barh(
-        positions,
-        np.maximum(errors, floor),
-        color=list(np.where(is_difference, "#d95f0e", "#8fa8bf")),
-        edgecolor=INK,
-        linewidth=0.5,
-    )
-    ax.set_yticks(positions)
-    ax.set_yticklabels(labels, fontsize=6)
-    ax.invert_yaxis()
-    ax.set_xscale("log")
-    ax.axvline(1e-9, color="#c0392b", linestyle="--", linewidth=0.8)
-    ax.text(1e-9, -0.45, " tolerance", fontsize=6, color="#c0392b", va="bottom")
-    _finish(
-        ax,
-        xlabel="Max absolute error vs brute-force linear",
-        title="Fast path is exact (orange: must differ)",
-    )
-
-    ax = axes[1]
-    order = ["independent", "shared_rate", "synchronous", "common_zero_lag"]
-    labels = ["Independent", "Shared rate\n(per fixation)", "Synchronous\n(4 ms lag)", "Common\nzero lag"]
-    frame = sensitivity.set_index("scenario")
-    width = 0.38
-    positions = np.arange(len(order))
-    for offset, (null_name, colour) in enumerate(
-        (("trial_shuffle", "#2c7fb8"), ("circular_shift", "#d95f0e"))
-    ):
-        values = [float(frame.loc[name, f"{null_name}_mean_z_pm10ms"]) for name in order]
-        ax.bar(
-            positions + (offset - 0.5) * width,
-            values,
-            width=width,
-            color=colour,
-            edgecolor=INK,
-            linewidth=0.5,
-            label=NULL_LABELS[null_name],
-        )
-    ax.axhline(0.0, color=MUTED_INK, linewidth=0.8)
-    ax.set_xticks(positions)
-    ax.set_xticklabels(labels, fontsize=6)
-    ax.legend(frameon=False, fontsize=6, loc="upper left")
-    _finish(ax, ylabel="Mean z, ±10 ms", title="Each null responds only to its own structure")
-
-    fig.tight_layout()
-    return fig, save_thesis_figure(fig, settings, stem)
-
-
 def plot_group_z_traces(
     payload: Mapping,
     settings: PairCoordinationPlotSettings,
@@ -203,15 +124,11 @@ def plot_group_z_traces(
 
     for ax, scope in zip(axes, scopes):
         for condition in conditions:
-            row = traces.loc[
-                (traces["scope"] == scope)
-                & (traces["condition"] == condition)
-                & (traces["null_name"] == null_name)
-            ]
-            if row.empty:
+            row = _trace_row(traces, scope=scope, condition=condition)
+            if row is None:
                 continue
-            mean = np.asarray(row["mean_z"].iloc[0], dtype=float)[keep]
-            sem = np.asarray(row["sem_z"].iloc[0], dtype=float)[keep]
+            mean = np.asarray(row[f"z_{null_name}_mean"], dtype=float)[keep]
+            sem = np.asarray(row[f"z_{null_name}_sem"], dtype=float)[keep]
             colour = CONDITION_COLORS.get(condition, MUTED_INK)
             ax.fill_between(
                 lags[keep], mean - sem, mean + sem, color=colour, alpha=0.22, linewidth=0
@@ -503,14 +420,10 @@ def plot_selectivity_comparison(
         ):
             traces = payload["traces"]
             for condition in CONDITION_ORDER:
-                row = traces.loc[
-                    (traces["scope"] == scope)
-                    & (traces["condition"] == condition)
-                    & (traces["null_name"] == null_name)
-                ]
-                if row.empty:
+                row = _trace_row(traces, scope=scope, condition=condition)
+                if row is None:
                     continue
-                mean = np.asarray(row["mean_z"].iloc[0], dtype=float)[keep]
+                mean = np.asarray(row[f"z_{null_name}_mean"], dtype=float)[keep]
                 ax.plot(
                     lags[keep],
                     mean,
@@ -523,5 +436,198 @@ def plot_selectivity_comparison(
         _finish(ax, xlabel="Lag (ms)", title=scope_label(scope))
     axes[0].set_ylabel(f"Mean z\n({NULL_LABELS[null_name]})")
     axes[-1].legend(frameon=False, fontsize=5, loc="upper right", ncol=1)
+    fig.tight_layout()
+    return fig, save_thesis_figure(fig, settings, stem)
+
+
+def _trace_row(traces: pd.DataFrame, **filters) -> Optional[pd.Series]:
+    """First row matching every column=value filter, or None."""
+    mask = np.ones(len(traces), dtype=bool)
+    for column, value in filters.items():
+        if column not in traces.columns:
+            return None
+        mask &= traces[column].astype(str).to_numpy() == str(value)
+    subset = traces.loc[mask]
+    return None if subset.empty else subset.iloc[0]
+
+
+def plot_observed_and_nulls(
+    payload: Mapping,
+    settings: PairCoordinationPlotSettings,
+    *,
+    scope: str = "within_region",
+    region_pair: Optional[str] = None,
+    conditions: Sequence[str] = CONDITION_ORDER,
+    max_lag_ms: float = 100.0,
+    stem: str = "fig01_observed_and_nulls",
+) -> tuple[plt.Figure, dict[str, Path]]:
+    """The raw correlation against both nulls, one panel per fixation condition.
+
+    This is the figure to read first.  It shows the actual mean cross-correlation
+    across pairs and, on the same axes, where each null sits — so the excess is
+    something you can see rather than something you have to take on trust from a
+    z-score.  Bands are standard error across pairs.
+
+    The two nulls should not coincide.  The trial-shuffle null keeps each unit's
+    fixation-locked rate profile, so it sits at whatever level shared rate
+    structure alone produces.  The circular-shift null keeps each fixation's own
+    spike count but destroys alignment, so it sits at the level expected from
+    rate alone within a fixation.  Observed above both is coordination that
+    neither shared rate nor within-fixation rate explains.
+    """
+    apply_thesis_plot_style()
+    lags = np.asarray(payload["lags_ms"], dtype=float)
+    traces = payload["traces"]
+    keep = np.abs(lags) <= float(max_lag_ms)
+
+    fig, axes = plt.subplots(
+        1,
+        len(conditions),
+        figsize=(settings.trace_figure_width_in, settings.trace_figure_height_in),
+        sharey=True,
+    )
+    axes = np.atleast_1d(axes)
+
+    channels = (
+        ("observed_mean", "observed_sem", INK, "-", "Observed"),
+        ("trial_shuffle_null_mean", "trial_shuffle_null_sem", "#2c7fb8", "--", "Trial-shuffle null"),
+        ("circular_shift_null_mean", "circular_shift_null_sem", "#d95f0e", ":", "Circular-shift null"),
+    )
+    for ax, condition in zip(axes, conditions):
+        filters = {"scope": scope, "condition": condition}
+        if region_pair is not None:
+            filters["region_pair"] = region_pair
+        row = _trace_row(traces, **filters)
+        if row is None:
+            _finish(ax, xlabel="Lag (ms)", title=condition_label(condition, short=True))
+            continue
+        for mean_key, sem_key, colour, dash, label in channels:
+            mean = np.asarray(row[mean_key], dtype=float)[keep]
+            sem = np.asarray(row[sem_key], dtype=float)[keep]
+            ax.fill_between(lags[keep], mean - sem, mean + sem, color=colour, alpha=0.20, linewidth=0)
+            ax.plot(lags[keep], mean, color=colour, linewidth=1.15, linestyle=dash, label=label)
+        ax.axvline(0.0, color=MUTED_INK, linewidth=0.6, linestyle=":")
+        _finish(
+            ax,
+            xlabel="Lag (ms)",
+            title=f"{condition_label(condition, short=True)}  (n={int(row['n_pairs']):,})",
+        )
+    axes[0].set_ylabel("Coincidences\nper fixation")
+    axes[-1].legend(frameon=False, fontsize=5.5, loc="upper right")
+    where = scope_label(scope) if region_pair is None else f"{region_pair_label(region_pair)} ({scope_label(scope)})"
+    fig.suptitle(f"Observed correlation and its nulls — {where}", fontsize=8, color=INK)
+    fig.tight_layout()
+    suffix = scope if region_pair is None else f"{scope}_{region_pair}"
+    return fig, save_thesis_figure(fig, settings, f"{stem}_{suffix}")
+
+
+def plot_region_traces(
+    payload: Mapping,
+    settings: PairCoordinationPlotSettings,
+    *,
+    null_name: str = "trial_shuffle",
+    scope: str = "within_region",
+    max_lag_ms: float = 100.0,
+    label: str = "",
+    stem: str = "fig03_region_traces",
+) -> tuple[plt.Figure, dict[str, Path]]:
+    """Excess over one null, resolved per region (within) or region pair (across).
+
+    One panel per region or region pair rather than a single pooled curve,
+    because a pooled curve cannot show whether an effect is general or is
+    carried by whichever region contributed the most pairs.
+    """
+    apply_thesis_plot_style()
+    lags = np.asarray(payload["lags_ms"], dtype=float)
+    traces = payload["traces"]
+    keep = np.abs(lags) <= float(max_lag_ms)
+
+    subset = traces.loc[traces["scope"].astype(str) == scope]
+    groups = sorted(subset["region_pair"].astype(str).unique()) if len(subset) else []
+    if not groups:
+        fig, ax = plt.subplots(figsize=(3.0, 2.0))
+        _finish(ax, title=f"No {scope_label(scope).lower()} pairs")
+        return fig, save_thesis_figure(fig, settings, f"{stem}_{null_name}_{scope}")
+
+    n_cols = min(len(groups), 4)
+    n_rows = int(np.ceil(len(groups) / n_cols))
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(settings.trace_figure_width_in, settings.trace_figure_height_in * n_rows),
+        sharey=True,
+        squeeze=False,
+    )
+    flat = axes.reshape(-1)
+    for ax, group in zip(flat, groups):
+        n_pairs = 0
+        for condition in CONDITION_ORDER:
+            row = _trace_row(traces, scope=scope, region_pair=group, condition=condition)
+            if row is None:
+                continue
+            mean = np.asarray(row[f"z_{null_name}_mean"], dtype=float)[keep]
+            sem = np.asarray(row[f"z_{null_name}_sem"], dtype=float)[keep]
+            colour = CONDITION_COLORS.get(condition, MUTED_INK)
+            ax.fill_between(lags[keep], mean - sem, mean + sem, color=colour, alpha=0.20, linewidth=0)
+            ax.plot(lags[keep], mean, color=colour, linewidth=1.1, label=condition_label(condition, short=True))
+            n_pairs = max(n_pairs, int(row["n_pairs"]))
+        ax.axhline(0.0, color=MUTED_INK, linewidth=0.8, linestyle="--")
+        ax.axvline(0.0, color=MUTED_INK, linewidth=0.6, linestyle=":")
+        _finish(ax, xlabel="Lag (ms)", title=f"{region_pair_label(group)}  (n={n_pairs:,})")
+    for ax in flat[len(groups):]:
+        ax.set_visible(False)
+    axes[0, 0].set_ylabel(f"Mean z\n({NULL_LABELS[null_name]})")
+    flat[len(groups) - 1].legend(frameon=False, fontsize=5.5, loc="upper right")
+    title = f"{scope_label(scope)} — {NULL_MEANINGS[null_name]}"
+    if label:
+        title = f"{title} — {label}"
+    fig.suptitle(title, fontsize=8, color=INK)
+    fig.tight_layout()
+    suffix = f"{null_name}_{scope}" + (f"_{label.replace(' ', '_')}" if label else "")
+    return fig, save_thesis_figure(fig, settings, f"{stem}_{suffix}")
+
+
+def plot_region_condition_tests(
+    vs_null: pd.DataFrame,
+    settings: PairCoordinationPlotSettings,
+    *,
+    stem: str = "fig04_region_condition_tests",
+) -> tuple[plt.Figure, dict[str, Path]]:
+    """Per-region excess over null with significance, before any pooling."""
+    apply_thesis_plot_style()
+    fig, axes = plt.subplots(
+        1,
+        len(SCOPE_ORDER),
+        figsize=(settings.summary_figure_width_in, settings.summary_figure_height_in + 0.5),
+    )
+    axes = np.atleast_1d(axes)
+    for ax, scope in zip(axes, SCOPE_ORDER):
+        subset = vs_null.loc[vs_null["scope"].astype(str) == scope]
+        groups = sorted(subset["region_pair"].astype(str).unique())
+        width = 0.8 / max(len(CONDITION_ORDER), 1)
+        for index, condition in enumerate(CONDITION_ORDER):
+            rows = subset.loc[subset["condition"].astype(str) == condition].set_index("region_pair")
+            for position, group in enumerate(groups):
+                if group not in rows.index:
+                    continue
+                row = rows.loc[group]
+                row = row.iloc[0] if isinstance(row, pd.DataFrame) else row
+                value = float(row["mean_excess"])
+                x = position + (index - 1) * width
+                ax.bar(
+                    x, value, width=width,
+                    color=CONDITION_COLORS.get(condition, MUTED_INK),
+                    edgecolor=INK, linewidth=0.4,
+                    label=condition_label(condition, short=True) if position == 0 and ax is axes[0] else None,
+                )
+                p_value = float(row["p_value"]) if np.isfinite(row["p_value"]) else np.nan
+                if np.isfinite(p_value) and p_value < 0.05:
+                    ax.text(x, value, "*", ha="center", va="bottom", fontsize=6, color=INK)
+        ax.axhline(0.0, color=MUTED_INK, linewidth=0.8)
+        ax.set_xticks(np.arange(len(groups)))
+        ax.set_xticklabels([region_pair_label(g) for g in groups], fontsize=6, rotation=30, ha="right")
+        _finish(ax, title=scope_label(scope))
+    axes[0].set_ylabel("Mean excess over null\n(single-fixation null SD)")
+    axes[0].legend(frameon=False, fontsize=6, loc="best")
     fig.tight_layout()
     return fig, save_thesis_figure(fig, settings, stem)

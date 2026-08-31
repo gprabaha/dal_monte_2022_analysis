@@ -51,7 +51,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_population_pc_subspace impo
 from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination import (
     PairSpikeCoordinationSettings,
     SessionSpikeTrains,
-    build_group_z_traces,
+    build_group_traces,
     build_pair_spike_coordination_settings_from_config,
     build_pair_inventory,
     build_session_pair_table,
@@ -111,7 +111,7 @@ __all__ = [
     "verify_pca_identities",
     "PairSpikeCoordinationSettings",
     "SessionSpikeTrains",
-    "build_group_z_traces",
+    "build_group_traces",
     "build_pair_spike_coordination_settings_from_config",
     "build_pair_inventory",
     "build_session_pair_table",

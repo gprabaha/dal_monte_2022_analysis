@@ -350,12 +350,19 @@ Config:
   `hpc/ephys/run_fixation_pair_spike_coordination.sbatch` (array over dates).
 
 - `build_fixation_pair_spike_coordination_summary.py`
-  Aggregates the per-session pair tables into `summary/`:
-  - `pair_inventory.csv`, `coordination_summary.csv`, `coordination_vs_null.csv`
-  - `condition_comparisons.csv` and `condition_comparisons_selective.csv`
-    (within-pair Wilcoxon contrasts, FDR corrected)
+  Aggregates the per-session pair tables into `summary/`. Reporting is per
+  region for within-region pairs and per region pair for cross-region pairs,
+  with the pooled scope-level tables kept alongside as a summary:
+  - `coordination_vs_null_by_region.csv`, `coordination_summary_by_region.csv`,
+    `condition_comparisons_by_region.csv` and its `_selective` counterpart
+  - the same quantities pooled: `coordination_vs_null.csv`,
+    `coordination_summary.csv`, `condition_comparisons.csv`,
+    `condition_comparisons_selective.csv`
+  - `pair_inventory.csv`
   - `zero_lag_diagnostics.csv` (per-date zero-lag prevalence and outlier flags)
-  - `group_z_traces_*.pkl` (group-mean lag traces, accumulated by streaming)
+  - `group_traces_*.pkl` (group-mean lag traces carrying the raw observed
+    correlation, each null's level, and the standardised excess; accumulated by
+    streaming)
   Condition comparisons use an `_effect` column, not `_z`: z scales with the
   square root of the fixation count, and interactive-face fixations outnumber
   non-interactive ones roughly five to one.

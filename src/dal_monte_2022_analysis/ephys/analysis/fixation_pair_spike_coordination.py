@@ -1567,24 +1567,30 @@ def _pair_z_trace(
     return np.where(degenerate & np.isclose(excess, 0.0, atol=1e-12), 0.0, z)
 
 
-def build_group_z_traces(
+def build_group_traces(
     cfg_path: str | Path = "configs/dataset.yaml",
     *,
     output_subdir: str = DEFAULT_OUTPUT_SUBDIR,
     output_filename: str = "pair_coordination.pkl",
     group_columns: Sequence[str] = ("scope", "condition"),
-    null_names: Sequence[str] = NULL_NAMES,
     selective_only: bool = False,
 ) -> dict:
-    """Mean z trace per group, accumulated one session at a time.
+    """Group-mean lag traces, accumulated one session at a time.
 
-    Holding every pair's traces in memory would cost several gigabytes, and no
-    figure needs them individually.  This streams the per-session files and
-    keeps only running sums, so the notebook loads a table of a few kilobytes.
+    Carries the **raw** observed correlation and each null's level alongside the
+    standardised excess, because those are different questions: the raw traces
+    show what the correlation and its nulls actually look like, and the z traces
+    show how far apart they are.  A figure that only ever plots z hides whether
+    the nulls sit where they should.
 
-    Returns ``{"lags_ms": array, "traces": DataFrame}`` where each row carries
-    the group's mean z trace, its standard error across pairs, and the pair
-    count contributing to each lag.
+    Holding every pair's traces in memory would cost several gigabytes and no
+    figure needs them individually, so this streams the per-session files and
+    keeps running sums only.
+
+    Returns ``{"lags_ms", "overlap_bins", "traces"}`` where each row of
+    ``traces`` carries, per group, the mean and standard error across pairs of:
+    ``observed``, ``trial_shuffle_null``, ``circular_shift_null``, and the two
+    excess traces ``z_trial_shuffle`` / ``z_circular_shift``.
     """
     cfg = load_config(cfg_path)
     root = build_analysis_output_dir(cfg, output_subdir)
@@ -1592,14 +1598,19 @@ def build_group_z_traces(
     if not paths:
         raise FileNotFoundError(f"No pair coordination outputs under {root}.")
 
+    channels = ("observed",) + tuple(f"{name}_null" for name in NULL_NAMES) + tuple(
+        f"z_{name}" for name in NULL_NAMES
+    )
     lags: Optional[np.ndarray] = None
-    sums: dict[tuple, dict[str, np.ndarray]] = {}
+    overlap: Optional[np.ndarray] = None
+    sums: dict[tuple, dict[str, dict[str, np.ndarray]]] = {}
 
     for path in paths:
         payload = pd.read_pickle(path)
         frame = payload["pairs"]
         if lags is None:
             lags = np.asarray(payload["lags_ms"], dtype=float)
+            overlap = np.asarray(payload.get("overlap_bins", []), dtype=float)
         if "scope" not in frame.columns:
             frame = frame.assign(
                 scope=np.where(frame["same_region"], "within_region", "cross_region")
@@ -1612,53 +1623,60 @@ def build_group_z_traces(
         for keys, group in frame.groupby(list(group_columns), observed=True, dropna=False):
             keys = keys if isinstance(keys, tuple) else (keys,)
             keys = tuple(str(value) for value in keys)
-            for null_name in null_names:
-                accumulator = sums.setdefault((keys, null_name), None)
-                stacked = np.vstack(
+            stacks: dict[str, np.ndarray] = {
+                "observed": np.vstack([np.asarray(v, dtype=float) for v in group["observed"]])
+            }
+            for null_name in NULL_NAMES:
+                stacks[f"{null_name}_null"] = np.vstack(
+                    [np.asarray(v, dtype=float) for v in group[f"{null_name}_mean"]]
+                )
+                stacks[f"z_{null_name}"] = np.vstack(
                     [
-                        _pair_z_trace(row_obs, row_mean, row_sd)
-                        for row_obs, row_mean, row_sd in zip(
+                        _pair_z_trace(obs, mean, sd)
+                        for obs, mean, sd in zip(
                             group["observed"],
                             group[f"{null_name}_mean"],
                             group[f"{null_name}_sd"],
                         )
                     ]
                 )
+            accumulator = sums.setdefault(keys, {})
+            for channel in channels:
+                stacked = stacks[channel]
                 valid = np.isfinite(stacked)
                 filled = np.where(valid, stacked, 0.0)
-                if accumulator is None:
-                    accumulator = {
+                slot = accumulator.get(channel)
+                if slot is None:
+                    accumulator[channel] = {
                         "sum": filled.sum(axis=0),
                         "sumsq": np.square(filled).sum(axis=0),
                         "count": valid.sum(axis=0).astype(float),
                     }
-                    sums[(keys, null_name)] = accumulator
                 else:
-                    accumulator["sum"] += filled.sum(axis=0)
-                    accumulator["sumsq"] += np.square(filled).sum(axis=0)
-                    accumulator["count"] += valid.sum(axis=0)
+                    slot["sum"] += filled.sum(axis=0)
+                    slot["sumsq"] += np.square(filled).sum(axis=0)
+                    slot["count"] += valid.sum(axis=0)
 
     rows: list[dict] = []
-    for (keys, null_name), accumulator in sums.items():
-        count = accumulator["count"]
-        safe = np.maximum(count, 1.0)
-        mean = accumulator["sum"] / safe
-        variance = np.maximum(accumulator["sumsq"] / safe - np.square(mean), 0.0)
-        sem = np.where(count > 1, np.sqrt(variance / safe), np.nan)
+    for keys, accumulator in sums.items():
         row = dict(zip(group_columns, keys))
-        row.update(
-            {
-                "null_name": null_name,
-                "mean_z": np.where(count > 0, mean, np.nan).astype(np.float32),
-                "sem_z": sem.astype(np.float32),
-                "n_pairs": count.astype(np.int64),
-                "n_pairs_max": int(count.max()) if count.size else 0,
-            }
-        )
+        n_max = 0
+        for channel, slot in accumulator.items():
+            count = slot["count"]
+            safe = np.maximum(count, 1.0)
+            mean = slot["sum"] / safe
+            variance = np.maximum(slot["sumsq"] / safe - np.square(mean), 0.0)
+            row[f"{channel}_mean"] = np.where(count > 0, mean, np.nan).astype(np.float32)
+            row[f"{channel}_sem"] = np.where(
+                count > 1, np.sqrt(variance / safe), np.nan
+            ).astype(np.float32)
+            n_max = max(n_max, int(count.max()) if count.size else 0)
+        row["n_pairs"] = n_max
         rows.append(row)
 
     return {
         "lags_ms": np.asarray(lags, dtype=float),
+        "overlap_bins": np.asarray(overlap, dtype=float) if overlap is not None else np.asarray([]),
         "traces": pd.DataFrame(rows),
     }
 
@@ -1814,9 +1832,11 @@ def run_summary_build(
 ) -> dict[str, pd.DataFrame]:
     """Build every summary table the notebook reads, and write them to disk.
 
-    Mirrors ``build_fixation_pair_spike_coordination_summary.py`` so the
-    notebook can regenerate summaries in-process after a build finishes,
-    instead of asking the reader to drop out to a shell.
+    Reporting is **per region** for within-region pairs and **per region pair**
+    for cross-region pairs, with the pooled scope-level tables kept alongside.
+    Pooling first would let one region with many pairs carry a conclusion that
+    does not hold in the others, so the resolved tables are the primary ones and
+    the pooled ones are the summary.
     """
     cfg = load_config(settings.cfg_path)
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir) / "summary"
@@ -1827,31 +1847,51 @@ def run_summary_build(
         output_subdir=settings.output_subdir,
         output_filename=settings.output_filename,
     )
+    selective = pairs.loc[pairs["both_selective"]]
+
     outputs = {
         "pair_inventory": build_pair_inventory(pairs),
-        "coordination_summary": summarize_coordination(pairs, metric=metric),
+        # Per region / region pair -- the primary tables.
+        "coordination_summary_by_region": summarize_coordination(
+            pairs, metric=metric, group_columns=("scope", "region_pair", "condition")
+        ),
+        "coordination_vs_null_by_region": test_against_null(
+            pairs, metric=metric, group_columns=("scope", "region_pair", "condition")
+        ),
+        "condition_comparisons_by_region": compare_conditions(
+            pairs, metric=metric, group_columns=("scope", "region_pair")
+        ),
+        "condition_comparisons_by_region_selective": compare_conditions(
+            selective, metric=metric, group_columns=("scope", "region_pair")
+        ),
+        # Pooled across regions -- the summary.
+        "coordination_summary": summarize_coordination(
+            pairs, metric=metric, group_columns=("scope", "condition")
+        ),
         "coordination_vs_null": test_against_null(pairs, metric=metric),
         "condition_comparisons": compare_conditions(pairs, metric=metric),
-        "condition_comparisons_selective": compare_conditions(
-            pairs.loc[pairs["both_selective"]], metric=metric
-        ),
+        "condition_comparisons_selective": compare_conditions(selective, metric=metric),
         "zero_lag_diagnostics": build_zero_lag_diagnostics(pairs),
     }
     for name, frame in outputs.items():
         frame.to_csv(out_dir / f"{name}.csv", index=False)
 
     for stem, kwargs in {
-        "group_z_traces_by_scope": {"group_columns": ("scope", "condition")},
-        "group_z_traces_by_region_pair": {
+        "group_traces_by_scope": {"group_columns": ("scope", "condition")},
+        "group_traces_by_region": {
             "group_columns": ("scope", "region_pair", "condition")
         },
-        "group_z_traces_selective": {
+        "group_traces_selective": {
             "group_columns": ("scope", "condition"),
+            "selective_only": True,
+        },
+        "group_traces_by_region_selective": {
+            "group_columns": ("scope", "region_pair", "condition"),
             "selective_only": True,
         },
     }.items():
         pd.to_pickle(
-            build_group_z_traces(
+            build_group_traces(
                 settings.cfg_path,
                 output_subdir=settings.output_subdir,
                 output_filename=settings.output_filename,

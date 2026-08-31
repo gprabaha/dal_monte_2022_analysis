@@ -118,14 +118,31 @@ Input is `fixations_spike_train_1ms.pkl`, the same extraction that produces
 those used by the single-unit, population-PCA and mRNN analyses, so a pair
 result can be joined to a unit result without translation.
 
+## How results are reported
+
+Per **region** for within-region pairs and per **region pair** for cross-region
+pairs, *before* any pooling — pooling first would let one region with many pairs
+carry a conclusion that does not hold in the others. Pooled tables follow as a
+summary. Everything runs on all recorded pairs first, then repeats on pairs
+where both units are FDR-selective, with the two shown side by side on the same
+rows so a difference in conclusion is visible rather than inferred.
+
+The first figure is the raw one: the mean cross-correlation with **both nulls
+drawn on the same axes**, in coincidences per fixation, so the excess is visible
+rather than only inferable from a z-score.
+
 ## Outputs
 
 Written under `analysis_output_root/ephys/psth/fixation_pair_spike_coordination/`:
 
 - `date=*/session=*/pair_coordination.pkl` — per-session pair tables with traces
   (~2 GB total).
-- `summary/*.csv` — inventory, coordination vs null, condition comparisons,
-  zero-lag diagnostics.
-- `summary/group_z_traces_*.pkl` — group-mean lag traces, accumulated by
+- `summary/*_by_region.csv` — the primary tables: coordination vs null,
+  condition comparisons, and effect summaries per region / region pair, for all
+  pairs and for FDR-selective pairs.
+- `summary/*.csv` — the same quantities pooled to scope level, plus the pair
+  inventory and zero-lag diagnostics.
+- `summary/group_traces_*.pkl` — group-mean lag traces carrying the raw observed
+  correlation, each null's level, and the standardised excess, accumulated by
   streaming so the notebook never holds every pair's traces in memory.
 - `figures/` — every panel as editable PDF plus high-resolution PNG.
