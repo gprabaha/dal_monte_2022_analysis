@@ -37,6 +37,17 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_population_pca import (
     FixationPopulationPCASettings,
     run_fixation_population_pca_analysis,
 )
+from dal_monte_2022_analysis.ephys.analysis.fixation_population_pc_subspace import (
+    RegionPopulation,
+    PopulationPCAFit,
+    build_pairwise_subspace_table,
+    build_region_subspace_summary,
+    fit_all_scopes,
+    fit_population_pca,
+    load_region_populations,
+    resolve_shared_n_components,
+    verify_pca_identities,
+)
 from dal_monte_2022_analysis.ephys.analysis.fixation_psth_variability import (
     FixationPSTHVariabilitySettings,
     run_fixation_psth_variability_analysis,
@@ -71,6 +82,15 @@ __all__ = [
     "run_fixation_condition_dominance_analysis",
     "FixationPopulationPCASettings",
     "run_fixation_population_pca_analysis",
+    "RegionPopulation",
+    "PopulationPCAFit",
+    "build_pairwise_subspace_table",
+    "build_region_subspace_summary",
+    "fit_all_scopes",
+    "fit_population_pca",
+    "load_region_populations",
+    "resolve_shared_n_components",
+    "verify_pca_identities",
     "FixationPSTHVariabilitySettings",
     "run_fixation_psth_variability_analysis",
     "FixationROIVsPeriodFactorialSettings",

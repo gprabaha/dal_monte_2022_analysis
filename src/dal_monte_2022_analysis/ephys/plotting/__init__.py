@@ -74,6 +74,17 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_population_pca import (
     plot_fixation_population_pca_pairwise_geometry_violins,
     plot_fixation_population_pca_trajectories,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_population_pc_subspace import (
+    optimize_view_angle,
+    plot_alignment_matrix,
+    plot_cross_condition_variance_curves,
+    plot_cumulative_variance,
+    plot_pc_plane_projections,
+    plot_pc_trajectories_3d,
+    plot_principal_angle_spectra,
+    plot_subspace_distance_map,
+    plot_time_resolved_separation,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_mrnn import (
     FixationMRNNDiagnosticPlotSettings,
     plot_fixation_mrnn_activation_pc_timeseries,
@@ -141,6 +152,15 @@ __all__ = [
     "plot_fixation_population_pca_explained_variance_bars",
     "plot_fixation_population_pca_explained_variance_cumulative",
     "plot_fixation_population_pca_pairwise_geometry_violins",
+    "optimize_view_angle",
+    "plot_alignment_matrix",
+    "plot_cross_condition_variance_curves",
+    "plot_cumulative_variance",
+    "plot_pc_plane_projections",
+    "plot_pc_trajectories_3d",
+    "plot_principal_angle_spectra",
+    "plot_subspace_distance_map",
+    "plot_time_resolved_separation",
     "FixationMRNNDiagnosticPlotSettings",
     "plot_fixation_mrnn_activation_pc_timeseries",
     "plot_fixation_mrnn_activation_trajectories_3d",
