@@ -85,6 +85,12 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_population_pc_subspace impo
     plot_subspace_distance_map,
     plot_time_resolved_separation,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_pair_correlation_overview import (
+    PairOverviewPlotSettings,
+    plot_excess_by_condition,
+    plot_lag_band_summary,
+    plot_noise_above_null,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_signal_correlation import (
     SignalCorrelationPlotSettings,
     plot_condition_summary,
@@ -185,6 +191,10 @@ __all__ = [
     "plot_principal_angle_spectra",
     "plot_subspace_distance_map",
     "plot_time_resolved_separation",
+    "PairOverviewPlotSettings",
+    "plot_excess_by_condition",
+    "plot_lag_band_summary",
+    "plot_noise_above_null",
     "SignalCorrelationPlotSettings",
     "plot_condition_summary",
     "plot_correlation_traces",

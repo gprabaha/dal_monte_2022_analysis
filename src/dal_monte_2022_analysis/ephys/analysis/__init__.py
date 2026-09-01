@@ -49,6 +49,9 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_population_pc_subspace impo
     verify_pca_identities,
 )
 from dal_monte_2022_analysis.ephys.analysis.fixation_signal_correlation import (
+    LAG_MEASURES,
+    compare_lag_measures,
+    summarize_lag_measures,
     SignalCorrelationSettings,
     build_pair_correlations,
     estimate_timeline_reliability,
@@ -137,6 +140,9 @@ __all__ = [
     "load_region_populations",
     "resolve_shared_n_components",
     "verify_pca_identities",
+    "LAG_MEASURES",
+    "compare_lag_measures",
+    "summarize_lag_measures",
     "SignalCorrelationSettings",
     "build_pair_correlations",
     "estimate_timeline_reliability",

@@ -100,6 +100,24 @@ class SignalCorrelationSettings:
     #: spike-coordination analysis pair for pair.
     simultaneous_only: bool = True
     min_pairs_per_group: int = 100
+    #: Lags searched for the peak of the null-corrected correlation.
+    #:
+    #: Kept narrow on purpose.  The correlation at each lag is estimated from
+    #: only the overlapping bins -- 100 at zero lag, fewer as the lag grows --
+    #: so its variance rises with ``|lag|`` and a maximum taken over a wide
+    #: window mostly finds the noisiest lag rather than the best alignment.  At
+    #: +/-150 ms the per-pair peak sat at 0.35 for every condition with a median
+    #: lag near the search edge, which is what that failure looks like.
+    #:
+    #: The bias does not vanish at 100 ms, it is just smaller.  It is also
+    #: identical across conditions -- same lag count, same pair count -- so
+    #: comparisons between conditions remain valid even though the absolute
+    #: level is inflated.
+    peak_search_ms: float = 100.0
+    #: Band averaged on each side of zero for the lead/lag comparison.  It
+    #: starts away from zero so the two bands do not both contain the central
+    #: peak, which would make them trivially similar.
+    lag_band_ms: tuple[float, float] = (20.0, 200.0)
     random_seed: int = 0
 
 
@@ -449,15 +467,37 @@ def build_pair_correlations(
             centre = int(np.argmin(np.abs(lags_ms)))
             record[f"{condition}_zero_lag"] = float(observed[centre])
             record[f"{condition}_zero_lag_excess"] = float(excess[centre])
-            search = np.abs(lags_ms) <= 100.0
+            # Lag-band measures.  Zero lag is one bin of fifty and a poor
+            # summary of a correlation that can peak anywhere: two units whose
+            # responses have the same shape but different latencies correlate
+            # strongly at a non-zero lag and weakly at zero.  The peak says how
+            # similar the shapes are at their best alignment, and the two
+            # flanking bands say whether that alignment is symmetric.
+            search = np.abs(lags_ms) <= float(settings.peak_search_ms)
             if np.isfinite(excess[search]).any():
                 local = np.where(search, excess, -np.inf)
                 peak = int(np.nanargmax(local))
                 record[f"{condition}_peak_excess"] = float(excess[peak])
                 record[f"{condition}_peak_lag_ms"] = float(lags_ms[peak])
+                record[f"{condition}_peak_abs_lag_ms"] = float(abs(lags_ms[peak]))
             else:
                 record[f"{condition}_peak_excess"] = np.nan
                 record[f"{condition}_peak_lag_ms"] = np.nan
+                record[f"{condition}_peak_abs_lag_ms"] = np.nan
+
+            low, high = settings.lag_band_ms
+            positive = (lags_ms >= low) & (lags_ms <= high)
+            negative = (lags_ms <= -low) & (lags_ms >= -high)
+            record[f"{condition}_positive_lag_excess"] = (
+                float(np.nanmean(excess[positive])) if positive.any() else np.nan
+            )
+            record[f"{condition}_negative_lag_excess"] = (
+                float(np.nanmean(excess[negative])) if negative.any() else np.nan
+            )
+            record[f"{condition}_lag_asymmetry"] = (
+                record[f"{condition}_positive_lag_excess"]
+                - record[f"{condition}_negative_lag_excess"]
+            )
         records.append(record)
 
     return pd.DataFrame.from_records(records), lags_ms
@@ -664,3 +704,75 @@ def correlate_signal_with_noise(joined: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows)
+
+
+#: Lag-band measures reported instead of the zero-lag value alone.
+LAG_MEASURES: tuple[str, ...] = (
+    "peak_excess",
+    "positive_lag_excess",
+    "negative_lag_excess",
+    "peak_abs_lag_ms",
+)
+
+
+def summarize_lag_measures(
+    pairs: pd.DataFrame,
+    settings: SignalCorrelationSettings,
+    *,
+    measures: Sequence[str] = LAG_MEASURES,
+    scope: str = "within_region",
+) -> pd.DataFrame:
+    """Long-format summary of the lag-band measures, one row per group.
+
+    Zero lag is one bin of fifty and a poor summary of a correlation that can
+    peak anywhere: two units whose responses share a shape but differ in latency
+    correlate strongly at a non-zero lag and weakly at zero.  These summarise
+    the peak and the two flanking bands instead.
+    """
+    subset = pairs.loc[pairs["scope"].astype(str) == scope]
+    rows: list[dict] = []
+    for region_pair, group in subset.groupby("region_pair", observed=True):
+        if len(group) < settings.min_pairs_per_group:
+            continue
+        for condition in settings.conditions:
+            for measure in measures:
+                column = f"{condition}_{measure}"
+                if column not in group.columns:
+                    continue
+                values = group[column].to_numpy(dtype=float)
+                values = values[np.isfinite(values)]
+                if values.size == 0:
+                    continue
+                rows.append(
+                    {
+                        "scope": scope,
+                        "region_pair": str(region_pair),
+                        "condition": condition,
+                        "measure": measure,
+                        "n_pairs": int(values.size),
+                        "mean": float(values.mean()),
+                        "median": float(np.median(values)),
+                        "sem": float(values.std(ddof=1) / np.sqrt(values.size)),
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
+def compare_lag_measures(
+    pairs: pd.DataFrame,
+    settings: SignalCorrelationSettings,
+    *,
+    measures: Sequence[str] = LAG_MEASURES,
+    scope: str = "within_region",
+) -> pd.DataFrame:
+    """Condition contrasts on each lag-band measure, paired within pair."""
+    frames: list[pd.DataFrame] = []
+    subset = pairs.loc[pairs["scope"].astype(str) == scope]
+    for measure in measures:
+        result = compare_conditions(
+            subset, settings, metric=measure, group_columns=("region_pair",)
+        )
+        if result.empty:
+            continue
+        frames.append(result.assign(measure=measure))
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
