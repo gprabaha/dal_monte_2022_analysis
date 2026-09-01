@@ -85,6 +85,14 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_population_pc_subspace impo
     plot_subspace_distance_map,
     plot_time_resolved_separation,
 )
+from dal_monte_2022_analysis.ephys.plotting.fixation_signal_correlation import (
+    SignalCorrelationPlotSettings,
+    plot_condition_summary,
+    plot_correlation_traces,
+    plot_signal_vs_noise,
+    plot_signal_vs_noise_schematic,
+    plot_trial_count_confound,
+)
 from dal_monte_2022_analysis.ephys.plotting.fixation_pair_spatial_decay import (
     SpatialDecayPlotSettings,
     plot_condition_by_separation,
@@ -177,6 +185,12 @@ __all__ = [
     "plot_principal_angle_spectra",
     "plot_subspace_distance_map",
     "plot_time_resolved_separation",
+    "SignalCorrelationPlotSettings",
+    "plot_condition_summary",
+    "plot_correlation_traces",
+    "plot_signal_vs_noise",
+    "plot_signal_vs_noise_schematic",
+    "plot_trial_count_confound",
     "SpatialDecayPlotSettings",
     "plot_condition_by_separation",
     "plot_confound_schematic",

@@ -48,6 +48,16 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_population_pc_subspace impo
     resolve_shared_n_components,
     verify_pca_identities,
 )
+from dal_monte_2022_analysis.ephys.analysis.fixation_signal_correlation import (
+    SignalCorrelationSettings,
+    build_pair_correlations,
+    estimate_timeline_reliability,
+    load_condition_timelines,
+    normalized_cross_correlation,
+    stratify_by_trial_ratio,
+    correlate_signal_with_noise,
+    join_with_noise_correlation,
+)
 from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spatial_decay import (
     SpatialDecaySettings,
     build_decay_table,
@@ -127,6 +137,14 @@ __all__ = [
     "load_region_populations",
     "resolve_shared_n_components",
     "verify_pca_identities",
+    "SignalCorrelationSettings",
+    "build_pair_correlations",
+    "estimate_timeline_reliability",
+    "load_condition_timelines",
+    "normalized_cross_correlation",
+    "stratify_by_trial_ratio",
+    "correlate_signal_with_noise",
+    "join_with_noise_correlation",
     "SpatialDecaySettings",
     "build_decay_table",
     "build_reference_levels",
