@@ -34,6 +34,11 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
 
 REGION_ORDER: tuple[str, ...] = ("bla", "accg", "dmpfc", "ofc")
 
+#: Cross-region combinations reported.  Every well-populated one pairs BLA with
+#: a frontal region; ACCg and OFC were never recorded together and dmPFC x OFC
+#: comes from a handful of sessions, so neither is reportable.
+CROSS_REGION_ORDER: tuple[str, ...] = ("accg-bla", "bla-dmpfc", "bla-ofc")
+
 #: One colour per analysis, used consistently across every figure so a reader
 #: can tell at a glance which of the two a panel belongs to.
 NOISE_COLOUR = "#c0392b"
@@ -86,9 +91,17 @@ def _bare(ax) -> None:
         spine.set_visible(False)
 
 
-def _group_order(values: Sequence[str]) -> list[str]:
-    ranked = [r for r in REGION_ORDER if r in set(values)]
-    return ranked + sorted(set(values) - set(ranked))
+def _group_order(values: Sequence[str], *, scope: str = "within_region") -> list[str]:
+    """Groups in reporting order, dropping anything not reportable.
+
+    Cross-region is restricted to the BLA-anchored combinations: the others are
+    either impossible (ACCg and OFC were never recorded together) or come from
+    too few sessions to interpret, and showing them beside the populated ones
+    invites reading a hundred-pair estimate as though it were a result.
+    """
+    available = set(str(v) for v in values)
+    order = CROSS_REGION_ORDER if scope == "cross_region" else REGION_ORDER
+    return [group for group in order if group in available]
 
 
 def plot_method_schematic(
@@ -110,8 +123,8 @@ def plot_method_schematic(
     apply_thesis_plot_style()
     fig, axes = plt.subplots(
         1, 5,
-        figsize=(settings.schematic_width_in * 1.22, 1.95),
-        gridspec_kw={"width_ratios": [1.0, 1.0, 1.05, 1.0, 1.0], "wspace": 0.62},
+        figsize=(settings.schematic_width_in * 1.05, 2.05),
+        gridspec_kw={"width_ratios": [1.0, 1.0, 1.05, 1.0, 1.0], "wspace": 0.48},
     )
     rng = np.random.default_rng(11)
     lags = np.linspace(-200, 200, 260)
@@ -184,7 +197,7 @@ def plot_method_schematic(
     strip(ax)
     ax.set_title("NOISE\ncorrelation", fontsize=7.6, color=NOISE_COLOUR, pad=3)
 
-    fig.tight_layout(rect=(0, 0.13, 1, 0.87))
+    fig.tight_layout(rect=(0.005, 0.13, 0.995, 0.84))
     boxes = [ax.get_position() for ax in axes]
 
     def arrow(left_index: int, right_index: int, pointing: str, colour, label):
@@ -233,8 +246,7 @@ def plot_noise_above_null(
     keep = np.abs(lags) <= float(max_lag_ms)
     subset = frame.loc[frame["scope"].astype(str) == scope]
     if regions is None:
-        ordered = [r for r in REGION_ORDER if r in set(subset["region_pair"])]
-        regions = ordered + sorted(set(subset["region_pair"].astype(str)) - set(ordered))
+        regions = _group_order(list(subset["region_pair"].astype(str).unique()), scope=scope)
     present = [r for r in regions if (subset["region_pair"] == r).any()]
     if not present:
         fig, ax = plt.subplots(figsize=(3.2, 1.4))
@@ -272,6 +284,15 @@ def plot_noise_above_null(
             ax.tick_params(labelsize=5.5, pad=1.5)
             ax.locator_params(axis="y", nbins=3)
             nice_axis(ax)
+            # Detach the axes from each other and from the data, and give the
+            # lag axis only to the bottom row: it is identical in every panel,
+            # so drawing it twelve times spends ink and height on nothing.
+            ax.spines["left"].set_position(("outward", 4))
+            if row_index == len(conditions) - 1:
+                ax.spines["bottom"].set_position(("outward", 4))
+            else:
+                ax.spines["bottom"].set_visible(False)
+                ax.tick_params(axis="x", length=0)
             if row_index == 0:
                 ax.set_title(f"{region_label(region)}  (n={int(row['n_pairs']):,})",
                              fontsize=6.5, color=INK, pad=2.5)
@@ -283,7 +304,11 @@ def plot_noise_above_null(
     fig.legend(handles, labels, frameon=False, fontsize=5.5, ncol=2,
                loc="lower center", bbox_to_anchor=(0.5, -0.015))
     fig.supylabel("Cross-correlation", fontsize=6.5, x=0.005)
-    fig.tight_layout(rect=(0.012, 0.075, 1, 1))
+    fig.suptitle(
+        "Noise correlation: observed against the circular-shift null",
+        fontsize=8, color=INK,
+    )
+    fig.tight_layout(rect=(0.012, 0.075, 1, 0.95))
     return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
 
 
@@ -312,7 +337,7 @@ def plot_excess_by_condition(
     keep = np.abs(lags) <= float(max_lag_ms)
     subset = frame.loc[frame["scope"].astype(str) == scope]
     if regions is None:
-        regions = _group_order(list(subset["region_pair"].astype(str).unique()))
+        regions = _group_order(list(subset["region_pair"].astype(str).unique()), scope=scope)
     present = [r for r in regions if (subset["region_pair"] == r).any()]
     if not present:
         fig, ax = plt.subplots(figsize=(3.2, 1.4))
@@ -434,7 +459,7 @@ def plot_summary_bars(
     correlations: pd.DataFrame,
     settings: PairOverviewPlotSettings,
     *,
-    measure: str = "window_excess_pm100ms",
+    measure: str = "at_peak",
     scope: str = "within_region",
     stem: str = "fig04_summary_bars",
 ) -> tuple[plt.Figure, dict[str, Path]]:
@@ -454,7 +479,7 @@ def plot_summary_bars(
         signal_summary.loc[signal_summary["measure"] == measure]
         if "measure" in signal_summary.columns else signal_summary
     )
-    groups = _group_order(list(rows["region_pair"].astype(str).unique()))
+    groups = _group_order(list(rows["region_pair"].astype(str).unique()), scope=scope)
     contrasts = signal_contrasts
     if contrasts is not None and "measure" in contrasts.columns:
         contrasts = contrasts.loc[contrasts["measure"] == measure]
@@ -465,17 +490,19 @@ def plot_summary_bars(
                  settings.panel_height_in + 1.0),
     )
     _bar_panel(axes[0], rows, groups, contrasts=contrasts)
-    _finish(axes[0], ylabel="Signal correlation, mean ±100 ms\n(observed − null)",
+    _finish(axes[0], ylabel="Signal correlation at peak\n(observed − null)",
             title="Signal correlation by fixation type", title_size=7.5)
 
     if len(correlations):
         spearman = correlations.copy()
         spearman = spearman.rename(columns={"spearman_rho": "mean"})
-        groups_r = _group_order(list(spearman["region_pair"].astype(str).unique()))
+        groups_r = _group_order(list(spearman["region_pair"].astype(str).unique()), scope=scope)
         _bar_panel(axes[1], spearman, groups_r, value="mean", error=None,
                    star_column="p_value")
-    _finish(axes[1], ylabel="Spearman ρ\n(signal vs noise correlation)",
-            title="Do the two measures track each other?", title_size=7.5)
+    # Naming this precisely matters: it is a correlation *across pairs* between
+    # two per-pair numbers, each of which is itself the peak of a correlation.
+    _finish(axes[1], ylabel="Spearman ρ across pairs",
+            title="Pairs with more shared tuning also co-fire more", title_size=7.5)
 
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, frameon=False, fontsize=6.5, ncol=3,

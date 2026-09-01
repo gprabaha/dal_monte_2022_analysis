@@ -49,6 +49,10 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_population_pc_subspace impo
     verify_pca_identities,
 )
 from dal_monte_2022_analysis.ephys.analysis.fixation_signal_correlation import (
+    compare_at_group_peak,
+    extract_at_group_peak,
+    group_peak_lags,
+    summarize_at_group_peak,
     LAG_MEASURES,
     compare_lag_measures,
     summarize_lag_measures,
@@ -143,6 +147,10 @@ __all__ = [
     "LAG_MEASURES",
     "compare_lag_measures",
     "summarize_lag_measures",
+    "compare_at_group_peak",
+    "extract_at_group_peak",
+    "group_peak_lags",
+    "summarize_at_group_peak",
     "SignalCorrelationSettings",
     "build_pair_correlations",
     "estimate_timeline_reliability",

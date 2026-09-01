@@ -814,3 +814,135 @@ def compare_lag_measures(
             continue
         frames.append(result.assign(measure=measure))
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+# ---------------------------------------------------------------------------
+# Peak of the group trace, read back on every pair
+# ---------------------------------------------------------------------------
+#
+# Summarising signal correlation at a peak is the natural thing to want -- the
+# traces have an obvious maximum and that is what a reader looks at -- but the
+# obvious implementation is wrong twice over.
+#
+# Taking each *pair's* maximum inflates the level: every pair's peak falls at a
+# different lag, so the mean of the maxima is far larger than the maximum of the
+# mean, and a bar chart built that way reads around 0.3 beside a trace that
+# peaks near 0.1.
+#
+# Taking a fixed window instead (the mean over +/-100 ms) is unbiased and agrees
+# with the trace exactly, but it is not the peak: it averages the peak together
+# with the shoulders around it, so the bars sit below the maximum a reader can
+# see in the trace above them.
+#
+# What follows does neither.  The peak lag is found once per group from the
+# *group-mean* trace, and every pair is then read at that one lag.  No maximum
+# is taken per pair, so nothing is inflated; the bar equals the height of the
+# peak in the trace figure; and because each pair contributes a value at a fixed
+# lag, the per-pair spread and the paired condition tests remain valid.
+
+
+def group_peak_lags(
+    traces: pd.DataFrame,
+    *,
+    scope: str = "within_region",
+    max_lag_ms: float = 250.0,
+    lags_ms: Optional[np.ndarray] = None,
+) -> dict[tuple[str, str], float]:
+    """Lag of the group-mean excess maximum, per region and condition.
+
+    Searched over the full stored lag range by default, so the lag reported is
+    the one visible in the trace figure rather than one inside an arbitrary
+    sub-window.
+    """
+    if lags_ms is None:
+        raise ValueError("lags_ms is required.")
+    lags_ms = np.asarray(lags_ms, dtype=float)
+    window = np.abs(lags_ms) <= float(max_lag_ms)
+    out: dict[tuple[str, str], float] = {}
+    subset = traces.loc[traces["scope"].astype(str) == scope]
+    for row in subset.itertuples():
+        excess = np.asarray(getattr(row, "excess_mean"), dtype=float)
+        candidate = np.where(window, excess, -np.inf)
+        if not np.isfinite(candidate).any():
+            continue
+        out[(str(row.region_pair), str(row.condition))] = float(
+            lags_ms[int(np.nanargmax(candidate))]
+        )
+    return out
+
+
+def extract_at_group_peak(
+    pairs: pd.DataFrame,
+    peak_lags: Mapping[tuple[str, str], float],
+    settings: SignalCorrelationSettings,
+    *,
+    lags_ms: np.ndarray,
+    scope: str = "within_region",
+) -> pd.DataFrame:
+    """Each pair's excess at its group's peak lag, one column per condition.
+
+    Returns a copy of the pair table with ``{condition}_at_peak`` columns and
+    the lag each was taken at, so the paired condition tests can run on them
+    unchanged.
+    """
+    lags_ms = np.asarray(lags_ms, dtype=float)
+    subset = pairs.loc[pairs["scope"].astype(str) == scope].copy()
+    for condition in settings.conditions:
+        values: list[float] = []
+        taken: list[float] = []
+        for _, row in subset.iterrows():
+            lag = peak_lags.get((str(row["region_pair"]), condition))
+            if lag is None:
+                values.append(np.nan)
+                taken.append(np.nan)
+                continue
+            index = int(np.argmin(np.abs(lags_ms - lag)))
+            values.append(float(np.asarray(row[f"{condition}_excess"], dtype=float)[index]))
+            taken.append(float(lags_ms[index]))
+        subset[f"{condition}_at_peak"] = values
+        subset[f"{condition}_peak_lag_used_ms"] = taken
+    return subset
+
+
+def summarize_at_group_peak(
+    pairs_at_peak: pd.DataFrame,
+    settings: SignalCorrelationSettings,
+    *,
+    scope: str = "within_region",
+) -> pd.DataFrame:
+    """Group summary of the peak-aligned values, in the shape the bars expect."""
+    rows: list[dict] = []
+    for region_pair, group in pairs_at_peak.groupby("region_pair", observed=True):
+        if len(group) < settings.min_pairs_per_group:
+            continue
+        for condition in settings.conditions:
+            values = group[f"{condition}_at_peak"].to_numpy(dtype=float)
+            values = values[np.isfinite(values)]
+            if values.size == 0:
+                continue
+            lag = group[f"{condition}_peak_lag_used_ms"].dropna()
+            rows.append(
+                {
+                    "scope": scope,
+                    "region_pair": str(region_pair),
+                    "condition": condition,
+                    "measure": "at_peak",
+                    "n_pairs": int(values.size),
+                    "peak_lag_ms": float(lag.iloc[0]) if len(lag) else np.nan,
+                    "mean": float(values.mean()),
+                    "median": float(np.median(values)),
+                    "sem": float(values.std(ddof=1) / np.sqrt(values.size)),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def compare_at_group_peak(
+    pairs_at_peak: pd.DataFrame,
+    settings: SignalCorrelationSettings,
+) -> pd.DataFrame:
+    """Paired condition contrasts on the peak-aligned values."""
+    result = compare_conditions(
+        pairs_at_peak, settings, metric="at_peak", group_columns=("region_pair",)
+    )
+    return result.assign(measure="at_peak") if not result.empty else result

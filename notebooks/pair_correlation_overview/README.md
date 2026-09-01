@@ -1,5 +1,9 @@
 # Noise and signal correlation in simultaneously recorded selective pairs
 
+Written as a **thesis chapter**: introduction, methods, results and discussion,
+with the figures inline. Figures are also written as editable PDFs for stitching
+into a paper figure.
+
 The combined analysis. Every pair is **two FDR-selective units recorded
 simultaneously in the same region**, and two things are measured on those same
 pairs.
@@ -21,24 +25,28 @@ Signal correlation comes first because it carries the clearer result.
 
 1. Method schematic — one set of trials, two orders of operation
 2. **Signal**: null-corrected correlation across lags
-3. **Signal**: mean ±100 ms by region and fixation type, with significance
+3. **Signal**: peak height by region and fixation type, with significance
 4. **Noise**: observed against null, every region and condition
 5. **Noise**: null-subtracted — the fixation types do not differ
 6. Spearman correlation between the two measures, per region and condition
 
-## Why a windowed mean, not zero lag and not the peak
+## How the signal-correlation bars are computed
 
-Signal correlation is summarised as the **mean over ±100 ms**.
+Summarising at a peak is the right instinct and has two wrong implementations.
 
-*Not zero lag*: it is one bin of fifty, and two units whose responses share a
-shape but differ in latency correlate strongly off zero and weakly at it.
+*A per-pair maximum* inflates the level: every pair peaks at a different lag, so
+the mean of the maxima far exceeds the maximum of the mean. Bars built that way
+read ≈0.30 beside traces peaking at ≈0.10 — same data, two incompatible numbers.
 
-*Not the peak*: each pair's maximum falls at a different lag, so the mean of the
-per-pair maxima is far larger than the maximum of the mean. A bar chart of peaks
-read around 0.3 while the trace it summarised peaked near 0.1 — the same data,
-two incompatible numbers. The windowed mean takes no maximum anywhere, so the
-bars and the traces are the same quantity: the mean over pairs of the windowed
-value **equals** the mean of the group trace over that window, verified to 5e-10.
+*A fixed window* (the mean over ±100 ms) is unbiased and matches the trace
+exactly, but it is not the peak: it averages the peak with its shoulders and
+sits below the maximum a reader can see.
+
+What is used instead: the peak lag is found **once per group from the group-mean
+trace**, searched over the full ±250 ms, and every pair is read at that single
+lag. No maximum is taken per pair, so the bar equals the visible peak of the
+trace, and because each pair contributes a value at a fixed lag the per-pair
+spread and the paired tests stay valid.
 
 ## Why the two y-axes are not comparable
 
