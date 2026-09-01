@@ -61,6 +61,15 @@ include_cross_region: true
 # level with an uncoupled pair.
 n_circular_shift_draws: 50
 
+# The cross-trial shuffle is computed alongside as a SECONDARY null and stored,
+# so the two can be compared on identical pairs without a rebuild. It is not the
+# reported default and no figure uses it. Measured on the full dataset, the
+# choice of null shifts the absolute excess (the cross-trial null sits lower, so
+# the excess is 8% larger within region and 37% larger across) but leaves the
+# condition contrasts essentially unchanged, because a within-pair condition
+# difference is a difference of two excesses and the null largely cancels.
+n_trial_shuffle_draws: 50
+
 # A rotation shorter than the coordination timescale of interest would leave the
 # effect partly intact and make the null too conservative.
 min_circular_shift_ms: 50.0

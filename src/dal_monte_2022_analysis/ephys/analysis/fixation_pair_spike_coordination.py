@@ -147,6 +147,8 @@ class PairSpikeCoordinationSettings:
     #: included.  An all-but-silent unit produces an all-zero null SD.
     min_spikes_per_unit_condition: int = 10
     n_circular_shift_draws: int = 50
+    #: Draws for the secondary cross-trial shuffle null.
+    n_trial_shuffle_draws: int = 50
     #: Smallest rotation the shift null uses, in ms.  A rotation shorter than
     #: the coordination timescale of interest would leave the effect partly
     #: intact and make the null too conservative.
@@ -203,6 +205,7 @@ def build_pair_spike_coordination_settings_from_config(
         min_fixations_per_condition=int(cfg.get("min_fixations_per_condition", 8)),
         min_spikes_per_unit_condition=int(cfg.get("min_spikes_per_unit_condition", 10)),
         n_circular_shift_draws=int(cfg.get("n_circular_shift_draws", 50)),
+        n_trial_shuffle_draws=int(cfg.get("n_trial_shuffle_draws", 50)),
         min_circular_shift_ms=float(cfg.get("min_circular_shift_ms", 50.0)),
         include_within_region=bool(cfg.get("include_within_region", True)),
         include_cross_region=bool(cfg.get("include_cross_region", True)),
@@ -546,6 +549,27 @@ def compute_condition_coordination(
     if n_shift > 1:
         variance *= float(n_shift) / float(n_shift - 1)
 
+    # --- cross-trial shuffle null, secondary --------------------------------
+    # A derangement of the fixation index.  Reuses the spectra already computed,
+    # so it costs one inverse transform per draw and nothing else.
+    shuffle_sum = np.zeros_like(observed)
+    shuffle_sumsq = np.zeros_like(observed)
+    n_shuffle = int(settings.n_trial_shuffle_draws)
+    for _ in range(n_shuffle):
+        order = _random_derangement(n_fixations, rng)
+        draw = _to_traces(
+            _cross_spectra_all_pairs(spectra, spectra[:, order, :]),
+            n_bins,
+            n_fft,
+            quantum=quantum,
+        )
+        shuffle_sum += draw
+        shuffle_sumsq += np.square(draw)
+    shuffle_mean = shuffle_sum / float(n_shuffle)
+    shuffle_var = np.maximum(shuffle_sumsq / float(n_shuffle) - np.square(shuffle_mean), 0.0)
+    if n_shuffle > 1:
+        shuffle_var *= float(n_shuffle) / float(n_shuffle - 1)
+
     _, lags_ms = _lag_axis(n_bins, bin_size_ms)
     return {
         "lags_ms": lags_ms,
@@ -553,6 +577,8 @@ def compute_condition_coordination(
         "observed": observed,
         "circular_shift_mean": mean,
         "circular_shift_sd": np.sqrt(variance),
+        "trial_shuffle_mean": shuffle_mean,
+        "trial_shuffle_sd": np.sqrt(shuffle_var),
         "spike_counts": trains.sum(axis=(1, 2)),
         "n_fixations": np.int64(n_fixations),
     }
@@ -726,7 +752,15 @@ DEFAULT_PEAK_SEARCH_MS = 100.0
 #: fall together across fixations, with no timing relationship whatsoever, clear
 #: it easily.  :func:`verify_null_sensitivity` demonstrates exactly that on a
 #: synthetic pair built to have shared gain and nothing else.
-NULL_NAMES: tuple[str, ...] = ("circular_shift",)
+#: The cross-trial shuffle is computed alongside as a *secondary* null, so the
+#: two can be compared on identical pairs without a rebuild.  It is not the
+#: reported default and no figure uses it: it pairs unit A's fixation i with
+#: unit B's fixation j, which destroys across-fixation rate covariation as well
+#: as timing, so two cells whose excitability merely rises and falls together
+#: clear it.  It is retained because "would this conclusion change under the
+#: other null" is a question worth being able to answer.
+NULL_NAMES: tuple[str, ...] = ("circular_shift", "trial_shuffle")
+PRIMARY_NULL = "circular_shift"
 
 
 def _summarize_pair_traces(
@@ -992,6 +1026,7 @@ def build_session_pair_table(
             "bin_size_ms": session.bin_size_ms,
             "store_max_lag_ms": settings.store_max_lag_ms,
             "n_circular_shift_draws": settings.n_circular_shift_draws,
+            "n_trial_shuffle_draws": settings.n_trial_shuffle_draws,
             "min_circular_shift_ms": settings.min_circular_shift_ms,
             # Linear: at every lag only genuinely overlapping bins contribute,
             # so no spike is ever paired with one a full window away.  The wrap
@@ -999,6 +1034,7 @@ def build_session_pair_table(
             # alignment is the intent.
             "correlation_kind": "linear",
             "null_kind": "circular shift: rotation within the analysis window",
+            "secondary_null_kind": "trial shuffle: derangement of the fixation index",
             "lag_sign_convention": "positive lag = unit_1 fires after unit_2",
             "selectivity_column": settings.selectivity_column,
             "trial_matched_n": matched_n,
@@ -1143,6 +1179,8 @@ TRACE_COLUMNS: tuple[str, ...] = (
     "observed",
     "circular_shift_mean",
     "circular_shift_sd",
+    "trial_shuffle_mean",
+    "trial_shuffle_sd",
 )
 
 
