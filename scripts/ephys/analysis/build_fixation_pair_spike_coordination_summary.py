@@ -10,6 +10,7 @@ per-session outputs.
 import argparse
 
 from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination import (
+    CONDITION_METRIC,
     build_pair_spike_coordination_settings_from_config,
     run_summary_build,
 )
@@ -24,7 +25,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--metric",
-        default="trial_shuffle_mean_effect_pm10ms",
+        default=CONDITION_METRIC,
         help="Effect column compared across conditions (must not scale with trial count).",
     )
     args = parser.parse_args()

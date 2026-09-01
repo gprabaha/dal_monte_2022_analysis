@@ -45,20 +45,17 @@ min_spikes_per_unit_condition: 10
 include_within_region: true
 include_cross_region: true
 
-# --- Nulls -------------------------------------------------------------------
+# --- Null --------------------------------------------------------------------
+# One null: the trial shuffle. Unit A's train on fixation i is paired with unit
+# B's train on some other fixation, so both units keep their fixation-locked
+# rate profiles and their exact spike counts, and only the trial-by-trial
+# covariation is destroyed.
+#
 # Each draw is a derangement of the fixation index, so the null statistic is
-# built from exactly as many terms as the observed one. Estimating the null from
+# built from exactly as many pairings as the observed one. Estimating it from
 # all F*(F-1) cross-fixation pairings instead would shrink its standard error
-# and inflate every z-score.
+# and inflate every comparison.
 n_trial_shuffle_draws: 50
-n_circular_shift_draws: 50
-
-# The circular-shift null rotates one train WITHIN the analysis window. The wrap
-# this introduces belongs here and only here: destroying temporal alignment is
-# what a null is for, which is the same reason wrapping is not acceptable in the
-# observed statistic. Shifts smaller than this would leave the coordination
-# intact and make the null too conservative.
-min_circular_shift_ms: 50.0
 
 # Recompute every pair on a common fixation count across conditions. Interactive
 # face fixations outnumber non-interactive ones roughly five to one, so this is

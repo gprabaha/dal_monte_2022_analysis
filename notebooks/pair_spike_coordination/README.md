@@ -2,7 +2,7 @@
 
 Does spike coordination between **simultaneously recorded** neuron pairs change
 with fixation condition — interactive face vs non-interactive face vs object —
-and does that differ within a region versus across regions?
+within a region and across regions?
 
 ## Contents
 
@@ -13,129 +13,83 @@ and does that differ within a region versus across regions?
 
 ## Running it
 
-The notebook drives the whole pipeline. Section 1 reports which of the 42 dates
-are built and, with `SUBMIT_JOBS = True`, submits a SLURM array for **only the
-incomplete dates** and waits for it. Section 2 rebuilds the summary tables.
-Everything after reads those summaries.
-
-Submission is opt-in on purpose: the array costs real cluster time and a
-notebook cell is easy to re-run by accident. With `SUBMIT_JOBS = False` the cell
-only inspects and prints the `sbatch` line it would have run.
-
-The equivalent from a shell:
+Section 1 reports which of the 42 dates are built and, with `SUBMIT_JOBS = True`,
+submits a SLURM array for **only the incomplete dates** and waits. Submission is
+opt-in: the array costs real cluster time and a notebook cell is easy to re-run
+by accident.
 
 ```bash
-# 1. Per-session pair tables (SLURM array over the 42 recording dates)
+# equivalent from a shell
 sbatch --array=0-41 hpc/ephys/run_fixation_pair_spike_coordination.sbatch
-
-# ...or one date locally
-python scripts/ephys/analysis/build_fixation_pair_spike_coordination.py --date 01312018
-
-# 2. Aggregate into the tables the notebook reads
 python scripts/ephys/analysis/build_fixation_pair_spike_coordination_summary.py
-```
 
-After editing `_build_notebook.py`, regenerate the `.ipynb`:
-
-```bash
+# after editing _build_notebook.py
 conda run -n gaze_processing python notebooks/pair_spike_coordination/_build_notebook.py
 ```
 
-Sanity-check the machinery without touching the data:
+## What is computed
 
-```bash
-python scripts/ephys/analysis/build_fixation_pair_spike_coordination.py --verify-only
-```
+**Per fixation, never per average.** Every cross-correlation is computed on one
+fixation's two **unsmoothed 1 ms** spike trains and only then averaged.
+Cross-correlating condition-averaged PSTHs would measure shared rate structure,
+not coordination; smoothing first would blur the timing this exists to measure.
 
-## Design decisions worth knowing before reading the figures
+**Everything inside ±500 ms.** Observed and null alike use the same 1000 bins
+around fixation onset. Widening it is not an option: 95% of ±5 s surrounds
+contain at least one other analysed fixation (median 5), so outside the window
+is not neutral baseline.
 
-**Per-fixation, never per-average.** Coordination is a trial-by-trial quantity.
-Cross-correlating condition-averaged PSTHs measures shared rate structure, not
-coordination. Every cross-correlation is computed on one fixation's two 1 ms
-spike trains and only then averaged.
+**Linear correlation** (zero-padded transform) — the statistic
+`scipy.signal.correlate` computes and the one the behavioural
+cross-correlations use. At lag L only the `N − |L|` genuinely overlapping bins
+contribute, so no spike is paired with one a full window away. The taper this
+introduces needs no correction: the null carries it identically.
 
-**Unsmoothed input.** Smoothing before cross-correlation blurs the fine timing
-the analysis exists to measure. Smooth the saved traces afterwards if a figure
-needs it.
+## One null
 
-**Linear correlation, everything inside ±500 ms.** The correlation is linear
-(zero-padded transform) — the same statistic `scipy.signal.correlate` computes
-and the one the behavioural cross-correlations use. At lag L only the `N − |L|`
-genuinely overlapping bins contribute, so no spike is ever paired with one a
-full window away. A wrapping transform would pair a spike at −500 ms with one at
-+500 ms and call it a coincidence at lag L, which is not a physical measurement.
+The **trial shuffle**: unit A's train on fixation *i* paired with unit B's on
+some other fixation. Both units keep their fixation-locked rate profiles and
+their exact spike counts; only trial-by-trial covariation is destroyed.
 
-The taper that linear correlation introduces needs no correction: both nulls
-carry it identically, so it cancels in the excess and in every z-score. Per-lag
-overlap counts are stored with each output for figures wanting comparable raw
-magnitudes.
+Each draw is a *derangement* of the fixation index, so the null is built from
+exactly as many pairings as the observed statistic. Estimating it from all
+`F(F−1)` cross-fixation pairings would shrink its standard error and inflate
+every comparison.
 
-Widening the window is not an option: 95% of ±5 s surrounds contain at least one
-other analysed fixation (median 5). Outside the window is not baseline.
+## Two measures
 
-**Two nulls, because they answer different questions.**
+| measure | definition | role |
+|---|---|---|
+| **normalised correlation** | correlation ÷ `sqrt(n_A · n_B)` | headline |
+| coincidence count | spike pairs at that lag, per fixation | second measure |
 
-| null | destroys | keeps | an excess means |
-|---|---|---|---|
-| trial shuffle | trial-by-trial covariation | each unit's fixation-locked rate profile | the cells co-fluctuate across fixations |
-| circular shift | fine temporal alignment | that fixation's count and slow envelope | coordination finer than the shift |
+The normalisation is what `normalize_cross_correlation_sqrt_bin_count` applies
+to the behavioural cross-correlations — for binary vectors `sqrt(n_x·n_y)` is
+exactly `‖x‖·‖y‖`, the cosine normalisation.
 
-The shift null rotates a train within the window, which wraps. That is fine in a
-null — destroying alignment is the point — and is exactly why it is not fine in
-the observed statistic.
+**Is it appropriate here?** Partly. It does *not* equate chance levels across
+conditions with different firing rates: chance coincidences grow as `n_A·n_B`
+while this divides by `sqrt(n_A·n_B)`, so a higher-rate condition still sits
+higher. What removes the rate is the **null**, which carries the same spike
+counts. And because the normaliser depends only on spike counts, it cancels
+exactly in `observed − null` — so the choice sets the y-axis of the observed
+plots and changes no statistic. A test pins that.
 
-**Count-matched nulls.** There are `F*(F-1)` possible cross-fixation pairings but
-only `F` real ones. A null estimated from all of them would have a far smaller
-standard error than the observed statistic and would inflate every z-score. Each
-draw is therefore a *derangement*: exactly `F` pairings, each fixation used once
-per side.
+## How results are reported
 
-**Which number compares conditions.** The raw correlation is not the measure of
-coordination — a coincidence count scales with the product of the two firing
-rates, so a condition with slightly higher rates yields more coincidences by
-chance. What counts is the gap to the null.
+Per region for within-region pairs, per region pair for cross-region pairs.
+**Nothing is averaged across regions** — with these recordings a pooled number
+would be a composition of very unequal region contributions rather than a
+summary. Each block runs on all pairs, then on pairs where both units are
+FDR-selective.
 
-| metric | what it is | confounds removed | use for |
-|---|---|---|---|
-| **`ratio`** | `obs / null − 1` | firing rate **and** fixation count | **comparing conditions** |
-| `effect` | excess in single-fixation null SD | fixation count | secondary |
-| `z` | excess in null SD of the fixation mean | none — scales with `√n_fixations` | *is this coordinated at all* |
-
-Interactive-face fixations outnumber the others roughly **six to one** (median
-106 vs 17–18 per pair), and `z ∝ √n_fixations` inflates them ~2.4× on that
-alone — enough to reverse a ranking. Every figure and every statistic uses the
-same metric, so a plot can never appear to contradict the test beside it, and
-`condition_comparisons_across_metrics.csv` runs each contrast under all three
-and flags disagreement.
-
-**The trial-shuffle null is the standard.** The circular-shift null is reported
-alongside as a timescale check, never as the primary comparison.
-
-**Paired condition contrasts.** Every pair contributes all three conditions, so
-comparisons are within-pair: the same two neurons, electrodes and session,
-differing only in which fixations were used. Pair identity, firing rate and
-recording quality cannot explain a difference.
-
-**The zero-lag artifact is removed, not just noted.** Days carrying it are
-dropped from every primary table; the artifact is a property of the recording,
-so leaving it in and flagging it at the end would mean every headline number
-carries it. The chance that two randomly sampled neurons are monosynaptically
-connected is near zero, so a zero-lag peak shared by most pairs on a day is
-common input — movement, arousal, or a shared reference/ground artifact. The
-all-days tables are kept as the sensitivity check, and the notebook shows both
-side by side.
-
-## Data provenance
-
-Input is `fixations_spike_train_1ms.pkl`, the same extraction that produces
-`fixations_psth_10ms.pkl`. The fixations, units and trials are identical to
-those used by the single-unit, population-PCA and mRNN analyses, so a pair
-result can be joined to a unit result without translation.
+Comparisons are **paired within pair**: the same two neurons, electrodes and
+session, differing only in which fixations were used.
 
 ## Which comparisons the recordings support
 
 A cross-region pair exists only where both regions were recorded in the **same
-session**, and that was far from uniform. Across all 417 sessions:
+session**. Across all 417 sessions:
 
 | within region | pairs | | across regions | pairs |
 |---|---|---|---|---|
@@ -146,38 +100,25 @@ session**, and that was far from uniform. Across all 417 sessions:
 | | | | dmPFC × OFC | 140 |
 | | | | **ACCg × OFC** | **0** |
 
-All four regions support within-region comparisons. Across regions, every
-well-populated combination involves **BLA** — ACCg and OFC were never recorded
-together, and dmPFC × OFC comes from 10 sessions. `build_region_pair_inventory`
-reports this and flags combinations below the pair threshold; the region figures
-exclude them so a hundred-pair curve is never drawn beside a
-thirty-thousand-pair one. Nothing is dropped silently.
+All four regions support within-region comparisons. Across regions every
+well-populated combination involves **BLA**. Combinations below the pair
+threshold appear in the tables but are excluded from the figures.
 
-## How results are reported
+## The zero-lag artifact
 
-Per **region** for within-region pairs and per **region pair** for cross-region
-pairs, *before* any pooling — pooling first would let one region with many pairs
-carry a conclusion that does not hold in the others. Pooled tables follow as a
-summary. Everything runs on all recorded pairs first, then repeats on pairs
-where both units are FDR-selective, with the two shown side by side on the same
-rows so a difference in conclusion is visible rather than inferred.
-
-The first figure is the raw one: the mean cross-correlation with **both nulls
-drawn on the same axes**, in coincidences per fixation, so the excess is visible
-rather than only inferable from a z-score.
+Two randomly sampled neurons are essentially never monosynaptically connected,
+so a sharp zero-lag peak shared by most pairs on a day is common input —
+movement, arousal, or a shared reference/ground artifact. It is a property of
+the day and array, not of the pair, so flagged days are **removed from every
+result**, not noted at the end.
 
 ## Outputs
 
-Written under `analysis_output_root/ephys/psth/fixation_pair_spike_coordination/`:
+Under `analysis_output_root/ephys/psth/fixation_pair_spike_coordination/`:
 
 - `date=*/session=*/pair_coordination.pkl` — per-session pair tables with traces
-  (~2 GB total).
-- `summary/*_by_region.csv` — the primary tables: coordination vs null,
-  condition comparisons, and effect summaries per region / region pair, for all
-  pairs and for FDR-selective pairs.
-- `summary/*.csv` — the same quantities pooled to scope level, plus the pair
-  inventory and zero-lag diagnostics.
-- `summary/group_traces_*.pkl` — group-mean lag traces carrying the raw observed
-  correlation, each null's level, and the standardised excess, accumulated by
-  streaming so the notebook never holds every pair's traces in memory.
-- `figures/` — every panel as editable PDF plus high-resolution PNG.
+- `summary/*.csv` — inventory, per-region coordination and condition contrasts
+  (all pairs and FDR-selective), the count-measure contrasts, zero-lag
+  diagnostics, and the dropped dates
+- `summary/traces_by_region*.pkl` — group-mean lag traces, streamed
+- `figures/` — every panel as editable PDF plus high-resolution PNG

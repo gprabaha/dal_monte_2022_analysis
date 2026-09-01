@@ -17,6 +17,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination imp
     IDENTITY_TOLERANCE,
     PairSpikeCoordinationSettings,
     _cross_spectra_all_pairs,
+    _summarize_pair_traces,
     _next_fast_length,
     _random_derangement,
     _to_traces,
@@ -24,8 +25,9 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination imp
     build_zero_lag_diagnostics,
     compare_conditions,
     CONDITION_METRIC,
+    COUNT_METRIC,
+    cosine_normalizer,
     build_region_pair_inventory,
-    compare_conditions_across_metrics,
     compute_condition_coordination,
     drop_zero_lag_artifact_dates,
     overlap_bins,
@@ -38,14 +40,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination imp
 
 
 def _settings(**kwargs) -> PairSpikeCoordinationSettings:
-    base = {
-        "cfg_path": "",
-        "n_trial_shuffle_draws": 25,
-        "n_circular_shift_draws": 25,
-        # The synthetic windows here are 64 bins, not the 1000 of real data, so
-        # the production 50 ms floor would leave no admissible shift.
-        "min_circular_shift_ms": 4.0,
-    }
+    base = {"cfg_path": "", "n_trial_shuffle_draws": 25}
     base.update(kwargs)
     return PairSpikeCoordinationSettings(**base)
 
@@ -75,7 +70,7 @@ class TestNullConstruction(unittest.TestCase):
             trains[1, fixation, n_bins - 2] = 1.0   # near the end
         result = compute_condition_coordination(
             trains,
-            settings=_settings(n_trial_shuffle_draws=2, n_circular_shift_draws=2),
+            settings=_settings(n_trial_shuffle_draws=2),
             bin_size_ms=1.0,
             rng=np.random.default_rng(0),
         )
@@ -118,7 +113,7 @@ class TestNullConstruction(unittest.TestCase):
         trains = (rng.random((2, n_fixations, n_bins)) < 0.12).astype(float)
         result = compute_condition_coordination(
             trains,
-            settings=_settings(n_trial_shuffle_draws=2, n_circular_shift_draws=2),
+            settings=_settings(n_trial_shuffle_draws=2),
             bin_size_ms=1.0,
             rng=np.random.default_rng(0),
         )
@@ -160,13 +155,55 @@ class TestNullConstruction(unittest.TestCase):
             trains[1, fixation, 10 + delay] = 1.0
         result = compute_condition_coordination(
             trains,
-            settings=_settings(n_trial_shuffle_draws=2, n_circular_shift_draws=2),
+            settings=_settings(n_trial_shuffle_draws=2),
             bin_size_ms=1.0,
             rng=np.random.default_rng(0),
         )
         lags = result["lags_ms"]
         self.assertEqual(float(lags[np.argmax(result["observed"][1, 0])]), float(delay))
         self.assertEqual(float(lags[np.argmax(result["observed"][0, 1])]), float(-delay))
+
+
+class TestNormalization(unittest.TestCase):
+    """The cosine normaliser must cancel out of the null-corrected measure."""
+
+    def test_normalizer_matches_the_behavioural_form(self):
+        from dal_monte_2022_analysis.core.signal.cross_correlation import (
+            normalize_cross_correlation_sqrt_bin_count,
+        )
+
+        corr = np.array([4.0, 6.0, 8.0])
+        n_a, n_b = 9.0, 16.0
+        behavioural = normalize_cross_correlation_sqrt_bin_count(corr, n_a, n_b)
+        ours = corr / cosine_normalizer(n_a, n_b)
+        np.testing.assert_allclose(behavioural, ours, rtol=1e-6)
+
+    def test_normalisation_cancels_in_the_null_corrected_measure(self):
+        """It sets the y-axis of the observed plot and changes no statistic."""
+        rng = np.random.default_rng(12)
+        lags = np.arange(-20.0, 21.0)
+        observed = rng.random(lags.size) + 1.0
+        null_mean = rng.random(lags.size) + 1.0
+        null_sd = np.full(lags.size, 0.3)
+        summaries = [
+            _summarize_pair_traces(
+                lags, observed, null_mean, null_sd,
+                n_fixations=30, normalizer=scale, prefix="trial_shuffle",
+            )
+            for scale in (1.0, 7.5)
+        ]
+        # The count excess and the z are untouched by the normaliser.
+        for key in ("trial_shuffle_mean_count_excess_pm10ms", "trial_shuffle_mean_z_pm10ms"):
+            self.assertAlmostEqual(summaries[0][key], summaries[1][key], places=12)
+        # The normalised excess scales exactly with it.
+        self.assertAlmostEqual(
+            summaries[0]["trial_shuffle_mean_norm_excess_pm10ms"] / 7.5,
+            summaries[1]["trial_shuffle_mean_norm_excess_pm10ms"],
+            places=12,
+        )
+
+    def test_normalizer_is_undefined_for_a_silent_unit(self):
+        self.assertTrue(np.isnan(cosine_normalizer(0.0, 5.0)))
 
 
 class TestNullSensitivity(unittest.TestCase):
@@ -178,31 +215,28 @@ class TestNullSensitivity(unittest.TestCase):
             "scenario"
         )
 
-    def test_independent_pair_sits_near_zero_for_both_nulls(self):
-        for null_name in ("trial_shuffle", "circular_shift"):
-            value = float(self.frame.loc["independent", f"{null_name}_mean_z_pm10ms"])
-            self.assertLess(abs(value), 1.5, f"{null_name} is not centred on an uncoupled pair")
+    def test_independent_pair_sits_near_zero(self):
+        value = float(self.frame.loc["independent", "trial_shuffle_mean_z_pm10ms"])
+        self.assertLess(abs(value), 1.5, "the null is not centred on an uncoupled pair")
 
-    def test_shared_rate_moves_trial_shuffle_but_not_circular_shift(self):
-        shuffle = float(self.frame.loc["shared_rate", "trial_shuffle_mean_z_pm10ms"])
-        shift = float(self.frame.loc["shared_rate", "circular_shift_mean_z_pm10ms"])
-        self.assertGreater(shuffle, 1.0)
-        self.assertGreater(shuffle, shift)
+    def test_shared_rate_is_detected(self):
+        """Trial-by-trial co-fluctuation is exactly what this null removes."""
+        self.assertGreater(
+            float(self.frame.loc["shared_rate", "trial_shuffle_mean_z_pm10ms"]), 1.0
+        )
 
-    def test_synchrony_is_detected_by_both_nulls_at_the_injected_lag(self):
-        for null_name in ("trial_shuffle", "circular_shift"):
-            self.assertGreater(
-                float(self.frame.loc["synchronous", f"{null_name}_mean_z_pm10ms"]), 1.5
-            )
-            self.assertEqual(
-                float(self.frame.loc["synchronous", f"{null_name}_peak_lag_ms"]), -4.0
-            )
+    def test_synchrony_is_detected_at_the_injected_lag(self):
+        self.assertGreater(
+            float(self.frame.loc["synchronous", "trial_shuffle_mean_z_pm10ms"]), 1.5
+        )
+        self.assertEqual(
+            float(self.frame.loc["synchronous", "trial_shuffle_peak_lag_ms"]), -4.0
+        )
 
     def test_common_input_appears_at_exactly_zero_lag(self):
-        for null_name in ("trial_shuffle", "circular_shift"):
-            self.assertEqual(
-                float(self.frame.loc["common_zero_lag", f"{null_name}_peak_lag_ms"]), 0.0
-            )
+        self.assertEqual(
+            float(self.frame.loc["common_zero_lag", "trial_shuffle_peak_lag_ms"]), 0.0
+        )
 
 
 class TestDegenerateNulls(unittest.TestCase):
@@ -214,13 +248,12 @@ class TestDegenerateNulls(unittest.TestCase):
         result = compute_condition_coordination(
             trains, settings=_settings(), bin_size_ms=1.0, rng=np.random.default_rng(0)
         )
-        for null_name in ("trial_shuffle", "circular_shift"):
-            excess = result["observed"][0, 1] - result[f"{null_name}_mean"][0, 1]
-            sd = result[f"{null_name}_sd"][0, 1]
-            finite = sd > 0
-            if finite.any():
-                z = excess[finite] / sd[finite]
-                self.assertLess(float(np.max(np.abs(z))), 1e3)
+        excess = result["observed"][0, 1] - result["trial_shuffle_mean"][0, 1]
+        sd = result["trial_shuffle_sd"][0, 1]
+        finite = sd > 0
+        if finite.any():
+            z = excess[finite] / sd[finite]
+            self.assertLess(float(np.max(np.abs(z))), 1e3)
 
     def test_integer_input_traces_land_on_the_count_quantum(self):
         rng = np.random.default_rng(4)
@@ -269,11 +302,11 @@ def _synthetic_pairs(
                     "region_pair": "bla" if index % 2 == 0 else "bla-accg",
                     "n_fixations": 30,
                     "both_selective": index % 3 == 0,
-                    "trial_shuffle_mean_effect_pm10ms": rng.normal(condition_offset, 1.0),
+                    "trial_shuffle_mean_norm_excess_pm10ms": rng.normal(condition_offset, 1.0),
+                    "trial_shuffle_mean_count_excess_pm10ms": rng.normal(condition_offset, 1.0),
                     "trial_shuffle_mean_z_pm10ms": rng.normal(condition_offset, 1.0),
-                    "trial_shuffle_mean_ratio_pm10ms": rng.normal(condition_offset, 1.0),
-                    "circular_shift_zero_lag_z": rng.normal(0.0, 1.0),
-                    "circular_shift_mean_z_pm25ms": rng.normal(0.0, 1.0),
+                    "trial_shuffle_zero_lag_z": rng.normal(0.0, 1.0),
+                    "trial_shuffle_mean_z_pm25ms": rng.normal(0.0, 1.0),
                 }
             )
     return pd.DataFrame(rows)
@@ -284,14 +317,14 @@ class TestSummariesAndTests(unittest.TestCase):
         self.pairs = _synthetic_pairs()
 
     def test_summarize_adds_scope_and_bootstrap_interval(self):
-        summary = summarize_coordination(self.pairs)
+        summary = summarize_coordination(self.pairs, metric=CONDITION_METRIC)
         self.assertIn("scope", summary.columns)
         self.assertTrue(set(summary["scope"]) <= {"within_region", "cross_region"})
         finite = summary.dropna(subset=["ci_low", "ci_high"])
         self.assertTrue((finite["ci_low"] <= finite["ci_high"]).all())
 
     def test_condition_comparison_is_paired_and_corrected(self):
-        result = compare_conditions(self.pairs)
+        result = compare_conditions(self.pairs, metric=CONDITION_METRIC)
         self.assertIn("p_value_corrected", result.columns)
         self.assertIn("effect_size_rank_biserial", result.columns)
         # Every pair contributes all three conditions, so pairing loses nothing.
@@ -301,7 +334,7 @@ class TestSummariesAndTests(unittest.TestCase):
         )
 
     def test_comparison_recovers_a_planted_condition_difference(self):
-        result = compare_conditions(_synthetic_pairs(n_pairs=200, seed=6))
+        result = compare_conditions(_synthetic_pairs(n_pairs=200, seed=6), metric=CONDITION_METRIC)
         planted = result.loc[
             (result["condition_a"] == "face_interactive")
             & (result["condition_b"] == "object")
@@ -310,7 +343,7 @@ class TestSummariesAndTests(unittest.TestCase):
         self.assertTrue((planted["mean_difference"] > 0).all())
 
     def test_against_null_reports_one_row_per_group(self):
-        result = run_test_against_null(self.pairs)
+        result = run_test_against_null(self.pairs, metric=CONDITION_METRIC)
         self.assertEqual(len(result), 2 * len(CONDITION_ORDER))
         self.assertIn("p_value", result.columns)
 
@@ -331,42 +364,26 @@ class TestSummariesAndTests(unittest.TestCase):
         # Flagged, never silently dropped.
         self.assertIn("dmpfc-ofc", set(inventory["region_pair"]))
 
-    def test_metric_comparison_reports_where_metrics_disagree(self):
-        """A conclusion that depends on the choice of metric must be visible."""
-        # No effect in any metric to start with, then plant one in the ratio
-        # only -- the situation where the choice of metric changes the answer.
-        pairs = _synthetic_pairs(n_pairs=200, seed=8, offset=0.0)
-        interactive = pairs["condition"] == "face_interactive"
-        pairs.loc[interactive, "trial_shuffle_mean_ratio_pm10ms"] += 1.5
-        result = compare_conditions_across_metrics(pairs)
-        self.assertIn("metrics_agree", result.columns)
-        for kind in ("ratio", "effect", "z"):
-            self.assertIn(f"significant_{kind}", result.columns)
-        planted = result.loc[
-            (result["condition_a"] == "face_interactive")
-            & (result["condition_b"] == "object")
-        ]
-        self.assertTrue(planted["significant_ratio"].all())
-        self.assertFalse(planted["metrics_agree"].all())
-
     def test_artifact_dates_are_dropped_not_just_flagged(self):
         pairs = _synthetic_pairs(n_pairs=240, seed=9)
         target = sorted(pairs["date"].unique())[0]
-        pairs.loc[pairs["date"] == target, "circular_shift_zero_lag_z"] = 12.0
+        pairs.loc[pairs["date"] == target, "trial_shuffle_zero_lag_z"] = 12.0
         cleaned, dropped = drop_zero_lag_artifact_dates(pairs)
         self.assertIn(target, dropped)
         # Dropped outright, in every scope, not merely flagged.
         self.assertNotIn(target, set(cleaned["date"].astype(str)))
         self.assertLess(len(cleaned), len(pairs))
 
-    def test_condition_metric_is_the_ratio(self):
+    def test_condition_metric_is_null_corrected_and_normalised(self):
         """Conditions must not be compared on a trial-count-scaled quantity."""
-        self.assertIn("ratio", CONDITION_METRIC)
+        self.assertIn("norm_excess", CONDITION_METRIC)
+        self.assertNotIn("_z_", CONDITION_METRIC)
+        self.assertIn("count_excess", COUNT_METRIC)
 
     def test_zero_lag_diagnostics_flags_a_contaminated_day(self):
         pairs = _synthetic_pairs(n_pairs=240, seed=7)
         target = sorted(pairs["date"].unique())[0]
-        pairs.loc[pairs["date"] == target, "circular_shift_zero_lag_z"] = 12.0
+        pairs.loc[pairs["date"] == target, "trial_shuffle_zero_lag_z"] = 12.0
         diagnostics = build_zero_lag_diagnostics(pairs)
         self.assertIn("suspected_zero_lag_artifact", diagnostics.columns)
         worst = diagnostics.sort_values("frac_pairs_zero_lag_above", ascending=False)
