@@ -47,7 +47,7 @@ introduces needs no correction: the null carries it identically.
 
 ## One null
 
-The **trial shuffle**: unit A's train on fixation *i* paired with unit B's on
+The **cross-trial shuffle**: unit A's train on fixation *i* paired with unit B's on
 some other fixation. Both units keep their fixation-locked rate profiles and
 their exact spike counts; only trial-by-trial covariation is destroyed.
 
@@ -56,24 +56,14 @@ exactly as many pairings as the observed statistic. Estimating it from all
 `F(F−1)` cross-fixation pairings would shrink its standard error and inflate
 every comparison.
 
-## Two measures
+## The measure
 
-| measure | definition | role |
-|---|---|---|
-| **normalised correlation** | correlation ÷ `sqrt(n_A · n_B)` | headline |
-| coincidence count | spike pairs at that lag, per fixation | second measure |
-
-The normalisation is what `normalize_cross_correlation_sqrt_bin_count` applies
-to the behavioural cross-correlations — for binary vectors `sqrt(n_x·n_y)` is
-exactly `‖x‖·‖y‖`, the cosine normalisation.
-
-**Is it appropriate here?** Partly. It does *not* equate chance levels across
-conditions with different firing rates: chance coincidences grow as `n_A·n_B`
-while this divides by `sqrt(n_A·n_B)`, so a higher-rate condition still sits
-higher. What removes the rate is the **null**, which carries the same spike
-counts. And because the normaliser depends only on spike counts, it cancels
-exactly in `observed − null` — so the choice sets the y-axis of the observed
-plots and changes no statistic. A test pins that.
+**Coincidences per fixation** — spike pairs at that lag, averaged over
+fixations — and `observed − null` as the comparison. No normalisation is
+applied: the cross-trial null already carries both units' firing rates and their
+exact spike counts, so the difference is rate-controlled by construction.
+Dividing by a function of the spike counts on top of that would change the
+y-axis and nothing else.
 
 ## How results are reported
 

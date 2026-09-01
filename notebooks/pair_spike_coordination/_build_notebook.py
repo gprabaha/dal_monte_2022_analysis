@@ -2,7 +2,7 @@
 
 Per ``AGENTS.md`` the notebook is thin: every function it calls lives in
 ``src/dal_monte_2022_analysis``.  This script assembles narrative and call sites
-only, so the analysis cannot drift into the notebook.
+only.
 
     conda run -n gaze_processing python notebooks/pair_spike_coordination/_build_notebook.py
 """
@@ -39,29 +39,28 @@ from dal_monte_2022_analysis.ephys.analysis import fixation_pair_spike_coordinat
 from dal_monte_2022_analysis.ephys.plotting import fixation_pair_spike_coordination as viz
 
 pd.set_option("display.width", 200)
-pd.set_option("display.max_columns", 60)
+pd.set_option("display.max_columns", 50)
 
-DATASET_CFG_PATH = repo_root / "configs" / "dataset.yaml"
-COORDINATION_CFG_PATH = repo_root / "configs" / "ephys_fixation_pair_spike_coordination.yaml"
-cfg = load_config(str(DATASET_CFG_PATH))
+cfg = load_config(str(repo_root / "configs" / "dataset.yaml"))
+settings = psc.build_pair_spike_coordination_settings_from_config(
+    dataset_cfg_path=str(repo_root / "configs" / "dataset.yaml"),
+    coordination_cfg_path=str(repo_root / "configs" / "ephys_fixation_pair_spike_coordination.yaml"),
+)
 
 SUMMARY_DIR = build_analysis_output_dir(cfg, psc.DEFAULT_OUTPUT_SUBDIR) / "summary"
 FIGURE_DIR = build_analysis_output_dir(cfg, psc.DEFAULT_OUTPUT_SUBDIR) / "figures"
 FIGURE_DIR.mkdir(parents=True, exist_ok=True)
 figs = viz.PairCoordinationPlotSettings(output_dir=FIGURE_DIR)
-
 MIN_PAIRS = psc.DEFAULT_MIN_PAIRS_FOR_REPORTING
 
-settings = psc.build_pair_spike_coordination_settings_from_config(
-    dataset_cfg_path=str(DATASET_CFG_PATH),
-    coordination_cfg_path=str(COORDINATION_CFG_PATH),
-)
-print("summary dir:", SUMMARY_DIR)
+print(f"window        : {settings.signal_window_ms[0]:.0f} to {settings.signal_window_ms[1]:.0f} ms")
+print(f"signal        : {settings.signal_input_column} from {settings.trial_input_filename}")
+print(f"null draws    : {settings.n_trial_shuffle_draws} cross-trial shuffles")
 '''
 
 BUILD = '''
-# Submission is opt-in: the array costs real cluster time and a notebook cell is
-# easy to re-run by accident. False only reports what is missing.
+# Submission is opt-in: the array costs cluster time and a cell is easy to
+# re-run by accident. False only reports what is missing.
 SUBMIT_JOBS = False
 REBUILD_SUMMARIES = True
 
@@ -75,139 +74,67 @@ if REBUILD_SUMMARIES:
 
 LOAD = '''
 traces = pd.read_pickle(SUMMARY_DIR / "traces_by_region.pkl")
-traces_selective = pd.read_pickle(SUMMARY_DIR / "traces_by_region_selective.pkl")
+traces_sig = pd.read_pickle(SUMMARY_DIR / "traces_by_region_selective.pkl")
+contrasts = pd.read_csv(SUMMARY_DIR / "condition_comparisons_by_region.csv")
+contrasts_sig = pd.read_csv(SUMMARY_DIR / "condition_comparisons_by_region_selective.csv")
 
-inventory = pd.read_csv(SUMMARY_DIR / "region_pair_inventory.csv")
-display(inventory)
+# Confirm every cross-correlation came from the same +/-500 ms window.
+one = next(
+    (build_analysis_output_dir(cfg, psc.DEFAULT_OUTPUT_SUBDIR)).glob(
+        "date=*/session=*/pair_coordination.pkl"
+    )
+)
+meta = pd.read_pickle(one)["meta"]
+print(f"window {meta['signal_window_ms']} ms at {meta['bin_size_ms']:.0f} ms bins, "
+      f"{meta['correlation_kind']} correlation, null = {meta['null_kind']}")
 
-dropped = pd.read_csv(SUMMARY_DIR / "dropped_artifact_dates.csv")
-if len(dropped):
-    display(Markdown(
-        f"**{len(dropped)} date(s) removed for the zero-lag artifact:** "
-        f"{sorted(dropped['date'].astype(str))}"
-    ))
-else:
-    display(Markdown("_No date was flagged for the zero-lag artifact._"))
+display(pd.read_csv(SUMMARY_DIR / "region_pair_inventory.csv"))
 '''
 
 
-def within(measure: str = "norm") -> str:
+def observed(traces: str, scope: str, label: str = "") -> str:
+    arg = f', label="{label}"' if label else ""
     return f'''
 fig, paths = viz.plot_observed_and_null_grid(
-    traces, figs, scope="within_region", measure="{measure}", min_pairs=MIN_PAIRS
+    {traces}, figs, scope="{scope}", min_pairs=MIN_PAIRS{arg}
 )
 display(Image(filename=str(paths["png"])))
 '''
 
 
-WITHIN_OBSERVED_SELECTIVE = '''
-fig, paths = viz.plot_observed_and_null_grid(
-    traces_selective, figs, scope="within_region", min_pairs=MIN_PAIRS,
-    label="FDR-selective pairs",
-)
-display(Image(filename=str(paths["png"])))
-'''
-
-WITHIN_CORRECTED = '''
+def corrected(traces: str, table: str, scope: str, label: str = "") -> str:
+    arg = f', label="{label}"' if label else ""
+    return f'''
 fig, paths = viz.plot_null_corrected_grid(
-    traces, figs, scope="within_region", min_pairs=MIN_PAIRS
+    {traces}, figs, scope="{scope}", min_pairs=MIN_PAIRS{arg}
 )
 display(Image(filename=str(paths["png"])))
 
-contrasts = pd.read_csv(SUMMARY_DIR / "condition_comparisons_by_region.csv")
-display(contrasts.loc[contrasts["scope"] == "within_region"].round(4))
-
-fig, paths = viz.plot_condition_contrasts(contrasts, figs, scope="within_region")
-display(Image(filename=str(paths["png"])))
-'''
-
-WITHIN_CORRECTED_SELECTIVE = '''
-fig, paths = viz.plot_null_corrected_grid(
-    traces_selective, figs, scope="within_region", min_pairs=MIN_PAIRS,
-    label="FDR-selective pairs",
-)
-display(Image(filename=str(paths["png"])))
-
-contrasts_selective = pd.read_csv(
-    SUMMARY_DIR / "condition_comparisons_by_region_selective.csv"
-)
-display(contrasts_selective.loc[contrasts_selective["scope"] == "within_region"].round(4))
+subset = {table}.loc[{table}["scope"] == "{scope}"]
+display(subset.round(4))
 
 fig, paths = viz.plot_condition_contrasts(
-    contrasts_selective, figs, scope="within_region", label="FDR-selective pairs"
+    {table}, figs, scope="{scope}"{arg}
 )
 display(Image(filename=str(paths["png"])))
 '''
 
-CROSS_OBSERVED = '''
-fig, paths = viz.plot_observed_and_null_grid(
-    traces, figs, scope="cross_region", min_pairs=MIN_PAIRS
-)
-display(Image(filename=str(paths["png"])))
-
-fig, paths = viz.plot_observed_and_null_grid(
-    traces_selective, figs, scope="cross_region", min_pairs=MIN_PAIRS,
-    label="FDR-selective pairs",
-)
-display(Image(filename=str(paths["png"])))
-'''
-
-CROSS_CORRECTED = '''
-fig, paths = viz.plot_null_corrected_grid(
-    traces, figs, scope="cross_region", min_pairs=MIN_PAIRS
-)
-display(Image(filename=str(paths["png"])))
-
-display(contrasts.loc[contrasts["scope"] == "cross_region"].round(4))
-fig, paths = viz.plot_condition_contrasts(contrasts, figs, scope="cross_region")
-display(Image(filename=str(paths["png"])))
-'''
-
-CROSS_CORRECTED_SELECTIVE = '''
-fig, paths = viz.plot_null_corrected_grid(
-    traces_selective, figs, scope="cross_region", min_pairs=MIN_PAIRS,
-    label="FDR-selective pairs",
-)
-display(Image(filename=str(paths["png"])))
-
-display(contrasts_selective.loc[contrasts_selective["scope"] == "cross_region"].round(4))
-fig, paths = viz.plot_condition_contrasts(
-    contrasts_selective, figs, scope="cross_region", label="FDR-selective pairs"
-)
-display(Image(filename=str(paths["png"])))
-'''
-
-SECOND_MEASURE = '''
-for scope in ("within_region", "cross_region"):
-    fig, paths = viz.plot_null_corrected_grid(
-        traces, figs, scope=scope, measure="count", min_pairs=MIN_PAIRS
-    )
-    display(Image(filename=str(paths["png"])))
-
-counts = pd.read_csv(SUMMARY_DIR / "condition_comparisons_by_region_counts.csv")
-merged = contrasts.merge(
-    counts, on=["scope", "region_pair", "condition_a", "condition_b"],
-    suffixes=("_norm", "_count"),
-)
-display(
-    merged.loc[
-        :,
-        ["scope", "region_pair", "condition_a", "condition_b",
-         "mean_difference_norm", "significant_norm",
-         "mean_difference_count", "significant_count"],
-    ].round(4)
-)
-'''
 
 ABOVE_NULL = '''
-vs_null = pd.read_csv(SUMMARY_DIR / "vs_null_by_region.csv")
-display(vs_null.round(4))
+display(pd.read_csv(SUMMARY_DIR / "vs_null_by_region.csv").round(4))
 '''
 
 ARTIFACT = '''
-diagnostics = pd.read_csv(SUMMARY_DIR / "zero_lag_diagnostics.csv")
-display(diagnostics.round(4))
+dropped = pd.read_csv(SUMMARY_DIR / "dropped_artifact_dates.csv")
+if len(dropped):
+    display(Markdown(
+        f"**{len(dropped)} date(s) removed from every result above:** "
+        f"{sorted(dropped['date'].astype(str))}"
+    ))
+else:
+    display(Markdown("_No date was flagged._"))
 
+diagnostics = pd.read_csv(SUMMARY_DIR / "zero_lag_diagnostics.csv")
 fig, paths = viz.plot_zero_lag_diagnostics(diagnostics, figs)
 display(Image(filename=str(paths["png"])))
 '''
@@ -216,14 +143,10 @@ display(Image(filename=str(paths["png"])))
 _CELL_IDS = count(1)
 
 
-def _next_id() -> str:
-    return f"cell-{next(_CELL_IDS):02d}"
-
-
 def markdown(text: str) -> dict:
     return {
         "cell_type": "markdown",
-        "id": _next_id(),
+        "id": f"cell-{next(_CELL_IDS):02d}",
         "metadata": {},
         "source": text.strip().splitlines(keepends=True),
     }
@@ -232,7 +155,7 @@ def markdown(text: str) -> dict:
 def code(text: str) -> dict:
     return {
         "cell_type": "code",
-        "id": _next_id(),
+        "id": f"cell-{next(_CELL_IDS):02d}",
         "execution_count": None,
         "metadata": {},
         "outputs": [],
@@ -244,144 +167,111 @@ CELLS = [
     markdown(f"""
 # {TITLE}
 
-Do two neurons recorded at the same time coordinate their spiking differently
-during **interactive-face**, **non-interactive-face** and **object** fixations —
-within a region, and across regions?
+Does spike coordination between two simultaneously recorded neurons differ
+between **interactive-face**, **non-interactive-face** and **object** fixations
+— within a region, and across regions?
 
 ## What is computed
 
 Every cross-correlation is computed on one fixation's two **unsmoothed 1 ms**
 spike trains, over the **±500 ms** window around fixation onset, and only then
-averaged. Nothing outside that window enters anything. Cross-correlating
-condition-averaged PSTHs would measure shared rate structure, not coordination;
-smoothing first would blur the timing this exists to measure.
+averaged across fixations. Nothing outside that window enters anything.
 
-The correlation is **linear** (zero-padded), the statistic
-`scipy.signal.correlate` computes and the one the behavioural
-cross-correlations use.
+The correlation is **linear** (zero-padded), the same statistic
+`scipy.signal.correlate` computes. Values are **coincidences per fixation**:
+spike pairs at that lag, averaged over fixations. No normalisation is applied —
+the null already carries both units' firing rates and exact spike counts, so
+`observed − null` is rate-controlled by construction.
 
 ## The null
 
-One null: the **trial shuffle**. Unit A's train on fixation *i* is paired with
-unit B's train on some other fixation. Both units keep their fixation-locked
-rate profiles and their exact spike counts; only the trial-by-trial covariation
-is destroyed. An excess over it means the two cells co-fluctuate from fixation
-to fixation.
+One null, the **cross-trial shuffle**: unit A's train on fixation *i* is paired
+with unit B's train on a *different* fixation. Both units keep their
+fixation-locked rate profiles and their exact spike counts; only the
+trial-by-trial covariation is destroyed. An excess over it means the two cells
+co-fluctuate from fixation to fixation.
 
-Each draw is a *derangement* of the fixation index, so the null is built from
-exactly as many pairings as the observed statistic. Estimating it from all
-`F(F−1)` cross-fixation pairings would shrink its standard error and inflate
-every comparison.
+Each draw is a *derangement* of the fixation index, so the null uses exactly as
+many pairings as the observed statistic. Estimating it from all `F(F−1)`
+cross-fixation pairings would shrink its standard error and inflate every
+comparison.
 
-## The two measures
+## Structure
 
-| measure | definition | role |
-|---|---|---|
-| **normalised correlation** | correlation ÷ `sqrt(n_A · n_B)` | headline |
-| coincidence count | spike pairs at that lag, per fixation | second measure |
+Per region, per fixation type. **Nothing is averaged across regions.**
 
-The normalisation is the one `core.signal.normalize_cross_correlation_sqrt_bin_count`
-applies to the behavioural cross-correlations — for binary vectors `sqrt(n_x·n_y)`
-is exactly `‖x‖·‖y‖`, the cosine normalisation.
+1. Within region — all pairs
+2. Within region — FDR-selective pairs
+3. Across regions — all pairs
+4. Across regions — FDR-selective pairs
 
-**Is it appropriate here?** Partly, and it is worth being precise. It does *not*
-equate chance levels across conditions with different firing rates: chance
-coincidences grow as `n_A·n_B` while this divides by `sqrt(n_A·n_B)`, so a
-higher-rate condition still sits higher. What removes the rate is the **null**,
-which carries the same spike counts. And because the normaliser depends only on
-spike counts, it cancels exactly in `observed − null` — so this choice sets the
-y-axis of the observed plots and changes no statistic.
-
-## How results are reported
-
-Per region for within-region pairs, per region pair for cross-region pairs.
-**Nothing is averaged across regions.** With these recordings a pooled number
-would be a composition of very unequal region contributions rather than a
-summary of them.
-
-Each block runs on all pairs first, then on pairs where **both** units are
-FDR-selective (`three_condition_core`).
+Each block shows the observed correlation against the null, then the
+null-corrected difference with the condition contrasts.
 """),
     code(SETUP),
     markdown("""
-## 1. Build state and summaries
+## Build state and summaries
 """),
     code(BUILD),
     markdown("""
-## 2. What the recordings support
+## What the recordings support
 
 A cross-region pair exists only where both regions were recorded in the **same
 session**. All four regions support within-region comparisons; across regions
-every well-populated combination involves BLA, ACCg and OFC were never recorded
-together, and dmPFC × OFC comes from a handful of sessions. Combinations below
-the pair threshold appear in the tables but are excluded from the figures.
+every well-populated combination involves BLA. Combinations below the pair
+threshold appear in the table but are excluded from the figures.
 
 Days carrying the zero-lag artifact are removed from everything below.
 """),
     code(LOAD),
     markdown("""
-# Within region
+# 1. Within region — all pairs
 
-## 3. Observed correlation and the trial-shuffle null
+## Observed correlation and the cross-trial null
 
-Regions down, fixation conditions across. The **gap between the two curves** is
-the coordination — the observed curve alone is not, since a correlation scales
-with the product of the two firing rates.
+Regions down, fixation conditions across. The **gap between the curves** is the
+coordination; the observed curve alone is not, since a correlation scales with
+the product of the two firing rates.
 """),
-    code(within()),
+    code(observed("traces", "within_region")),
     markdown("""
-### The same, for FDR-selective pairs only
-"""),
-    code(WITHIN_OBSERVED_SELECTIVE),
-    markdown("""
-## 4. Null-corrected coordination, and condition comparisons
+## Null-corrected, and condition comparisons
 
 Observed minus null, conditions overlaid within each region. Zero means no
 coordination beyond what each unit's own fixation-locked rate profile predicts.
 
-The contrasts are **paired within pair**: the same two neurons, electrodes and
+Contrasts are **paired within pair** — the same two neurons, electrodes and
 session, differing only in which fixations were used. Benjamini–Hochberg
 corrected; filled markers survived it.
 """),
-    code(WITHIN_CORRECTED),
+    code(corrected("traces", "contrasts", "within_region")),
     markdown("""
-### The same, for FDR-selective pairs only
+# 2. Within region — FDR-selective pairs
+
+Pairs where **both** units are significantly selective for at least one
+fixation-condition contrast (FDR-corrected, `three_condition_core`).
 
 Selecting units by a condition contrast and then asking whether coordination
 differs by condition is circular, so this is a sensitivity check rather than
 independent confirmation. What it can show is whether an effect is carried by
 the selective subset or is distributed across the population.
 """),
-    code(WITHIN_CORRECTED_SELECTIVE),
+    code(observed("traces_sig", "within_region", "FDR-selective pairs")),
+    code(corrected("traces_sig", "contrasts_sig", "within_region", "FDR-selective pairs")),
     markdown("""
-# Across regions
-
-## 5. Observed correlation and the trial-shuffle null
-
-All pairs, then FDR-selective pairs.
+# 3. Across regions — all pairs
 """),
-    code(CROSS_OBSERVED),
+    code(observed("traces", "cross_region")),
+    code(corrected("traces", "contrasts", "cross_region")),
     markdown("""
-## 6. Null-corrected coordination, and condition comparisons
+# 4. Across regions — FDR-selective pairs
 """),
-    code(CROSS_CORRECTED),
-    markdown("""
-### The same, for FDR-selective pairs only
-"""),
-    code(CROSS_CORRECTED_SELECTIVE),
+    code(observed("traces_sig", "cross_region", "FDR-selective pairs")),
+    code(corrected("traces_sig", "contrasts_sig", "cross_region", "FDR-selective pairs")),
     markdown("""
 # Supporting
 
-## 7. Second measure: raw coincidence counts
-
-The same null-corrected comparison in coincidences per fixation rather than
-normalised units, with the two sets of contrasts side by side. A conclusion that
-holds in one measure and not the other is a conclusion about the normalisation,
-not about the neurons.
-"""),
-    code(SECOND_MEASURE),
-    markdown("""
-## 8. Is there coordination above null at all?
+## Is there coordination above null at all?
 
 Secondary to the condition comparison, but worth confirming there is something
 to compare. One-sample Wilcoxon of the per-pair excess against zero, per region
@@ -391,7 +281,7 @@ fixation count.
 """),
     code(ABOVE_NULL),
     markdown("""
-## 9. The zero-lag artifact
+## The zero-lag artifact
 
 Two randomly sampled neurons are essentially never monosynaptically connected,
 so a sharp zero-lag peak shared by most pairs on a day is common input —

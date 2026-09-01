@@ -25,8 +25,6 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination imp
     build_zero_lag_diagnostics,
     compare_conditions,
     CONDITION_METRIC,
-    COUNT_METRIC,
-    cosine_normalizer,
     build_region_pair_inventory,
     compute_condition_coordination,
     drop_zero_lag_artifact_dates,
@@ -164,46 +162,29 @@ class TestNullConstruction(unittest.TestCase):
         self.assertEqual(float(lags[np.argmax(result["observed"][0, 1])]), float(-delay))
 
 
-class TestNormalization(unittest.TestCase):
-    """The cosine normaliser must cancel out of the null-corrected measure."""
+class TestMeasure(unittest.TestCase):
+    """The reported measure is raw coincidences, null-corrected."""
 
-    def test_normalizer_matches_the_behavioural_form(self):
-        from dal_monte_2022_analysis.core.signal.cross_correlation import (
-            normalize_cross_correlation_sqrt_bin_count,
-        )
-
-        corr = np.array([4.0, 6.0, 8.0])
-        n_a, n_b = 9.0, 16.0
-        behavioural = normalize_cross_correlation_sqrt_bin_count(corr, n_a, n_b)
-        ours = corr / cosine_normalizer(n_a, n_b)
-        np.testing.assert_allclose(behavioural, ours, rtol=1e-6)
-
-    def test_normalisation_cancels_in_the_null_corrected_measure(self):
-        """It sets the y-axis of the observed plot and changes no statistic."""
+    def test_summary_reports_counts_and_excess_without_normalisation(self):
         rng = np.random.default_rng(12)
         lags = np.arange(-20.0, 21.0)
         observed = rng.random(lags.size) + 1.0
         null_mean = rng.random(lags.size) + 1.0
         null_sd = np.full(lags.size, 0.3)
-        summaries = [
-            _summarize_pair_traces(
-                lags, observed, null_mean, null_sd,
-                n_fixations=30, normalizer=scale, prefix="trial_shuffle",
-            )
-            for scale in (1.0, 7.5)
-        ]
-        # The count excess and the z are untouched by the normaliser.
-        for key in ("trial_shuffle_mean_count_excess_pm10ms", "trial_shuffle_mean_z_pm10ms"):
-            self.assertAlmostEqual(summaries[0][key], summaries[1][key], places=12)
-        # The normalised excess scales exactly with it.
+        summary = _summarize_pair_traces(
+            lags, observed, null_mean, null_sd, n_fixations=30, prefix="trial_shuffle"
+        )
+        window = np.abs(lags) <= 10.0
         self.assertAlmostEqual(
-            summaries[0]["trial_shuffle_mean_norm_excess_pm10ms"] / 7.5,
-            summaries[1]["trial_shuffle_mean_norm_excess_pm10ms"],
+            summary["trial_shuffle_mean_excess_pm10ms"],
+            float(np.mean((observed - null_mean)[window])),
             places=12,
         )
-
-    def test_normalizer_is_undefined_for_a_silent_unit(self):
-        self.assertTrue(np.isnan(cosine_normalizer(0.0, 5.0)))
+        self.assertAlmostEqual(
+            summary["observed_mean_pm10ms"], float(np.mean(observed[window])), places=12
+        )
+        # No normalised columns survive: the null already controls for rate.
+        self.assertFalse([k for k in summary if "norm" in k])
 
 
 class TestNullSensitivity(unittest.TestCase):
@@ -302,8 +283,7 @@ def _synthetic_pairs(
                     "region_pair": "bla" if index % 2 == 0 else "bla-accg",
                     "n_fixations": 30,
                     "both_selective": index % 3 == 0,
-                    "trial_shuffle_mean_norm_excess_pm10ms": rng.normal(condition_offset, 1.0),
-                    "trial_shuffle_mean_count_excess_pm10ms": rng.normal(condition_offset, 1.0),
+                    "trial_shuffle_mean_excess_pm10ms": rng.normal(condition_offset, 1.0),
                     "trial_shuffle_mean_z_pm10ms": rng.normal(condition_offset, 1.0),
                     "trial_shuffle_zero_lag_z": rng.normal(0.0, 1.0),
                     "trial_shuffle_mean_z_pm25ms": rng.normal(0.0, 1.0),
@@ -374,11 +354,10 @@ class TestSummariesAndTests(unittest.TestCase):
         self.assertNotIn(target, set(cleaned["date"].astype(str)))
         self.assertLess(len(cleaned), len(pairs))
 
-    def test_condition_metric_is_null_corrected_and_normalised(self):
+    def test_condition_metric_is_null_corrected_not_z(self):
         """Conditions must not be compared on a trial-count-scaled quantity."""
-        self.assertIn("norm_excess", CONDITION_METRIC)
+        self.assertIn("excess", CONDITION_METRIC)
         self.assertNotIn("_z_", CONDITION_METRIC)
-        self.assertIn("count_excess", COUNT_METRIC)
 
     def test_zero_lag_diagnostics_flags_a_contaminated_day(self):
         pairs = _synthetic_pairs(n_pairs=240, seed=7)

@@ -665,13 +665,10 @@ def verify_null_identities(
 #:            one for comparing conditions: interactive-face fixations outnumber
 #:            the others roughly six to one, which is enough to reverse a
 #:            ranking by itself.
-CONDITION_METRIC = "trial_shuffle_mean_norm_excess_pm10ms"
+CONDITION_METRIC = "trial_shuffle_mean_excess_pm10ms"
 ABOVE_NULL_METRIC = "trial_shuffle_mean_z_pm10ms"
-#: Second measure, reported alongside: the raw coincidence excess per fixation.
-COUNT_METRIC = "trial_shuffle_mean_count_excess_pm10ms"
 #: What the observed (uncorrected) curve is summarised by, in the same units.
-OBSERVED_METRIC = "observed_mean_norm_pm10ms"
-METRIC_KINDS: tuple[str, ...] = ("norm_excess", "count_excess", "z")
+OBSERVED_METRIC = "observed_mean_pm10ms"
 
 #: Half-widths (ms) over which the z traces are averaged into scalar summaries.
 SUMMARY_WINDOWS_MS: tuple[float, ...] = (5.0, 10.0, 25.0, 50.0, 100.0)
@@ -684,28 +681,6 @@ DEFAULT_PEAK_SEARCH_MS = 100.0
 NULL_NAMES: tuple[str, ...] = ("trial_shuffle",)
 
 
-def cosine_normalizer(mean_spikes_a: float, mean_spikes_b: float) -> float:
-    """``sqrt(n_a * n_b)``, the normaliser the behavioural analysis uses.
-
-    ``normalize_cross_correlation_sqrt_bin_count`` in ``core.signal`` divides a
-    behavioural cross-correlation by ``sqrt(count_x * count_y)``; for binary
-    vectors that is exactly ``||x|| * ||y||``, the cosine normalisation.  The
-    same form is used here on mean per-fixation spike counts, so a neural
-    cross-correlation is on the same footing as a behavioural one.
-
-    A caveat worth stating rather than burying: this does **not** equate chance
-    levels across conditions with different firing rates.  Chance coincidences
-    grow as ``n_a * n_b`` while this divides by ``sqrt(n_a * n_b)``, so a
-    higher-rate condition still sits higher.  What removes the rate is the null,
-    which carries the same spike counts.  Since the normaliser depends only on
-    spike counts, it cancels exactly in ``observed - null`` and in
-    ``observed / null`` -- so this choice sets the y-axis of the observed plot
-    and changes no statistic.
-    """
-    product = float(mean_spikes_a) * float(mean_spikes_b)
-    return float(np.sqrt(product)) if product > 0 else float("nan")
-
-
 def _summarize_pair_traces(
     lags_ms: np.ndarray,
     observed: np.ndarray,
@@ -713,25 +688,26 @@ def _summarize_pair_traces(
     null_sd: np.ndarray,
     *,
     n_fixations: int,
-    normalizer: float,
     prefix: str,
     peak_search_ms: float = DEFAULT_PEAK_SEARCH_MS,
 ) -> dict[str, object]:
     """Scalar summaries of one pair's correlation and its excess over the null.
 
-    Three families are stored:
+    Everything is in **coincidences per fixation** -- spike pairs at that lag,
+    averaged over fixations.  No normalisation is applied: the trial-shuffle
+    null already carries both units' firing rates and their exact spike counts,
+    so ``observed - null`` is rate-controlled by construction.  Dividing by a
+    function of the spike counts on top of that would change the y-axis and
+    nothing else.
 
-    ``*_norm_*``   cosine-normalised, matching the behavioural analysis.  The
-                   headline measure.
-    ``*_count_*``  raw coincidences per fixation.  The second measure.
-    ``*_z``        standardised excess, for "is this coordinated at all" only.
-                   It scales with the square root of the fixation count, so it
-                   must not be used to compare conditions.
+    ``*_z`` is kept only for the separate question of whether a pair is
+    coordinated at all.  It scales with the square root of the fixation count,
+    so it must not be used to compare conditions.
 
-    Note on ``*_peak_*``: it is a maximum over every lag in the search window
-    and so is inflated under the null by construction.  Use it to read off
-    *where* coordination sits; use the windowed ``*_pm*ms`` columns, which are
-    not maxima, to test whether it is there at all.
+    Note on ``*_peak_*``: it is a maximum over every lag in the search window and
+    so is inflated under the null by construction.  Use it to read off *where*
+    coordination sits; use the windowed ``*_pm*ms`` columns, which are not
+    maxima, to test whether it is there at all.
     """
     excess = observed - null_mean
     degenerate = null_sd <= 0
@@ -739,30 +715,23 @@ def _summarize_pair_traces(
         z_trace = np.where(degenerate, np.nan, excess / np.where(degenerate, 1.0, null_sd))
     z_trace = np.where(degenerate & np.isclose(excess, 0.0, atol=1e-12), 0.0, z_trace)
 
-    scale = float(normalizer) if np.isfinite(normalizer) and normalizer > 0 else np.nan
-    observed_norm = observed / scale
-    null_norm = null_mean / scale
-    excess_norm = excess / scale
-
     out: dict[str, object] = {}
     zero_index = int(np.argmin(np.abs(lags_ms)))
     out[f"{prefix}_zero_lag_z"] = float(z_trace[zero_index])
-    out[f"{prefix}_zero_lag_norm_excess"] = float(excess_norm[zero_index])
-    out[f"{prefix}_zero_lag_count_excess"] = float(excess[zero_index])
-    out["observed_zero_lag_norm"] = float(observed_norm[zero_index])
-    out["observed_zero_lag_count"] = float(observed[zero_index])
-    out["null_zero_lag_norm"] = float(null_norm[zero_index])
+    out[f"{prefix}_zero_lag_excess"] = float(excess[zero_index])
+    out["observed_zero_lag"] = float(observed[zero_index])
+    out["null_zero_lag"] = float(null_mean[zero_index])
 
     search = np.abs(lags_ms) <= float(peak_search_ms)
     if search.any() and np.isfinite(z_trace[search]).any():
         local = np.where(search, z_trace, -np.inf)
         peak_index = int(np.nanargmax(local))
         out[f"{prefix}_peak_z"] = float(z_trace[peak_index])
-        out[f"{prefix}_peak_norm_excess"] = float(excess_norm[peak_index])
+        out[f"{prefix}_peak_excess"] = float(excess[peak_index])
         out[f"{prefix}_peak_lag_ms"] = float(lags_ms[peak_index])
     else:
         out[f"{prefix}_peak_z"] = np.nan
-        out[f"{prefix}_peak_norm_excess"] = np.nan
+        out[f"{prefix}_peak_excess"] = np.nan
         out[f"{prefix}_peak_lag_ms"] = np.nan
 
     for half_width in SUMMARY_WINDOWS_MS:
@@ -770,19 +739,15 @@ def _summarize_pair_traces(
         tag = f"pm{int(half_width)}ms"
         if window.any():
             out[f"{prefix}_mean_z_{tag}"] = float(np.nanmean(z_trace[window]))
-            out[f"{prefix}_mean_norm_excess_{tag}"] = float(np.nanmean(excess_norm[window]))
-            out[f"{prefix}_mean_count_excess_{tag}"] = float(np.nanmean(excess[window]))
-            out[f"observed_mean_norm_{tag}"] = float(np.nanmean(observed_norm[window]))
-            out[f"observed_mean_count_{tag}"] = float(np.nanmean(observed[window]))
-            out[f"null_mean_norm_{tag}"] = float(np.nanmean(null_norm[window]))
+            out[f"{prefix}_mean_excess_{tag}"] = float(np.nanmean(excess[window]))
+            out[f"observed_mean_{tag}"] = float(np.nanmean(observed[window]))
+            out[f"null_mean_{tag}"] = float(np.nanmean(null_mean[window]))
         else:
             for key in (
                 f"{prefix}_mean_z_{tag}",
-                f"{prefix}_mean_norm_excess_{tag}",
-                f"{prefix}_mean_count_excess_{tag}",
-                f"observed_mean_norm_{tag}",
-                f"observed_mean_count_{tag}",
-                f"null_mean_norm_{tag}",
+                f"{prefix}_mean_excess_{tag}",
+                f"observed_mean_{tag}",
+                f"null_mean_{tag}",
             ):
                 out[key] = np.nan
     return out
@@ -904,14 +869,8 @@ def build_session_pair_table(
 
                 observed = result["observed"][first, second]
                 record["observed"] = observed[keep].astype(np.float32)
-                # Mean spikes per fixation for each unit: the cosine
-                # normaliser, and the quantity the null leaves untouched.
-                mean_a = float(spike_counts[first]) / float(max(n_fixations, 1))
-                mean_b = float(spike_counts[second]) / float(max(n_fixations, 1))
-                normalizer = cosine_normalizer(mean_a, mean_b)
-                record["mean_spikes_1"] = mean_a
-                record["mean_spikes_2"] = mean_b
-                record["normalizer"] = normalizer
+                record["mean_spikes_1"] = float(spike_counts[first]) / float(max(n_fixations, 1))
+                record["mean_spikes_2"] = float(spike_counts[second]) / float(max(n_fixations, 1))
                 for null_name in NULL_NAMES:
                     null_mean = result[f"{null_name}_mean"][first, second]
                     null_sd = result[f"{null_name}_sd"][first, second]
@@ -924,7 +883,6 @@ def build_session_pair_table(
                             null_mean,
                             null_sd,
                             n_fixations=n_fixations,
-                            normalizer=normalizer,
                             prefix=null_name,
                         )
                     )
@@ -938,7 +896,6 @@ def build_session_pair_table(
                                     matched_result[f"{null_name}_mean"][first, second],
                                     matched_result[f"{null_name}_sd"][first, second],
                                     n_fixations=int(matched_result["n_fixations"]),
-                                    normalizer=normalizer,
                                     prefix=null_name,
                                 ).items()
                             }
@@ -1699,10 +1656,6 @@ def verify_null_sensitivity(
                 result[f"{null_name}_mean"][0, 1],
                 result[f"{null_name}_sd"][0, 1],
                 n_fixations=n_fixations,
-                normalizer=cosine_normalizer(
-                    float(result["spike_counts"][0]) / n_fixations,
-                    float(result["spike_counts"][1]) / n_fixations,
-                ),
                 prefix=null_name,
             )
             row[f"{null_name}_peak_z"] = summary[f"{null_name}_peak_z"]
@@ -1734,38 +1687,17 @@ def _pair_z_trace(
 
 
 def _pair_traces(row: pd.Series) -> dict[str, np.ndarray]:
-    """One pair's observed, null and excess traces, cosine-normalised."""
+    """One pair's observed, null and excess traces, in coincidences per fixation."""
     observed = np.asarray(row["observed"], dtype=float)
     null_mean = np.asarray(row["trial_shuffle_mean"], dtype=float)
-    null_sd = np.asarray(row["trial_shuffle_sd"], dtype=float)
-    scale = float(row.get("normalizer", np.nan))
-    if not np.isfinite(scale) or scale <= 0:
-        scale = np.nan
-    excess = observed - null_mean
-    degenerate = null_sd <= 0
-    with np.errstate(divide="ignore", invalid="ignore"):
-        z = np.where(degenerate, np.nan, excess / np.where(degenerate, 1.0, null_sd))
-    z = np.where(degenerate & np.isclose(excess, 0.0, atol=1e-12), 0.0, z)
     return {
-        "observed_norm": observed / scale,
-        "null_norm": null_mean / scale,
-        "excess_norm": excess / scale,
-        "observed_count": observed,
-        "null_count": null_mean,
-        "excess_count": excess,
-        "z": z,
+        "observed": observed,
+        "null": null_mean,
+        "excess": observed - null_mean,
     }
 
 
-TRACE_CHANNELS: tuple[str, ...] = (
-    "observed_norm",
-    "null_norm",
-    "excess_norm",
-    "observed_count",
-    "null_count",
-    "excess_count",
-    "z",
-)
+TRACE_CHANNELS: tuple[str, ...] = ("observed", "null", "excess")
 
 
 def build_group_traces(
@@ -2215,10 +2147,6 @@ def verify_null_sensitivity(
                 result[f"{null_name}_mean"][0, 1],
                 result[f"{null_name}_sd"][0, 1],
                 n_fixations=n_fixations,
-                normalizer=cosine_normalizer(
-                    float(result["spike_counts"][0]) / n_fixations,
-                    float(result["spike_counts"][1]) / n_fixations,
-                ),
                 prefix=null_name,
             )
             row[f"{null_name}_peak_z"] = summary[f"{null_name}_peak_z"]
@@ -2420,10 +2348,6 @@ def run_summary_build(
         ),
         "condition_comparisons_by_region_selective": compare_conditions(
             selective, metric=metric, group_columns=("scope", "region_pair")
-        ),
-        # Second measure, same contrasts on raw coincidence counts.
-        "condition_comparisons_by_region_counts": compare_conditions(
-            pairs, metric=COUNT_METRIC, group_columns=("scope", "region_pair")
         ),
         "zero_lag_diagnostics": build_zero_lag_diagnostics(all_pairs),
     }

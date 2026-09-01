@@ -5,8 +5,8 @@ recomputes.  Two figure shapes carry the analysis:
 
 ``plot_observed_and_null_grid``
     Regions down, fixation conditions across.  Each panel shows the observed
-    cross-correlation and the trial-shuffle null on the same axes, so the excess
-    is visible rather than inferred.
+    cross-correlation and the cross-trial shuffle null on the same axes, so the
+    excess is visible rather than inferred.
 
 ``plot_null_corrected_grid``
     One panel per region, the three conditions overlaid, showing observed minus
@@ -47,17 +47,11 @@ SCOPE_LABELS: dict[str, str] = {
     "cross_region": "Across regions",
 }
 
-#: The measure a panel is drawn in.  ``norm`` is the cosine normalisation the
-#: behavioural cross-correlations use, ``count`` is raw coincidences per
-#: fixation.  Both are reported; ``norm`` leads.
-MEASURE_LABELS: dict[str, str] = {
-    "norm": "Normalised correlation",
-    "count": "Coincidences per fixation",
-}
-MEASURE_EXCESS_LABELS: dict[str, str] = {
-    "norm": "Observed − null\n(normalised)",
-    "count": "Observed − null\n(coincidences per fixation)",
-}
+#: Everything is in coincidences per fixation.  No normalisation is applied:
+#: the trial-shuffle null already carries both units' firing rates and exact
+#: spike counts, so ``observed - null`` is rate-controlled by construction.
+MEASURE_LABEL = "Coincidences\nper fixation"
+EXCESS_LABEL = "Observed − null\n(coincidences per fixation)"
 
 
 @dataclass
@@ -151,7 +145,6 @@ def plot_observed_and_null_grid(
     settings: PairCoordinationPlotSettings,
     *,
     scope: str = "within_region",
-    measure: str = "norm",
     max_lag_ms: float = 100.0,
     min_pairs: int = 0,
     label: str = "",
@@ -174,7 +167,7 @@ def plot_observed_and_null_grid(
         return _empty_figure(
             settings,
             f"No {scope_label(scope).lower()} group reaches\n{min_pairs:,} pairs per condition",
-            f"{stem}_{measure}_{scope}",
+            f"{stem}_{scope}",
         )
 
     n_rows, n_cols = len(groups), len(CONDITION_ORDER)
@@ -197,8 +190,8 @@ def plot_observed_and_null_grid(
                 ax.set_visible(False)
                 continue
             for channel, colour, dash, name in (
-                (f"observed_{measure}", INK, "-", "Observed"),
-                (f"null_{measure}", "#2c7fb8", "--", "Trial-shuffle null"),
+                ("observed", INK, "-", "Observed"),
+                ("null", "#2c7fb8", "--", "Cross-trial shuffle null"),
             ):
                 mean = np.asarray(row[f"{channel}_mean"], dtype=float)[keep]
                 sem = np.asarray(row[f"{channel}_sem"], dtype=float)[keep]
@@ -217,17 +210,19 @@ def plot_observed_and_null_grid(
                 xlabel="Lag (ms)" if row_index == n_rows - 1 else "",
                 title=title,
             )
-        row_axes[0].set_ylabel(f"{region_pair_label(group)}\n{MEASURE_LABELS[measure]}", fontsize=6)
+        row_axes[0].set_ylabel(f"{region_pair_label(group)}\n{MEASURE_LABEL}", fontsize=6)
         for ax in row_axes[1:]:
             ax.sharey(row_axes[0])
             ax.tick_params(labelleft=False)
     axes[0][-1].legend(frameon=False, fontsize=5.5, loc="upper right")
-    heading = f"{scope_label(scope)} — observed vs trial-shuffle null"
+    heading = f"{scope_label(scope)} — observed vs cross-trial shuffle null"
     if label:
         heading = f"{heading} — {label}"
-    fig.suptitle(heading, fontsize=8, color=INK)
-    fig.tight_layout()
-    suffix = f"{measure}_{scope}" + (f"_{label.replace(' ', '_').lower()}" if label else "")
+    # Reserve the strip the title needs before tight_layout packs the axes, or
+    # the top row's panel titles collide with it.
+    fig.tight_layout(rect=(0, 0, 1, 0.955))
+    fig.suptitle(heading, fontsize=8, color=INK, y=0.99)
+    suffix = scope + (f"_{label.replace(' ', '_').lower()}" if label else "")
     return fig, save_thesis_figure(fig, settings, f"{stem}_{suffix}")
 
 
@@ -236,7 +231,6 @@ def plot_null_corrected_grid(
     settings: PairCoordinationPlotSettings,
     *,
     scope: str = "within_region",
-    measure: str = "norm",
     max_lag_ms: float = 100.0,
     min_pairs: int = 0,
     label: str = "",
@@ -257,7 +251,7 @@ def plot_null_corrected_grid(
         return _empty_figure(
             settings,
             f"No {scope_label(scope).lower()} group reaches\n{min_pairs:,} pairs per condition",
-            f"{stem}_{measure}_{scope}",
+            f"{stem}_{scope}",
         )
 
     n_cols = min(len(groups), 4)
@@ -275,8 +269,8 @@ def plot_null_corrected_grid(
             row = _row(traces, scope=scope, region_pair=group, condition=condition)
             if row is None:
                 continue
-            mean = np.asarray(row[f"excess_{measure}_mean"], dtype=float)[keep]
-            sem = np.asarray(row[f"excess_{measure}_sem"], dtype=float)[keep]
+            mean = np.asarray(row["excess_mean"], dtype=float)[keep]
+            sem = np.asarray(row["excess_sem"], dtype=float)[keep]
             colour = CONDITION_COLORS.get(condition, MUTED_INK)
             ax.fill_between(
                 lags[keep], mean - sem, mean + sem, color=colour, alpha=0.20, linewidth=0
@@ -291,14 +285,14 @@ def plot_null_corrected_grid(
         _finish(ax, xlabel="Lag (ms)", title=f"{region_pair_label(group)}  (n={n_pairs:,})")
     for ax in flat[len(groups):]:
         ax.set_visible(False)
-    axes[0][0].set_ylabel(MEASURE_EXCESS_LABELS[measure], fontsize=6)
+    axes[0][0].set_ylabel(EXCESS_LABEL, fontsize=6)
     flat[len(groups) - 1].legend(frameon=False, fontsize=5.5, loc="upper right")
     heading = f"{scope_label(scope)} — null-corrected coordination"
     if label:
         heading = f"{heading} — {label}"
-    fig.suptitle(heading, fontsize=8, color=INK)
-    fig.tight_layout()
-    suffix = f"{measure}_{scope}" + (f"_{label.replace(' ', '_').lower()}" if label else "")
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
+    fig.suptitle(heading, fontsize=8, color=INK, y=0.99)
+    suffix = scope + (f"_{label.replace(' ', '_').lower()}" if label else "")
     return fig, save_thesis_figure(fig, settings, f"{stem}_{suffix}")
 
 
