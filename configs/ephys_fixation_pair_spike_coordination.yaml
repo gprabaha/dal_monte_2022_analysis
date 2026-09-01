@@ -80,8 +80,11 @@ selectivity_column: is_selective_unit_corrected
 # --- Output ------------------------------------------------------------------
 output_subdir: ephys/psth/fixation_pair_spike_coordination
 output_filename: pair_coordination.pkl
-# Saved traces are cropped to this half-width. The circular correlation is
-# defined over the full period; this only controls what reaches disk.
+# Half-width of the saved traces. The correlation is defined over -999..+999 ms,
+# but every peak in this data returns to baseline well before 250 ms, and the
+# overlap taper makes the far lags progressively noisier -- at 900 ms only 100
+# of 1000 bins contribute. Storing 250 keeps the whole structure at a quarter of
+# the size.
 store_max_lag_ms: 250.0
 
 summary_subdir: ephys/psth/fixation_pair_spike_coordination/summary

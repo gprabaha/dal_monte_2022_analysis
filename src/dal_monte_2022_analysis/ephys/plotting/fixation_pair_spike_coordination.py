@@ -42,6 +42,12 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     save_thesis_figure,
 )
 
+#: Lag half-width the figures show.  The correlation is computed over
+#: -999..+999 ms, but the overlap taper makes the far lags progressively noisier
+#: -- at 900 ms only 100 of 1000 bins contribute -- and every peak in this data
+#: has decayed to its baseline well before 250 ms.
+DEFAULT_PLOT_MAX_LAG_MS = 250.0
+
 SCOPE_LABELS: dict[str, str] = {
     "within_region": "Within region",
     "cross_region": "Across regions",
@@ -145,7 +151,7 @@ def plot_observed_and_null_grid(
     settings: PairCoordinationPlotSettings,
     *,
     scope: str = "within_region",
-    max_lag_ms: float = 100.0,
+    max_lag_ms: Optional[float] = DEFAULT_PLOT_MAX_LAG_MS,
     min_pairs: int = 0,
     label: str = "",
     stem: str = "observed_and_null",
@@ -161,7 +167,13 @@ def plot_observed_and_null_grid(
     apply_thesis_plot_style()
     lags = np.asarray(payload["lags_ms"], dtype=float)
     traces = payload["traces"]
-    keep = np.abs(lags) <= float(max_lag_ms)
+    # ``None`` shows every lag that was saved.  The default shows +/-250 ms,
+    # which contains the whole peak and its return to baseline in every region.
+    keep = (
+        np.ones(lags.shape, dtype=bool)
+        if max_lag_ms is None
+        else np.abs(lags) <= float(max_lag_ms)
+    )
     groups = region_groups(traces, scope, min_pairs=min_pairs)
     if not groups:
         return _empty_figure(
@@ -230,7 +242,7 @@ def plot_null_corrected_grid(
     settings: PairCoordinationPlotSettings,
     *,
     scope: str = "within_region",
-    max_lag_ms: float = 100.0,
+    max_lag_ms: Optional[float] = DEFAULT_PLOT_MAX_LAG_MS,
     min_pairs: int = 0,
     label: str = "",
     stem: str = "null_corrected",
@@ -244,7 +256,13 @@ def plot_null_corrected_grid(
     apply_thesis_plot_style()
     lags = np.asarray(payload["lags_ms"], dtype=float)
     traces = payload["traces"]
-    keep = np.abs(lags) <= float(max_lag_ms)
+    # ``None`` shows every lag that was saved.  The default shows +/-250 ms,
+    # which contains the whole peak and its return to baseline in every region.
+    keep = (
+        np.ones(lags.shape, dtype=bool)
+        if max_lag_ms is None
+        else np.abs(lags) <= float(max_lag_ms)
+    )
     groups = region_groups(traces, scope, min_pairs=min_pairs)
     if not groups:
         return _empty_figure(
@@ -264,23 +282,6 @@ def plot_null_corrected_grid(
     flat = axes.reshape(-1)
     for ax, group in zip(flat, groups):
         n_pairs = 0
-        # Stack the significance rugs so three conditions do not overprint.
-        panel_rows = [
-            _row(traces, scope=scope, region_pair=group, condition=c) for c in CONDITION_ORDER
-        ]
-        finite = [
-            np.asarray(r["excess_mean"], dtype=float)[keep] for r in panel_rows if r is not None
-        ]
-        span = (
-            (np.nanmin([np.nanmin(v) for v in finite]), np.nanmax([np.nanmax(v) for v in finite]))
-            if finite
-            else (0.0, 1.0)
-        )
-        step = 0.055 * (span[1] - span[0] or 1.0)
-        marker_levels = {
-            condition: span[0] - (index + 1) * step
-            for index, condition in enumerate(CONDITION_ORDER)
-        }
         for condition in CONDITION_ORDER:
             row = _row(traces, scope=scope, region_pair=group, condition=condition)
             if row is None:
@@ -295,18 +296,6 @@ def plot_null_corrected_grid(
                 lags[keep], mean, color=colour, linewidth=1.1,
                 label=condition_label(condition, short=True),
             )
-            # A rug of the lags whose excess clears the null, sign-tested across
-            # pairs and FDR-corrected over lags.  Without it a curve that is
-            # visibly above zero everywhere reads as though every lag counted.
-            if "excess_significant" in row.index:
-                flag = np.asarray(row["excess_significant"], dtype=bool)[keep]
-                if flag.any():
-                    ax.plot(
-                        lags[keep][flag],
-                        np.full(int(flag.sum()), marker_levels[condition]),
-                        marker="|", linestyle="none", markersize=2.6,
-                        color=colour, alpha=0.85,
-                    )
             n_pairs = max(n_pairs, int(row["n_pairs"]))
         ax.axhline(0.0, color=MUTED_INK, linewidth=0.8, linestyle="--")
         ax.axvline(0.0, color=MUTED_INK, linewidth=0.5, linestyle=":")
