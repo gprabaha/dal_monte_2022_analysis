@@ -48,6 +48,17 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_population_pc_subspace impo
     resolve_shared_n_components,
     verify_pca_identities,
 )
+from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spatial_decay import (
+    SpatialDecaySettings,
+    build_decay_table,
+    build_reference_levels,
+    build_separation_inventory,
+    fit_decay,
+    fit_decay_by_group,
+    load_pairs_with_separation,
+    test_condition_by_separation,
+    test_decay_flatness,
+)
 from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination import (
     PairSpikeCoordinationSettings,
     SessionSpikeTrains,
@@ -116,6 +127,15 @@ __all__ = [
     "load_region_populations",
     "resolve_shared_n_components",
     "verify_pca_identities",
+    "SpatialDecaySettings",
+    "build_decay_table",
+    "build_reference_levels",
+    "build_separation_inventory",
+    "fit_decay",
+    "fit_decay_by_group",
+    "load_pairs_with_separation",
+    "test_condition_by_separation",
+    "test_decay_flatness",
     "PairSpikeCoordinationSettings",
     "SessionSpikeTrains",
     "build_group_traces",
