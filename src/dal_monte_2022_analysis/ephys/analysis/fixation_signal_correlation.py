@@ -70,6 +70,12 @@ REGION_ORDER: tuple[str, ...] = ("bla", "accg", "dmpfc", "ofc")
 
 DEFAULT_OUTPUT_SUBDIR = "ephys/psth/fixation_signal_correlation"
 
+#: What the bar charts and the signal-versus-noise comparison summarise: the
+#: mean of the null-corrected correlation over the full stored lag range.  A
+#: windowed mean rather than a per-pair peak, because every pair peaks at a
+#: different lag and the mean of the maxima far exceeds the maximum of the mean.
+WINDOW_METRIC = "window_excess_pm250ms"
+
 #: Unit identity, matching every other analysis in the repository.
 UNIT_KEY_COLUMNS: tuple[str, ...] = (
     "date",
@@ -119,7 +125,7 @@ class SignalCorrelationSettings:
     #: peak, which would make them trivially similar.
     lag_band_ms: tuple[float, float] = (20.0, 200.0)
     #: Half-widths (ms) averaged into windowed, selection-free summaries.
-    window_half_widths_ms: tuple[float, ...] = (50.0, 100.0, 150.0)
+    window_half_widths_ms: tuple[float, ...] = (50.0, 100.0, 150.0, 250.0)
     random_seed: int = 0
 
 
@@ -654,10 +660,15 @@ def join_with_noise_correlation(
     pairs: pd.DataFrame,
     settings: SignalCorrelationSettings,
     *,
-    noise_metric: str = "circular_shift_peak_pm2ms",
-    signal_metric: str = "peak_excess",
+    noise_metric: str = "circular_shift_mean_excess_pm250ms",
+    signal_metric: str = WINDOW_METRIC,
 ) -> pd.DataFrame:
     """Match each pair to its spike-coordination measurement, where one exists.
+
+    Both sides default to the **mean over +/-250 ms** of the null-corrected
+    correlation, so the two quantities being related are summarised the same way
+    -- a whole-window average on each -- rather than a peak on one and a window
+    on the other.
 
     Signal and noise correlation are different quantities and need not track
     each other: two units can share a response profile and be independent trial
@@ -747,10 +758,6 @@ LAG_MEASURES: tuple[str, ...] = (
     "peak_abs_lag_ms",
 )
 
-#: What the bar charts summarise.  A windowed mean rather than a per-pair peak,
-#: so the bars and the trace figure show the same quantity -- see the comment in
-#: :func:`build_pair_correlations` for why a peak would not.
-WINDOW_METRIC = "window_excess_pm100ms"
 
 
 def summarize_lag_measures(

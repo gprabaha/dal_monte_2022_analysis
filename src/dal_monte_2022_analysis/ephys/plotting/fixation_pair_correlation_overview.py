@@ -85,6 +85,22 @@ def _finish(ax, *, xlabel="", ylabel="", title="", title_size=7) -> None:
     nice_axis(ax)
 
 
+def _trim_spines(ax, *, bottom: bool = True) -> None:
+    """End each spine at its outermost tick rather than at the axes corner.
+
+    An untrimmed spine runs the full width of the axes and reads as a frame; a
+    trimmed one reads as a scale, and the tick at each end tells you where the
+    scale stops rather than leaving the reader to guess.
+    """
+    ticks = [t for t in ax.get_yticks() if ax.get_ylim()[0] <= t <= ax.get_ylim()[1]]
+    if len(ticks) >= 2:
+        ax.spines["left"].set_bounds(min(ticks), max(ticks))
+    if bottom:
+        ticks = [t for t in ax.get_xticks() if ax.get_xlim()[0] <= t <= ax.get_xlim()[1]]
+        if len(ticks) >= 2:
+            ax.spines["bottom"].set_bounds(min(ticks), max(ticks))
+
+
 def _bare(ax) -> None:
     ax.set_xticks([]); ax.set_yticks([])
     for spine in ax.spines.values():
@@ -123,8 +139,8 @@ def plot_method_schematic(
     apply_thesis_plot_style()
     fig, axes = plt.subplots(
         1, 5,
-        figsize=(settings.schematic_width_in * 1.05, 2.05),
-        gridspec_kw={"width_ratios": [1.0, 1.0, 1.05, 1.0, 1.0], "wspace": 0.48},
+        figsize=(settings.schematic_width_in * 0.96, 2.20),
+        gridspec_kw={"width_ratios": [1.0, 1.0, 1.05, 1.0, 1.0], "wspace": 0.45},
     )
     rng = np.random.default_rng(11)
     lags = np.linspace(-200, 200, 260)
@@ -197,7 +213,7 @@ def plot_method_schematic(
     strip(ax)
     ax.set_title("NOISE\ncorrelation", fontsize=7.6, color=NOISE_COLOUR, pad=3)
 
-    fig.tight_layout(rect=(0.005, 0.13, 0.995, 0.84))
+    fig.tight_layout(rect=(0.002, 0.12, 0.998, 0.80))
     boxes = [ax.get_position() for ax in axes]
 
     def arrow(left_index: int, right_index: int, pointing: str, colour, label):
@@ -293,6 +309,7 @@ def plot_noise_above_null(
             else:
                 ax.spines["bottom"].set_visible(False)
                 ax.tick_params(axis="x", length=0)
+            _trim_spines(ax, bottom=row_index == len(conditions) - 1)
             if row_index == 0:
                 ax.set_title(f"{region_label(region)}  (n={int(row['n_pairs']):,})",
                              fontsize=6.5, color=INK, pad=2.5)
@@ -459,7 +476,7 @@ def plot_summary_bars(
     correlations: pd.DataFrame,
     settings: PairOverviewPlotSettings,
     *,
-    measure: str = "at_peak",
+    measure: str = "window_excess_pm250ms",
     scope: str = "within_region",
     stem: str = "fig04_summary_bars",
 ) -> tuple[plt.Figure, dict[str, Path]]:
@@ -490,7 +507,7 @@ def plot_summary_bars(
                  settings.panel_height_in + 1.0),
     )
     _bar_panel(axes[0], rows, groups, contrasts=contrasts)
-    _finish(axes[0], ylabel="Signal correlation at peak\n(observed − null)",
+    _finish(axes[0], ylabel="Signal correlation, mean ±250 ms\n(observed − null)",
             title="Signal correlation by fixation type", title_size=7.5)
 
     if len(correlations):

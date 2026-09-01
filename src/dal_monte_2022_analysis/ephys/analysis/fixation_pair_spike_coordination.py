@@ -732,7 +732,7 @@ OBSERVED_METRIC = "observed_mean_pm10ms"
 BASELINE_LAG_MS = 200.0
 
 #: Half-widths (ms) over which the z traces are averaged into scalar summaries.
-SUMMARY_WINDOWS_MS: tuple[float, ...] = (5.0, 10.0, 25.0, 50.0, 100.0)
+SUMMARY_WINDOWS_MS: tuple[float, ...] = (5.0, 10.0, 25.0, 50.0, 100.0, 250.0)
 
 #: Lag range searched for the coordination peak.
 DEFAULT_PEAK_SEARCH_MS = 100.0

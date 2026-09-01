@@ -101,15 +101,12 @@ display(Image(filename=str(paths["png"])))
 
 def bars_cell(scope: str) -> str:
     return f'''
-# The bar is the height of the peak in the trace above, not a per-pair maximum
-# and not a windowed mean: the peak lag is found once from the group trace and
-# every pair is then read at that one lag.
-peak_lags = sc.group_peak_lags(signal_traces["traces"], scope="{scope}", lags_ms=signal_lags)
-at_peak = sc.extract_at_group_peak(
-    signal, peak_lags, signal_settings, lags_ms=signal_lags, scope="{scope}"
+summary = sc.summarize_lag_measures(
+    signal, signal_settings, measures=(sc.WINDOW_METRIC,), scope="{scope}"
 )
-summary = sc.summarize_at_group_peak(at_peak, signal_settings, scope="{scope}")
-contrasts = sc.compare_at_group_peak(at_peak, signal_settings)
+contrasts = sc.compare_lag_measures(
+    signal, signal_settings, measures=(sc.WINDOW_METRIC,), scope="{scope}"
+)
 rho = correlations.loc[correlations["scope"] == "{scope}"]
 
 fig, paths = viz.plot_summary_bars(summary, contrasts, rho, figs, scope="{scope}")
@@ -118,10 +115,7 @@ display(Image(filename=str(paths["png"])))
 display(
     summary.pivot_table(index="region_pair", columns="condition", values="mean").round(4)
 )
-display(Markdown("**Lag at which each peak was taken (ms)**"))
-display(
-    summary.pivot_table(index="region_pair", columns="condition", values="peak_lag_ms").round(0)
-)
+
 display(
     contrasts.loc[
         :, ["region_pair", "condition_a", "condition_b", "n_pairs", "mean_difference",
