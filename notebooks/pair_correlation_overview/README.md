@@ -21,9 +21,10 @@ Signal correlation comes first because it carries the clearer result.
 
 1. Method schematic — one set of trials, two orders of operation
 2. **Signal**: null-corrected correlation across lags
-3. **Signal**: peak correlation by region and fixation type
-4. **Noise**: sits above the circular-shift null; fixation type does not change it
-5. Peak signal against peak noise, per region, per condition
+3. **Signal**: mean ±100 ms by region and fixation type, with significance
+4. **Noise**: observed against null, every region and condition
+5. **Noise**: null-subtracted — the fixation types do not differ
+6. Spearman correlation between the two measures, per region and condition
 
 ## Why a windowed mean, not zero lag and not the peak
 

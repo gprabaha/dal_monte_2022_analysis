@@ -89,7 +89,7 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_pair_correlation_overview i
     PairOverviewPlotSettings,
     plot_excess_by_condition,
     plot_peak_comparison,
-    plot_peak_signal_vs_noise,
+    plot_signal_noise_correlation_bars,
     plot_noise_above_null,
 )
 from dal_monte_2022_analysis.ephys.plotting.fixation_signal_correlation import (
@@ -195,7 +195,7 @@ __all__ = [
     "PairOverviewPlotSettings",
     "plot_excess_by_condition",
     "plot_peak_comparison",
-    "plot_peak_signal_vs_noise",
+    "plot_signal_noise_correlation_bars",
     "plot_noise_above_null",
     "SignalCorrelationPlotSettings",
     "plot_condition_summary",

@@ -75,7 +75,7 @@ display(
 '''
 
 NOISE_ABOVE = '''
-fig, paths = viz.plot_noise_above_null(noise_traces, figs, condition="face_interactive")
+fig, paths = viz.plot_noise_above_null(noise_traces, figs)
 display(Image(filename=str(paths["png"])))
 '''
 
@@ -143,12 +143,14 @@ display(
 '''
 
 COMBINED = '''
-joined = sc.join_with_noise_correlation(signal, signal_settings)
+joined = sc.join_with_noise_correlation(
+    signal, signal_settings, signal_metric=sc.WINDOW_METRIC
+)
 joined = joined.loc[joined["scope"] == "within_region"]
 correlations = sc.correlate_signal_with_noise(joined)
 print(f"pairs with both measurements: {len(joined) // 3:,} per condition")
 
-fig, paths = viz.plot_peak_signal_vs_noise(joined, correlations, figs)
+fig, paths = viz.plot_signal_noise_correlation_bars(correlations, figs)
 display(Image(filename=str(paths["png"])))
 
 display(
@@ -219,18 +221,17 @@ Summarised as the **mean over ±100 ms**, not at zero lag and not at the peak.
   the same quantity: the mean over pairs of this **equals** the mean of the
   group trace over the same window.
 
-Brackets carry the rank-biserial effect size, starred where the contrast
-survives FDR correction. With hundreds to thousands of pairs per region almost
-any difference clears an alpha, so the star says "survived correction" and the
-number says whether it matters.
+Brackets appear only where a contrast survives FDR correction. Annotating the
+rest would fill the panel with numbers that all say "no difference", and the
+reader would have to check each one to learn that.
 """),
     code(SIGNAL_PEAK),
     markdown("""
 # Noise correlation
 
-## 4. It sits above the null, and fixation type does not change it
+## 4. It sits above the null in every region and condition
 
-Interactive face first, against the circular-shift null. The gap between the two
+Rows are fixation conditions, columns are regions. The gap between the two
 curves is the coordination.
 
 The y-axis is **coincidences per fixation**, not a correlation coefficient: at
@@ -249,12 +250,14 @@ difference reaches significance.
     markdown("""
 # Putting them together
 
-## 5. Peak signal against peak noise, per region
+## 5. Do the two measures track each other?
 
-One panel per region, since the two quantities differ by an order of magnitude
-between regions and a pooled scatter would show mostly that. Points are coloured
-by fixation condition and the Spearman correlation per condition is printed on
-the panel.
+Spearman correlation between each pair's signal and noise correlation, per
+region and fixation condition. A positive value means pairs whose mean responses
+resemble each other also tend to co-fire trial to trial — which is not
+guaranteed, since the two are computed by different operations on the same
+trains and either can exist without the other. Stars mark ρ significantly
+different from zero.
 """),
     code(COMBINED),
     markdown("""
