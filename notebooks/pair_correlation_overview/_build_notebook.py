@@ -118,12 +118,16 @@ display(Image(filename=str(paths["png"])))
 '''
 
 SIGNAL_PEAK = '''
-lag_summary = sc.summarize_lag_measures(signal, signal_settings, measures=("peak_excess",))
-peak_contrasts = sc.compare_lag_measures(signal, signal_settings, measures=("peak_excess",))
+lag_summary = sc.summarize_lag_measures(
+    signal, signal_settings, measures=(sc.WINDOW_METRIC,)
+)
+peak_contrasts = sc.compare_lag_measures(
+    signal, signal_settings, measures=(sc.WINDOW_METRIC,)
+)
 
 fig, paths = viz.plot_peak_comparison(
     lag_summary, figs, contrasts=peak_contrasts,
-    title="Peak signal correlation by region and fixation type",
+    title="Signal correlation by region and fixation type",
 )
 display(Image(filename=str(paths["png"])))
 
@@ -202,19 +206,23 @@ unit from another session no more than chance".
 """),
     code(SIGNAL_TRACES),
     markdown("""
-## 3. Peak correlation by region and fixation type
+## 3. Correlation by region and fixation type
 
-Summarised at the **peak** rather than at zero lag. Zero lag is one bin of
-fifty, and two units whose responses share a shape but differ in latency
-correlate strongly off zero and weakly at it — so a zero-lag summary would miss
-exactly the pairs the analysis is looking for.
+Summarised as the **mean over ±100 ms**, not at zero lag and not at the peak.
 
-The peak's absolute level is inflated, since it is a maximum over many noisy
-lags. That inflation is identical for every condition, so the comparisons hold
-even though the level should not be quoted alone.
+- *Not zero lag*: it is one bin of fifty, and two units whose responses share a
+  shape but differ in latency correlate strongly off zero and weakly at it.
+- *Not the peak*: each pair's maximum falls at a different lag, so averaging
+  per-pair maxima gives a far larger number than the maximum of the average —
+  a bar chart of peaks reads around 0.3 while the trace above it peaks near
+  0.1. The windowed mean has no maximum in it, so the bars and the traces are
+  the same quantity: the mean over pairs of this **equals** the mean of the
+  group trace over the same window.
 
-Annotations give the rank-biserial effect size for interactive face against each
-other condition, starred where the contrast survives FDR correction.
+Brackets carry the rank-biserial effect size, starred where the contrast
+survives FDR correction. With hundreds to thousands of pairs per region almost
+any difference clears an alpha, so the star says "survived correction" and the
+number says whether it matters.
 """),
     code(SIGNAL_PEAK),
     markdown("""

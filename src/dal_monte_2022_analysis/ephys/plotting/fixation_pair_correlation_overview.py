@@ -26,6 +26,7 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     MUTED_INK,
     REGION_LABELS,
     ThesisFigureSettings,
+    add_significance_bracket,
     apply_thesis_plot_style,
     nice_axis,
     save_thesis_figure,
@@ -77,118 +78,120 @@ def plot_method_schematic(
     *,
     stem: str = "fig01_method_schematic",
 ) -> tuple[plt.Figure, dict[str, Path]]:
-    """The same spike trains, two orders of operation.
+    """One set of trials in the centre, the two orders of operation either side.
 
-    One set of trials on the left feeds both paths.  The upper path correlates
-    within each trial and averages the correlograms; the lower path averages the
-    trials into rate timelines and correlates those.  Averaging first is the
-    only difference, and it is what removes trial-by-trial covariation -- which
-    is why the two paths measure independent things.
+    Reading outward from the middle: to the right, correlate within each trial
+    and average the correlograms; to the left, average the trials into rate
+    timelines and correlate those.  Averaging first is the only difference, and
+    it is what removes trial-by-trial covariation -- which is why the two sides
+    measure independent things.
     """
     apply_thesis_plot_style()
-    from matplotlib.gridspec import GridSpec
-
-    fig = plt.figure(figsize=(settings.schematic_width_in, settings.schematic_height_in))
-    grid = GridSpec(
-        2, 3, figure=fig, width_ratios=[1.05, 1.0, 1.0],
-        hspace=0.55, wspace=0.52, left=0.09, right=0.985, top=0.86, bottom=0.10,
+    fig, axes = plt.subplots(
+        1, 5,
+        figsize=(settings.schematic_width_in * 1.32, settings.schematic_height_in * 0.72),
+        gridspec_kw={"width_ratios": [1.0, 1.0, 1.15, 1.0, 1.0], "wspace": 0.75},
     )
     rng = np.random.default_rng(11)
     lags = np.linspace(-200, 200, 240)
     time = np.linspace(-500, 500, 120)
     unit_colours = ("#111111", "#2c7fb8")
+    interactive = CONDITION_COLORS["face_interactive"]
 
-    # ---- shared trials -----------------------------------------------------
-    ax_trains = fig.add_subplot(grid[:, 0])
-    labels = ["trial 1", "trial 2", "", "trial n"]
-    for row, label in enumerate(labels):
+    # ---- centre: the trials both sides start from --------------------------
+    ax = axes[2]
+    for row, label in enumerate(["trial 1", "trial 2", "", "trial n"]):
         y = 3 - row
         if label == "":
-            ax_trains.text(0, y + 0.40, "⋮", ha="center", va="center",
-                           fontsize=13, color=INK)
+            ax.text(0, y + 0.40, "⋮", ha="center", va="center", fontsize=13, color=INK)
             continue
         for offset, colour in zip((0.44, 0.06), unit_colours):
-            ax_trains.vlines(rng.uniform(-500, 500, 13), y + offset,
-                             y + offset + 0.30, color=colour, lw=0.85)
-        ax_trains.text(-620, y + 0.38, label, fontsize=6.5, color=INK,
-                       ha="right", va="center")
-    ax_trains.axvline(0, color=MUTED_INK, lw=0.7, ls=":")
-    ax_trains.text(0, 4.45, "fixation onset", ha="center", fontsize=6, color=MUTED_INK)
-    # Name the two units against the trains they belong to, not in a corner.
-    ax_trains.text(520, 3.59, "unit 1", fontsize=6, color=unit_colours[0], va="center")
-    ax_trains.text(520, 3.21, "unit 2", fontsize=6, color=unit_colours[1], va="center")
-    ax_trains.set_xlim(-680, 560)
-    ax_trains.set_ylim(-0.35, 4.75)
-    _bare(ax_trains)
-    ax_trains.set_title("1 ms spike trains, ±500 ms", fontsize=7.5, color=INK)
+            ax.vlines(rng.uniform(-500, 500, 13), y + offset, y + offset + 0.30,
+                      color=colour, lw=0.85)
+        ax.text(-505, y + 0.72, label, fontsize=5.5, color=MUTED_INK, ha="left", va="center")
+    ax.axvline(0, color=MUTED_INK, lw=0.7, ls=":")
+    ax.text(0, 4.72, "fixation onset", ha="center", fontsize=5.5, color=MUTED_INK)
+    ax.text(545, 3.59, "unit 1", fontsize=5.5, color=unit_colours[0], va="center")
+    ax.text(545, 3.21, "unit 2", fontsize=5.5, color=unit_colours[1], va="center")
+    ax.set_xlim(-540, 660); ax.set_ylim(-0.35, 5.05); _bare(ax)
+    ax.set_title("1 ms spike trains\n±500 ms per fixation", fontsize=7.5, color=INK)
 
-    # ---- upper path: correlate, then average -------------------------------
-    ax_a = fig.add_subplot(grid[0, 1])
+    # ---- left of centre: average first -------------------------------------
+    ax = axes[1]
+    ax.plot(time, 1.05 + 0.85 * np.exp(-0.5 * ((time - 45) / 130.0) ** 2),
+            color=unit_colours[0], lw=1.6)
+    ax.plot(time, 0.05 + 0.72 * np.exp(-0.5 * ((time + 5) / 150.0) ** 2),
+            color=unit_colours[1], lw=1.6)
+    ax.axvline(0, color=MUTED_INK, lw=0.6, ls=":")
+    ax.set_xlabel("Time (ms)", fontsize=6)
+    ax.set_yticks([])
+    _finish(ax, title="mean rate timeline\nper unit", title_size=7)
+    ax.title.set_color(SIGNAL_COLOUR)
+
+    ax = axes[0]
+    null_s = 0.002 + 0.001 * np.exp(-np.abs(lags) / 160)
+    obs_s = null_s + 0.085 * np.exp(-0.5 * ((lags - 35) / 85.0) ** 2)
+    ax.plot(lags, obs_s, color=interactive, lw=1.4)
+    ax.plot(lags, null_s, color=MUTED_INK, lw=1.1, ls="--")
+    ax.fill_between(lags, null_s, obs_s, color=SIGNAL_COLOUR, alpha=0.28, lw=0)
+    ax.set_xlabel("Lag (ms)", fontsize=6); ax.set_yticks([])
+    _finish(ax, title="SIGNAL\ncorrelation", title_size=8.5)
+    ax.title.set_color(SIGNAL_COLOUR)
+
+    # ---- right of centre: correlate first ----------------------------------
+    ax = axes[3]
     for trial in range(3):
         trace = 0.5 * np.exp(-np.abs(lags) / 22.0) * rng.uniform(0.4, 1.7)
         trace = trace + rng.normal(0, 0.06, lags.size)
-        ax_a.plot(lags, trace + (2 - trial) * 0.8, color=MUTED_INK, lw=0.7)
-    ax_a.text(0, -0.42, "⋮", ha="center", va="center", fontsize=13, color=INK)
-    ax_a.set_ylim(-0.75, 2.35)
-    ax_a.set_xlabel("Lag (ms)", fontsize=6.5)
-    _bare(ax_a)
-    ax_a.set_title("one correlogram per trial", fontsize=7, color=NOISE_COLOUR)
+        ax.plot(lags, trace + (2 - trial) * 0.8, color=MUTED_INK, lw=0.7)
+    ax.text(0, -0.42, "⋮", ha="center", va="center", fontsize=13, color=INK)
+    ax.set_ylim(-0.75, 2.35)
+    ax.set_xlabel("Lag (ms)", fontsize=6)
+    _bare(ax)
+    ax.set_title("one correlogram\nper trial", fontsize=7, color=NOISE_COLOUR)
 
-    ax_b = fig.add_subplot(grid[0, 2])
+    ax = axes[4]
     null_n = 0.055 + 0.004 * np.exp(-np.abs(lags) / 180)
     obs_n = null_n + 0.020 * np.exp(-np.abs(lags) / 9.0)
-    ax_b.plot(lags, obs_n, color=CONDITION_COLORS["face_interactive"], lw=1.4)
-    ax_b.plot(lags, null_n, color=MUTED_INK, lw=1.1, ls="--")
-    ax_b.fill_between(lags, null_n, obs_n, color=NOISE_COLOUR, alpha=0.28, lw=0)
-    ax_b.set_xlabel("Lag (ms)", fontsize=6.5)
-    ax_b.set_yticks([])
-    _finish(ax_b, title="NOISE correlation", title_size=8)
-    ax_b.title.set_color(NOISE_COLOUR)
+    ax.plot(lags, obs_n, color=interactive, lw=1.4)
+    ax.plot(lags, null_n, color=MUTED_INK, lw=1.1, ls="--")
+    ax.fill_between(lags, null_n, obs_n, color=NOISE_COLOUR, alpha=0.28, lw=0)
+    ax.set_xlabel("Lag (ms)", fontsize=6); ax.set_yticks([])
+    _finish(ax, title="NOISE\ncorrelation", title_size=8.5)
+    ax.title.set_color(NOISE_COLOUR)
 
-    # ---- lower path: average, then correlate -------------------------------
-    ax_c = fig.add_subplot(grid[1, 1])
-    ax_c.plot(time, 1.05 + 0.85 * np.exp(-0.5 * ((time - 45) / 130.0) ** 2),
-              color=unit_colours[0], lw=1.6)
-    ax_c.plot(time, 0.05 + 0.72 * np.exp(-0.5 * ((time + 5) / 150.0) ** 2),
-              color=unit_colours[1], lw=1.6)
-    ax_c.axvline(0, color=MUTED_INK, lw=0.7, ls=":")
-    ax_c.set_xlabel("Time from fixation (ms)", fontsize=6.5)
-    ax_c.set_yticks([])
-    _finish(ax_c, title="one mean rate timeline per unit", title_size=7)
-    ax_c.title.set_color(SIGNAL_COLOUR)
+    # ---- arrows outward from the centre ------------------------------------
+    # Placed from the axes' actual positions after layout, so they land in the
+    # gaps between panels rather than on top of them.
+    fig.tight_layout(rect=(0, 0.02, 1, 0.82))
+    boxes = [ax.get_position() for ax in axes]
 
-    ax_d = fig.add_subplot(grid[1, 2])
-    null_s = 0.002 + 0.001 * np.exp(-np.abs(lags) / 160)
-    obs_s = null_s + 0.085 * np.exp(-0.5 * ((lags - 35) / 85.0) ** 2)
-    ax_d.plot(lags, obs_s, color=CONDITION_COLORS["face_interactive"], lw=1.4)
-    ax_d.plot(lags, null_s, color=MUTED_INK, lw=1.1, ls="--")
-    ax_d.fill_between(lags, null_s, obs_s, color=SIGNAL_COLOUR, alpha=0.28, lw=0)
-    ax_d.set_xlabel("Lag (ms)", fontsize=6.5)
-    ax_d.set_yticks([])
-    _finish(ax_d, title="SIGNAL correlation", title_size=8)
-    ax_d.title.set_color(SIGNAL_COLOUR)
-
-    # ---- labelled arrows ---------------------------------------------------
-    def arrow(x0, y0, x1, y1, colour, label, dy=0.022):
-        fig.add_artist(
-            FancyArrowPatch(
-                (x0, y0), (x1, y1), transform=fig.transFigure,
-                arrowstyle="-|>", mutation_scale=9, color=colour, lw=1.3,
-                connectionstyle="arc3,rad=0.0",
-            )
+    def arrow(left_index: int, right_index: int, pointing: str, colour, label):
+        gap_left = boxes[left_index].x1
+        gap_right = boxes[right_index].x0
+        pad = 0.12 * (gap_right - gap_left)
+        y = 0.42
+        start, end = (
+            (gap_right - pad, gap_left + pad)
+            if pointing == "left"
+            else (gap_left + pad, gap_right - pad)
         )
-        fig.text((x0 + x1) / 2, max(y0, y1) + dy, label, ha="center", va="bottom",
-                 fontsize=6.0, color=colour, linespacing=1.25)
+        fig.add_artist(
+            FancyArrowPatch((start, y), (end, y), transform=fig.transFigure,
+                            arrowstyle="-|>", mutation_scale=9, color=colour, lw=1.3)
+        )
+        fig.text(0.5 * (gap_left + gap_right), y + 0.045, label, ha="center",
+                 va="bottom", fontsize=6.0, color=colour, linespacing=1.25)
 
-    arrow(0.318, 0.735, 0.392, 0.735, NOISE_COLOUR, "correlate\nwithin trials")
-    arrow(0.655, 0.735, 0.725, 0.735, NOISE_COLOUR, "then\naverage")
-    arrow(0.318, 0.255, 0.392, 0.255, SIGNAL_COLOUR, "average\nacross trials")
-    arrow(0.655, 0.255, 0.725, 0.255, SIGNAL_COLOUR, "then\ncross-correlate")
+    arrow(1, 2, "left", SIGNAL_COLOUR, "average\nacross trials")
+    arrow(0, 1, "left", SIGNAL_COLOUR, "then\ncross-correlate")
+    arrow(2, 3, "right", NOISE_COLOUR, "correlate\nwithin trials")
+    arrow(3, 4, "right", NOISE_COLOUR, "then\naverage")
+    # The rightmost panel's tick labels reach into its gap; nudge that one label.
+    fig.texts[-1].set_position((fig.texts[-1].get_position()[0] - 0.008,
+                                fig.texts[-1].get_position()[1]))
 
-    fig.suptitle(
-        "Averaging first removes trial-by-trial covariation — the only difference between the two",
-        fontsize=8, color=INK, y=0.975,
-    )
+    fig.tight_layout(rect=(0, 0, 1, 0.86))
     return fig, save_thesis_figure(fig, settings, stem)
 
 
@@ -319,8 +322,8 @@ def plot_peak_comparison(
     settings: PairOverviewPlotSettings,
     *,
     contrasts: Optional[pd.DataFrame] = None,
-    measure: str = "peak_excess",
-    ylabel: str = "Peak signal correlation\n(observed − null)",
+    measure: str = "window_excess_pm100ms",
+    ylabel: str = "Signal correlation, mean ±100 ms\n(observed − null)",
     title: str = "",
     stem: str = "fig03_peak_comparison",
 ) -> tuple[plt.Figure, dict[str, Path]]:
@@ -368,21 +371,36 @@ def plot_peak_comparison(
         local = contrasts
         if "measure" in local.columns:
             local = local.loc[local["measure"] == measure]
-        top = ax.get_ylim()[1]
+        # Brackets carry the effect size, not a p-value.  With hundreds to
+        # thousands of pairs per region almost any difference clears an alpha,
+        # so the star says "survived FDR" and the number says whether it matters.
+        offsets = {c: (i - 1) * width for i, c in enumerate(CONDITION_ORDER)}
+        low, high = ax.get_ylim()
+        step = 0.085 * (high - low)
+        headroom = high
         for position, region in enumerate(regions):
-            block = local.loc[
-                (local["region_pair"] == region)
-                & (local["condition_a"] == "face_interactive")
-            ]
-            if block.empty:
-                continue
-            marks = [
-                f"{condition_label(row.condition_b)}: {row.effect_size_rank_biserial:+.2f}"
-                + ("*" if bool(row.significant) else "")
-                for row in block.itertuples()
-            ]
-            ax.text(position, top * 0.99, "int vs\n" + "\n".join(marks),
-                    ha="center", va="top", fontsize=5.2, color=MUTED_INK)
+            block = local.loc[local["region_pair"] == region]
+            level = 0
+            for row in block.itertuples():
+                if row.condition_a not in offsets or row.condition_b not in offsets:
+                    continue
+                if not np.isfinite(row.effect_size_rank_biserial):
+                    continue
+                y = high + step * (0.35 + level)
+                headroom = max(headroom, y + step * 0.6)
+                star = "*" if bool(row.significant) else ""
+                add_significance_bracket(
+                    ax,
+                    position + offsets[row.condition_a],
+                    position + offsets[row.condition_b],
+                    y,
+                    f"{row.effect_size_rank_biserial:+.2f}{star}",
+                    fontsize=5.2,
+                    color=MUTED_INK,
+                    tick_frac=0.012,
+                )
+                level += 1
+        ax.set_ylim(low, headroom)
 
     _finish(ax, ylabel=ylabel, title=title, title_size=8)
     fig.tight_layout()

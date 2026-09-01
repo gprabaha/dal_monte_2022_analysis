@@ -118,6 +118,8 @@ class SignalCorrelationSettings:
     #: starts away from zero so the two bands do not both contain the central
     #: peak, which would make them trivially similar.
     lag_band_ms: tuple[float, float] = (20.0, 200.0)
+    #: Half-widths (ms) averaged into windowed, selection-free summaries.
+    window_half_widths_ms: tuple[float, ...] = (50.0, 100.0, 150.0)
     random_seed: int = 0
 
 
@@ -498,6 +500,21 @@ def build_pair_correlations(
                 record[f"{condition}_positive_lag_excess"]
                 - record[f"{condition}_negative_lag_excess"]
             )
+
+            # Mean over a fixed window, with no maximum taken anywhere.
+            #
+            # This is the measure to put in a bar chart beside the trace figure,
+            # because the two are then the same number: the mean over pairs of
+            # this equals the mean of the group trace over the same window.  The
+            # per-pair *peak* is not -- each pair's maximum falls at a different
+            # lag, so averaging per-pair maxima gives a much larger value than
+            # the maximum of the average, and a bar chart of peaks sits well
+            # above the trace it is supposed to summarise.
+            for half_width in settings.window_half_widths_ms:
+                window = np.abs(lags_ms) <= float(half_width)
+                record[f"{condition}_window_excess_pm{int(half_width)}ms"] = (
+                    float(np.nanmean(excess[window])) if window.any() else np.nan
+                )
         records.append(record)
 
     return pd.DataFrame.from_records(records), lags_ms
@@ -708,11 +725,17 @@ def correlate_signal_with_noise(joined: pd.DataFrame) -> pd.DataFrame:
 
 #: Lag-band measures reported instead of the zero-lag value alone.
 LAG_MEASURES: tuple[str, ...] = (
+    "window_excess_pm100ms",
     "peak_excess",
     "positive_lag_excess",
     "negative_lag_excess",
     "peak_abs_lag_ms",
 )
+
+#: What the bar charts summarise.  A windowed mean rather than a per-pair peak,
+#: so the bars and the trace figure show the same quantity -- see the comment in
+#: :func:`build_pair_correlations` for why a peak would not.
+WINDOW_METRIC = "window_excess_pm100ms"
 
 
 def summarize_lag_measures(

@@ -25,17 +25,19 @@ Signal correlation comes first because it carries the clearer result.
 4. **Noise**: sits above the circular-shift null; fixation type does not change it
 5. Peak signal against peak noise, per region, per condition
 
-## Why the peak, not zero lag
+## Why a windowed mean, not zero lag and not the peak
 
-Zero lag is one bin of fifty and a poor summary: two units whose responses share
-a shape but differ in latency correlate strongly at a non-zero lag and weakly at
-zero, so a zero-lag summary would miss exactly the pairs the analysis looks for.
-Reported instead: the **peak** over ±100 ms — similarity at best alignment.
+Signal correlation is summarised as the **mean over ±100 ms**.
 
-The peak is a maximum over many noisy lags and so is inflated in level. That
-inflation is identical for every condition, since each is a maximum over the
-same lags on the same pairs, so comparisons hold even though the absolute value
-should not be quoted alone.
+*Not zero lag*: it is one bin of fifty, and two units whose responses share a
+shape but differ in latency correlate strongly off zero and weakly at it.
+
+*Not the peak*: each pair's maximum falls at a different lag, so the mean of the
+per-pair maxima is far larger than the maximum of the mean. A bar chart of peaks
+read around 0.3 while the trace it summarised peaked near 0.1 — the same data,
+two incompatible numbers. The windowed mean takes no maximum anywhere, so the
+bars and the traces are the same quantity: the mean over pairs of the windowed
+value **equals** the mean of the group trace over that window, verified to 5e-10.
 
 ## Why the two y-axes are not comparable
 
