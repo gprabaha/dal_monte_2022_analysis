@@ -51,7 +51,7 @@ SCOPE_LABELS: dict[str, str] = {
 #: the trial-shuffle null already carries both units' firing rates and exact
 #: spike counts, so ``observed - null`` is rate-controlled by construction.
 MEASURE_LABEL = "Coincidences\nper fixation"
-EXCESS_LABEL = "Observed − null\n(coincidences per fixation)"
+EXCESS_LABEL = "Cross-correlation − null\n(coincidences per fixation)"
 
 
 @dataclass
@@ -287,7 +287,7 @@ def plot_null_corrected_grid(
         ax.set_visible(False)
     axes[0][0].set_ylabel(EXCESS_LABEL, fontsize=6)
     flat[len(groups) - 1].legend(frameon=False, fontsize=5.5, loc="upper right")
-    heading = f"{scope_label(scope)} — null-corrected coordination"
+    heading = f"{scope_label(scope)} — null-corrected cross-correlation"
     if label:
         heading = f"{heading} — {label}"
     fig.tight_layout(rect=(0, 0, 1, 0.93))
@@ -354,7 +354,7 @@ def plot_condition_contrasts(
     heading = f"{scope_label(scope)}"
     if label:
         heading = f"{heading} — {label}"
-    _finish(ax, xlabel="Within-pair difference in null-corrected coordination", title=heading)
+    _finish(ax, xlabel="Within-pair difference in null-corrected cross-correlation", title=heading)
     fig.tight_layout()
     suffix = scope + (f"_{label.replace(' ', '_').lower()}" if label else "")
     return fig, save_thesis_figure(fig, settings, f"{stem}_{suffix}")
