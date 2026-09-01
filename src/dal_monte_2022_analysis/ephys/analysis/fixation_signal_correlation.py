@@ -675,15 +675,30 @@ def join_with_noise_correlation(
     noise = noise.copy()
     for column in ("date", "unit_uuid_1", "unit_uuid_2", "condition"):
         noise[column] = noise[column].astype(str)
-    noise["match_key"] = (
-        noise["date"] + "|" + noise["unit_uuid_1"] + "|" + noise["unit_uuid_2"]
-    )
-    lookup = noise.set_index(["match_key", "condition"])[noise_metric]
+    # Order-insensitive key.  The two analyses build their pairs independently
+    # -- the noise side sorts units by region then uuid, this side takes them in
+    # the order the combined export lists them -- so a pair can appear as (A, B)
+    # in one and (B, A) in the other.  Keying on the sorted uuids matches them
+    # regardless.  Keying on the raw order silently dropped most cross-region
+    # pairs, which showed up as region pairs missing from the summary rather
+    # than as an error.
+    noise["match_key"] = [
+        date + "|" + "|".join(sorted((first, second)))
+        for date, first, second in zip(
+            noise["date"], noise["unit_uuid_1"], noise["unit_uuid_2"]
+        )
+    ]
+    lookup = noise.set_index(["match_key", "condition"])[noise_metric].sort_index()
 
     rows: list[dict] = []
     for _, row in pairs.iterrows():
+        match_key = (
+            str(row["date"])
+            + "|"
+            + "|".join(sorted((str(row["unit_uuid_1"]), str(row["unit_uuid_2"]))))
+        )
         for condition in settings.conditions:
-            key = (str(row["pair_key"]), condition)
+            key = (match_key, condition)
             if key not in lookup.index:
                 continue
             value = lookup.loc[key]

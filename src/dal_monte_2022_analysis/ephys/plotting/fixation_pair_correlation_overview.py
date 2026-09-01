@@ -86,6 +86,11 @@ def _bare(ax) -> None:
         spine.set_visible(False)
 
 
+def _group_order(values: Sequence[str]) -> list[str]:
+    ranked = [r for r in REGION_ORDER if r in set(values)]
+    return ranked + sorted(set(values) - set(ranked))
+
+
 def plot_method_schematic(
     settings: PairOverviewPlotSettings,
     *,
@@ -208,40 +213,47 @@ def plot_noise_above_null(
     traces: Mapping,
     settings: PairOverviewPlotSettings,
     *,
+    scope: str = "within_region",
     conditions: Sequence[str] = CONDITION_ORDER,
     max_lag_ms: float = 150.0,
-    regions: Sequence[str] = REGION_ORDER,
-    stem: str = "fig04_noise_above_null",
+    regions: Optional[Sequence[str]] = None,
+    stem: str = "fig03_noise_above_null",
 ) -> tuple[plt.Figure, dict[str, Path]]:
-    """Observed noise correlation against its null, every region and condition.
+    """Observed noise cross-correlation against its null, per region and condition.
 
-    Rows are fixation conditions, columns are regions.  The gap between the two
-    curves in each panel is the coordination; the observed curve alone is not,
-    since a coincidence count scales with the product of the two firing rates.
+    Rows are fixation conditions, columns are regions, and only the bottom row
+    carries an x-axis: the lag axis is the same in every panel, so repeating it
+    twelve times spends height on nothing.  Panels are deliberately short --
+    what has to be legible is the gap between the two curves, not the shape of
+    either one in isolation.
     """
     apply_thesis_plot_style()
     lags = np.asarray(traces["lags_ms"], dtype=float)
     frame = traces["traces"]
     keep = np.abs(lags) <= float(max_lag_ms)
-    present = [
-        r for r in regions
-        if ((frame["region_pair"] == r) & (frame["scope"] == "within_region")).any()
-    ]
+    subset = frame.loc[frame["scope"].astype(str) == scope]
+    if regions is None:
+        ordered = [r for r in REGION_ORDER if r in set(subset["region_pair"])]
+        regions = ordered + sorted(set(subset["region_pair"].astype(str)) - set(ordered))
+    present = [r for r in regions if (subset["region_pair"] == r).any()]
+    if not present:
+        fig, ax = plt.subplots(figsize=(3.2, 1.4))
+        ax.text(0.5, 0.5, f"No {scope.replace('_', ' ')} groups", ha="center",
+                va="center", fontsize=7, color=MUTED_INK)
+        _bare(ax)
+        return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
 
     fig, axes = plt.subplots(
         len(conditions), len(present),
-        figsize=(settings.panel_width_in * len(present),
-                 settings.panel_height_in * 0.92 * len(conditions) + 0.35),
-        squeeze=False,
+        figsize=(settings.panel_width_in * len(present), 0.62 * len(conditions) + 0.72),
+        squeeze=False, sharex=True,
     )
     for row_index, condition in enumerate(conditions):
         colour = CONDITION_COLORS.get(condition, INK)
         for column, region in enumerate(present):
             ax = axes[row_index][column]
-            row = frame.loc[
-                (frame["scope"] == "within_region")
-                & (frame["region_pair"] == region)
-                & (frame["condition"] == condition)
+            row = subset.loc[
+                (subset["region_pair"] == region) & (subset["condition"] == condition)
             ]
             if row.empty:
                 ax.set_visible(False)
@@ -255,24 +267,24 @@ def plot_noise_above_null(
                 sem = np.asarray(row[f"{channel}_sem"], dtype=float)[keep]
                 ax.fill_between(lags[keep], mean - sem, mean + sem,
                                 color=line_colour, alpha=0.22, lw=0)
-                ax.plot(lags[keep], mean, color=line_colour, lw=1.15, ls=dash, label=label)
-            ax.axvline(0, color=MUTED_INK, lw=0.5, ls=":")
-            _finish(
-                ax,
-                xlabel="Lag (ms)" if row_index == len(conditions) - 1 else "",
-                title=(f"{region_label(region)}  (n={int(row['n_pairs']):,})"
-                       if row_index == 0 else ""),
-            )
-        axes[row_index][0].set_ylabel(
-            f"{condition_label(condition)}\ncoincidences per fixation", fontsize=6
-        )
-    axes[0][-1].legend(frameon=False, fontsize=5.5, loc="upper right")
-    fig.suptitle(
-        "Noise correlation sits above the null in every region and condition",
-        fontsize=8, color=INK,
-    )
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
-    return fig, save_thesis_figure(fig, settings, stem)
+                ax.plot(lags[keep], mean, color=line_colour, lw=1.0, ls=dash, label=label)
+            ax.axvline(0, color=MUTED_INK, lw=0.4, ls=":")
+            ax.tick_params(labelsize=5.5, pad=1.5)
+            ax.locator_params(axis="y", nbins=3)
+            nice_axis(ax)
+            if row_index == 0:
+                ax.set_title(f"{region_label(region)}  (n={int(row['n_pairs']):,})",
+                             fontsize=6.5, color=INK, pad=2.5)
+            if row_index == len(conditions) - 1:
+                ax.set_xlabel("Lag (ms)", fontsize=6.5)
+        axes[row_index][0].set_ylabel(condition_label(condition), fontsize=6,
+                                      color=CONDITION_COLORS.get(condition, INK))
+    handles, labels = axes[0][-1].get_legend_handles_labels()
+    fig.legend(handles, labels, frameon=False, fontsize=5.5, ncol=2,
+               loc="lower center", bbox_to_anchor=(0.5, -0.015))
+    fig.supylabel("Cross-correlation", fontsize=6.5, x=0.005)
+    fig.tight_layout(rect=(0.012, 0.075, 1, 1))
+    return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
 
 
 def plot_excess_by_condition(
@@ -280,11 +292,12 @@ def plot_excess_by_condition(
     settings: PairOverviewPlotSettings,
     *,
     contrasts: Optional[pd.DataFrame] = None,
+    scope: str = "within_region",
     max_lag_ms: float = 150.0,
-    regions: Sequence[str] = REGION_ORDER,
-    ylabel: str = "Observed − null",
+    regions: Optional[Sequence[str]] = None,
+    ylabel: str = "Cross-correlation − null",
     title: str = "",
-    stem: str = "fig03_excess_by_condition",
+    stem: str = "fig02_excess_by_condition",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Null-corrected correlation for all three conditions, per region.
 
@@ -297,7 +310,16 @@ def plot_excess_by_condition(
     lags = np.asarray(traces["lags_ms"], dtype=float)
     frame = traces["traces"]
     keep = np.abs(lags) <= float(max_lag_ms)
-    present = [r for r in regions if ((frame["region_pair"] == r) & (frame["scope"] == "within_region")).any()]
+    subset = frame.loc[frame["scope"].astype(str) == scope]
+    if regions is None:
+        regions = _group_order(list(subset["region_pair"].astype(str).unique()))
+    present = [r for r in regions if (subset["region_pair"] == r).any()]
+    if not present:
+        fig, ax = plt.subplots(figsize=(3.2, 1.4))
+        ax.text(0.5, 0.5, f"No {scope.replace('_', ' ')} groups", ha="center",
+                va="center", fontsize=7, color=MUTED_INK)
+        _bare(ax)
+        return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
 
     fig, axes = plt.subplots(
         1, len(present),
@@ -307,10 +329,8 @@ def plot_excess_by_condition(
     for ax, region in zip(axes[0], present):
         n_pairs = 0
         for condition in CONDITION_ORDER:
-            row = frame.loc[
-                (frame["scope"] == "within_region")
-                & (frame["region_pair"] == region)
-                & (frame["condition"] == condition)
+            row = subset.loc[
+                (subset["region_pair"] == region) & (subset["condition"] == condition)
             ]
             if row.empty:
                 continue
@@ -337,138 +357,128 @@ def plot_excess_by_condition(
         fig.tight_layout(rect=(0, 0, 1, 0.90))
     else:
         fig.tight_layout()
-    return fig, save_thesis_figure(fig, settings, stem)
+    return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
 
 
-def plot_peak_comparison(
+def _bar_panel(
+    ax,
     summary: pd.DataFrame,
-    settings: PairOverviewPlotSettings,
+    groups: Sequence[str],
     *,
+    value: str = "mean",
+    error: Optional[str] = "sem",
     contrasts: Optional[pd.DataFrame] = None,
-    measure: str = "window_excess_pm100ms",
-    ylabel: str = "Signal correlation, mean ±100 ms\n(observed − null)",
-    title: str = "",
-    stem: str = "fig03_peak_comparison",
-) -> tuple[plt.Figure, dict[str, Path]]:
-    """Peak null-corrected correlation per region and fixation condition.
-
-    The peak is a maximum over many noisy lags, so its absolute level is
-    inflated -- but identically for every condition, since each is a maximum
-    over the same lags on the same pairs.  Comparisons between conditions
-    therefore hold even though the level should not be quoted on its own.
-
-    When ``contrasts`` is supplied, contrasts that survive FDR correction are
-    marked, and the rank-biserial effect size is printed rather than a p-value:
-    with thousands of pairs per region, significance is a statement about sample
-    size and the effect size is the one about the neurons.
-    """
-    apply_thesis_plot_style()
-    regions = [r for r in REGION_ORDER if r in set(summary["region_pair"])]
-    rows = summary.loc[summary["measure"] == measure] if "measure" in summary.columns else summary
-
-    fig, ax = plt.subplots(
-        figsize=(settings.panel_width_in * 0.95 * max(len(regions), 1) + 0.8,
-                 settings.panel_height_in + 0.9)
-    )
+    star_column: Optional[str] = None,
+) -> None:
+    """One grouped bar panel: regions on x, one bar per fixation condition."""
     width = 0.8 / max(len(CONDITION_ORDER), 1)
-    for index, condition in enumerate(CONDITION_ORDER):
-        table = rows.loc[rows["condition"] == condition].set_index("region_pair")
+    offsets = {c: (i - 1) * width for i, c in enumerate(CONDITION_ORDER)}
+    for condition in CONDITION_ORDER:
+        rows = summary.loc[summary["condition"] == condition].set_index("region_pair")
         positions, values, errors = [], [], []
-        for position, region in enumerate(regions):
-            if region not in table.index:
+        for position, group in enumerate(groups):
+            if group not in rows.index:
                 continue
-            positions.append(position + (index - 1) * width)
-            values.append(float(table.loc[region, "mean"]))
-            errors.append(float(table.loc[region, "sem"]))
+            positions.append(position + offsets[condition])
+            values.append(float(rows.loc[group, value]))
+            errors.append(float(rows.loc[group, error]) if error else 0.0)
         if positions:
-            ax.bar(positions, values, width=width, yerr=errors,
+            ax.bar(positions, values, width=width,
+                   yerr=errors if error else None,
                    color=CONDITION_COLORS.get(condition, MUTED_INK),
-                   edgecolor=INK, linewidth=0.5, error_kw={"elinewidth": 0.8, "capsize": 1.6},
+                   edgecolor=INK, linewidth=0.45,
+                   error_kw={"elinewidth": 0.7, "capsize": 1.4},
                    label=condition_label(condition))
+            if star_column is not None:
+                for position, group in enumerate(groups):
+                    if group not in rows.index:
+                        continue
+                    stars = significance_stars(float(rows.loc[group, star_column]))
+                    if stars and stars != "n.s.":
+                        height = float(rows.loc[group, value])
+                        ax.text(position + offsets[condition],
+                                height + (0.02 if height >= 0 else -0.05) * abs(ax.get_ylim()[1]),
+                                stars, ha="center",
+                                va="bottom" if height >= 0 else "top",
+                                fontsize=6.5, color=INK)
     ax.axhline(0, color=MUTED_INK, lw=0.8)
-    ax.set_xticks(np.arange(len(regions)))
-    ax.set_xticklabels([region_label(r) for r in regions], fontsize=7)
-    ax.legend(frameon=False, fontsize=6, loc="upper left")
+    ax.set_xticks(np.arange(len(groups)))
+    ax.set_xticklabels([region_label(g) for g in groups], fontsize=6.5)
 
     if contrasts is not None and len(contrasts):
-        local = contrasts
-        if "measure" in local.columns:
-            local = local.loc[local["measure"] == measure]
         # Only contrasts that survive FDR get a bracket.  Annotating the rest
-        # fills the panel with numbers that all say "no difference", and the
-        # reader has to check each one to learn that.
-        local = local.loc[local["significant"].fillna(False)]
-        offsets = {c: (i - 1) * width for i, c in enumerate(CONDITION_ORDER)}
+        # fills the panel with marks that all say "no difference".
+        local = contrasts.loc[contrasts["significant"].fillna(False)]
         low, high = ax.get_ylim()
-        step = 0.085 * (high - low)
+        step = 0.10 * (high - low)
         headroom = high
-        for position, region in enumerate(regions):
-            block = local.loc[local["region_pair"] == region]
+        for position, group in enumerate(groups):
+            block = local.loc[local["region_pair"] == group]
             for level, row in enumerate(block.itertuples()):
                 if row.condition_a not in offsets or row.condition_b not in offsets:
                     continue
-                y = high + step * (0.35 + level)
-                headroom = max(headroom, y + step * 0.7)
+                y = high + step * (0.30 + level)
+                headroom = max(headroom, y + step * 0.85)
                 add_significance_bracket(
-                    ax,
-                    position + offsets[row.condition_a],
-                    position + offsets[row.condition_b],
-                    y,
+                    ax, position + offsets[row.condition_a],
+                    position + offsets[row.condition_b], y,
                     significance_stars(row.p_value_corrected),
-                    fontsize=7.0,
-                    color=INK,
-                    tick_frac=0.012,
+                    fontsize=6.5, color=INK, tick_frac=0.012,
                 )
         ax.set_ylim(low, headroom)
 
-    _finish(ax, ylabel=ylabel, title=title, title_size=8)
-    fig.tight_layout()
-    return fig, save_thesis_figure(fig, settings, stem)
 
-
-def plot_signal_noise_correlation_bars(
+def plot_summary_bars(
+    signal_summary: pd.DataFrame,
+    signal_contrasts: pd.DataFrame,
     correlations: pd.DataFrame,
     settings: PairOverviewPlotSettings,
     *,
-    alpha: float = 0.05,
-    stem: str = "fig06_signal_noise_correlation",
+    measure: str = "window_excess_pm100ms",
+    scope: str = "within_region",
+    stem: str = "fig04_summary_bars",
 ) -> tuple[plt.Figure, dict[str, Path]]:
-    """Spearman correlation between per-pair signal and noise correlation.
+    """Signal correlation and the signal/noise relationship, side by side.
 
-    One bar per region and fixation condition.  A positive value means pairs
-    whose mean responses resemble each other also tend to co-fire trial to
-    trial -- which is not guaranteed, since the two are computed by different
-    operations and one can exist without the other.
+    Left: null-corrected signal correlation per region and fixation condition,
+    with brackets on the contrasts that survive FDR.  Right: the Spearman
+    correlation between each pair's signal and noise correlation, starred where
+    it differs from zero.
+
+    The legend sits below both panels rather than inside either: the brackets
+    grow upward from the tallest bar, and any in-axes legend ends up underneath
+    them in whichever region happens to have the largest effect.
     """
     apply_thesis_plot_style()
-    regions = [r for r in REGION_ORDER if r in set(correlations["region_pair"])]
-    fig, ax = plt.subplots(
-        figsize=(settings.panel_width_in * 0.95 * max(len(regions), 1) + 0.8,
-                 settings.panel_height_in + 0.5)
+    rows = (
+        signal_summary.loc[signal_summary["measure"] == measure]
+        if "measure" in signal_summary.columns else signal_summary
     )
-    width = 0.8 / max(len(CONDITION_ORDER), 1)
-    for index, condition in enumerate(CONDITION_ORDER):
-        rows = correlations.loc[correlations["condition"] == condition].set_index("region_pair")
-        for position, region in enumerate(regions):
-            if region not in rows.index:
-                continue
-            row = rows.loc[region]
-            value = float(row["spearman_rho"])
-            x = position + (index - 1) * width
-            ax.bar(x, value, width=width,
-                   color=CONDITION_COLORS.get(condition, MUTED_INK),
-                   edgecolor=INK, linewidth=0.45,
-                   label=condition_label(condition) if position == 0 else None)
-            stars = significance_stars(float(row["p_value"]))
-            if stars and stars != "n.s.":
-                ax.text(x, value + (0.012 if value >= 0 else -0.030), stars,
-                        ha="center", va="bottom" if value >= 0 else "top",
-                        fontsize=7, color=INK)
-    ax.axhline(0, color=MUTED_INK, lw=0.8)
-    ax.set_xticks(np.arange(len(regions)))
-    ax.set_xticklabels([region_label(r) for r in regions], fontsize=7)
-    ax.legend(frameon=False, fontsize=6, loc="upper left")
-    _finish(ax, ylabel="Spearman ρ\n(signal vs noise correlation)",
-            title="Pairs that share a response profile also co-fire", title_size=8)
-    fig.tight_layout()
-    return fig, save_thesis_figure(fig, settings, stem)
+    groups = _group_order(list(rows["region_pair"].astype(str).unique()))
+    contrasts = signal_contrasts
+    if contrasts is not None and "measure" in contrasts.columns:
+        contrasts = contrasts.loc[contrasts["measure"] == measure]
+
+    fig, axes = plt.subplots(
+        1, 2,
+        figsize=(settings.panel_width_in * 1.05 * max(len(groups), 1) + 1.6,
+                 settings.panel_height_in + 1.0),
+    )
+    _bar_panel(axes[0], rows, groups, contrasts=contrasts)
+    _finish(axes[0], ylabel="Signal correlation, mean ±100 ms\n(observed − null)",
+            title="Signal correlation by fixation type", title_size=7.5)
+
+    if len(correlations):
+        spearman = correlations.copy()
+        spearman = spearman.rename(columns={"spearman_rho": "mean"})
+        groups_r = _group_order(list(spearman["region_pair"].astype(str).unique()))
+        _bar_panel(axes[1], spearman, groups_r, value="mean", error=None,
+                   star_column="p_value")
+    _finish(axes[1], ylabel="Spearman ρ\n(signal vs noise correlation)",
+            title="Do the two measures track each other?", title_size=7.5)
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, frameon=False, fontsize=6.5, ncol=3,
+               loc="lower center", bbox_to_anchor=(0.5, -0.01))
+    fig.tight_layout(rect=(0, 0.085, 1, 1))
+    return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
