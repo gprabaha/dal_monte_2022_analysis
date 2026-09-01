@@ -57,6 +57,18 @@ tends to be day- and array-specific rather than pair-specific,
 :func:`build_zero_lag_diagnostics` reports the zero-lag excess per date and per
 region pair so a contaminated day is visible instead of silently averaged in.
 
+*Within-region pairs share an array; cross-region pairs do not.*  Any
+comparison of the two is therefore confounded with array identity, shared
+reference and common noise, and the difference cannot be read as biology on its
+own.  The test that separates them is electrode separation: a shared reference
+lifts every pair on an array equally, while local circuitry decays with
+distance.  In this dataset it decays steeply -- the sharp peak falls thirteen
+fold from adjacent channels to more than fifteen apart, monotonically, in every
+region -- so the within-region excess is not a uniform array offset.  Pairs on
+the *same* channel are a separate matter: they show a *negative* zero-lag
+excess, the spike sorter's inability to assign two spikes to different units in
+the same millisecond, and are 2% of the data.
+
 *Count-matched nulls.*  There are ``F * (F - 1)`` possible cross-fixation
 pairings but only ``F`` real ones, so a null estimated from all of them would
 have a far smaller standard error than the observed statistic and would inflate
@@ -688,6 +700,11 @@ ABOVE_NULL_METRIC = "circular_shift_mean_z_pm10ms"
 #: What the observed (uncorrected) curve is summarised by, in the same units.
 OBSERVED_METRIC = "observed_mean_pm10ms"
 
+#: Lags treated as "far enough to contain no interaction", used as each pair's
+#: own baseline.  At 200-250 ms nothing plausible is still coupled, so whatever
+#: sits there is that pair's offset rather than its coordination.
+BASELINE_LAG_MS = 200.0
+
 #: Half-widths (ms) over which the z traces are averaged into scalar summaries.
 SUMMARY_WINDOWS_MS: tuple[float, ...] = (5.0, 10.0, 25.0, 50.0, 100.0)
 
@@ -764,6 +781,32 @@ def _summarize_pair_traces(
         out[f"{prefix}_peak_z"] = np.nan
         out[f"{prefix}_peak_excess"] = np.nan
         out[f"{prefix}_peak_lag_ms"] = np.nan
+
+    # --- shape measures ------------------------------------------------------
+    # A fixed +/-10 ms window is the wrong ruler when peak widths differ by an
+    # order of magnitude between regions: it is most of ACCg's 1 ms peak plus a
+    # lot of its flat baseline, and only part of OFC's.  These separate the
+    # sharp peak from the broad shoulder and measure each on its own terms,
+    # after removing the pair's own far-lag offset.
+    far = np.abs(lags_ms) >= BASELINE_LAG_MS
+    baseline = float(np.nanmean(excess[far])) if far.any() else 0.0
+    centred = excess - baseline
+    out[f"{prefix}_baseline"] = baseline
+    out[f"{prefix}_peak_pm2ms"] = float(np.nanmean(centred[np.abs(lags_ms) <= 2.0]))
+    shoulder = (np.abs(lags_ms) >= 20.0) & (np.abs(lags_ms) <= 100.0)
+    out[f"{prefix}_shoulder_20to100ms"] = float(np.nanmean(centred[shoulder]))
+
+    # Directionality: does unit_1 tend to fire after unit_2, or before?  A
+    # positive value means the correlation is heavier at positive lags, i.e.
+    # unit_1 lags unit_2.  Meaningless for within-region pairs, where the
+    # ordering of the two units is arbitrary; informative across regions only if
+    # the pair orientation is fixed, which it is not here -- so this is reported
+    # per ordered region pair and read only with that caveat.
+    lead = (lags_ms >= 1.0) & (lags_ms <= 50.0)
+    lag_side = (lags_ms <= -1.0) & (lags_ms >= -50.0)
+    out[f"{prefix}_asymmetry_1to50ms"] = float(
+        np.nanmean(centred[lead]) - np.nanmean(centred[lag_side])
+    )
 
     for half_width in SUMMARY_WINDOWS_MS:
         window = np.abs(lags_ms) <= float(half_width)
@@ -1717,12 +1760,6 @@ def _pair_z_trace(
     with np.errstate(divide="ignore", invalid="ignore"):
         z = np.where(degenerate, np.nan, excess / np.where(degenerate, 1.0, null_sd))
     return np.where(degenerate & np.isclose(excess, 0.0, atol=1e-12), 0.0, z)
-
-
-#: Lags treated as "far enough to contain no interaction", used as each pair's
-#: own baseline.  At 200-250 ms nothing plausible is still coupled, so whatever
-#: sits there is that pair's offset rather than its coordination.
-BASELINE_LAG_MS = 200.0
 
 
 def _pair_traces(row: pd.Series, lags_ms: np.ndarray) -> dict[str, np.ndarray]:
