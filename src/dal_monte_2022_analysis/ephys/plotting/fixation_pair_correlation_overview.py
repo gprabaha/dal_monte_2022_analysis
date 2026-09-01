@@ -139,8 +139,8 @@ def plot_method_schematic(
     apply_thesis_plot_style()
     fig, axes = plt.subplots(
         1, 5,
-        figsize=(settings.schematic_width_in * 0.96, 2.20),
-        gridspec_kw={"width_ratios": [1.0, 1.0, 1.05, 1.0, 1.0], "wspace": 0.45},
+        figsize=(settings.schematic_width_in * 0.96, 2.35),
+        gridspec_kw={"width_ratios": [1.0, 1.0, 1.05, 1.0, 1.0], "wspace": 0.42},
     )
     rng = np.random.default_rng(11)
     lags = np.linspace(-200, 200, 260)
@@ -169,7 +169,7 @@ def plot_method_schematic(
     ax.set_xticks([]); ax.set_yticks([])
     for side in ("top", "right", "left", "bottom"):
         ax.spines[side].set_visible(False)
-    ax.set_title("spike trains\nper fixation", fontsize=6.8, color=INK, pad=3)
+    ax.set_title("spike trains\nper fixation", fontsize=6.8, color=INK, pad=9)
 
     # ---- left of centre: average first -------------------------------------
     ax = axes[1]
@@ -180,7 +180,7 @@ def plot_method_schematic(
     ax.axvline(0, color=MUTED_INK, lw=0.6, ls=(0, (1, 2)))
     ax.set_ylim(-0.10, 2.05)
     strip(ax)
-    ax.set_title("mean rate\ntimelines", fontsize=6.8, color=SIGNAL_COLOUR, pad=3)
+    ax.set_title("mean rate\ntimelines", fontsize=6.8, color=SIGNAL_COLOUR, pad=9)
 
     ax = axes[0]
     null_s = np.full_like(lags, 0.006)
@@ -190,7 +190,7 @@ def plot_method_schematic(
     ax.plot(lags, null_s, color=MUTED_INK, lw=1.0, ls=(0, (3, 2)))
     ax.set_ylim(-0.004, 0.115)
     strip(ax)
-    ax.set_title("SIGNAL\ncorrelation", fontsize=7.6, color=SIGNAL_COLOUR, pad=3)
+    ax.set_title("SIGNAL\ncorrelation", fontsize=7.6, color=SIGNAL_COLOUR, pad=9)
 
     # ---- right of centre: correlate first ----------------------------------
     ax = axes[3]
@@ -201,7 +201,7 @@ def plot_method_schematic(
     ax.text(0, -0.30, "⋮", ha="center", va="center", fontsize=9, color=MUTED_INK)
     ax.set_ylim(-0.62, 1.95)
     strip(ax)
-    ax.set_title("one correlogram\nper trial", fontsize=6.8, color=NOISE_COLOUR, pad=3)
+    ax.set_title("one correlogram\nper trial", fontsize=6.8, color=NOISE_COLOUR, pad=9)
 
     ax = axes[4]
     null_n = 0.052 + 0.004 * np.exp(-np.abs(lags) / 170)
@@ -211,9 +211,11 @@ def plot_method_schematic(
     ax.plot(lags, null_n, color=MUTED_INK, lw=1.0, ls=(0, (3, 2)))
     ax.set_ylim(0.0495, 0.080)
     strip(ax)
-    ax.set_title("NOISE\ncorrelation", fontsize=7.6, color=NOISE_COLOUR, pad=3)
+    ax.set_title("NOISE\ncorrelation", fontsize=7.6, color=NOISE_COLOUR, pad=9)
 
-    fig.tight_layout(rect=(0.002, 0.12, 0.998, 0.80))
+    # Set the margins directly.  These axes carry no tick labels and no y
+    # labels, so tight_layout reserves a wide band on each flank for nothing.
+    fig.subplots_adjust(left=0.015, right=0.985, top=0.775, bottom=0.145, wspace=0.42)
     boxes = [ax.get_position() for ax in axes]
 
     def arrow(left_index: int, right_index: int, pointing: str, colour, label):
@@ -516,10 +518,11 @@ def plot_summary_bars(
         groups_r = _group_order(list(spearman["region_pair"].astype(str).unique()), scope=scope)
         _bar_panel(axes[1], spearman, groups_r, value="mean", error=None,
                    star_column="p_value")
-    # Naming this precisely matters: it is a correlation *across pairs* between
-    # two per-pair numbers, each of which is itself the peak of a correlation.
+    # Descriptive, not a claim.  The relationship holds in some region and
+    # condition combinations and not others, so a title asserting that it holds
+    # would be contradicted by half its own panel.
     _finish(axes[1], ylabel="Spearman ρ across pairs",
-            title="Pairs with more shared tuning also co-fire more", title_size=7.5)
+            title="Signal against noise correlation", title_size=7.5)
 
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, frameon=False, fontsize=6.5, ncol=3,
