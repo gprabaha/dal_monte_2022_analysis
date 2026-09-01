@@ -713,6 +713,26 @@ def verify_null_identities(
 # ``trial_match_conditions`` additionally recomputes everything on a common
 # fixation count per session, as a direct control on the same confound.
 
+#: The metric to compare conditions on, and why.
+#:
+#: ``ratio``  fractional excess over the null's own level, ``obs / null - 1``.
+#:            The null carries the same firing rates and the same fixation
+#:            count as the observed statistic, so dividing by it removes both
+#:            confounds.  Interpretable directly: "N% more coincidences than
+#:            chance".  **This is the default for condition comparisons.**
+#: ``effect`` excess in single-fixation null-SD units.  Removes the fixation
+#:            count but divides by a noise scale that can itself differ between
+#:            conditions.
+#: ``z``      excess in units of the null SD of the fixation-averaged statistic.
+#:            Scales with the square root of the fixation count, so it is the
+#:            right quantity for "is this pair coordinated at all" and the wrong
+#:            one for comparing conditions: interactive-face fixations outnumber
+#:            the others roughly six to one, which is enough to reverse a
+#:            ranking by itself.
+CONDITION_METRIC = "trial_shuffle_mean_ratio_pm10ms"
+ABOVE_NULL_METRIC = "trial_shuffle_mean_z_pm10ms"
+METRIC_KINDS: tuple[str, ...] = ("ratio", "effect", "z")
+
 #: Half-widths (ms) over which the z traces are averaged into scalar summaries.
 SUMMARY_WINDOWS_MS: tuple[float, ...] = (5.0, 10.0, 25.0, 50.0, 100.0)
 
@@ -742,6 +762,16 @@ def _summarize_pair_traces(
     there at all.
     """
     excess = observed - null_mean
+    # Fractional excess above chance: how many more coincidences than the null
+    # expects, as a proportion of what it expects.  This is the metric to
+    # compare conditions on.  Raw coincidence counts scale with the product of
+    # the two firing rates, and the standardised z additionally scales with the
+    # square root of the fixation count -- and interactive-face fixations
+    # outnumber the others roughly six to one here, which is enough to reverse
+    # a ranking on its own.  Dividing by the null's own level removes both,
+    # because the null carries the same rates and the same trial count.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio_trace = np.where(np.abs(null_mean) > 0, excess / null_mean, np.nan)
     # A lag where every null draw landed on the same value has no spread to
     # standardise against.  If the observed value matches it too, there is
     # genuinely no excess and z is 0; if it does not, the excess is real but
@@ -757,6 +787,7 @@ def _summarize_pair_traces(
     zero_index = int(np.argmin(np.abs(lags_ms)))
     out[f"{prefix}_zero_lag_z"] = float(z_trace[zero_index])
     out[f"{prefix}_zero_lag_effect"] = float(effect_trace[zero_index])
+    out[f"{prefix}_zero_lag_ratio"] = float(ratio_trace[zero_index])
 
     search = np.abs(lags_ms) <= float(peak_search_ms)
     if search.any() and np.isfinite(z_trace[search]).any():
@@ -774,12 +805,15 @@ def _summarize_pair_traces(
         window = np.abs(lags_ms) <= float(half_width)
         label = f"{prefix}_mean_z_pm{int(half_width)}ms"
         effect_label = f"{prefix}_mean_effect_pm{int(half_width)}ms"
+        ratio_label = f"{prefix}_mean_ratio_pm{int(half_width)}ms"
         if window.any():
             out[label] = float(np.nanmean(z_trace[window]))
             out[effect_label] = float(np.nanmean(effect_trace[window]))
+            out[ratio_label] = float(np.nanmean(ratio_trace[window]))
         else:
             out[label] = np.nan
             out[effect_label] = np.nan
+            out[ratio_label] = np.nan
     return out
 
 
@@ -1357,6 +1391,7 @@ def build_zero_lag_diagnostics(
     *,
     null_name: str = "circular_shift",
     z_threshold: float = 3.0,
+    scale_floor: float = 0.02,
 ) -> pd.DataFrame:
     """Per-date, per-scope zero-lag excess, for spotting a contaminated session.
 
@@ -1409,23 +1444,66 @@ def build_zero_lag_diagnostics(
     if result.empty:
         return result
     # Flag dates whose zero-lag prevalence is a robust outlier against the rest.
+    #
+    # The scale is floored rather than taken straight from the MAD.  When the
+    # artifact hits one day and every other day is clean the MAD is exactly
+    # zero, and an unfloored score would be undefined precisely in the case this
+    # is meant to catch -- a single contaminated recording among good ones.  The
+    # floor is expressed as a fraction of pairs, so a day where a few percent
+    # more pairs than usual carry a zero-lag peak is still measured against
+    # something.
     for scope, group in result.groupby("scope"):
         values = group["frac_pairs_zero_lag_above"].to_numpy(dtype=float)
         finite = values[np.isfinite(values)]
-        if finite.size < 4:
+        if finite.size < 3:
             continue
         median = float(np.median(finite))
         mad = float(np.median(np.abs(finite - median)))
-        scale = mad * 1.4826 if mad > 0 else np.nan
+        scale = max(mad * 1.4826, float(scale_floor))
         result.loc[group.index, "zero_lag_outlier_score"] = (
-            (group["frac_pairs_zero_lag_above"] - median) / scale
-            if np.isfinite(scale) and scale > 0
-            else np.nan
-        )
+            group["frac_pairs_zero_lag_above"] - median
+        ) / scale
     result["suspected_zero_lag_artifact"] = result.get(
         "zero_lag_outlier_score", pd.Series(np.nan, index=result.index)
     ).gt(3.5)
     return result.sort_values(["scope", "date"]).reset_index(drop=True)
+
+
+def drop_zero_lag_artifact_dates(
+    pairs: pd.DataFrame,
+    *,
+    null_name: str = "circular_shift",
+    z_threshold: float = 3.0,
+) -> tuple[pd.DataFrame, list[str]]:
+    """Remove recording days carrying the zero-lag artifact.
+
+    Two randomly sampled neurons are essentially never monosynaptically
+    connected, so a sharp zero-lag peak shared by most pairs on a day is common
+    input -- movement, arousal, or a shared reference/ground artifact -- not a
+    pairwise interaction.  Because it is a property of the day and array rather
+    than of the pair, the contaminated days can be identified and removed
+    outright instead of being averaged into every result.
+
+    Returns the cleaned table and the dropped dates.  A date is dropped in *all*
+    scopes if it is flagged in any, since the artifact is a property of the
+    recording rather than of a particular comparison.
+    """
+    diagnostics = build_zero_lag_diagnostics(
+        pairs, null_name=null_name, z_threshold=z_threshold
+    )
+    if diagnostics.empty or "suspected_zero_lag_artifact" not in diagnostics.columns:
+        return pairs, []
+    flagged = sorted(
+        diagnostics.loc[
+            diagnostics["suspected_zero_lag_artifact"].fillna(False), "date"
+        ]
+        .astype(str)
+        .unique()
+    )
+    if not flagged:
+        return pairs, []
+    cleaned = pairs.loc[~pairs["date"].astype(str).isin(set(flagged))].reset_index(drop=True)
+    return cleaned, flagged
 
 
 def build_pair_inventory(pairs: pd.DataFrame) -> pd.DataFrame:
@@ -1567,6 +1645,16 @@ def _pair_z_trace(
     return np.where(degenerate & np.isclose(excess, 0.0, atol=1e-12), 0.0, z)
 
 
+def _pair_ratio_trace(observed: np.ndarray, null_mean: np.ndarray) -> np.ndarray:
+    """Fractional excess above the null's own level, per lag."""
+    observed = np.asarray(observed, dtype=float)
+    null_mean = np.asarray(null_mean, dtype=float)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(
+            np.abs(null_mean) > 0, (observed - null_mean) / null_mean, np.nan
+        )
+
+
 def build_group_traces(
     cfg_path: str | Path = "configs/dataset.yaml",
     *,
@@ -1574,6 +1662,7 @@ def build_group_traces(
     output_filename: str = "pair_coordination.pkl",
     group_columns: Sequence[str] = ("scope", "condition"),
     selective_only: bool = False,
+    exclude_dates: Optional[Sequence[str]] = None,
 ) -> dict:
     """Group-mean lag traces, accumulated one session at a time.
 
@@ -1598,14 +1687,20 @@ def build_group_traces(
     if not paths:
         raise FileNotFoundError(f"No pair coordination outputs under {root}.")
 
-    channels = ("observed",) + tuple(f"{name}_null" for name in NULL_NAMES) + tuple(
-        f"z_{name}" for name in NULL_NAMES
+    channels = (
+        ("observed",)
+        + tuple(f"{name}_null" for name in NULL_NAMES)
+        + tuple(f"z_{name}" for name in NULL_NAMES)
+        + tuple(f"ratio_{name}" for name in NULL_NAMES)
     )
     lags: Optional[np.ndarray] = None
     overlap: Optional[np.ndarray] = None
     sums: dict[tuple, dict[str, dict[str, np.ndarray]]] = {}
 
+    excluded = {str(value) for value in (exclude_dates or ())}
     for path in paths:
+        if excluded and path.parent.parent.name.split("=", 1)[1] in excluded:
+            continue
         payload = pd.read_pickle(path)
         frame = payload["pairs"]
         if lags is None:
@@ -1637,6 +1732,14 @@ def build_group_traces(
                             group["observed"],
                             group[f"{null_name}_mean"],
                             group[f"{null_name}_sd"],
+                        )
+                    ]
+                )
+                stacks[f"ratio_{null_name}"] = np.vstack(
+                    [
+                        _pair_ratio_trace(obs, mean)
+                        for obs, mean in zip(
+                            group["observed"], group[f"{null_name}_mean"]
                         )
                     ]
                 )
@@ -1828,7 +1931,7 @@ def _compact_array_spec(indices: Sequence[int]) -> str:
 def run_summary_build(
     settings: PairSpikeCoordinationSettings,
     *,
-    metric: str = "trial_shuffle_mean_effect_pm10ms",
+    metric: str = CONDITION_METRIC,
 ) -> dict[str, pd.DataFrame]:
     """Build every summary table the notebook reads, and write them to disk.
 
@@ -1842,15 +1945,32 @@ def run_summary_build(
     out_dir = build_analysis_output_dir(cfg, settings.output_subdir) / "summary"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    pairs, _ = load_pair_coordination(
+    all_pairs, _ = load_pair_coordination(
         settings.cfg_path,
         output_subdir=settings.output_subdir,
         output_filename=settings.output_filename,
     )
+    # Contaminated days are removed from every primary table rather than checked
+    # afterwards: the zero-lag artifact is a property of the recording, so
+    # leaving it in and noting it later would mean every headline number carries
+    # it.  The all-days tables are kept alongside as the sensitivity check.
+    pairs, dropped_dates = drop_zero_lag_artifact_dates(all_pairs)
+    if dropped_dates:
+        print(
+            f"dropped {len(dropped_dates)} date(s) flagged for the zero-lag artifact: "
+            f"{dropped_dates}"
+        )
+        print(f"pairs retained: {len(pairs):,} of {len(all_pairs):,}")
+    else:
+        print("no dates flagged for the zero-lag artifact.")
     selective = pairs.loc[pairs["both_selective"]]
 
     outputs = {
         "pair_inventory": build_pair_inventory(pairs),
+        "dropped_artifact_dates": pd.DataFrame({"date": dropped_dates}),
+        "condition_comparisons_by_region_all_days": compare_conditions(
+            all_pairs, metric=metric, group_columns=("scope", "region_pair")
+        ),
         # Consult before the result tables: not every region combination was
         # recorded simultaneously often enough to interpret.
         "region_pair_inventory": build_region_pair_inventory(pairs),
@@ -1859,7 +1979,8 @@ def run_summary_build(
             pairs, metric=metric, group_columns=("scope", "region_pair", "condition")
         ),
         "coordination_vs_null_by_region": test_against_null(
-            pairs, metric=metric, group_columns=("scope", "region_pair", "condition")
+            pairs, metric=ABOVE_NULL_METRIC,
+            group_columns=("scope", "region_pair", "condition"),
         ),
         "condition_comparisons_by_region": compare_conditions(
             pairs, metric=metric, group_columns=("scope", "region_pair")
@@ -1871,10 +1992,12 @@ def run_summary_build(
         "coordination_summary": summarize_coordination(
             pairs, metric=metric, group_columns=("scope", "condition")
         ),
-        "coordination_vs_null": test_against_null(pairs, metric=metric),
+        "coordination_vs_null": test_against_null(pairs, metric=ABOVE_NULL_METRIC),
         "condition_comparisons": compare_conditions(pairs, metric=metric),
         "condition_comparisons_selective": compare_conditions(selective, metric=metric),
-        "zero_lag_diagnostics": build_zero_lag_diagnostics(pairs),
+        # Does the conclusion depend on which metric is used?
+        "condition_comparisons_across_metrics": compare_conditions_across_metrics(pairs),
+        "zero_lag_diagnostics": build_zero_lag_diagnostics(all_pairs),
     }
     for name, frame in outputs.items():
         frame.to_csv(out_dir / f"{name}.csv", index=False)
@@ -1898,6 +2021,7 @@ def run_summary_build(
                 settings.cfg_path,
                 output_subdir=settings.output_subdir,
                 output_filename=settings.output_filename,
+                exclude_dates=dropped_dates,
                 **kwargs,
             ),
             out_dir / f"{stem}.pkl",
@@ -1912,6 +2036,51 @@ def run_summary_build(
 #: while dmPFC x OFC has ~140 (from 10 sessions) and ACCg x OFC has none at all,
 #: because those regions were rarely or never recorded simultaneously.
 DEFAULT_MIN_PAIRS_FOR_REPORTING = 500
+
+
+def compare_conditions_across_metrics(
+    pairs: pd.DataFrame,
+    *,
+    null_name: str = "trial_shuffle",
+    half_width_ms: int = 10,
+    group_columns: Sequence[str] = ("scope", "region_pair"),
+) -> pd.DataFrame:
+    """Run the condition contrasts under all three metrics, merged on one row.
+
+    The three do not have to agree, and when they do not the reason is almost
+    always a confound rather than a discovery: ``z`` rewards conditions with
+    more fixations, ``effect`` divides by a noise scale, and ``ratio`` divides
+    by the chance level.  Putting them side by side makes a conclusion that
+    depends on the choice of metric visible instead of implicit.
+    """
+    frames: list[pd.DataFrame] = []
+    keys = list(group_columns) + ["condition_a", "condition_b"]
+    for kind in METRIC_KINDS:
+        metric = f"{null_name}_mean_{kind}_pm{int(half_width_ms)}ms"
+        if metric not in pairs.columns:
+            continue
+        result = compare_conditions(pairs, metric=metric, group_columns=group_columns)
+        if result.empty:
+            continue
+        columns = keys + ["n_pairs", "mean_difference", "p_value_corrected", "significant"]
+        result = result.loc[:, [c for c in columns if c in result.columns]]
+        result = result.rename(
+            columns={
+                "mean_difference": f"difference_{kind}",
+                "p_value_corrected": f"p_{kind}",
+                "significant": f"significant_{kind}",
+            }
+        )
+        frames.append(result)
+    if not frames:
+        return pd.DataFrame()
+    merged = frames[0]
+    for frame in frames[1:]:
+        merged = merged.merge(frame.drop(columns=["n_pairs"], errors="ignore"), on=keys, how="outer")
+    significant = [c for c in merged.columns if c.startswith("significant_")]
+    if significant:
+        merged["metrics_agree"] = merged.loc[:, significant].nunique(axis=1) == 1
+    return merged.reset_index(drop=True)
 
 
 def build_region_pair_inventory(

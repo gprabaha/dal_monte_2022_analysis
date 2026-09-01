@@ -83,11 +83,20 @@ FIGURE_DIR = build_analysis_output_dir(cfg, psc.DEFAULT_OUTPUT_SUBDIR) / "figure
 FIGURE_DIR.mkdir(parents=True, exist_ok=True)
 fig_settings = viz.PairCoordinationPlotSettings(output_dir=FIGURE_DIR)
 
-#: The excess is standardised in single-fixation null units so that it does not
-#: scale with how many fixations a condition contains.  Interactive-face
-#: fixations outnumber non-interactive-face ones roughly five to one, so a
-#: z-based comparison would rank conditions largely by trial count.
-EFFECT_METRIC = "trial_shuffle_mean_effect_pm10ms"
+# The trial-shuffle null is the standard throughout: it holds each unit's
+# fixation-locked rate profile fixed and removes only the trial-by-trial
+# covariation, which is the quantity of interest. The circular-shift null is
+# reported alongside as a timescale check, never as the primary comparison.
+NULL = "trial_shuffle"
+
+# Conditions are compared on the fractional excess over the null, obs/null - 1.
+# The null carries the same firing rates and the same fixation count as the
+# observed statistic, so dividing by it removes both confounds.
+CONDITION_METRIC = psc.CONDITION_METRIC
+# "Is this coordinated at all" is a different question and takes z, which is the
+# right quantity there and the wrong one for comparing conditions.
+ABOVE_NULL_METRIC = psc.ABOVE_NULL_METRIC
+EFFECT_METRIC = CONDITION_METRIC
 
 print("summary dir:", SUMMARY_DIR)
 print("figure dir :", FIGURE_DIR)
@@ -127,12 +136,39 @@ REGION_TRACES = '''
 by_region = pd.read_pickle(SUMMARY_DIR / "group_traces_by_region.pkl")
 
 for scope in ("within_region", "cross_region"):
-    for null_name in ("trial_shuffle", "circular_shift"):
-        fig, paths = viz.plot_region_traces(
-            by_region, fig_settings, scope=scope, null_name=null_name,
-            min_pairs=MIN_PAIRS,
-        )
-        display(Image(filename=str(paths["png"])))
+    fig, paths = viz.plot_region_traces(
+        by_region, fig_settings, scope=scope, null_name=NULL,
+        metric="ratio", min_pairs=MIN_PAIRS,
+    )
+    display(Image(filename=str(paths["png"])))
+
+display(Markdown(
+    "The same panels against the **circular-shift** null, as a timescale check. "
+    "Structure present above the trial-shuffle null but absent here would be slow "
+    "co-fluctuation rather than fine synchrony."
+))
+for scope in ("within_region", "cross_region"):
+    fig, paths = viz.plot_region_traces(
+        by_region, fig_settings, scope=scope, null_name="circular_shift",
+        metric="ratio", min_pairs=MIN_PAIRS,
+    )
+    display(Image(filename=str(paths["png"])))
+'''
+
+METRIC_CHECK = '''
+across_metrics = pd.read_csv(SUMMARY_DIR / "condition_comparisons_across_metrics.csv")
+display(across_metrics.round(4))
+
+disagree = across_metrics.loc[~across_metrics["metrics_agree"].fillna(True)]
+if len(disagree):
+    display(Markdown(
+        f"**{len(disagree)} of {len(across_metrics)} contrasts change significance "
+        "depending on the metric.** Where that happens the ratio is the one to trust: "
+        "`z` rewards conditions with more fixations, and interactive-face fixations "
+        "outnumber the others several to one."
+    ))
+else:
+    display(Markdown("_All contrasts agree across the three metrics._"))
 '''
 
 REGION_TESTS = '''
@@ -165,12 +201,7 @@ display(Image(filename=str(paths["png"])))
 '''
 
 POOLED = '''
-fig, paths = viz.plot_group_z_traces(by_scope, fig_settings, null_name="trial_shuffle")
-display(Image(filename=str(paths["png"])))
-
-vs_null = pd.read_csv(SUMMARY_DIR / "coordination_vs_null.csv")
-display(vs_null.round(4))
-fig, paths = viz.plot_excess_vs_null(vs_null, fig_settings)
+fig, paths = viz.plot_group_traces(by_scope, fig_settings, null_name=NULL, metric="ratio")
 display(Image(filename=str(paths["png"])))
 
 comparisons = pd.read_csv(SUMMARY_DIR / "condition_comparisons.csv")
@@ -222,8 +253,9 @@ for scope in ("within_region", "cross_region"):
     )
     display(Image(filename=str(paths["png"])))
     fig, paths = viz.plot_region_traces(
-        sel_by_region, fig_settings, scope=scope, label="FDR-selective",
-        min_pairs=MIN_PAIRS, stem="fig11_region_traces_selective",
+        sel_by_region, fig_settings, scope=scope, null_name=NULL, metric="ratio",
+        label="FDR-selective", min_pairs=MIN_PAIRS,
+        stem="fig11_region_traces_selective",
     )
     display(Image(filename=str(paths["png"])))
 '''
@@ -254,7 +286,16 @@ display(
 '''
 
 ZERO_LAG = '''
-diagnostics = psc.build_zero_lag_diagnostics(pairs)
+dropped = pd.read_csv(SUMMARY_DIR / "dropped_artifact_dates.csv")
+if len(dropped):
+    display(Markdown(
+        f"**{len(dropped)} date(s) were removed from every result above**: "
+        f"{sorted(dropped['date'].astype(str))}"
+    ))
+else:
+    display(Markdown("_No date was flagged, so nothing was removed._"))
+
+diagnostics = pd.read_csv(SUMMARY_DIR / "zero_lag_diagnostics.csv")
 display(diagnostics.round(4))
 
 flagged = diagnostics.loc[diagnostics["suspected_zero_lag_artifact"].fillna(False)]
@@ -271,25 +312,30 @@ display(Image(filename=str(paths["png"])))
 '''
 
 EXCLUDE = '''
-flagged_dates = set(
-    psc.build_zero_lag_diagnostics(pairs)
-    .pipe(lambda d: d.loc[d["suspected_zero_lag_artifact"].fillna(False), "date"])
-    .astype(str)
+all_days = pd.read_csv(SUMMARY_DIR / "condition_comparisons_by_region_all_days.csv")
+side = by_region_contrasts.merge(
+    all_days, on=["scope", "region_pair", "condition_a", "condition_b"],
+    suffixes=("_clean", "_all_days"),
 )
-if flagged_dates:
-    clean = pairs.loc[~pairs["date"].astype(str).isin(flagged_dates)]
-    print(f"dropping {len(flagged_dates)} flagged date(s): {sorted(flagged_dates)}")
-    print(f"pairs remaining: {len(clean):,} of {len(pairs):,}")
-    clean_comparisons = psc.compare_conditions(
-        clean, metric=EFFECT_METRIC, group_columns=("scope", "region_pair")
-    )
-    display(clean_comparisons.round(4))
+display(
+    side.loc[
+        :,
+        ["scope", "region_pair", "condition_a", "condition_b",
+         "mean_difference_clean", "significant_clean",
+         "mean_difference_all_days", "significant_all_days"],
+    ].round(4)
+)
+changed = side.loc[side["significant_clean"] != side["significant_all_days"]]
+if len(changed):
     display(Markdown(
-        "If the condition effects above match the all-days result, the conclusion "
-        "does not rest on the flagged days."
+        f"**{len(changed)} contrast(s) change significance when the flagged days are "
+        "put back.** The reported result is the one with them removed."
     ))
 else:
-    display(Markdown("_No days were flagged, so there is nothing to exclude._"))
+    display(Markdown(
+        "_No contrast changes when the flagged days are put back, so no conclusion "
+        "rests on them._"
+    ))
 '''
 
 
@@ -360,13 +406,29 @@ The shift null rotates a train within the window, which wraps. That is fine in a
 null — destroying alignment is the point — and is exactly why it is not fine in
 the observed statistic.
 
-## Which number to compare
+## Which number to compare — this matters more than it sounds
 
-- **`z`** — excess in units of the null SD of the fixation-averaged statistic.
-  Grows with `sqrt(n_fixations)`. Use for *is this coordinated at all*.
-- **`effect`** — `z / sqrt(n_fixations)`, in single-fixation null units. Does not
-  depend on trial count. **Use to compare conditions**, since interactive-face
-  fixations outnumber non-interactive ones about five to one.
+The raw black curve in section 3 is **not** the measure of coordination. A
+coincidence count scales with the product of the two firing rates, so a
+condition with slightly higher rates produces more coincidences by chance alone.
+What counts is the **gap** between observed and null.
+
+Three standardisations appear below and they do not rank the conditions the same
+way:
+
+| metric | what it is | confounds removed | use for |
+|---|---|---|---|
+| **`ratio`** | `obs / null − 1` | firing rate **and** fixation count | **comparing conditions** |
+| `effect` | excess in single-fixation null SD | fixation count | secondary |
+| `z` | excess in null SD of the fixation mean | none — scales with `√n_fixations` | *is this coordinated at all* |
+
+Interactive-face fixations outnumber the others roughly **six to one** here
+(median 106 vs 17–18 per pair). Since `z ∝ √n_fixations`, that alone inflates
+interactive face by about 2.4× — enough to reverse a ranking. So an
+interactive-face curve standing apart in a *z* plot is not yet evidence of
+anything; the same comparison in `ratio` is.
+
+Section 6 runs every contrast under all three and flags where they disagree.
 
 ## How results are reported
 
@@ -429,19 +491,31 @@ explains.
     markdown("""
 ## 4. Excess over null, per region and per region pair
 
-The same comparison as a standardised excess, resolved per region (within) and
-per region pair (across), for both nulls. Zero is the null's own expectation.
+The same comparison as a **fractional excess over the trial-shuffle null**,
+resolved per region (within) and per region pair (across). Zero is the null's own
+expectation, and the y-axis is directly readable: 0.05 means 5% more
+coincidences than chance.
 
-Structure present against the trial-shuffle null but absent against the
-circular-shift null is slow co-fluctuation rather than fine synchrony.
+The trial-shuffle null is the standard throughout — it holds each unit's
+fixation-locked rate profile fixed and removes only trial-by-trial covariation.
+The circular-shift panels follow as a timescale check.
 """),
     code(REGION_TRACES),
     markdown("""
-### Is coordination above null, region by region?
+### Does the answer depend on which metric is used?
 
-One-sample Wilcoxon signed-rank test of the per-pair excess against zero, per
-region and condition. This is the *is there anything there* question, answered
-before any pooling.
+Every contrast run under all three standardisations, merged onto one row. Where
+they disagree the reason is a confound rather than a discovery, and the `ratio`
+column is the one to trust.
+"""),
+    code(METRIC_CHECK),
+    markdown("""
+### Supporting: is coordination above null at all?
+
+Secondary to the condition comparison, but worth confirming there is something
+to compare. One-sample Wilcoxon signed-rank test of the per-pair excess against
+zero, per region and condition, using `z` — the right quantity for this question
+and the wrong one for the comparison above.
 """),
     code(REGION_TESTS),
     markdown("""
@@ -461,15 +535,16 @@ Benjamini–Hochberg corrected across the reported contrasts.
 """),
     code(REGION_CONTRASTS),
     markdown("""
-## 6. Pooled across regions
+## 7. Pooled across regions
 
 The same quantities pooled to scope level, as a summary of the region-resolved
-results above. Read these *after* section 5, and treat a pooled effect that no
-individual region shows as a composition artifact rather than a finding.
+results above. Read these *after* the per-region sections, and treat a pooled
+effect that no individual region shows as a composition artifact rather than a
+finding.
 """),
     code(POOLED),
     markdown("""
-## 7. Control: trial-count matching
+## 8. Control: trial-count matching
 
 The `effect` metric is already built not to scale with trial count. This is the
 direct check: every pair recomputed on a common fixation count across
@@ -478,7 +553,7 @@ driving it.**
 """),
     code(MATCHED),
     markdown("""
-## 8. Pairs where both units are FDR-selective
+## 9. Pairs where both units are FDR-selective
 
 Everything above used **all** recorded pairs. This repeats it on pairs where
 both units are significantly selective for at least one fixation-condition
@@ -498,24 +573,27 @@ conclusion is visible directly rather than inferred by comparing two tables.
 """),
     code(SELECTIVE_TESTS),
     markdown("""
-## 9. The zero-lag artifact
+## 10. The zero-lag artifact — already removed
 
-Earlier runs showed a sharp zero-lag peak on some days. That is almost certainly
-**not** a pairwise interaction: the chance that two randomly sampled neurons are
-monosynaptically connected is near zero, so a zero-lag peak shared by most pairs
-on a day is common input — movement, arousal, or a shared reference/ground
-artifact.
+Days carrying the zero-lag artifact are **dropped from every result above**, not
+checked afterwards. The artifact is a property of the recording, so leaving it
+in and noting it at the end would mean every headline number carries it.
 
-The signature separating an artifact from a real effect is that it is a property
-of the **day and array**, not of the pair: on a contaminated day nearly every
-simultaneously recorded pair shows it, including pairs sharing nothing else.
+The chance that two randomly sampled neurons are monosynaptically connected is
+near zero, so a sharp zero-lag peak shared by most pairs on a day is common
+input — movement, arousal, or a shared reference/ground artifact. The signature
+separating it from a real effect is that it is a property of the **day and
+array**, not of the pair: on a contaminated day nearly every simultaneously
+recorded pair shows it, including pairs sharing nothing else.
+
+This section reports which days were removed and why.
 """),
     code(ZERO_LAG),
     markdown("""
-## 10. Does the conclusion survive dropping flagged days?
+## 11. What the flagged days would have done
 
-The honest test of an artifact: remove the suspect days and see whether the
-condition effects hold.
+The reported result already excludes them. This puts them back for comparison,
+so the size of the artifact's influence is visible rather than asserted.
 """),
     code(EXCLUDE),
 ]

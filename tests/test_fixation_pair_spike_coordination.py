@@ -23,8 +23,11 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination imp
     assign_condition,
     build_zero_lag_diagnostics,
     compare_conditions,
+    CONDITION_METRIC,
     build_region_pair_inventory,
+    compare_conditions_across_metrics,
     compute_condition_coordination,
+    drop_zero_lag_artifact_dates,
     overlap_bins,
     sufficient_region_pairs,
     summarize_coordination,
@@ -242,24 +245,33 @@ class TestConditionAssignment(unittest.TestCase):
         self.assertIsNone(assign_condition("face", None))
 
 
-def _synthetic_pairs(n_pairs: int = 60, seed: int = 5) -> pd.DataFrame:
+def _synthetic_pairs(
+    n_pairs: int = 60, seed: int = 5, n_dates: int = 8, offset: float = 0.6
+) -> pd.DataFrame:
+    """Synthetic pair table.
+
+    ``n_dates`` matters: the zero-lag outlier rule is a median-absolute-deviation
+    across dates, so it needs several to have a distribution to be an outlier
+    against.
+    """
     rng = np.random.default_rng(seed)
     rows = []
     for index in range(n_pairs):
         for condition in CONDITION_ORDER:
-            offset = 0.6 if condition == "face_interactive" else 0.0
+            condition_offset = offset if condition == "face_interactive" else 0.0
             rows.append(
                 {
                     "pair_key": f"pair{index}",
-                    "date": f"010{index % 3}2018",
+                    "date": f"0{index % n_dates:03d}2018",
                     "session": str(index % 4),
                     "condition": condition,
                     "same_region": index % 2 == 0,
                     "region_pair": "bla" if index % 2 == 0 else "bla-accg",
                     "n_fixations": 30,
                     "both_selective": index % 3 == 0,
-                    "trial_shuffle_mean_effect_pm10ms": rng.normal(offset, 1.0),
-                    "trial_shuffle_mean_z_pm10ms": rng.normal(offset, 1.0),
+                    "trial_shuffle_mean_effect_pm10ms": rng.normal(condition_offset, 1.0),
+                    "trial_shuffle_mean_z_pm10ms": rng.normal(condition_offset, 1.0),
+                    "trial_shuffle_mean_ratio_pm10ms": rng.normal(condition_offset, 1.0),
                     "circular_shift_zero_lag_z": rng.normal(0.0, 1.0),
                     "circular_shift_mean_z_pm25ms": rng.normal(0.0, 1.0),
                 }
@@ -319,14 +331,46 @@ class TestSummariesAndTests(unittest.TestCase):
         # Flagged, never silently dropped.
         self.assertIn("dmpfc-ofc", set(inventory["region_pair"]))
 
+    def test_metric_comparison_reports_where_metrics_disagree(self):
+        """A conclusion that depends on the choice of metric must be visible."""
+        # No effect in any metric to start with, then plant one in the ratio
+        # only -- the situation where the choice of metric changes the answer.
+        pairs = _synthetic_pairs(n_pairs=200, seed=8, offset=0.0)
+        interactive = pairs["condition"] == "face_interactive"
+        pairs.loc[interactive, "trial_shuffle_mean_ratio_pm10ms"] += 1.5
+        result = compare_conditions_across_metrics(pairs)
+        self.assertIn("metrics_agree", result.columns)
+        for kind in ("ratio", "effect", "z"):
+            self.assertIn(f"significant_{kind}", result.columns)
+        planted = result.loc[
+            (result["condition_a"] == "face_interactive")
+            & (result["condition_b"] == "object")
+        ]
+        self.assertTrue(planted["significant_ratio"].all())
+        self.assertFalse(planted["metrics_agree"].all())
+
+    def test_artifact_dates_are_dropped_not_just_flagged(self):
+        pairs = _synthetic_pairs(n_pairs=240, seed=9)
+        target = sorted(pairs["date"].unique())[0]
+        pairs.loc[pairs["date"] == target, "circular_shift_zero_lag_z"] = 12.0
+        cleaned, dropped = drop_zero_lag_artifact_dates(pairs)
+        self.assertIn(target, dropped)
+        # Dropped outright, in every scope, not merely flagged.
+        self.assertNotIn(target, set(cleaned["date"].astype(str)))
+        self.assertLess(len(cleaned), len(pairs))
+
+    def test_condition_metric_is_the_ratio(self):
+        """Conditions must not be compared on a trial-count-scaled quantity."""
+        self.assertIn("ratio", CONDITION_METRIC)
+
     def test_zero_lag_diagnostics_flags_a_contaminated_day(self):
-        pairs = _synthetic_pairs(n_pairs=120, seed=7)
-        contaminated = pairs["date"] == "01002018"
-        pairs.loc[contaminated, "circular_shift_zero_lag_z"] = 12.0
+        pairs = _synthetic_pairs(n_pairs=240, seed=7)
+        target = sorted(pairs["date"].unique())[0]
+        pairs.loc[pairs["date"] == target, "circular_shift_zero_lag_z"] = 12.0
         diagnostics = build_zero_lag_diagnostics(pairs)
         self.assertIn("suspected_zero_lag_artifact", diagnostics.columns)
         worst = diagnostics.sort_values("frac_pairs_zero_lag_above", ascending=False)
-        self.assertEqual(str(worst.iloc[0]["date"]), "01002018")
+        self.assertEqual(str(worst.iloc[0]["date"]), target)
 
 
 if __name__ == "__main__":

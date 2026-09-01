@@ -90,26 +90,40 @@ standard error than the observed statistic and would inflate every z-score. Each
 draw is therefore a *derangement*: exactly `F` pairings, each fixation used once
 per side.
 
-**`z` vs `effect`.** `z` is the excess in null-SD units of the fixation-averaged
-statistic and grows with `sqrt(n_fixations)`; use it for "is this coordinated at
-all". `effect = z / sqrt(n_fixations)` does not depend on trial count; **use it
-to compare conditions.** Interactive-face fixations outnumber non-interactive
-ones roughly five to one, so ranking conditions by `z` would rank them largely
-by trial count. Section 7 additionally recomputes everything on a common
-fixation count as a direct control.
+**Which number compares conditions.** The raw correlation is not the measure of
+coordination — a coincidence count scales with the product of the two firing
+rates, so a condition with slightly higher rates yields more coincidences by
+chance. What counts is the gap to the null.
+
+| metric | what it is | confounds removed | use for |
+|---|---|---|---|
+| **`ratio`** | `obs / null − 1` | firing rate **and** fixation count | **comparing conditions** |
+| `effect` | excess in single-fixation null SD | fixation count | secondary |
+| `z` | excess in null SD of the fixation mean | none — scales with `√n_fixations` | *is this coordinated at all* |
+
+Interactive-face fixations outnumber the others roughly **six to one** (median
+106 vs 17–18 per pair), and `z ∝ √n_fixations` inflates them ~2.4× on that
+alone — enough to reverse a ranking. Every figure and every statistic uses the
+same metric, so a plot can never appear to contradict the test beside it, and
+`condition_comparisons_across_metrics.csv` runs each contrast under all three
+and flags disagreement.
+
+**The trial-shuffle null is the standard.** The circular-shift null is reported
+alongside as a timescale check, never as the primary comparison.
 
 **Paired condition contrasts.** Every pair contributes all three conditions, so
 comparisons are within-pair: the same two neurons, electrodes and session,
 differing only in which fixations were used. Pair identity, firing rate and
 recording quality cannot explain a difference.
 
-**The zero-lag artifact.** Earlier runs showed a sharp zero-lag peak on some
-days. The chance that two randomly sampled neurons are monosynaptically
+**The zero-lag artifact is removed, not just noted.** Days carrying it are
+dropped from every primary table; the artifact is a property of the recording,
+so leaving it in and flagging it at the end would mean every headline number
+carries it. The chance that two randomly sampled neurons are monosynaptically
 connected is near zero, so a zero-lag peak shared by most pairs on a day is
-common input — movement, arousal, or a shared reference/ground artifact. It is a
-property of the *day and array*, not of the pair, so section 9 reports per-date
-zero-lag prevalence and flags outlier days, and section 10 re-runs the condition
-tests with those days dropped.
+common input — movement, arousal, or a shared reference/ground artifact. The
+all-days tables are kept as the sensitivity check, and the notebook shows both
+side by side.
 
 ## Data provenance
 

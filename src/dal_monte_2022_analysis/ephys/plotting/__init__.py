@@ -93,7 +93,7 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_pair_spike_coordination imp
     plot_region_traces,
     plot_condition_effects,
     plot_excess_vs_null,
-    plot_group_z_traces,
+    plot_group_traces,
     plot_selectivity_comparison,
     plot_zero_lag_diagnostics,
 )
@@ -180,7 +180,7 @@ __all__ = [
     "plot_region_traces",
     "plot_condition_effects",
     "plot_excess_vs_null",
-    "plot_group_z_traces",
+    "plot_group_traces",
     "plot_selectivity_comparison",
     "plot_zero_lag_diagnostics",
     "FixationMRNNDiagnosticPlotSettings",

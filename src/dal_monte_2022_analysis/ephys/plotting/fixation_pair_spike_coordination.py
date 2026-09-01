@@ -6,7 +6,7 @@ figures are ordered the way the argument has to be made:
 
 1. what the correlation and its two nulls actually look like
    (``plot_observed_and_nulls``),
-2. how far observed sits above each null (``plot_group_z_traces``,
+2. how far observed sits above each null (``plot_group_traces``,
    ``plot_excess_vs_null``),
 3. how that resolves per region and per region pair (``plot_region_traces``,
    ``plot_condition_effects``),
@@ -57,6 +57,19 @@ NULL_MEANINGS: dict[str, str] = {
     "circular_shift": "fine-timing alignment within a fixation",
 }
 
+#: Axis labels and channel prefixes for the three standardisations.  Traces and
+#: bars must be drawn from the *same* one, or a figure will appear to contradict
+#: the statistics computed beside it.
+METRIC_CHANNEL: dict[str, str] = {"ratio": "ratio", "z": "z"}
+METRIC_AXIS_LABEL: dict[str, str] = {
+    "ratio": "Excess over null\n(fraction of chance)",
+    "z": "Excess over null\n(z)",
+}
+METRIC_NOTE: dict[str, str] = {
+    "ratio": "removes firing rate and fixation count",
+    "z": "scales with sqrt(fixation count) - not for comparing conditions",
+}
+
 
 def condition_label(condition: object, *, short: bool = False) -> str:
     key = str(condition)
@@ -93,15 +106,16 @@ def _finish(ax, *, xlabel: str = "", ylabel: str = "", title: str = "") -> None:
     nice_axis(ax)
 
 
-def plot_group_z_traces(
+def plot_group_traces(
     payload: Mapping,
     settings: PairCoordinationPlotSettings,
     *,
     null_name: str = "trial_shuffle",
+    metric: str = "ratio",
     scopes: Sequence[str] = SCOPE_ORDER,
     conditions: Sequence[str] = CONDITION_ORDER,
     max_lag_ms: float = 100.0,
-    stem: str = "fig06_group_z_traces",
+    stem: str = "fig06_group_traces",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Mean per-lag excess over the null, one panel per scope.
 
@@ -127,8 +141,9 @@ def plot_group_z_traces(
             row = _trace_row(traces, scope=scope, condition=condition)
             if row is None:
                 continue
-            mean = np.asarray(row[f"z_{null_name}_mean"], dtype=float)[keep]
-            sem = np.asarray(row[f"z_{null_name}_sem"], dtype=float)[keep]
+            channel = f"{METRIC_CHANNEL[metric]}_{null_name}"
+            mean = np.asarray(row[f"{channel}_mean"], dtype=float)[keep]
+            sem = np.asarray(row[f"{channel}_sem"], dtype=float)[keep]
             colour = CONDITION_COLORS.get(condition, MUTED_INK)
             ax.fill_between(
                 lags[keep], mean - sem, mean + sem, color=colour, alpha=0.22, linewidth=0
@@ -143,15 +158,15 @@ def plot_group_z_traces(
         ax.axhline(0.0, color=MUTED_INK, linewidth=0.8, linestyle="--")
         ax.axvline(0.0, color=MUTED_INK, linewidth=0.6, linestyle=":")
         _finish(ax, xlabel="Lag (ms)", title=scope_label(scope))
-    axes[0].set_ylabel(f"Mean z\n({NULL_LABELS[null_name]})")
+    axes[0].set_ylabel(METRIC_AXIS_LABEL[metric])
     axes[-1].legend(frameon=False, fontsize=6, loc="upper right")
     fig.suptitle(
-        f"Excess coordination: {NULL_MEANINGS[null_name]}",
-        fontsize=8,
+        f"Excess coordination: {NULL_MEANINGS[null_name]} — {METRIC_NOTE[metric]}",
+        fontsize=7.5,
         color=INK,
     )
     fig.tight_layout()
-    return fig, save_thesis_figure(fig, settings, f"{stem}_{null_name}")
+    return fig, save_thesis_figure(fig, settings, f"{stem}_{metric}_{null_name}")
 
 
 def plot_excess_vs_null(
@@ -218,6 +233,7 @@ def plot_condition_effects(
     settings: PairCoordinationPlotSettings,
     *,
     group_column: str = "region_pair",
+    metric_label: str = "ratio",
     stem: str = "fig04_condition_effects",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Condition effects broken out by region pair, with bootstrap intervals."""
@@ -261,7 +277,7 @@ def plot_condition_effects(
         ax.set_xticks(np.arange(len(groups)))
         ax.set_xticklabels([region_pair_label(g) for g in groups], fontsize=6, rotation=30, ha="right")
         _finish(ax, title=scope_label(scope))
-    axes[0].set_ylabel("Coordination effect\n(single-fixation null SD)")
+    axes[0].set_ylabel(METRIC_AXIS_LABEL.get(metric_label, "Coordination effect"))
     axes[0].legend(frameon=False, fontsize=6, loc="best")
     fig.tight_layout()
     return fig, save_thesis_figure(fig, settings, stem)
@@ -272,6 +288,7 @@ def plot_condition_contrasts(
     settings: PairCoordinationPlotSettings,
     *,
     label: str = "All pairs",
+    metric_label: str = "ratio",
     stem: str = "fig05_condition_contrasts",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Within-pair condition contrasts: the same two neurons, different fixations.
@@ -322,7 +339,11 @@ def plot_condition_contrasts(
         )
     )
     ax.legend(handles=handles, frameon=False, fontsize=6, loc="best")
-    _finish(ax, xlabel="Within-pair difference in coordination effect", title=label)
+    _finish(
+        ax,
+        xlabel=f"Within-pair difference ({METRIC_NOTE.get(metric_label, metric_label)})",
+        title=label,
+    )
     fig.tight_layout()
     return fig, save_thesis_figure(fig, settings, stem)
 
@@ -392,6 +413,7 @@ def plot_selectivity_comparison(
     settings: PairCoordinationPlotSettings,
     *,
     null_name: str = "trial_shuffle",
+    metric: str = "ratio",
     max_lag_ms: float = 100.0,
     stem: str = "fig11_selective_pairs",
 ) -> tuple[plt.Figure, dict[str, Path]]:
@@ -423,7 +445,9 @@ def plot_selectivity_comparison(
                 row = _trace_row(traces, scope=scope, condition=condition)
                 if row is None:
                     continue
-                mean = np.asarray(row[f"z_{null_name}_mean"], dtype=float)[keep]
+                mean = np.asarray(
+                    row[f"{METRIC_CHANNEL[metric]}_{null_name}_mean"], dtype=float
+                )[keep]
                 ax.plot(
                     lags[keep],
                     mean,
@@ -434,7 +458,7 @@ def plot_selectivity_comparison(
                 )
         ax.axhline(0.0, color=MUTED_INK, linewidth=0.8, linestyle=":")
         _finish(ax, xlabel="Lag (ms)", title=scope_label(scope))
-    axes[0].set_ylabel(f"Mean z\n({NULL_LABELS[null_name]})")
+    axes[0].set_ylabel(METRIC_AXIS_LABEL[metric])
     axes[-1].legend(frameon=False, fontsize=5, loc="upper right", ncol=1)
     fig.tight_layout()
     return fig, save_thesis_figure(fig, settings, stem)
@@ -526,6 +550,7 @@ def plot_region_traces(
     settings: PairCoordinationPlotSettings,
     *,
     null_name: str = "trial_shuffle",
+    metric: str = "ratio",
     scope: str = "within_region",
     max_lag_ms: float = 100.0,
     label: str = "",
@@ -561,9 +586,21 @@ def plot_region_traces(
                 keep_groups.append(group)
         groups = keep_groups
     if not groups:
-        fig, ax = plt.subplots(figsize=(3.0, 2.0))
-        _finish(ax, title=f"No {scope_label(scope).lower()} pairs")
-        return fig, save_thesis_figure(fig, settings, f"{stem}_{null_name}_{scope}")
+        fig, ax = plt.subplots(figsize=(3.6, 2.0))
+        note = (
+            f"No {scope_label(scope).lower()} group reaches\n{min_pairs:,} pairs in every condition"
+            if min_pairs > 0
+            else f"No {scope_label(scope).lower()} pairs"
+        )
+        ax.text(0.5, 0.5, note, ha="center", va="center", fontsize=7, color=MUTED_INK)
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        _finish(ax, title=scope_label(scope))
+        return fig, save_thesis_figure(
+            fig, settings, f"{stem}_{metric}_{null_name}_{scope}"
+        )
 
     n_cols = min(len(groups), 4)
     n_rows = int(np.ceil(len(groups) / n_cols))
@@ -581,8 +618,9 @@ def plot_region_traces(
             row = _trace_row(traces, scope=scope, region_pair=group, condition=condition)
             if row is None:
                 continue
-            mean = np.asarray(row[f"z_{null_name}_mean"], dtype=float)[keep]
-            sem = np.asarray(row[f"z_{null_name}_sem"], dtype=float)[keep]
+            channel = f"{METRIC_CHANNEL[metric]}_{null_name}"
+            mean = np.asarray(row[f"{channel}_mean"], dtype=float)[keep]
+            sem = np.asarray(row[f"{channel}_sem"], dtype=float)[keep]
             colour = CONDITION_COLORS.get(condition, MUTED_INK)
             ax.fill_between(lags[keep], mean - sem, mean + sem, color=colour, alpha=0.20, linewidth=0)
             ax.plot(lags[keep], mean, color=colour, linewidth=1.1, label=condition_label(condition, short=True))
@@ -592,14 +630,14 @@ def plot_region_traces(
         _finish(ax, xlabel="Lag (ms)", title=f"{region_pair_label(group)}  (n={n_pairs:,})")
     for ax in flat[len(groups):]:
         ax.set_visible(False)
-    axes[0, 0].set_ylabel(f"Mean z\n({NULL_LABELS[null_name]})")
+    axes[0, 0].set_ylabel(METRIC_AXIS_LABEL[metric])
     flat[len(groups) - 1].legend(frameon=False, fontsize=5.5, loc="upper right")
-    title = f"{scope_label(scope)} — {NULL_MEANINGS[null_name]}"
+    title = f"{scope_label(scope)} — {NULL_MEANINGS[null_name]} ({METRIC_NOTE[metric]})"
     if label:
         title = f"{title} — {label}"
-    fig.suptitle(title, fontsize=8, color=INK)
+    fig.suptitle(title, fontsize=7.5, color=INK)
     fig.tight_layout()
-    suffix = f"{null_name}_{scope}" + (f"_{label.replace(' ', '_')}" if label else "")
+    suffix = f"{metric}_{null_name}_{scope}" + (f"_{label.replace(' ', '_')}" if label else "")
     return fig, save_thesis_figure(fig, settings, f"{stem}_{suffix}")
 
 
