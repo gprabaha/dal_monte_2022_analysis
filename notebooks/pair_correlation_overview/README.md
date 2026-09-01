@@ -17,43 +17,44 @@ without the other.
 
 ## Structure
 
-1. Method schematic — both computations side by side
-2. **Noise**: interactive face sits above the circular-shift null, per region
-3. **Noise**: null-corrected, all three conditions — they do not differ
-4. **Signal**: null-corrected correlation across lags
-5. **Signal**: summarised away from zero lag — peak, and the ±20–200 ms bands
-6. Do the two measures track each other?
-7. The trial-count caveat
+Signal correlation comes first because it carries the clearer result.
 
-## Why not zero lag for signal correlation
+1. Method schematic — one set of trials, two orders of operation
+2. **Signal**: null-corrected correlation across lags
+3. **Signal**: peak correlation by region and fixation type
+4. **Noise**: sits above the circular-shift null; fixation type does not change it
+5. Peak signal against peak noise, per region, per condition
+
+## Why the peak, not zero lag
 
 Zero lag is one bin of fifty and a poor summary: two units whose responses share
 a shape but differ in latency correlate strongly at a non-zero lag and weakly at
-zero. Reported instead: the **peak** over ±100 ms (similarity at best alignment)
-and the **mean over +20 to +200 ms and −20 to −200 ms** (whether that alignment
-is symmetric).
+zero, so a zero-lag summary would miss exactly the pairs the analysis looks for.
+Reported instead: the **peak** over ±100 ms — similarity at best alignment.
 
-Two caveats on those. The peak is a maximum over many noisy lags and is inflated
-in level — identically for every condition, so comparisons hold even though the
-absolute value does not. And within a region the ordering of the two units is
-arbitrary, so the **sign** of a lead/lag difference carries no meaning; the two
-bands are expected to be similar and a departure would be the notable thing.
+The peak is a maximum over many noisy lags and so is inflated in level. That
+inflation is identical for every condition, since each is a maximum over the
+same lags on the same pairs, so comparisons hold even though the absolute value
+should not be quoted alone.
+
+## Why the two y-axes are not comparable
+
+Signal correlation is a Pearson coefficient, bounded in [−1, 1]. Noise
+correlation is **coincidences per fixation**: at each 1 ms lag, the number of
+spike pairs separated by that lag. Chance is roughly `rate₁ × rate₂ × bin
+width` — about 0.05 for two 7 Hz units — which is why those values sit where
+they do. They are different units and only their *ranks* are compared, in the
+final scatter.
 
 ## The trial-count caveat
 
 Interactive-face fixations outnumber the others about six to one, so
 interactive-face mean timelines are estimated more precisely and correlate
-better with anything. The cross-session null does not absorb this.
-
-The **noise** results are trial-count matched and do not carry it. The
-**signal** results are not — no matched average exists — so section 7
-stratifies by the trial-count ratio instead: shared tuning predicts a difference
-flat across strata, estimation noise predicts one that grows with it.
-
-This bounds how much of section 5 to believe. It does not make the analysis
-worthless: the level of signal correlation over its null, the region
-differences, and the signal/noise relationship are comparisons the imbalance
-does not obviously drive.
+better with anything. The noise-correlation comparisons are trial-count matched
+and do not carry this; the signal-correlation comparisons cannot be, so their
+absolute sizes are upper bounds. The region and condition ordering is not
+obviously driven by it. `notebooks/signal_correlation/` has the stratification
+that bounds it directly.
 
 ## Reading the statistics
 

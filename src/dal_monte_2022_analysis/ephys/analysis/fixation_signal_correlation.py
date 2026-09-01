@@ -638,7 +638,7 @@ def join_with_noise_correlation(
     settings: SignalCorrelationSettings,
     *,
     noise_metric: str = "circular_shift_peak_pm2ms",
-    signal_metric: str = "zero_lag_excess",
+    signal_metric: str = "peak_excess",
 ) -> pd.DataFrame:
     """Match each pair to its spike-coordination measurement, where one exists.
 

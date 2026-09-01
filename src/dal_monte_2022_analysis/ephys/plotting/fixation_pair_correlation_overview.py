@@ -16,7 +16,7 @@ from typing import Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
-from matplotlib.patches import Rectangle
+from matplotlib.patches import FancyArrowPatch, Rectangle
 
 from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     CONDITION_COLORS,
@@ -32,6 +32,11 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
 )
 
 REGION_ORDER: tuple[str, ...] = ("bla", "accg", "dmpfc", "ofc")
+
+#: One colour per analysis, used consistently across every figure so a reader
+#: can tell at a glance which of the two a panel belongs to.
+NOISE_COLOUR = "#c0392b"
+SIGNAL_COLOUR = "#2c7fb8"
 
 
 @dataclass
@@ -72,109 +77,118 @@ def plot_method_schematic(
     *,
     stem: str = "fig01_method_schematic",
 ) -> tuple[plt.Figure, dict[str, Path]]:
-    """Both computations, step by step, on one page.
+    """The same spike trains, two orders of operation.
 
-    The two rows share their first panel and diverge immediately after: the
-    noise row correlates *within* each fixation and averages the results, the
-    signal row averages *first* and correlates the averages.  Averaging first is
-    what removes trial-by-trial covariation, which is why the two measure
-    independent things.
+    One set of trials on the left feeds both paths.  The upper path correlates
+    within each trial and averages the correlograms; the lower path averages the
+    trials into rate timelines and correlates those.  Averaging first is the
+    only difference, and it is what removes trial-by-trial covariation -- which
+    is why the two paths measure independent things.
     """
     apply_thesis_plot_style()
-    fig, axes = plt.subplots(
-        2, 4, figsize=(settings.schematic_width_in, settings.schematic_height_in)
+    from matplotlib.gridspec import GridSpec
+
+    fig = plt.figure(figsize=(settings.schematic_width_in, settings.schematic_height_in))
+    grid = GridSpec(
+        2, 3, figure=fig, width_ratios=[1.05, 1.0, 1.0],
+        hspace=0.55, wspace=0.52, left=0.09, right=0.985, top=0.86, bottom=0.10,
     )
-    rng = np.random.default_rng(7)
-    time = np.linspace(-500, 500, 100)
-    lags = np.linspace(-250, 250, 200)
+    rng = np.random.default_rng(11)
+    lags = np.linspace(-200, 200, 240)
+    time = np.linspace(-500, 500, 120)
+    unit_colours = ("#111111", "#2c7fb8")
 
-    # ---------------- row 1: noise correlation --------------------------------
-    ax = axes[0][0]
-    for trial in range(5):
-        for offset, colour in ((0.0, INK), (0.42, "#2c7fb8")):
-            ax.vlines(rng.uniform(-500, 500, 11), trial + offset,
-                      trial + offset + 0.3, color=colour, lw=0.6)
-    ax.axvline(0, color=MUTED_INK, lw=0.6, linestyle=":")
-    ax.set_ylabel("fixations", fontsize=6)
-    ax.set_xlim(-560, 560); ax.set_ylim(-0.4, 5.3); _bare(ax)
-    ax.set_title("1 ms spike trains,\n±500 ms per fixation", fontsize=7, color=INK)
+    # ---- shared trials -----------------------------------------------------
+    ax_trains = fig.add_subplot(grid[:, 0])
+    labels = ["trial 1", "trial 2", "", "trial n"]
+    for row, label in enumerate(labels):
+        y = 3 - row
+        if label == "":
+            ax_trains.text(0, y + 0.40, "⋮", ha="center", va="center",
+                           fontsize=13, color=INK)
+            continue
+        for offset, colour in zip((0.44, 0.06), unit_colours):
+            ax_trains.vlines(rng.uniform(-500, 500, 13), y + offset,
+                             y + offset + 0.30, color=colour, lw=0.85)
+        ax_trains.text(-620, y + 0.38, label, fontsize=6.5, color=INK,
+                       ha="right", va="center")
+    ax_trains.axvline(0, color=MUTED_INK, lw=0.7, ls=":")
+    ax_trains.text(0, 4.45, "fixation onset", ha="center", fontsize=6, color=MUTED_INK)
+    # Name the two units against the trains they belong to, not in a corner.
+    ax_trains.text(520, 3.59, "unit 1", fontsize=6, color=unit_colours[0], va="center")
+    ax_trains.text(520, 3.21, "unit 2", fontsize=6, color=unit_colours[1], va="center")
+    ax_trains.set_xlim(-680, 560)
+    ax_trains.set_ylim(-0.35, 4.75)
+    _bare(ax_trains)
+    ax_trains.set_title("1 ms spike trains, ±500 ms", fontsize=7.5, color=INK)
 
-    ax = axes[0][1]
-    for trial in range(4):
-        trace = 0.4 * np.exp(-np.abs(lags) / 30.0) * rng.uniform(0.5, 1.6) + rng.normal(0, 0.05, lags.size)
-        ax.plot(lags, trace + trial * 0.6, color=INK, lw=0.6, alpha=0.7)
-    ax.set_xlabel("Lag (ms)", fontsize=6)
-    _bare(ax)
-    ax.set_title("correlate WITHIN\neach fixation", fontsize=7, color="#c0392b")
+    # ---- upper path: correlate, then average -------------------------------
+    ax_a = fig.add_subplot(grid[0, 1])
+    for trial in range(3):
+        trace = 0.5 * np.exp(-np.abs(lags) / 22.0) * rng.uniform(0.4, 1.7)
+        trace = trace + rng.normal(0, 0.06, lags.size)
+        ax_a.plot(lags, trace + (2 - trial) * 0.8, color=MUTED_INK, lw=0.7)
+    ax_a.text(0, -0.42, "⋮", ha="center", va="center", fontsize=13, color=INK)
+    ax_a.set_ylim(-0.75, 2.35)
+    ax_a.set_xlabel("Lag (ms)", fontsize=6.5)
+    _bare(ax_a)
+    ax_a.set_title("one correlogram per trial", fontsize=7, color=NOISE_COLOUR)
 
-    ax = axes[0][2]
-    null = 0.30 + 0.015 * np.exp(-np.abs(lags) / 200)
-    observed = null + 0.16 * np.exp(-np.abs(lags) / 8.0)
-    ax.plot(lags, observed, color=INK, lw=1.2, label="observed")
-    ax.plot(lags, null, color="#2c7fb8", lw=1.1, ls="--", label="circular-shift null")
-    ax.fill_between(lags, null, observed, color="#d95f0e", alpha=0.3, lw=0)
-    ax.legend(frameon=False, fontsize=5, loc="upper right")
-    ax.set_xlabel("Lag (ms)", fontsize=6); ax.set_yticks([])
-    _finish(ax, title="average, then subtract\nthe null")
+    ax_b = fig.add_subplot(grid[0, 2])
+    null_n = 0.055 + 0.004 * np.exp(-np.abs(lags) / 180)
+    obs_n = null_n + 0.020 * np.exp(-np.abs(lags) / 9.0)
+    ax_b.plot(lags, obs_n, color=CONDITION_COLORS["face_interactive"], lw=1.4)
+    ax_b.plot(lags, null_n, color=MUTED_INK, lw=1.1, ls="--")
+    ax_b.fill_between(lags, null_n, obs_n, color=NOISE_COLOUR, alpha=0.28, lw=0)
+    ax_b.set_xlabel("Lag (ms)", fontsize=6.5)
+    ax_b.set_yticks([])
+    _finish(ax_b, title="NOISE correlation", title_size=8)
+    ax_b.title.set_color(NOISE_COLOUR)
 
-    ax = axes[0][3]
-    ax.text(0.5, 0.92, "NOISE correlation", ha="center", fontsize=8, color="#c0392b", va="top")
-    ax.text(0.5, 0.72,
-            "Do these two units fire together\n"
-            "on the SAME fixation, more than\n"
-            "chance?\n\n"
-            "Null rotates one train within its\n"
-            "own fixation, so each fixation keeps\n"
-            "its spike count and slow envelope.",
-            ha="center", va="top", fontsize=6, color=INK)
-    ax.set_xlim(0, 1); ax.set_ylim(0, 1); _bare(ax)
+    # ---- lower path: average, then correlate -------------------------------
+    ax_c = fig.add_subplot(grid[1, 1])
+    ax_c.plot(time, 1.05 + 0.85 * np.exp(-0.5 * ((time - 45) / 130.0) ** 2),
+              color=unit_colours[0], lw=1.6)
+    ax_c.plot(time, 0.05 + 0.72 * np.exp(-0.5 * ((time + 5) / 150.0) ** 2),
+              color=unit_colours[1], lw=1.6)
+    ax_c.axvline(0, color=MUTED_INK, lw=0.7, ls=":")
+    ax_c.set_xlabel("Time from fixation (ms)", fontsize=6.5)
+    ax_c.set_yticks([])
+    _finish(ax_c, title="one mean rate timeline per unit", title_size=7)
+    ax_c.title.set_color(SIGNAL_COLOUR)
 
-    # ---------------- row 2: signal correlation -------------------------------
-    ax = axes[1][0]
-    for trial in range(5):
-        for offset, colour in ((0.0, INK), (0.42, "#2c7fb8")):
-            ax.vlines(rng.uniform(-500, 500, 11), trial + offset,
-                      trial + offset + 0.3, color=colour, lw=0.6)
-    ax.axvline(0, color=MUTED_INK, lw=0.6, linestyle=":")
-    ax.set_ylabel("fixations", fontsize=6)
-    ax.set_xlim(-560, 560); ax.set_ylim(-0.4, 5.3); _bare(ax)
-    ax.set_title("the same trains", fontsize=7, color=INK)
+    ax_d = fig.add_subplot(grid[1, 2])
+    null_s = 0.002 + 0.001 * np.exp(-np.abs(lags) / 160)
+    obs_s = null_s + 0.085 * np.exp(-0.5 * ((lags - 35) / 85.0) ** 2)
+    ax_d.plot(lags, obs_s, color=CONDITION_COLORS["face_interactive"], lw=1.4)
+    ax_d.plot(lags, null_s, color=MUTED_INK, lw=1.1, ls="--")
+    ax_d.fill_between(lags, null_s, obs_s, color=SIGNAL_COLOUR, alpha=0.28, lw=0)
+    ax_d.set_xlabel("Lag (ms)", fontsize=6.5)
+    ax_d.set_yticks([])
+    _finish(ax_d, title="SIGNAL correlation", title_size=8)
+    ax_d.title.set_color(SIGNAL_COLOUR)
 
-    ax = axes[1][1]
-    ax.plot(time, 1.0 + 0.85 * np.exp(-0.5 * ((time - 40) / 120.0) ** 2), color=INK, lw=1.5)
-    ax.plot(time, 0.1 + 0.7 * np.exp(-0.5 * ((time - 5) / 140.0) ** 2), color="#2c7fb8", lw=1.5)
-    ax.axvline(0, color=MUTED_INK, lw=0.6, linestyle=":")
-    ax.set_xlabel("Time (ms)", fontsize=6); ax.set_yticks([])
-    _finish(ax, title="average FIRST, into\nmean rate timelines", title_size=7)
-    ax.title.set_color("#2c7fb8")
+    # ---- labelled arrows ---------------------------------------------------
+    def arrow(x0, y0, x1, y1, colour, label, dy=0.022):
+        fig.add_artist(
+            FancyArrowPatch(
+                (x0, y0), (x1, y1), transform=fig.transFigure,
+                arrowstyle="-|>", mutation_scale=9, color=colour, lw=1.3,
+                connectionstyle="arc3,rad=0.0",
+            )
+        )
+        fig.text((x0 + x1) / 2, max(y0, y1) + dy, label, ha="center", va="bottom",
+                 fontsize=6.0, color=colour, linespacing=1.25)
 
-    ax = axes[1][2]
-    sig_null = 0.002 + 0.001 * np.exp(-np.abs(lags) / 150)
-    sig_obs = sig_null + 0.09 * np.exp(-0.5 * ((lags - 30) / 90.0) ** 2)
-    ax.plot(lags, sig_obs, color=INK, lw=1.2, label="observed")
-    ax.plot(lags, sig_null, color="#2c7fb8", lw=1.1, ls="--", label="cross-session null")
-    ax.fill_between(lags, sig_null, sig_obs, color="#d95f0e", alpha=0.3, lw=0)
-    ax.legend(frameon=False, fontsize=5, loc="upper right")
-    ax.set_xlabel("Lag (ms)", fontsize=6); ax.set_yticks([])
-    _finish(ax, title="correlate the averages,\nsubtract the null")
-
-    ax = axes[1][3]
-    ax.text(0.5, 0.92, "SIGNAL correlation", ha="center", fontsize=8, color="#2c7fb8", va="top")
-    ax.text(0.5, 0.72,
-            "Do their MEAN responses have\n"
-            "the same shape, and at what lag?\n\n"
-            "Null is a unit of the same region\n"
-            "from a different session: real and\n"
-            "fixation-locked, but sharing no\n"
-            "session, array or behaviour.",
-            ha="center", va="top", fontsize=6, color=INK)
-    ax.set_xlim(0, 1); ax.set_ylim(0, 1); _bare(ax)
+    arrow(0.318, 0.735, 0.392, 0.735, NOISE_COLOUR, "correlate\nwithin trials")
+    arrow(0.655, 0.735, 0.725, 0.735, NOISE_COLOUR, "then\naverage")
+    arrow(0.318, 0.255, 0.392, 0.255, SIGNAL_COLOUR, "average\nacross trials")
+    arrow(0.655, 0.255, 0.725, 0.255, SIGNAL_COLOUR, "then\ncross-correlate")
 
     fig.suptitle(
-        "Averaging first is the whole difference: it removes trial-by-trial covariation",
-        fontsize=8, color=INK,
+        "Averaging first removes trial-by-trial covariation — the only difference between the two",
+        fontsize=8, color=INK, y=0.975,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
     return fig, save_thesis_figure(fig, settings, stem)
 
 
@@ -209,8 +223,8 @@ def plot_noise_above_null(
             _bare(ax); continue
         row = row.iloc[0]
         for channel, colour, dash, label in (
-            ("observed", INK, "-", "Observed"),
-            ("null", "#2c7fb8", "--", "Circular-shift null"),
+            ("observed", CONDITION_COLORS.get(condition, INK), "-", "Observed"),
+            ("null", MUTED_INK, "--", "Circular-shift null"),
         ):
             mean = np.asarray(row[f"{channel}_mean"], dtype=float)[keep]
             sem = np.asarray(row[f"{channel}_sem"], dtype=float)[keep]
@@ -219,7 +233,12 @@ def plot_noise_above_null(
         ax.axvline(0, color=MUTED_INK, lw=0.5, ls=":")
         _finish(ax, xlabel="Lag (ms)",
                 title=f"{region_label(region)}  (n={int(row['n_pairs']):,})")
-    axes[0][0].set_ylabel("Coincidences\nper fixation", fontsize=6.5)
+    # Coincidence counts, not a correlation coefficient: at each 1 ms lag this
+    # is the number of spike pairs separated by that lag, per fixation.  Chance
+    # is roughly rate_1 * rate_2 * bin width, so ~0.05 for two 7 Hz units, which
+    # is why the values sit where they do and why they are not comparable in
+    # magnitude with the signal correlation.
+    axes[0][0].set_ylabel("Coincidences per fixation\n(1 ms lag bins)", fontsize=6.5)
     axes[0][-1].legend(frameon=False, fontsize=5.5, loc="upper right")
     fig.suptitle(
         f"Noise correlation sits above the null — {condition_label(condition)}, "
@@ -295,59 +314,148 @@ def plot_excess_by_condition(
     return fig, save_thesis_figure(fig, settings, stem)
 
 
-def plot_lag_band_summary(
+def plot_peak_comparison(
     summary: pd.DataFrame,
     settings: PairOverviewPlotSettings,
     *,
-    measures: Sequence[tuple[str, str]] = (
-        ("peak_excess", "Peak (max over ±100 ms)"),
-        ("positive_lag_excess", "Mean, +20 to +200 ms"),
-        ("negative_lag_excess", "Mean, −20 to −200 ms"),
-    ),
-    stem: str = "fig05_lag_band_summary",
+    contrasts: Optional[pd.DataFrame] = None,
+    measure: str = "peak_excess",
+    ylabel: str = "Peak signal correlation\n(observed − null)",
+    title: str = "",
+    stem: str = "fig03_peak_comparison",
 ) -> tuple[plt.Figure, dict[str, Path]]:
-    """Signal correlation summarised away from zero lag.
+    """Peak null-corrected correlation per region and fixation condition.
 
-    Zero lag is one bin of fifty and a poor summary: two units whose responses
-    have the same shape but different latencies correlate strongly at a non-zero
-    lag and weakly at zero.  The peak asks how similar the shapes are at their
-    best alignment; the two flanking bands ask whether that alignment is
-    symmetric.
+    The peak is a maximum over many noisy lags, so its absolute level is
+    inflated -- but identically for every condition, since each is a maximum
+    over the same lags on the same pairs.  Comparisons between conditions
+    therefore hold even though the level should not be quoted on its own.
 
-    Within a region the ordering of the two units in a pair is arbitrary, so the
-    *sign* of a lead/lag difference carries no meaning — the two bands are
-    expected to be similar, and it is a departure that would be notable.
+    When ``contrasts`` is supplied, contrasts that survive FDR correction are
+    marked, and the rank-biserial effect size is printed rather than a p-value:
+    with thousands of pairs per region, significance is a statement about sample
+    size and the effect size is the one about the neurons.
     """
     apply_thesis_plot_style()
+    regions = [r for r in REGION_ORDER if r in set(summary["region_pair"])]
+    rows = summary.loc[summary["measure"] == measure] if "measure" in summary.columns else summary
+
+    fig, ax = plt.subplots(
+        figsize=(settings.panel_width_in * 0.95 * max(len(regions), 1) + 0.8,
+                 settings.panel_height_in + 0.9)
+    )
+    width = 0.8 / max(len(CONDITION_ORDER), 1)
+    for index, condition in enumerate(CONDITION_ORDER):
+        table = rows.loc[rows["condition"] == condition].set_index("region_pair")
+        positions, values, errors = [], [], []
+        for position, region in enumerate(regions):
+            if region not in table.index:
+                continue
+            positions.append(position + (index - 1) * width)
+            values.append(float(table.loc[region, "mean"]))
+            errors.append(float(table.loc[region, "sem"]))
+        if positions:
+            ax.bar(positions, values, width=width, yerr=errors,
+                   color=CONDITION_COLORS.get(condition, MUTED_INK),
+                   edgecolor=INK, linewidth=0.5, error_kw={"elinewidth": 0.8, "capsize": 1.6},
+                   label=condition_label(condition))
+    ax.axhline(0, color=MUTED_INK, lw=0.8)
+    ax.set_xticks(np.arange(len(regions)))
+    ax.set_xticklabels([region_label(r) for r in regions], fontsize=7)
+    ax.legend(frameon=False, fontsize=6, loc="upper left")
+
+    if contrasts is not None and len(contrasts):
+        local = contrasts
+        if "measure" in local.columns:
+            local = local.loc[local["measure"] == measure]
+        top = ax.get_ylim()[1]
+        for position, region in enumerate(regions):
+            block = local.loc[
+                (local["region_pair"] == region)
+                & (local["condition_a"] == "face_interactive")
+            ]
+            if block.empty:
+                continue
+            marks = [
+                f"{condition_label(row.condition_b)}: {row.effect_size_rank_biserial:+.2f}"
+                + ("*" if bool(row.significant) else "")
+                for row in block.itertuples()
+            ]
+            ax.text(position, top * 0.99, "int vs\n" + "\n".join(marks),
+                    ha="center", va="top", fontsize=5.2, color=MUTED_INK)
+
+    _finish(ax, ylabel=ylabel, title=title, title_size=8)
+    fig.tight_layout()
+    return fig, save_thesis_figure(fig, settings, stem)
+
+
+def plot_peak_signal_vs_noise(
+    joined: pd.DataFrame,
+    correlations: pd.DataFrame,
+    settings: PairOverviewPlotSettings,
+    *,
+    stem: str = "fig05_peak_signal_vs_noise",
+) -> tuple[plt.Figure, dict[str, Path]]:
+    """Peak signal against peak noise correlation, per region, per condition.
+
+    One panel per region because the two quantities differ by an order of
+    magnitude between regions and a pooled scatter would show mostly that.
+    Points are coloured by fixation condition; the Spearman correlation per
+    condition is printed on the panel, since the question is whether pairs that
+    share a response profile also co-fire, not where the cloud sits.
+    """
+    apply_thesis_plot_style()
+    regions = [r for r in REGION_ORDER if r in set(joined["region_pair"])]
+    if not regions:
+        fig, ax = plt.subplots(figsize=(3.2, 1.8))
+        ax.text(0.5, 0.5, "No matched pairs", ha="center", va="center",
+                fontsize=7, color=MUTED_INK)
+        _bare(ax)
+        return fig, save_thesis_figure(fig, settings, stem)
+
     fig, axes = plt.subplots(
-        1, len(measures),
-        figsize=(settings.panel_width_in * 1.25 * len(measures), settings.panel_height_in + 0.6),
+        1, len(regions),
+        figsize=(settings.panel_width_in * 1.15 * len(regions), settings.panel_height_in + 0.8),
         squeeze=False,
     )
-    regions = [r for r in REGION_ORDER if r in set(summary["region_pair"])]
-    for ax, (key, label) in zip(axes[0], measures):
-        width = 0.8 / max(len(CONDITION_ORDER), 1)
-        for index, condition in enumerate(CONDITION_ORDER):
-            rows = summary.loc[
-                (summary["condition"] == condition) & (summary["measure"] == key)
-            ].set_index("region_pair")
-            positions, values, errors = [], [], []
-            for position, region in enumerate(regions):
-                if region not in rows.index:
-                    continue
-                positions.append(position + (index - 1) * width)
-                values.append(float(rows.loc[region, "mean"]))
-                errors.append(float(rows.loc[region, "sem"]))
-            if positions:
-                ax.bar(positions, values, width=width, yerr=errors,
-                       color=CONDITION_COLORS.get(condition, MUTED_INK),
-                       edgecolor=INK, linewidth=0.4, error_kw={"elinewidth": 0.7},
-                       label=condition_label(condition) if ax is axes[0][0] else None)
-        ax.axhline(0, color=MUTED_INK, lw=0.8)
-        ax.set_xticks(np.arange(len(regions)))
-        ax.set_xticklabels([region_label(r) for r in regions], fontsize=6)
-        _finish(ax, title=label)
-    axes[0][0].set_ylabel("Signal correlation\n(observed − null)", fontsize=6.5)
-    axes[0][0].legend(frameon=False, fontsize=5.5, loc="best")
-    fig.tight_layout()
+    for ax, region in zip(axes[0], regions):
+        block = joined.loc[joined["region_pair"] == region]
+        lines = []
+        for condition in CONDITION_ORDER:
+            part = block.loc[block["condition"] == condition].dropna(subset=["signal", "noise"])
+            if part.empty:
+                continue
+            colour = CONDITION_COLORS.get(condition, MUTED_INK)
+            ax.scatter(part["signal"], part["noise"], s=3.0, alpha=0.35,
+                       color=colour, linewidths=0, label=condition_label(condition))
+            row = correlations.loc[
+                (correlations["region_pair"] == region)
+                & (correlations["condition"] == condition)
+            ]
+            if len(row):
+                rho = float(row["spearman_rho"].iloc[0])
+                star = "*" if float(row["p_value"].iloc[0]) < 0.05 else ""
+                lines.append((colour, f"ρ={rho:+.2f}{star}"))
+        for index, (colour, text) in enumerate(lines):
+            ax.text(0.03, 0.97 - 0.10 * index, text, transform=ax.transAxes,
+                    ha="left", va="top", fontsize=5.8, color=colour)
+        ax.axhline(0, color=MUTED_INK, lw=0.6)
+        ax.axvline(0, color=MUTED_INK, lw=0.6)
+        # Robust limits.  A handful of pairs carry noise-correlation peaks an
+        # order of magnitude above the rest, and letting them set the axis
+        # flattens every other point onto the zero line.
+        values = block["noise"].to_numpy(dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size:
+            low, high = np.percentile(values, [0.5, 99.0])
+            pad = 0.08 * (high - low or 1.0)
+            ax.set_ylim(low - pad, high + pad)
+        _finish(ax, xlabel="Peak signal correlation",
+                title=f"{region_label(region)}  (n={len(block) // 3:,})")
+    axes[0][0].set_ylabel("Peak noise correlation\n(coincidences per fixation)", fontsize=6.5)
+    handles, labels = axes[0][-1].get_legend_handles_labels()
+    fig.legend(handles, labels, frameon=False, fontsize=6, markerscale=3,
+               loc="lower center", ncol=3, bbox_to_anchor=(0.5, -0.02))
+    fig.suptitle("Do pairs that share a response profile also co-fire?", fontsize=8, color=INK)
+    fig.tight_layout(rect=(0, 0.07, 1, 0.90))
     return fig, save_thesis_figure(fig, settings, stem)

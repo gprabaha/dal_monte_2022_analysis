@@ -117,53 +117,41 @@ fig, paths = viz.plot_excess_by_condition(
 display(Image(filename=str(paths["png"])))
 '''
 
-SIGNAL_BANDS = '''
-lag_summary = sc.summarize_lag_measures(signal, signal_settings)
-fig, paths = viz.plot_lag_band_summary(lag_summary, figs)
+SIGNAL_PEAK = '''
+lag_summary = sc.summarize_lag_measures(signal, signal_settings, measures=("peak_excess",))
+peak_contrasts = sc.compare_lag_measures(signal, signal_settings, measures=("peak_excess",))
+
+fig, paths = viz.plot_peak_comparison(
+    lag_summary, figs, contrasts=peak_contrasts,
+    title="Peak signal correlation by region and fixation type",
+)
 display(Image(filename=str(paths["png"])))
 
-for measure in ("peak_excess", "positive_lag_excess", "negative_lag_excess"):
-    display(Markdown(f"**{measure}**"))
-    display(
-        lag_summary.loc[lag_summary["measure"] == measure]
-        .pivot_table(index="region_pair", columns="condition", values="mean").round(4)
-    )
-
-lag_contrasts = sc.compare_lag_measures(signal, signal_settings)
 display(
-    lag_contrasts.loc[
-        lag_contrasts["measure"].isin(
-            ["peak_excess", "positive_lag_excess", "negative_lag_excess"]
-        ),
-        ["measure", "region_pair", "condition_a", "condition_b", "n_pairs",
-         "mean_difference", "effect_size_rank_biserial", "significant"],
+    lag_summary.pivot_table(index="region_pair", columns="condition", values="mean").round(4)
+)
+display(
+    peak_contrasts.loc[
+        :, ["region_pair", "condition_a", "condition_b", "n_pairs", "mean_difference",
+            "effect_size_rank_biserial", "p_value_corrected", "significant"]
     ].round(4)
 )
 '''
 
 COMBINED = '''
 joined = sc.join_with_noise_correlation(signal, signal_settings)
+joined = joined.loc[joined["scope"] == "within_region"]
 correlations = sc.correlate_signal_with_noise(joined)
-print(f"pairs with both measurements: {len(joined):,}")
-display(correlations.round(4))
+print(f"pairs with both measurements: {len(joined) // 3:,} per condition")
 
-from dal_monte_2022_analysis.ephys.plotting import fixation_signal_correlation as sigviz
-sig_figs = sigviz.SignalCorrelationPlotSettings(output_dir=FIGURE_DIR)
-fig, paths = sigviz.plot_signal_vs_noise(joined, correlations, sig_figs,
-                                         stem="fig06_signal_vs_noise")
+fig, paths = viz.plot_peak_signal_vs_noise(joined, correlations, figs)
 display(Image(filename=str(paths["png"])))
-'''
 
-TRIALS = '''
-strata = sc.stratify_by_trial_ratio(signal, signal_settings, metric="peak_excess")
-display(strata.round(4))
-
-from dal_monte_2022_analysis.ephys.plotting import fixation_signal_correlation as sigviz
-fig, paths = sigviz.plot_trial_count_confound(
-    strata, sigviz.SignalCorrelationPlotSettings(output_dir=FIGURE_DIR),
-    stem="fig07_trial_count_confound",
+display(
+    correlations.loc[
+        :, ["region_pair", "condition", "n_pairs", "spearman_rho", "p_value"]
+    ].round(4)
 )
-display(Image(filename=str(paths["png"])))
 '''
 
 _CELL_IDS = count(1)
@@ -184,18 +172,19 @@ CELLS = [
 # {TITLE}
 
 Every pair here is **two FDR-selective units recorded simultaneously in the same
-region**. Two things are measured on those same pairs, and the point of putting
-them together is that neither is interpretable alone.
+region**. Two things are measured on those same pairs.
 
-| | noise correlation | signal correlation |
+| | signal correlation | noise correlation |
 |---|---|---|
-| computed on | per-fixation 1 ms spike trains | condition-averaged rate timelines |
-| asks | do they fire together on the **same** fixation | do their **mean responses** share a shape |
-| null | circular shift within fixation | unit of the same region, different session |
+| computed on | condition-averaged rate timelines | per-fixation 1 ms spike trains |
+| asks | do their **mean responses** share a shape | do they fire together on the **same** fixation |
+| null | unit of the same region, different session | circular shift within fixation |
 
 Averaging over fixations removes trial-by-trial covariation entirely. That is
-the whole difference between the two rows of the schematic, and it is why a pair
+the only difference between the two paths in the schematic, and it is why a pair
 can have either without the other.
+
+Signal correlation comes first because it carries the clearer result.
 """),
     code(SETUP),
     code(SCHEMATIC),
@@ -204,99 +193,86 @@ can have either without the other.
 """),
     code(LOAD),
     markdown("""
-# Noise correlation
-
-## 2. It sits above the null
-
-Interactive-face fixations, per region: the observed cross-correlation against
-the circular-shift null. The gap is the coordination.
-"""),
-    code(NOISE_ABOVE),
-    markdown("""
-## 3. But the fixation types do not differ
-
-The same quantity, null-corrected, for all three conditions. Trial-count matched,
-because interactive-face fixations outnumber the others roughly six to one.
-
-Read the **effect sizes**, not the asterisks. With thousands of pairs per region
-almost any difference reaches significance; rank-biserial is the number that
-says whether it is a difference worth reporting.
-"""),
-    code(NOISE_EXCESS),
-    markdown("""
 # Signal correlation
 
-## 4. Null-corrected correlation across lags
+## 2. Null-corrected correlation across lags
 
-The cross-session null is subtracted, so zero means "resembles a same-region unit
-from another session no more than chance".
+The cross-session null is subtracted, so zero means "resembles a same-region
+unit from another session no more than chance".
 """),
     code(SIGNAL_TRACES),
     markdown("""
-## 5. Summarised away from zero lag
+## 3. Peak correlation by region and fixation type
 
-Zero lag is one bin of fifty and a poor summary: two units whose responses share
-a shape but differ in latency correlate strongly at a non-zero lag and weakly at
-zero. Three measures instead —
+Summarised at the **peak** rather than at zero lag. Zero lag is one bin of
+fifty, and two units whose responses share a shape but differ in latency
+correlate strongly off zero and weakly at it — so a zero-lag summary would miss
+exactly the pairs the analysis is looking for.
 
-- **peak**: the maximum over ±100 ms, i.e. similarity at best alignment
-- **mean +20 to +200 ms** and **mean −20 to −200 ms**: whether that alignment is symmetric
+The peak's absolute level is inflated, since it is a maximum over many noisy
+lags. That inflation is identical for every condition, so the comparisons hold
+even though the level should not be quoted alone.
 
-Two caveats on reading these. The peak is a maximum over many noisy lags and is
-biased upward in level — but identically for every condition, so comparisons
-hold even though the absolute value does not. And within a region the ordering
-of the two units in a pair is arbitrary, so the **sign** of a lead/lag difference
-carries no meaning; the two bands are expected to be similar and it is a
-departure that would be notable.
+Annotations give the rank-biserial effect size for interactive face against each
+other condition, starred where the contrast survives FDR correction.
 """),
-    code(SIGNAL_BANDS),
+    code(SIGNAL_PEAK),
+    markdown("""
+# Noise correlation
+
+## 4. It sits above the null, and fixation type does not change it
+
+Interactive face first, against the circular-shift null. The gap between the two
+curves is the coordination.
+
+The y-axis is **coincidences per fixation**, not a correlation coefficient: at
+each 1 ms lag it counts spike pairs separated by that lag. Chance is roughly
+`rate₁ × rate₂ × bin width`, about 0.05 for two 7 Hz units, which is why the
+values sit where they do — and why they are not comparable in magnitude with the
+signal correlation above.
+"""),
+    code(NOISE_ABOVE),
+    markdown("""
+The same quantity null-corrected, for all three conditions, trial-count matched.
+Read the **effect sizes**: with thousands of pairs per region almost any
+difference reaches significance.
+"""),
+    code(NOISE_EXCESS),
     markdown("""
 # Putting them together
 
-## 6. Do the two measures track each other?
+## 5. Peak signal against peak noise, per region
 
-Pairs that share a response profile need not covary trial to trial, and vice
-versa. Matching each pair to both of its measurements answers it directly.
+One panel per region, since the two quantities differ by an order of magnitude
+between regions and a pooled scatter would show mostly that. Points are coloured
+by fixation condition and the Spearman correlation per condition is printed on
+the panel.
 """),
     code(COMBINED),
     markdown("""
-## 7. The trial-count caveat, stated rather than used to dismiss
-
-Interactive-face fixations outnumber the others about six to one, so
-interactive-face mean timelines are estimated more precisely and correlate
-better with anything. This inflates signal correlation for interactive face
-specifically, and the cross-session null does not absorb it.
-
-The noise-correlation results above are already trial-count matched, so they do
-not carry this. The signal-correlation results are **not** matched — no matched
-average exists — so the stratification below is the available control: shared
-tuning predicts a difference flat across strata of the trial-count ratio,
-estimation noise predicts one that grows with it.
-
-This bounds how much of section 5 to believe. It does not make the analysis
-worthless: the level of signal correlation over the cross-session null, the
-region differences, and the signal/noise relationship in section 6 are all
-comparisons that the imbalance does not obviously drive.
-"""),
-    code(TRIALS),
-    markdown("""
 ## What the two analyses say together
 
-Fill in against the numbers, but the shape of the answer:
-
-1. **Noise correlation is clearly above the circular-shift null in every
-   region** — simultaneously recorded selective pairs do co-fire beyond what
+1. **Signal correlation is above its cross-session null**, and it varies by
+   region and by fixation type — interactive face is highest where the effect
+   is clearest.
+2. **Noise correlation is clearly above its circular-shift null in every
+   region**, so simultaneously recorded selective pairs do co-fire beyond what
    their individual rate profiles predict.
-2. **Fixation type does not modulate it.** Effect sizes across every region and
-   contrast are a few hundredths, and the significance is sample size.
-3. **Signal correlation is above its own null**, and unlike noise correlation it
-   does vary between regions and shows larger condition effect sizes — most of
-   it in OFC, which is also where the trial-count confound bites hardest.
-4. **The two are positively related within region.** Pairs whose mean responses
+3. **Fixation type does not modulate noise correlation.** Effect sizes across
+   every region and contrast are a few hundredths.
+4. **The two are positively related within region** — pairs whose mean responses
    resemble each other also tend to co-fire trial to trial.
 
-The honest headline is that pairwise coupling in this dataset is a property of
-the **pair and the region**, not of what the animal was looking at.
+So the fixation-condition effect lives in **shared tuning**, not in
+trial-by-trial coupling: what changes with interactive face is how much two
+neurons' average responses resemble each other, not how tightly they co-fire on
+any given fixation.
+
+One caveat to carry: interactive-face fixations outnumber the others roughly six
+to one. The noise-correlation comparisons are trial-count matched and do not
+carry that; the signal-correlation comparisons cannot be, so their absolute
+sizes are upper bounds even though the region and condition ordering is not
+obviously driven by it.
 """),
 ]
 

@@ -88,7 +88,8 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_population_pc_subspace impo
 from dal_monte_2022_analysis.ephys.plotting.fixation_pair_correlation_overview import (
     PairOverviewPlotSettings,
     plot_excess_by_condition,
-    plot_lag_band_summary,
+    plot_peak_comparison,
+    plot_peak_signal_vs_noise,
     plot_noise_above_null,
 )
 from dal_monte_2022_analysis.ephys.plotting.fixation_signal_correlation import (
@@ -193,7 +194,8 @@ __all__ = [
     "plot_time_resolved_separation",
     "PairOverviewPlotSettings",
     "plot_excess_by_condition",
-    "plot_lag_band_summary",
+    "plot_peak_comparison",
+    "plot_peak_signal_vs_noise",
     "plot_noise_above_null",
     "SignalCorrelationPlotSettings",
     "plot_condition_summary",
