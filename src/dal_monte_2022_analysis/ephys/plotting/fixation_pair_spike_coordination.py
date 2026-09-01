@@ -179,9 +179,11 @@ def plot_observed_and_null_grid(
         squeeze=False,
     )
     for row_index, group in enumerate(groups):
-        # Share the y-axis within a region but not across regions: firing rates
-        # differ enough between regions that one shared scale would flatten the
-        # region with the smaller values into a line.
+        # Every panel autoscales independently.  Sharing a scale even within a
+        # row clipped the taller peaks and squashed the shorter ones, and the
+        # comparison that matters here is between the two curves inside a panel,
+        # not between panels -- that comparison is what the null-corrected
+        # figure is for.
         row_axes = axes[row_index]
         for column_index, condition in enumerate(CONDITION_ORDER):
             ax = row_axes[column_index]
@@ -191,7 +193,7 @@ def plot_observed_and_null_grid(
                 continue
             for channel, colour, dash, name in (
                 ("observed", INK, "-", "Observed"),
-                ("null", "#2c7fb8", "--", "Cross-trial shuffle null"),
+                ("null", "#2c7fb8", "--", "Circular-shift null"),
             ):
                 mean = np.asarray(row[f"{channel}_mean"], dtype=float)[keep]
                 sem = np.asarray(row[f"{channel}_sem"], dtype=float)[keep]
@@ -211,11 +213,8 @@ def plot_observed_and_null_grid(
                 title=title,
             )
         row_axes[0].set_ylabel(f"{region_pair_label(group)}\n{MEASURE_LABEL}", fontsize=6)
-        for ax in row_axes[1:]:
-            ax.sharey(row_axes[0])
-            ax.tick_params(labelleft=False)
     axes[0][-1].legend(frameon=False, fontsize=5.5, loc="upper right")
-    heading = f"{scope_label(scope)} — observed vs cross-trial shuffle null"
+    heading = f"{scope_label(scope)} — observed vs circular-shift null"
     if label:
         heading = f"{heading} — {label}"
     # Reserve the strip the title needs before tight_layout packs the axes, or
@@ -265,6 +264,23 @@ def plot_null_corrected_grid(
     flat = axes.reshape(-1)
     for ax, group in zip(flat, groups):
         n_pairs = 0
+        # Stack the significance rugs so three conditions do not overprint.
+        panel_rows = [
+            _row(traces, scope=scope, region_pair=group, condition=c) for c in CONDITION_ORDER
+        ]
+        finite = [
+            np.asarray(r["excess_mean"], dtype=float)[keep] for r in panel_rows if r is not None
+        ]
+        span = (
+            (np.nanmin([np.nanmin(v) for v in finite]), np.nanmax([np.nanmax(v) for v in finite]))
+            if finite
+            else (0.0, 1.0)
+        )
+        step = 0.055 * (span[1] - span[0] or 1.0)
+        marker_levels = {
+            condition: span[0] - (index + 1) * step
+            for index, condition in enumerate(CONDITION_ORDER)
+        }
         for condition in CONDITION_ORDER:
             row = _row(traces, scope=scope, region_pair=group, condition=condition)
             if row is None:
@@ -279,6 +295,18 @@ def plot_null_corrected_grid(
                 lags[keep], mean, color=colour, linewidth=1.1,
                 label=condition_label(condition, short=True),
             )
+            # A rug of the lags whose excess clears the null, sign-tested across
+            # pairs and FDR-corrected over lags.  Without it a curve that is
+            # visibly above zero everywhere reads as though every lag counted.
+            if "excess_significant" in row.index:
+                flag = np.asarray(row["excess_significant"], dtype=bool)[keep]
+                if flag.any():
+                    ax.plot(
+                        lags[keep][flag],
+                        np.full(int(flag.sum()), marker_levels[condition]),
+                        marker="|", linestyle="none", markersize=2.6,
+                        color=colour, alpha=0.85,
+                    )
             n_pairs = max(n_pairs, int(row["n_pairs"]))
         ax.axhline(0.0, color=MUTED_INK, linewidth=0.8, linestyle="--")
         ax.axvline(0.0, color=MUTED_INK, linewidth=0.5, linestyle=":")

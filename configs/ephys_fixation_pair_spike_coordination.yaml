@@ -46,16 +46,24 @@ include_within_region: true
 include_cross_region: true
 
 # --- Null --------------------------------------------------------------------
-# One null: the trial shuffle. Unit A's train on fixation i is paired with unit
-# B's train on some other fixation, so both units keep their fixation-locked
-# rate profiles and their exact spike counts, and only the trial-by-trial
-# covariation is destroyed.
+# One null: the CIRCULAR SHIFT. Unit B's train is rotated by a random offset
+# within its own fixation, so each fixation keeps its own spike counts and its
+# slow envelope. Covariation of excitability across fixations therefore survives
+# in the null and cannot by itself produce an excess; only fine temporal
+# alignment is destroyed.
 #
-# Each draw is a derangement of the fixation index, so the null statistic is
-# built from exactly as many pairings as the observed one. Estimating it from
-# all F*(F-1) cross-fixation pairings instead would shrink its standard error
-# and inflate every comparison.
-n_trial_shuffle_draws: 50
+# This replaces the cross-trial shuffle, which pairs unit A's fixation i with
+# unit B's fixation j and so destroys across-fixation rate covariation too. That
+# is too low a bar: two cells whose rates rise and fall together across
+# fixations, with no timing relationship at all, clear it easily.
+# verify_null_sensitivity shows exactly that on a synthetic shared-gain pair,
+# which reaches z = 2.0 against the cross-trial null and 1.3 against this one,
+# level with an uncoupled pair.
+n_circular_shift_draws: 50
+
+# A rotation shorter than the coordination timescale of interest would leave the
+# effect partly intact and make the null too conservative.
+min_circular_shift_ms: 50.0
 
 # Recompute every pair on a common fixation count across conditions. Interactive
 # face fixations outnumber non-interactive ones roughly five to one, so this is

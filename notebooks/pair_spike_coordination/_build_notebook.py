@@ -55,7 +55,7 @@ MIN_PAIRS = psc.DEFAULT_MIN_PAIRS_FOR_REPORTING
 
 print(f"window        : {settings.signal_window_ms[0]:.0f} to {settings.signal_window_ms[1]:.0f} ms")
 print(f"signal        : {settings.signal_input_column} from {settings.trial_input_filename}")
-print(f"null draws    : {settings.n_trial_shuffle_draws} cross-trial shuffles")
+print(f"null          : {settings.n_circular_shift_draws} circular shifts, min {settings.min_circular_shift_ms:.0f} ms")
 '''
 
 BUILD = '''
@@ -185,16 +185,25 @@ the null already carries both units' firing rates and exact spike counts, so
 
 ## The null
 
-One null, the **cross-trial shuffle**: unit A's train on fixation *i* is paired
-with unit B's train on a *different* fixation. Both units keep their
-fixation-locked rate profiles and their exact spike counts; only the
-trial-by-trial covariation is destroyed. An excess over it means the two cells
-co-fluctuate from fixation to fixation.
+One null, the **circular shift**: unit B's train is rotated by a random offset
+(at least 50 ms) **within its own fixation**. Each fixation keeps its own spike
+counts and its slow envelope, so two cells whose excitability simply rises and
+falls together across fixations produce *no* excess over it. What is destroyed
+is fine temporal alignment.
 
-Each draw is a *derangement* of the fixation index, so the null uses exactly as
-many pairings as the observed statistic. Estimating it from all `F(F−1)`
-cross-fixation pairings would shrink its standard error and inflate every
-comparison.
+This replaces the cross-trial shuffle, which pairs fixation *i* with fixation
+*j* and so destroys across-fixation rate covariation as well — too low a bar. A
+synthetic pair with shared gain and no timing relationship reaches z = 2.0
+against the cross-trial null and 1.3 against this one, level with an uncoupled
+pair.
+
+**Known bias, stated up front.** The rotation also misaligns the two units'
+*fixation-locked rate profiles*. Two cells that both respond to fixation onset
+show a broad correlation from that alone, and the shift removes it — so the null
+sits low at every lag and a uniform positive excess appears with no timing
+structure behind it. On a synthetic uncoupled pair with a shared rate bump this
+bias is about z = 1.2. Read the **shape** of the excess, not its offset: a peak
+standing above its own flanks is coordination, a flat elevation is this bias.
 
 ## Structure
 

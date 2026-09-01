@@ -38,7 +38,13 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination imp
 
 
 def _settings(**kwargs) -> PairSpikeCoordinationSettings:
-    base = {"cfg_path": "", "n_trial_shuffle_draws": 25}
+    base = {
+        "cfg_path": "",
+        "n_circular_shift_draws": 25,
+        # The synthetic windows are 64 bins, not the 1000 of real data, so the
+        # production 50 ms floor would leave no admissible rotation.
+        "min_circular_shift_ms": 4.0,
+    }
     base.update(kwargs)
     return PairSpikeCoordinationSettings(**base)
 
@@ -68,7 +74,7 @@ class TestNullConstruction(unittest.TestCase):
             trains[1, fixation, n_bins - 2] = 1.0   # near the end
         result = compute_condition_coordination(
             trains,
-            settings=_settings(n_trial_shuffle_draws=2),
+            settings=_settings(n_circular_shift_draws=2),
             bin_size_ms=1.0,
             rng=np.random.default_rng(0),
         )
@@ -111,7 +117,7 @@ class TestNullConstruction(unittest.TestCase):
         trains = (rng.random((2, n_fixations, n_bins)) < 0.12).astype(float)
         result = compute_condition_coordination(
             trains,
-            settings=_settings(n_trial_shuffle_draws=2),
+            settings=_settings(n_circular_shift_draws=2),
             bin_size_ms=1.0,
             rng=np.random.default_rng(0),
         )
@@ -153,7 +159,7 @@ class TestNullConstruction(unittest.TestCase):
             trains[1, fixation, 10 + delay] = 1.0
         result = compute_condition_coordination(
             trains,
-            settings=_settings(n_trial_shuffle_draws=2),
+            settings=_settings(n_circular_shift_draws=2),
             bin_size_ms=1.0,
             rng=np.random.default_rng(0),
         )
@@ -172,11 +178,11 @@ class TestMeasure(unittest.TestCase):
         null_mean = rng.random(lags.size) + 1.0
         null_sd = np.full(lags.size, 0.3)
         summary = _summarize_pair_traces(
-            lags, observed, null_mean, null_sd, n_fixations=30, prefix="trial_shuffle"
+            lags, observed, null_mean, null_sd, n_fixations=30, prefix="circular_shift"
         )
         window = np.abs(lags) <= 10.0
         self.assertAlmostEqual(
-            summary["trial_shuffle_mean_excess_pm10ms"],
+            summary["circular_shift_mean_excess_pm10ms"],
             float(np.mean((observed - null_mean)[window])),
             places=12,
         )
@@ -197,26 +203,34 @@ class TestNullSensitivity(unittest.TestCase):
         )
 
     def test_independent_pair_sits_near_zero(self):
-        value = float(self.frame.loc["independent", "trial_shuffle_mean_z_pm10ms"])
+        value = float(self.frame.loc["independent", "circular_shift_mean_z_pm10ms"])
         self.assertLess(abs(value), 1.5, "the null is not centred on an uncoupled pair")
 
-    def test_shared_rate_is_detected(self):
-        """Trial-by-trial co-fluctuation is exactly what this null removes."""
-        self.assertGreater(
-            float(self.frame.loc["shared_rate", "trial_shuffle_mean_z_pm10ms"]), 1.0
-        )
+    def test_shared_rate_alone_does_not_clear_this_null(self):
+        """The reason for preferring the circular shift over a cross-trial one.
+
+        Two cells whose excitability rises and falls together across fixations,
+        with no timing relationship at all, must not register as coordinated.
+        The circular shift keeps each fixation's own spike counts, so it does
+        not; a cross-trial shuffle destroys that covariation and so it does.
+        """
+        shared = float(self.frame.loc["shared_rate", "circular_shift_mean_z_pm10ms"])
+        independent = float(self.frame.loc["independent", "circular_shift_mean_z_pm10ms"])
+        synchronous = float(self.frame.loc["synchronous", "circular_shift_mean_z_pm10ms"])
+        self.assertLess(shared - independent, 1.0)
+        self.assertGreater(synchronous - shared, 2.0)
 
     def test_synchrony_is_detected_at_the_injected_lag(self):
         self.assertGreater(
-            float(self.frame.loc["synchronous", "trial_shuffle_mean_z_pm10ms"]), 1.5
+            float(self.frame.loc["synchronous", "circular_shift_mean_z_pm10ms"]), 1.5
         )
         self.assertEqual(
-            float(self.frame.loc["synchronous", "trial_shuffle_peak_lag_ms"]), -4.0
+            float(self.frame.loc["synchronous", "circular_shift_peak_lag_ms"]), -4.0
         )
 
     def test_common_input_appears_at_exactly_zero_lag(self):
         self.assertEqual(
-            float(self.frame.loc["common_zero_lag", "trial_shuffle_peak_lag_ms"]), 0.0
+            float(self.frame.loc["common_zero_lag", "circular_shift_peak_lag_ms"]), 0.0
         )
 
 
@@ -229,8 +243,8 @@ class TestDegenerateNulls(unittest.TestCase):
         result = compute_condition_coordination(
             trains, settings=_settings(), bin_size_ms=1.0, rng=np.random.default_rng(0)
         )
-        excess = result["observed"][0, 1] - result["trial_shuffle_mean"][0, 1]
-        sd = result["trial_shuffle_sd"][0, 1]
+        excess = result["observed"][0, 1] - result["circular_shift_mean"][0, 1]
+        sd = result["circular_shift_sd"][0, 1]
         finite = sd > 0
         if finite.any():
             z = excess[finite] / sd[finite]
@@ -283,10 +297,10 @@ def _synthetic_pairs(
                     "region_pair": "bla" if index % 2 == 0 else "bla-accg",
                     "n_fixations": 30,
                     "both_selective": index % 3 == 0,
-                    "trial_shuffle_mean_excess_pm10ms": rng.normal(condition_offset, 1.0),
-                    "trial_shuffle_mean_z_pm10ms": rng.normal(condition_offset, 1.0),
-                    "trial_shuffle_zero_lag_z": rng.normal(0.0, 1.0),
-                    "trial_shuffle_mean_z_pm25ms": rng.normal(0.0, 1.0),
+                    "circular_shift_mean_excess_pm10ms": rng.normal(condition_offset, 1.0),
+                    "circular_shift_mean_z_pm10ms": rng.normal(condition_offset, 1.0),
+                    "circular_shift_zero_lag_z": rng.normal(0.0, 1.0),
+                    "circular_shift_mean_z_pm25ms": rng.normal(0.0, 1.0),
                 }
             )
     return pd.DataFrame(rows)
@@ -347,7 +361,7 @@ class TestSummariesAndTests(unittest.TestCase):
     def test_artifact_dates_are_dropped_not_just_flagged(self):
         pairs = _synthetic_pairs(n_pairs=240, seed=9)
         target = sorted(pairs["date"].unique())[0]
-        pairs.loc[pairs["date"] == target, "trial_shuffle_zero_lag_z"] = 12.0
+        pairs.loc[pairs["date"] == target, "circular_shift_zero_lag_z"] = 12.0
         cleaned, dropped = drop_zero_lag_artifact_dates(pairs)
         self.assertIn(target, dropped)
         # Dropped outright, in every scope, not merely flagged.
@@ -362,7 +376,7 @@ class TestSummariesAndTests(unittest.TestCase):
     def test_zero_lag_diagnostics_flags_a_contaminated_day(self):
         pairs = _synthetic_pairs(n_pairs=240, seed=7)
         target = sorted(pairs["date"].unique())[0]
-        pairs.loc[pairs["date"] == target, "trial_shuffle_zero_lag_z"] = 12.0
+        pairs.loc[pairs["date"] == target, "circular_shift_zero_lag_z"] = 12.0
         diagnostics = build_zero_lag_diagnostics(pairs)
         self.assertIn("suspected_zero_lag_artifact", diagnostics.columns)
         worst = diagnostics.sort_values("frac_pairs_zero_lag_above", ascending=False)

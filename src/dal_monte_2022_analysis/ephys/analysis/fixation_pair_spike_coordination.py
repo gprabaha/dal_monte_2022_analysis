@@ -37,12 +37,17 @@ different behavioural condition rather than a null.
 
 *One null.*
 
-``trial_shuffle``
-    Pairs unit A's train on fixation *i* with unit B's train on fixation
-    *j != i*, within the same condition.  This keeps both units' fixation-locked
-    rate profiles and destroys only the trial-by-trial covariation, so an excess
-    over this null means the two cells co-fluctuate from fixation to fixation.
-    It does not distinguish fast synchrony from slow shared drive.
+``circular_shift``
+    Rotates unit B's train by a random offset **within its own fixation**, then
+    correlates linearly.  Each fixation's spike counts and slow envelope survive
+    untouched, so covariation of excitability across fixations is preserved and
+    cannot by itself produce an excess.  What is destroyed is fine temporal
+    alignment, so an excess means coordination at a timescale finer than the
+    shift.
+
+    The wrap the rotation introduces is acceptable here and only here:
+    destroying temporal structure is what a null is for, which is the same
+    reason wrapping is not acceptable in the observed statistic.
 
 A sharp zero-lag peak that survives the null is not evidence of a synaptic
 connection -- for two randomly sampled cells that prior is near zero.  It is
@@ -129,7 +134,11 @@ class PairSpikeCoordinationSettings:
     #: Minimum spikes a unit must fire across a condition's fixations to be
     #: included.  An all-but-silent unit produces an all-zero null SD.
     min_spikes_per_unit_condition: int = 10
-    n_trial_shuffle_draws: int = 50
+    n_circular_shift_draws: int = 50
+    #: Smallest rotation the shift null uses, in ms.  A rotation shorter than
+    #: the coordination timescale of interest would leave the effect partly
+    #: intact and make the null too conservative.
+    min_circular_shift_ms: float = 50.0
     include_within_region: bool = True
     include_cross_region: bool = True
     #: Also recompute every pair on a common fixation count across conditions.
@@ -181,7 +190,8 @@ def build_pair_spike_coordination_settings_from_config(
         conditions=tuple(cfg.get("conditions", CONDITION_ORDER)),
         min_fixations_per_condition=int(cfg.get("min_fixations_per_condition", 8)),
         min_spikes_per_unit_condition=int(cfg.get("min_spikes_per_unit_condition", 10)),
-        n_trial_shuffle_draws=int(cfg.get("n_trial_shuffle_draws", 50)),
+        n_circular_shift_draws=int(cfg.get("n_circular_shift_draws", 50)),
+        min_circular_shift_ms=float(cfg.get("min_circular_shift_ms", 50.0)),
         include_within_region=bool(cfg.get("include_within_region", True)),
         include_cross_region=bool(cfg.get("include_cross_region", True)),
         trial_match_conditions=bool(cfg.get("trial_match_conditions", True)),
@@ -491,38 +501,46 @@ def compute_condition_coordination(
         _cross_spectra_all_pairs(spectra, spectra), n_bins, n_fft, quantum=quantum
     )
 
-    # --- trial-shuffle null -------------------------------------------------
-    # Each draw deranges the fixation index on the second unit, so unit A's
-    # train on fixation i meets unit B's train on some other fixation.  Both
-    # units' fixation-locked rate profiles survive and their spike counts are
-    # untouched; only the trial-by-trial covariation is destroyed.  That is the
-    # single null this analysis uses.
-    shuffle_sum = np.zeros_like(observed)
-    shuffle_sumsq = np.zeros_like(observed)
-    n_shuffle = int(settings.n_trial_shuffle_draws)
-    for _ in range(n_shuffle):
-        order = _random_derangement(n_fixations, rng)
+    # --- circular-shift null ------------------------------------------------
+    # Each draw rotates the second unit's train within its own fixation, then
+    # correlates linearly.  Because the rotation happens before zero-padding it
+    # is not a phase ramp on the padded spectrum, so each draw re-transforms the
+    # rolled trains.  One gather replaces a Python loop over fixations.
+    min_shift = max(1, int(round(float(settings.min_circular_shift_ms) / float(bin_size_ms))))
+    if 2 * min_shift >= n_bins:
+        raise ValueError(
+            "min_circular_shift_ms leaves no admissible shifts for the analysis window."
+        )
+    shift_sum = np.zeros_like(observed)
+    shift_sumsq = np.zeros_like(observed)
+    n_shift = int(settings.n_circular_shift_draws)
+    time_index = np.arange(n_bins)
+    fixation_index = np.arange(n_fixations)[:, None]
+    for _ in range(n_shift):
+        shifts = rng.integers(min_shift, n_bins - min_shift, size=n_fixations)
+        gather = (time_index[None, :] - shifts[:, None]) % n_bins
+        rolled = trains[:, fixation_index, gather]
         draw = _to_traces(
-            _cross_spectra_all_pairs(spectra, spectra[:, order, :]),
+            _cross_spectra_all_pairs(spectra, np.fft.rfft(rolled, n=n_fft, axis=-1)),
             n_bins,
             n_fft,
             quantum=quantum,
         )
-        shuffle_sum += draw
-        shuffle_sumsq += np.square(draw)
+        shift_sum += draw
+        shift_sumsq += np.square(draw)
 
-    mean = shuffle_sum / float(n_shuffle)
-    variance = np.maximum(shuffle_sumsq / float(n_shuffle) - np.square(mean), 0.0)
-    if n_shuffle > 1:
-        variance *= float(n_shuffle) / float(n_shuffle - 1)
+    mean = shift_sum / float(n_shift)
+    variance = np.maximum(shift_sumsq / float(n_shift) - np.square(mean), 0.0)
+    if n_shift > 1:
+        variance *= float(n_shift) / float(n_shift - 1)
 
     _, lags_ms = _lag_axis(n_bins, bin_size_ms)
     return {
         "lags_ms": lags_ms,
         "overlap_bins": overlap_bins(n_bins),
         "observed": observed,
-        "trial_shuffle_mean": mean,
-        "trial_shuffle_sd": np.sqrt(variance),
+        "circular_shift_mean": mean,
+        "circular_shift_sd": np.sqrt(variance),
         "spike_counts": trains.sum(axis=(1, 2)),
         "n_fixations": np.int64(n_fixations),
     }
@@ -665,8 +683,8 @@ def verify_null_identities(
 #:            one for comparing conditions: interactive-face fixations outnumber
 #:            the others roughly six to one, which is enough to reverse a
 #:            ranking by itself.
-CONDITION_METRIC = "trial_shuffle_mean_excess_pm10ms"
-ABOVE_NULL_METRIC = "trial_shuffle_mean_z_pm10ms"
+CONDITION_METRIC = "circular_shift_mean_excess_pm10ms"
+ABOVE_NULL_METRIC = "circular_shift_mean_z_pm10ms"
 #: What the observed (uncorrected) curve is summarised by, in the same units.
 OBSERVED_METRIC = "observed_mean_pm10ms"
 
@@ -676,9 +694,22 @@ SUMMARY_WINDOWS_MS: tuple[float, ...] = (5.0, 10.0, 25.0, 50.0, 100.0)
 #: Lag range searched for the coordination peak.
 DEFAULT_PEAK_SEARCH_MS = 100.0
 
-#: One null, deliberately.  A second null answering a different question made
-#: every figure and table ambiguous about which comparison was being reported.
-NULL_NAMES: tuple[str, ...] = ("trial_shuffle",)
+#: One null, deliberately.
+#:
+#: The **circular shift**: unit B's train is rotated within its own fixation.
+#: Each fixation keeps its own spike counts and its slow envelope, so the null
+#: retains any covariation of excitability across fixations -- two cells that
+#: simply fire more on the same fixations produce no excess over it.  Only fine
+#: temporal alignment is destroyed, so an excess means coordination at a
+#: timescale finer than the shift.
+#:
+#: This replaces the cross-trial shuffle, which pairs unit A's fixation i with
+#: unit B's fixation j and therefore destroys across-fixation rate covariation
+#: as well.  That makes it too low a bar: two cells whose firing rates rise and
+#: fall together across fixations, with no timing relationship whatsoever, clear
+#: it easily.  :func:`verify_null_sensitivity` demonstrates exactly that on a
+#: synthetic pair built to have shared gain and nothing else.
+NULL_NAMES: tuple[str, ...] = ("circular_shift",)
 
 
 def _summarize_pair_traces(
@@ -917,13 +948,14 @@ def build_session_pair_table(
             "signal_window_ms": session.window_ms,
             "bin_size_ms": session.bin_size_ms,
             "store_max_lag_ms": settings.store_max_lag_ms,
-            "n_trial_shuffle_draws": settings.n_trial_shuffle_draws,
+            "n_circular_shift_draws": settings.n_circular_shift_draws,
+            "min_circular_shift_ms": settings.min_circular_shift_ms,
             # Linear: at every lag only genuinely overlapping bins contribute,
             # so no spike is ever paired with one a full window away.  The wrap
             # appears only inside the circular-shift null, where destroying
             # alignment is the intent.
             "correlation_kind": "linear",
-            "null_kind": "trial-shuffle: derangement of the fixation index",
+            "null_kind": "circular shift: rotation within the analysis window",
             "lag_sign_convention": "positive lag = unit_1 fires after unit_2",
             "selectivity_column": settings.selectivity_column,
             "trial_matched_n": matched_n,
@@ -1066,8 +1098,8 @@ def run_pair_spike_coordination_build(
 #: Trace columns saved per pair-condition.
 TRACE_COLUMNS: tuple[str, ...] = (
     "observed",
-    "trial_shuffle_mean",
-    "trial_shuffle_sd",
+    "circular_shift_mean",
+    "circular_shift_sd",
 )
 
 
@@ -1134,7 +1166,7 @@ def summarize_coordination(
     pairs: pd.DataFrame,
     *,
     metric: str = CONDITION_METRIC,
-    z_column: str = "trial_shuffle_mean_z_pm10ms",
+    z_column: str = ABOVE_NULL_METRIC,
     group_columns: Sequence[str] = ("scope", "region_pair", "condition"),
     z_threshold: float = 1.96,
 ) -> pd.DataFrame:
@@ -1320,7 +1352,7 @@ def compare_conditions(
 def build_zero_lag_diagnostics(
     pairs: pd.DataFrame,
     *,
-    null_name: str = "trial_shuffle",
+    null_name: str = "circular_shift",
     z_threshold: float = 3.0,
     scale_floor: float = 0.02,
 ) -> pd.DataFrame:
@@ -1411,7 +1443,7 @@ DEFAULT_MIN_PAIRS_FOR_REPORTING = 500
 def compare_conditions_across_metrics(
     pairs: pd.DataFrame,
     *,
-    null_name: str = "trial_shuffle",
+    null_name: str = "circular_shift",
     half_width_ms: int = 10,
     group_columns: Sequence[str] = ("scope", "region_pair"),
 ) -> pd.DataFrame:
@@ -1517,7 +1549,7 @@ def sufficient_region_pairs(
 def drop_zero_lag_artifact_dates(
     pairs: pd.DataFrame,
     *,
-    null_name: str = "trial_shuffle",
+    null_name: str = "circular_shift",
     z_threshold: float = 3.0,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Remove recording days carrying the zero-lag artifact.
@@ -1609,7 +1641,8 @@ def verify_null_sensitivity(
     rng = np.random.default_rng(seed)
     settings = PairSpikeCoordinationSettings(
         cfg_path="",
-        n_trial_shuffle_draws=int(n_draws),
+        n_circular_shift_draws=int(n_draws),
+        min_circular_shift_ms=4.0,
     )
 
     time_axis = np.arange(n_bins)
@@ -1686,18 +1719,67 @@ def _pair_z_trace(
     return np.where(degenerate & np.isclose(excess, 0.0, atol=1e-12), 0.0, z)
 
 
-def _pair_traces(row: pd.Series) -> dict[str, np.ndarray]:
-    """One pair's observed, null and excess traces, in coincidences per fixation."""
+#: Lags treated as "far enough to contain no interaction", used as each pair's
+#: own baseline.  At 200-250 ms nothing plausible is still coupled, so whatever
+#: sits there is that pair's offset rather than its coordination.
+BASELINE_LAG_MS = 200.0
+
+
+def _pair_traces(row: pd.Series, lags_ms: np.ndarray) -> dict[str, np.ndarray]:
+    """One pair's observed, null and excess traces, in coincidences per fixation.
+
+    ``excess_baselined`` additionally subtracts the pair's own far-lag mean.
+    Testing the raw excess lag by lag is not informative at these sample sizes:
+    with tens of thousands of pairs a sign test detects a bias far too small to
+    matter and marks every lag, including ones where the mean excess is zero to
+    four decimal places.  Removing each pair's own offset first turns the
+    question into "is there a peak here, above this pair's own baseline", which
+    is the one worth asking.
+    """
     observed = np.asarray(row["observed"], dtype=float)
-    null_mean = np.asarray(row["trial_shuffle_mean"], dtype=float)
+    null_mean = np.asarray(row["circular_shift_mean"], dtype=float)
+    excess = observed - null_mean
+    far = np.abs(lags_ms) >= BASELINE_LAG_MS
+    baseline = float(np.nanmean(excess[far])) if far.any() else 0.0
     return {
         "observed": observed,
         "null": null_mean,
-        "excess": observed - null_mean,
+        "excess": excess,
+        "excess_baselined": excess - baseline,
     }
 
 
-TRACE_CHANNELS: tuple[str, ...] = ("observed", "null", "excess")
+TRACE_CHANNELS: tuple[str, ...] = ("observed", "null", "excess", "excess_baselined")
+
+
+def _sign_test_p_values(n_positive: np.ndarray, n_total: np.ndarray) -> np.ndarray:
+    """Two-sided binomial p-value per lag for "more pairs above zero than below"."""
+    from scipy.stats import binomtest
+
+    out = np.full(np.shape(n_positive), np.nan, dtype=float)
+    for index in range(out.size):
+        total = int(n_total.reshape(-1)[index])
+        if total < 10:
+            continue
+        successes = int(round(float(n_positive.reshape(-1)[index])))
+        out.reshape(-1)[index] = binomtest(successes, total, 0.5).pvalue
+    return out
+
+
+def _fdr_reject(p_values: np.ndarray, alpha: float = 0.05) -> np.ndarray:
+    """Benjamini-Hochberg rejection mask across lags.
+
+    Every lag is a separate test and there are hundreds of them, so an
+    uncorrected threshold would mark a scatter of lags in pure noise.
+    """
+    from statsmodels.stats.multitest import multipletests
+
+    flat = np.asarray(p_values, dtype=float).reshape(-1)
+    reject = np.zeros(flat.shape, dtype=bool)
+    testable = np.isfinite(flat)
+    if testable.any():
+        reject[testable] = multipletests(flat[testable], alpha=alpha, method="fdr_bh")[0]
+    return reject.reshape(np.shape(p_values))
 
 
 def build_group_traces(
@@ -1750,23 +1832,26 @@ def build_group_traces(
         for keys, group in frame.groupby(list(group_columns), observed=True, dropna=False):
             keys = keys if isinstance(keys, tuple) else (keys,)
             keys = tuple(str(value) for value in keys)
-            per_pair = [_pair_traces(row) for _, row in group.iterrows()]
+            per_pair = [_pair_traces(row, lags) for _, row in group.iterrows()]
             accumulator = sums.setdefault(keys, {})
             for channel in TRACE_CHANNELS:
                 stacked = np.vstack([entry[channel] for entry in per_pair])
                 valid = np.isfinite(stacked)
                 filled = np.where(valid, stacked, 0.0)
+                positive = np.logical_and(valid, stacked > 0).sum(axis=0).astype(float)
                 slot = accumulator.get(channel)
                 if slot is None:
                     accumulator[channel] = {
                         "sum": filled.sum(axis=0),
                         "sumsq": np.square(filled).sum(axis=0),
                         "count": valid.sum(axis=0).astype(float),
+                        "positive": positive,
                     }
                 else:
                     slot["sum"] += filled.sum(axis=0)
                     slot["sumsq"] += np.square(filled).sum(axis=0)
                     slot["count"] += valid.sum(axis=0)
+                    slot["positive"] += positive
 
     rows: list[dict] = []
     for keys, accumulator in sums.items():
@@ -1781,6 +1866,18 @@ def build_group_traces(
             row[f"{channel}_sem"] = np.where(
                 count > 1, np.sqrt(variance / safe), np.nan
             ).astype(np.float32)
+            if channel == "excess_baselined":
+                # Which lags stand above the null at all, tested lag by lag.
+                # A sign test against p = 0.5 across pairs: it needs only the
+                # count of pairs above zero, so it survives the streaming, and
+                # it assumes nothing about the shape of a per-pair excess
+                # distribution that is heavily skewed.
+                p_values = _sign_test_p_values(slot["positive"], count)
+                row["excess_p_value"] = p_values.astype(np.float32)
+                row["excess_significant"] = _fdr_reject(p_values).astype(bool)
+                row["excess_frac_positive"] = np.where(
+                    count > 0, slot["positive"] / safe, np.nan
+                ).astype(np.float32)
             n_max = max(n_max, int(count.max()) if count.size else 0)
         row["n_pairs"] = n_max
         rows.append(row)
@@ -1925,7 +2022,7 @@ def compare_conditions(
 def build_zero_lag_diagnostics(
     pairs: pd.DataFrame,
     *,
-    null_name: str = "trial_shuffle",
+    null_name: str = "circular_shift",
     z_threshold: float = 3.0,
     scale_floor: float = 0.02,
 ) -> pd.DataFrame:
@@ -2008,7 +2105,7 @@ def build_zero_lag_diagnostics(
 def drop_zero_lag_artifact_dates(
     pairs: pd.DataFrame,
     *,
-    null_name: str = "trial_shuffle",
+    null_name: str = "circular_shift",
     z_threshold: float = 3.0,
 ) -> tuple[pd.DataFrame, list[str]]:
     """Remove recording days carrying the zero-lag artifact.
@@ -2100,7 +2197,8 @@ def verify_null_sensitivity(
     rng = np.random.default_rng(seed)
     settings = PairSpikeCoordinationSettings(
         cfg_path="",
-        n_trial_shuffle_draws=int(n_draws),
+        n_circular_shift_draws=int(n_draws),
+        min_circular_shift_ms=4.0,
     )
 
     time_axis = np.arange(n_bins)
