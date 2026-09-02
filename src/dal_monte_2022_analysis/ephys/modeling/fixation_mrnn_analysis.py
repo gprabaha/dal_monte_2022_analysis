@@ -53,20 +53,40 @@ def is_legacy_dense_checkpoint(checkpoint: Mapping[str, object]) -> bool:
     return not any(str(key).startswith("_within_region_param_") for key in state_dict)
 
 
+def resolve_checkpoint_path(run_dir: str | Path, *, prefer: str = "best") -> Path:
+    """Path to the checkpoint an analysis should read.
+
+    Runs trained after best-iterate checkpointing was added carry both
+    ``checkpoint_best.pth`` (lowest total loss) and ``checkpoint_final.pth`` (last
+    iterate). ``prefer="best"`` is the right default for anything that scores or
+    compares fits; ``prefer="final"`` is for convergence diagnostics that need the
+    iterate the run actually ended on. Older runs have only the final checkpoint, and
+    fall back to it either way.
+    """
+    run_dir = Path(run_dir)
+    final = run_dir / "checkpoint_final.pth"
+    best = run_dir / "checkpoint_best.pth"
+    if str(prefer).strip().lower() == "final":
+        return final if final.exists() else best
+    return best if best.exists() else final
+
+
 def load_fixation_mrnn_checkpoint(
     run_dir: str | Path,
     *,
     device: str = "cpu",
+    prefer: str = "best",
 ) -> tuple[FixationMRNNModel, dict[str, object]]:
     """Load a trained model and checkpoint.
 
+    Reads the best iterate where the run saved one (see :func:`resolve_checkpoint_path`).
     Legacy pre-bottleneck checkpoints are detected and loaded through
     :class:`LegacyDenseRecurrentFixationMRNNModel` so every run in the scratch
     tree replays through one entry point.
     """
     resolved_device = resolve_device(device)
     checkpoint = torch.load(
-        Path(run_dir) / "checkpoint_final.pth",
+        resolve_checkpoint_path(run_dir, prefer=prefer),
         map_location=resolved_device,
         weights_only=False,
     )
@@ -86,9 +106,10 @@ def replay_fixation_mrnn_run(
     *,
     device: str = "cpu",
     noise: bool = False,
+    prefer: str = "best",
 ) -> dict[str, object]:
-    """Replay a trained model on its saved inputs."""
-    model, checkpoint = load_fixation_mrnn_checkpoint(run_dir, device=device)
+    """Replay a trained model on its saved inputs, using its best iterate by default."""
+    model, checkpoint = load_fixation_mrnn_checkpoint(run_dir, device=device, prefer=prefer)
     resolved_device = next(model.parameters()).device
     inp = torch.as_tensor(checkpoint["input_tensor"], dtype=torch.float32, device=resolved_device)
     h0 = checkpoint["h0"].to(resolved_device)

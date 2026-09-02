@@ -7,6 +7,7 @@ from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import (
     extract_fixation_latent_dynamics,
     extract_region_currents,
     extract_region_current_vectors,
+    is_legacy_dense_checkpoint,
     load_fixation_mrnn_checkpoint,
     output_pc_scores,
     pc_reconstructed_firing_rate_accuracy,
@@ -14,6 +15,7 @@ from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import (
     replay_hidden_state_for_update,
     replay_fixation_mrnn_run,
     replay_fixation_mrnn_run_with_ablations,
+    resolve_checkpoint_path,
     variance_comparison,
 )
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_bridge import (
@@ -110,6 +112,8 @@ __all__ = [
     "summarize_targets",
     "train_fixation_mrnn",
     "train_fixation_mrnn_scratch",
+    "is_legacy_dense_checkpoint",
+    "resolve_checkpoint_path",
     "train_one_initialization",
     "variance_comparison",
 ]

@@ -462,6 +462,15 @@ def train_one_initialization(
     )
     history = []
     divergence_count = 0
+    # The optimizer's trajectory on this problem is spiky: the loss can jump one to two
+    # orders of magnitude and come back, right through to the final iteration. Saving
+    # only the last iterate therefore samples a noisy trajectory at an arbitrary point,
+    # and the sample is not unbiased across configurations -- harder-to-fit settings
+    # spike more and land worse. Hold on to the lowest-total-loss iterate as it goes by.
+    best_loss = float("inf")
+    best_iteration = 0
+    best_state: dict[str, torch.Tensor] | None = None
+    best_h0: torch.Tensor | None = None
 
     # Throttle the tqdm refresh rate so redirected (non-TTY) logs, e.g. SLURM
     # .err files, do not accumulate one progress segment every few iterations.
@@ -578,6 +587,12 @@ def train_one_initialization(
                 f"Training diverged for seed={seed} at iteration={iteration}: "
                 f"{reason}, loss={loss_value:g}."
             )
+        if loss_is_finite and loss_value < best_loss:
+            best_loss = loss_value
+            best_iteration = int(iteration)
+            best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
+            best_h0 = h0.detach().cpu().clone()
+
         loss.backward()
         if settings.gradient_clip_norm is not None and float(settings.gradient_clip_norm) > 0:
             torch.nn.utils.clip_grad_norm_(opt_params, max_norm=float(settings.gradient_clip_norm))
@@ -614,6 +629,23 @@ def train_one_initialization(
         "pca_by_region": serialize_pca_metadata(targets.pca_by_region),
     }
     torch.save(checkpoint, run_dir / "checkpoint_final.pth")
+
+    # ``checkpoint_best.pth`` carries the same payload with the lowest-loss weights
+    # substituted in, so both files load through the same reader. Analyses should read
+    # the best checkpoint; the final one is kept so the gap between them stays visible
+    # as a convergence diagnostic rather than being silently discarded.
+    final_loss = float(history[-1]["loss"]) if history else float("nan")
+    final_over_best = float(final_loss / best_loss) if best_loss > 0 and np.isfinite(best_loss) else float("nan")
+    if best_state is not None:
+        best_checkpoint = {
+            **checkpoint,
+            "model_state_dict": best_state,
+            "h0": best_h0,
+            "selected_iteration": int(best_iteration),
+            "selected_loss": float(best_loss),
+            "selection_rule": "min_total_loss",
+        }
+        torch.save(best_checkpoint, run_dir / "checkpoint_best.pth")
     with (run_dir / "manifest.json").open("w", encoding="utf-8") as f:
         json.dump(
             {
@@ -621,7 +653,11 @@ def train_one_initialization(
                 "seed": int(seed),
                 "target_mode": target_mode,
                 "run_dir": str(run_dir),
-                "final_loss": float(history_df["loss"].iloc[-1]),
+                "final_loss": final_loss,
+                "best_loss": float(best_loss),
+                "best_iteration": int(best_iteration),
+                "final_over_best": final_over_best,
+                "has_best_checkpoint": best_state is not None,
             },
             f,
             indent=2,
@@ -630,6 +666,11 @@ def train_one_initialization(
     return {
         "run_dir": run_dir,
         "checkpoint_path": run_dir / "checkpoint_final.pth",
+        "best_checkpoint_path": (run_dir / "checkpoint_best.pth") if best_state is not None else None,
+        "best_iteration": int(best_iteration),
+        "best_loss": float(best_loss),
+        "final_loss": final_loss,
+        "final_over_best": final_over_best,
         "history": history_df,
     }
 

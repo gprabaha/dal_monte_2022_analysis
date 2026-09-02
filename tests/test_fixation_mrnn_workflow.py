@@ -27,7 +27,9 @@ from dal_monte_2022_analysis.ephys.modeling import (
     reconstruction_accuracy,
     replay_fixation_mrnn_run,
     replay_fixation_mrnn_run_with_ablations,
+    resolve_checkpoint_path,
     train_fixation_mrnn_scratch,
+    train_one_initialization,
     variance_comparison,
 )
 
@@ -337,6 +339,108 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             )
             self.assertEqual(ablated["ablated_connections"], (("ofc", "bla"),))
             self.assertEqual(ablated["output"].shape, replay["output"].shape)
+
+    def test_best_iterate_is_checkpointed_separately_from_the_final_one(self) -> None:
+        """The saved model must be the best one the run found, not the last one it saw.
+
+        The optimizer's trajectory on this problem spikes, so the final iterate samples a
+        noisy curve at an arbitrary point. Both checkpoints are written: analyses read the
+        best, and the gap between them stays available as a convergence diagnostic.
+        """
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            analysis_root = root / "analysis"
+            avg_root = analysis_root / "ephys/psth/fixation_psth_averages"
+            avg_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, analysis_root)
+            _synthetic_combined_dataframe().to_pickle(avg_root / "combined.pkl")
+            with (avg_root / "timeline.pkl").open("wb") as f:
+                pickle.dump(np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float), f)
+
+            settings = FixationMRNNRunSettings(
+                dataset_cfg_path=str(cfg_path),
+                dataframe_filename="combined.pkl",
+                timeline_filename="timeline.pkl",
+                target_mode="raw_fr",
+                hidden_units=4,
+                epochs=40,
+                # Large enough to make the loss curve non-monotone, which is the regime
+                # the best-iterate rule exists for.
+                lr=5e-2,
+                seed=4242,
+                device="cpu",
+                spectral_radius=1.0,
+                temporal_basis_count=0,
+            )
+            run_dir = root / "run"
+            result = train_one_initialization(settings, run_dir=run_dir, seed=4242, overwrite=True)
+
+            self.assertTrue((run_dir / "checkpoint_final.pth").exists())
+            self.assertTrue((run_dir / "checkpoint_best.pth").exists())
+
+            history = result["history"]
+            losses = history["loss"].to_numpy(dtype=float)
+            # The recorded best must be the minimum of the loss the run actually logged.
+            self.assertAlmostEqual(float(result["best_loss"]), float(np.nanmin(losses)), places=10)
+            self.assertEqual(int(result["best_iteration"]), int(np.nanargmin(losses)) + 1)
+            self.assertGreaterEqual(float(result["final_over_best"]), 1.0)
+
+            best = torch.load(run_dir / "checkpoint_best.pth", map_location="cpu", weights_only=False)
+            self.assertEqual(best["selection_rule"], "min_total_loss")
+            self.assertEqual(int(best["selected_iteration"]), int(result["best_iteration"]))
+
+            manifest = json.loads((run_dir / "manifest.json").read_text())
+            self.assertTrue(manifest["has_best_checkpoint"])
+            self.assertAlmostEqual(manifest["best_loss"], float(result["best_loss"]), places=10)
+
+    def test_replay_reads_the_best_checkpoint_by_default(self) -> None:
+        """``prefer`` selects which iterate is replayed, and the two differ when the run
+        did not end on its best step."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            analysis_root = root / "analysis"
+            avg_root = analysis_root / "ephys/psth/fixation_psth_averages"
+            avg_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, analysis_root)
+            _synthetic_combined_dataframe().to_pickle(avg_root / "combined.pkl")
+            with (avg_root / "timeline.pkl").open("wb") as f:
+                pickle.dump(np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float), f)
+
+            settings = FixationMRNNRunSettings(
+                dataset_cfg_path=str(cfg_path),
+                dataframe_filename="combined.pkl",
+                timeline_filename="timeline.pkl",
+                target_mode="raw_fr",
+                hidden_units=4,
+                epochs=40,
+                lr=5e-2,
+                seed=99,
+                device="cpu",
+                spectral_radius=1.0,
+                temporal_basis_count=0,
+            )
+            run_dir = root / "run"
+            train_one_initialization(settings, run_dir=run_dir, seed=99, overwrite=True)
+
+            self.assertEqual(resolve_checkpoint_path(run_dir).name, "checkpoint_best.pth")
+            self.assertEqual(resolve_checkpoint_path(run_dir, prefer="final").name, "checkpoint_final.pth")
+
+            best_replay = replay_fixation_mrnn_run(run_dir, device="cpu")
+            final_replay = replay_fixation_mrnn_run(run_dir, device="cpu", prefer="final")
+            self.assertEqual(int(best_replay["checkpoint"]["selected_iteration"]), int(
+                json.loads((run_dir / "manifest.json").read_text())["best_iteration"]
+            ))
+            self.assertNotIn("selected_iteration", final_replay["checkpoint"])
+
+    def test_legacy_runs_without_a_best_checkpoint_fall_back_to_the_final_one(self) -> None:
+        """Every run already on disk predates this change and must keep loading."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            run_dir = Path(tmp_dir)
+            (run_dir / "checkpoint_final.pth").write_bytes(b"")
+            self.assertEqual(resolve_checkpoint_path(run_dir).name, "checkpoint_final.pth")
+            self.assertEqual(resolve_checkpoint_path(run_dir, prefer="final").name, "checkpoint_final.pth")
 
     def test_training_divergence_threshold_writes_failed_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
