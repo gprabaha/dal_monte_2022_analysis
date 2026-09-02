@@ -1,29 +1,52 @@
 # notebooks/mrnn_thesis
 
-Synthesis of the multi-regional RNN (mRNN) modelling work, and the plan for the
-chapter.
+The multi-regional RNN (mRNN) analysis: the audit of the legacy fits, and the rebuild.
+
+## The rebuild
+
+Everything the chapter will rest on is being refitted from scratch. The legacy tree is
+kept as a guide to *what to do*, not as a source of results — its families differ in
+learning rate, iteration count, activation and loss weights, so most of its comparisons
+are not comparable, and none of its checkpoints is the best iterate its run reached.
+
+Rebuilt runs live under `analysis_output_root/ephys/modeling/fixation_mrnn/chapter/<task>/`,
+never mixed with the legacy `scratch/` tree. One notebook per task; each is a control
+surface, not a script — it shows its design, the state of every run, and submits cluster
+work only when you set `SUBMIT = True`.
+
+| | Notebook | Question | Status |
+|---|---|---|---|
+| 00 | `00_training_protocol.ipynb` | What optimiser settings converge reliably? | **built**; sweep not yet submitted |
+| 01 | `01_target_and_loss.ipynb` | How many PCs, weighted how; derivative and curvature weights | to build |
+| 02 | `02_capacity.ipynb` | Units per region, at fixed settings | to build |
+| 03 | `03_architecture.ipynb` | full vs cross+diagonal vs within-region, ensembled and capacity-matched | to build |
+| 04 | `04_bottleneck_rank.ipynb` | Ranks 1–30, epoch-matched end to end | to build |
+| 05 | `05_seed_ensembles.ipynb` | 100 seeds — does stable fitting change the reproducibility result? | to build |
+| 06 | `06_invariants.ipynb` | Condition contrast; channel identity | to build |
+| 07 | `07_dynamics.ipynb` | Fixed points, Jacobians, basins | to build |
+| 08 | `08_generalization.ipynb` | Held-out post-fixation half | to build |
+| 09 | `09_chapter.ipynb` | Collated report | to build |
+
+The order is forced by what feeds what: 00 fixes the recipe, 01–02 fix the target and
+size, 03–04 are the structural claims, and 05 onwards are the science.
+
+## The audit of the legacy fits
 
 | File | Role |
 |---|---|
-| `mrnn_synthesis.ipynb` | **The notebook.** Reads every fitted network in the scratch tree, scores them on one footing, and works through seven figures: what was fitted, capacity, architecture, the bottleneck, reproducibility, what is invariant, and what is not. Ends with what can be inferred and what still has to be run. |
-| `_build_summary.py` | Authors that notebook from plain-Python source strings. |
-| `README.md` | This file — the same audit in prose, plus the run-by-run detail. |
+| `mrnn_synthesis.ipynb` | Reads all 273 legacy fits, scores them on one footing, and separates what they establish from what they only suggest. This is the motivation for the rebuild and the record of what is *not* being carried forward. |
+| `_build_summary.py` | Authors it. |
 
-Regenerate with:
+Regenerate any notebook with its `_build_*.py`, then:
 
 ```bash
-conda run -n gaze_processing python notebooks/mrnn_thesis/_build_summary.py
 conda run -n gaze_processing python -m jupyter nbconvert --to notebook --execute \
-    --inplace --ExecutePreprocessor.timeout=2400 notebooks/mrnn_thesis/mrnn_synthesis.ipynb
+    --inplace --ExecutePreprocessor.timeout=2400 notebooks/mrnn_thesis/<name>.ipynb
 ```
 
-It runs on CPU in a few minutes and refits nothing. Every number in the prose is
-computed in the cell above it, so the text stays correct as the scratch tree grows.
-Figures (editable PDF + PNG) go to
-`analysis_output_root/ephys/modeling/fixation_mrnn/plots/synthesis/`. All reusable code
-is in `src/` per `AGENTS.md`:
-`ephys/analysis/fixation_mrnn_synthesis.py` and
-`ephys/plotting/fixation_mrnn_synthesis.py`.
+All reusable code is in `src/` per `AGENTS.md` —
+`ephys/analysis/fixation_mrnn_{synthesis,protocol}.py` and the matching
+`ephys/plotting/` modules. Every number in the prose is computed in the cell above it.
 
 The exploratory notebooks this draws on are the loose `fixation_mrnn_*.ipynb` files
 in [`../`](..).

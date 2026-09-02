@@ -41,8 +41,6 @@ PROTOCOL_ARCHITECTURE: dict[str, object] = {
     "target_mode": "region_pcs",
     "pca_n_components": 42,
     "hidden_units": 50,
-    "activation": "tanh",
-    "spectral_radius": 1.1,
     "recurrent_connectivity": "full",
     "recurrent_bottleneck_dim": 3,
     "temporal_basis_count": 0,
@@ -55,7 +53,14 @@ PROTOCOL_ARCHITECTURE: dict[str, object] = {
 
 @dataclass(frozen=True)
 class ProtocolConfig:
-    """One optimiser configuration in the sweep."""
+    """One training configuration in the sweep.
+
+    Carries the optimiser axes plus the two architecture choices that plausibly drive
+    the instability: the activation (``tanh`` is bounded and zero-centred, matching
+    zero-centred PC targets; ``softplus`` is positive and unbounded, so an overshoot has
+    no ceiling) and the initial spectral radius (above ~1 the Jacobian product over 100
+    recurrent steps is what sharpens the landscape).
+    """
 
     label: str
     lr: float
@@ -63,6 +68,8 @@ class ProtocolConfig:
     lr_schedule: str = "constant"
     lr_warmup_iterations: int = 0
     lr_min_factor: float = 0.01
+    activation: str = "tanh"
+    spectral_radius: float = 1.1
 
     def overrides(self) -> dict[str, object]:
         return {
@@ -71,6 +78,8 @@ class ProtocolConfig:
             "lr_schedule": str(self.lr_schedule),
             "lr_warmup_iterations": int(self.lr_warmup_iterations),
             "lr_min_factor": float(self.lr_min_factor),
+            "activation": str(self.activation),
+            "spectral_radius": float(self.spectral_radius),
         }
 
 
@@ -78,35 +87,83 @@ def _clip_token(value: float | None) -> str:
     return "none" if value is None else f"{value:g}".replace(".", "p")
 
 
+def _number_token(value: float) -> str:
+    return f"{value:g}".replace(".", "p").replace("-", "m")
+
+
+def _config(
+    *,
+    lr: float,
+    schedule: str,
+    clip: float | None,
+    activation: str,
+    spectral_radius: float,
+) -> ProtocolConfig:
+    label = "_".join(
+        [
+            f"lr{_number_token(lr)}",
+            schedule,
+            f"clip{_clip_token(clip)}",
+            activation,
+            f"sr{_number_token(spectral_radius)}",
+        ]
+    )
+    return ProtocolConfig(
+        label=label,
+        lr=float(lr),
+        gradient_clip_norm=clip,
+        lr_schedule=str(schedule),
+        activation=str(activation),
+        spectral_radius=float(spectral_radius),
+    )
+
+
 def protocol_sweep_grid(
     *,
-    learning_rates: Sequence[float] = (3e-4, 1e-3, 3e-3),
-    gradient_clips: Sequence[float | None] = (None, 1.0),
-    schedules: Sequence[str] = ("constant", "cosine"),
-    warmup_iterations: int = 0,
+    learning_rates: Sequence[float] = (3e-4, 1e-3, 3e-3, 1e-2),
+    activations: Sequence[str] = ("tanh", "softplus"),
+    spectral_radii: Sequence[float] = (0.9, 1.1),
+    reference_activation: str = "tanh",
+    reference_spectral_radius: float = 1.1,
+    binding_clip: float = 0.05,
 ) -> list[ProtocolConfig]:
-    """The full optimiser grid, as a list of labelled configurations.
+    """The staged screening design: one factorial plus two control arms.
 
-    Defaults give 3 x 2 x 2 = 12 configurations. The learning rates bracket the working
-    band the legacy runs suggest (1e-3 fits well, 1e-4 underfits, 2e-3 and above
-    sometimes diverges), so the sweep spans a regime where failures are expected --
-    a sweep that never fails would tell us nothing about reliability.
+    A full product over every axis would be 64 configurations, most of them spent on
+    questions the existing runs have already answered. The design instead is:
+
+    **Main arm** -- peak learning rate x activation x initial spectral radius, all on a
+    cosine schedule with no clipping. Cosine is fixed here rather than swept because a
+    completed seed-matched block already shows it drives final/best to exactly 1.000 on
+    every seed; what is open is the *peak* rate it can safely carry, since decaying the
+    rate also costs fit.
+
+    **Schedule control** -- the same learning rates on a constant schedule at the
+    reference architecture, so the cosine claim is demonstrated inside this sweep rather
+    than imported from the pilot.
+
+    **Clipping control** -- the same learning rates with a clip norm of 0.05. The value
+    matters: measured gradient norms on this problem have median 0.024 and p90 0.078, so
+    the historical threshold of 1.0 bound on 0.1% of steps and was inert. 0.05 is the
+    first threshold that actually binds.
     """
     configs: list[ProtocolConfig] = []
     for lr in learning_rates:
-        for clip in gradient_clips:
-            for schedule in schedules:
-                label = f"lr{lr:g}".replace(".", "p").replace("-", "m")
-                label = f"{label}_clip{_clip_token(clip)}_{schedule}"
+        for activation in activations:
+            for spectral_radius in spectral_radii:
                 configs.append(
-                    ProtocolConfig(
-                        label=label,
-                        lr=float(lr),
-                        gradient_clip_norm=clip,
-                        lr_schedule=str(schedule),
-                        lr_warmup_iterations=int(warmup_iterations),
-                    )
+                    _config(lr=lr, schedule="cosine", clip=None,
+                            activation=activation, spectral_radius=spectral_radius)
                 )
+    for lr in learning_rates:
+        configs.append(
+            _config(lr=lr, schedule="constant", clip=None,
+                    activation=reference_activation, spectral_radius=reference_spectral_radius)
+        )
+        configs.append(
+            _config(lr=lr, schedule="cosine", clip=float(binding_clip),
+                    activation=reference_activation, spectral_radius=reference_spectral_radius)
+        )
     return configs
 
 
@@ -379,7 +436,257 @@ def write_selected_protocol(
     return path
 
 
+# --------------------------------------------------------------------------------------
+# Diagnosing the instability
+# --------------------------------------------------------------------------------------
+
+
+def objective_is_deterministic(settings: FixationMRNNRunSettings) -> dict[str, object]:
+    """Report whether the training objective carries any stochasticity.
+
+    This decides what a loss spike can mean. With three conditions trained full-batch and
+    no input or activation noise, the loss is a deterministic function of the parameters,
+    so an upward jump is the optimizer stepping uphill on a fixed landscape -- not
+    sampling variance. That rules out "just noise" and rules in step-size remedies.
+    """
+    return {
+        "batch_size": len(settings.condition_order),
+        "full_batch": True,
+        "input_noise": float(settings.inp_noise),
+        "activation_noise": float(settings.act_noise),
+        "deterministic": float(settings.inp_noise) == 0.0 and float(settings.act_noise) == 0.0,
+    }
+
+
+def measure_gradient_norms(
+    settings: FixationMRNNRunSettings,
+    *,
+    run_dir: str | Path,
+    iterations: int = 2000,
+    seed: int = 31,
+) -> pd.DataFrame:
+    """Train briefly with clipping effectively disabled, recording the gradient norm.
+
+    ``torch.nn.utils.clip_grad_norm_`` returns the pre-clip norm, so setting the
+    threshold far above any plausible value turns it into a measurement. The point is to
+    find out whether the clip threshold in use ever binds: Adam scales each parameter by
+    its own second moment, so a global norm clip only does anything when the norm
+    actually exceeds the threshold.
+    """
+    import torch
+
+    from dal_monte_2022_analysis.ephys.modeling import fixation_mrnn_training as training
+
+    norms: list[float] = []
+    original = torch.nn.utils.clip_grad_norm_
+
+    def recording_clip(parameters, max_norm, **kwargs):
+        value = original(parameters, max_norm, **kwargs)
+        norms.append(float(value))
+        return value
+
+    torch.nn.utils.clip_grad_norm_ = recording_clip
+    try:
+        probe = replace(settings, epochs=int(iterations), gradient_clip_norm=1e9)
+        result = training.train_one_initialization(probe, run_dir=Path(run_dir), seed=int(seed), overwrite=True)
+    finally:
+        torch.nn.utils.clip_grad_norm_ = original
+
+    history = result["history"]
+    return pd.DataFrame(
+        {
+            "iteration": history["iteration"].to_numpy()[: len(norms)],
+            "loss": history["loss"].to_numpy()[: len(norms)],
+            "gradient_norm": np.asarray(norms, dtype=float),
+        }
+    )
+
+
+def clip_threshold_binding_rate(gradient_norms: pd.DataFrame, thresholds: Sequence[float]) -> pd.DataFrame:
+    """Fraction of steps each candidate clip threshold would actually constrain."""
+    values = gradient_norms["gradient_norm"].to_numpy(dtype=float)
+    return pd.DataFrame(
+        [
+            {
+                "clip_norm": float(threshold),
+                "fraction_of_steps_clipped": float(np.mean(values > float(threshold))),
+            }
+            for threshold in thresholds
+        ]
+    )
+
+
+def spike_positions(losses: np.ndarray, *, jump_threshold_log10: float = 0.5) -> np.ndarray:
+    """Where in a run its upward loss jumps occur, as a fraction of total iterations."""
+    losses = np.asarray(losses, dtype=float)
+    safe = np.where(np.isfinite(losses) & (losses > 0), losses, np.nan)
+    delta = np.diff(np.log10(np.clip(safe, 1e-12, None)))
+    indices = np.flatnonzero(np.nan_to_num(delta, nan=0.0) > float(jump_threshold_log10))
+    return indices / max(len(losses), 1)
+
+
+def survey_legacy_instability(
+    scratch_root: str | Path,
+    *,
+    min_iterations: int = 5000,
+) -> pd.DataFrame:
+    """Spike rate and final-versus-best gap for every legacy run, with its settings.
+
+    The legacy tree is an unplanned natural experiment: 271 runs spanning six learning
+    rates, two activations and two clip settings. It cannot separate confounded axes --
+    which is what the sweep is for -- but it does show which axis moves the instability
+    at all, and it is the evidence that picks the sweep's ranges.
+    """
+    import torch
+
+    root = Path(scratch_root)
+    rows: list[dict[str, object]] = []
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir():
+            continue
+        candidates = [entry] if (entry / "history.csv").exists() else sorted(entry.glob("init=*"))
+        for run in candidates:
+            history_path = run / "history.csv"
+            checkpoint_path = run / "checkpoint_final.pth"
+            if not history_path.exists() or not checkpoint_path.exists():
+                continue
+            checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+            stored = checkpoint.get("settings")
+            settings = dict(stored) if isinstance(stored, Mapping) else dict(vars(stored))
+            losses = pd.read_csv(history_path)["loss"].to_numpy(dtype=float)
+            finite = losses[np.isfinite(losses)]
+            if len(losses) < int(min_iterations) or finite.size == 0:
+                continue
+            positions = spike_positions(losses)
+            rows.append(
+                {
+                    "run": str(run.relative_to(root)),
+                    "iterations": int(len(losses)),
+                    "lr": settings.get("lr"),
+                    "activation": settings.get("activation"),
+                    "spectral_radius": settings.get("spectral_radius"),
+                    "gradient_clip_norm": settings.get("gradient_clip_norm"),
+                    "n_spikes": int(positions.size),
+                    "spikes_per_10k": float(1e4 * positions.size / len(losses)),
+                    "late_spikes": int(np.sum(positions > 0.5)),
+                    "best_loss": float(finite.min()),
+                    "final_over_best": float(losses[-1] / finite.min()) if finite.min() > 0 else np.nan,
+                    "final_is_best": bool(finite.min() > 0 and losses[-1] / finite.min() < 1.01),
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------------------
+# The pass bar
+# --------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ConvergenceBar:
+    """What a configuration has to achieve to be usable downstream.
+
+    Stated before the sweep runs so the choice cannot be reverse-engineered from the
+    result. The bar is about *convergence*, not cosmetics: a spiky trajectory means the
+    optimizer never settled, so its best iterate is the luckiest point on a jittery walk.
+    Different seeds then land at different lucky points -- which is a candidate
+    explanation for the seed-to-seed disagreement the whole analysis turns on.
+    """
+
+    #: No upward jump larger than this many decades, anywhere in the scored window.
+    jump_threshold_log10: float = 0.5
+    #: Fraction of training the bar is applied over, measured from the end.
+    late_fraction: float = 0.5
+    #: How far the final iterate may sit above the best one.
+    max_final_over_best: float = 1.01
+    #: Every seed must pass; a configuration that works on most seeds is not usable.
+    require_all_seeds: bool = True
+
+
+def evaluate_convergence(losses: np.ndarray, bar: ConvergenceBar = ConvergenceBar()) -> dict[str, object]:
+    """Score one run against the bar."""
+    losses = np.asarray(losses, dtype=float)
+    finite = losses[np.isfinite(losses)]
+    if finite.size == 0:
+        return {"late_spikes": np.nan, "final_over_best": np.nan, "passes": False}
+    start = int(len(losses) * (1.0 - float(bar.late_fraction)))
+    late = spike_positions(losses, jump_threshold_log10=bar.jump_threshold_log10)
+    late_count = int(np.sum(late > (1.0 - float(bar.late_fraction))))
+    final_over_best = float(losses[-1] / finite.min()) if finite.min() > 0 else np.inf
+    return {
+        "scored_from_iteration": start,
+        "late_spikes": late_count,
+        "final_over_best": final_over_best,
+        "passes": bool(late_count == 0 and final_over_best <= float(bar.max_final_over_best)),
+    }
+
+
+def configurations_meeting_bar(
+    inventory: pd.DataFrame,
+    bar: ConvergenceBar = ConvergenceBar(),
+) -> pd.DataFrame:
+    """Apply the bar to every seed, then to every configuration."""
+    rows: list[dict[str, object]] = []
+    for _, run in inventory.iterrows():
+        history_path = Path(run["run_dir"]) / "history.csv"
+        record = {
+            "label": run["label"],
+            "lr": run["lr"],
+            "lr_schedule": run["lr_schedule"],
+            "gradient_clip_norm": run["gradient_clip_norm"],
+            "activation": run.get("activation"),
+            "spectral_radius": run.get("spectral_radius"),
+            "seed": run["seed"],
+        }
+        if not history_path.exists():
+            rows.append({**record, "late_spikes": np.nan, "final_over_best": np.nan,
+                         "best_loss": np.nan, "passes": False, "complete": False})
+            continue
+        losses = pd.read_csv(history_path)["loss"].to_numpy(dtype=float)
+        finite = losses[np.isfinite(losses)]
+        rows.append({
+            **record,
+            **evaluate_convergence(losses, bar),
+            "best_loss": float(finite.min()) if finite.size else np.nan,
+            "complete": True,
+        })
+    per_seed = pd.DataFrame(rows)
+    if per_seed.empty:
+        return per_seed
+    aggregated = (
+        per_seed.groupby("label", sort=False)
+        .agg(
+            lr=("lr", "first"),
+            lr_schedule=("lr_schedule", "first"),
+            gradient_clip_norm=("gradient_clip_norm", "first"),
+            activation=("activation", "first"),
+            spectral_radius=("spectral_radius", "first"),
+            n_seeds=("seed", "size"),
+            n_complete=("complete", "sum"),
+            n_passing=("passes", "sum"),
+            max_late_spikes=("late_spikes", "max"),
+            max_final_over_best=("final_over_best", "max"),
+            median_best_loss=("best_loss", "median"),
+        )
+        .reset_index()
+    )
+    aggregated["passes_bar"] = (
+        (aggregated["n_passing"] == aggregated["n_seeds"])
+        if bar.require_all_seeds
+        else (aggregated["n_passing"] > 0)
+    ) & (aggregated["n_complete"] == aggregated["n_seeds"])
+    return aggregated.sort_values(["passes_bar", "median_best_loss"], ascending=[False, True]).reset_index(drop=True)
+
+
 __all__ = [
+    "survey_legacy_instability",
+    "spike_positions",
+    "objective_is_deterministic",
+    "measure_gradient_norms",
+    "evaluate_convergence",
+    "configurations_meeting_bar",
+    "clip_threshold_binding_rate",
+    "ConvergenceBar",
     "PROTOCOL_ARCHITECTURE",
     "ProtocolConfig",
     "build_protocol_settings",
