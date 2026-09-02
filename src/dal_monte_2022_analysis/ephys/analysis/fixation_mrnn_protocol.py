@@ -308,6 +308,36 @@ def protocol_job_commands(
     return commands, run_dirs
 
 
+def running_job_state(jobs_dir: str | Path) -> dict[str, object]:
+    """Whether the job array this sweep last submitted is still on the queue.
+
+    Cells write their checkpoint only at the end, so a sweep that is running looks
+    identical on disk to one that was never submitted. Without this check, re-running the
+    submission cell while an array is in flight would queue a duplicate of every
+    unfinished cell.
+    """
+    import subprocess
+
+    job_file = Path(jobs_dir) / "job_id.txt"
+    if not job_file.exists():
+        return {"job_id": None, "active": False, "states": {}}
+    job_id = job_file.read_text().strip()
+    if not job_id:
+        return {"job_id": None, "active": False, "states": {}}
+    try:
+        result = subprocess.run(
+            ["squeue", "-j", job_id, "-h", "-o", "%T"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {"job_id": job_id, "active": False, "states": {}, "error": "squeue unavailable"}
+    states: dict[str, int] = {}
+    for line in result.stdout.split():
+        states[line] = states.get(line, 0) + 1
+    active = any(state in {"PENDING", "RUNNING", "CONFIGURING", "COMPLETING"} for state in states)
+    return {"job_id": job_id, "active": active, "states": states}
+
+
 # --------------------------------------------------------------------------------------
 # Scoring
 # --------------------------------------------------------------------------------------
@@ -708,7 +738,199 @@ def configurations_meeting_bar(
     return aggregated.sort_values(["passes_bar", "median_best_loss"], ascending=[False, True]).reset_index(drop=True)
 
 
+# --------------------------------------------------------------------------------------
+# Reconstruction quality: does a good loss mean a faithful trace?
+# --------------------------------------------------------------------------------------
+
+
+def run_reconstruction_quality(run_dir: str | Path, *, device: str = "cpu") -> pd.DataFrame:
+    """Score one run in PC space and in PC-backprojected firing-rate space.
+
+    The training loss is a weighted sum of a pointwise term and two temporal-difference
+    terms, so it is not on a scale anyone can read, and it is not the quantity the
+    modelling claims rest on. R^2 against the observed trajectories is. Reporting both
+    spaces matters because they can disagree: the PC target weights all 42 components
+    equally, while firing-rate space is dominated by the high-variance ones, so a model
+    can lose the small PCs and still look near-perfect on the rates.
+    """
+    from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import (
+        pc_reconstructed_firing_rate_accuracy,
+        reconstruction_accuracy,
+        replay_fixation_mrnn_run,
+    )
+
+    replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
+    pc = reconstruction_accuracy(replay).assign(space="pc")
+    fr = pc_reconstructed_firing_rate_accuracy(replay).assign(space="fr")
+    return pd.concat([pc, fr], ignore_index=True).assign(run_dir=str(run_dir))
+
+
+def collect_reconstruction_quality(
+    inventory: pd.DataFrame,
+    *,
+    device: str = "cpu",
+    limit: int | None = None,
+) -> pd.DataFrame:
+    """Score every completed run in an inventory, optionally the best ``limit`` of them."""
+    complete = inventory[inventory["complete"].astype(bool)].copy()
+    if complete.empty:
+        return pd.DataFrame()
+    if limit is not None:
+        losses = []
+        for _, run in complete.iterrows():
+            history_path = Path(run["run_dir"]) / "history.csv"
+            values = pd.read_csv(history_path)["loss"].to_numpy(dtype=float) if history_path.exists() else np.array([np.inf])
+            finite = values[np.isfinite(values)]
+            losses.append(float(finite.min()) if finite.size else np.inf)
+        complete = complete.assign(best_loss=losses).nsmallest(int(limit), "best_loss")
+    frames = []
+    for _, run in complete.iterrows():
+        quality = run_reconstruction_quality(run["run_dir"], device=device)
+        frames.append(quality.assign(label=run["label"], seed=run["seed"]))
+    return pd.concat(frames, ignore_index=True)
+
+
+def rank_runs_by_loss(inventory: pd.DataFrame, *, top_n: int = 3) -> pd.DataFrame:
+    """The ``top_n`` completed runs by best training loss, with their run directories."""
+    rows: list[dict[str, object]] = []
+    for _, run in inventory[inventory["complete"].astype(bool)].iterrows():
+        history_path = Path(run["run_dir"]) / "history.csv"
+        if not history_path.exists():
+            continue
+        losses = pd.read_csv(history_path)["loss"].to_numpy(dtype=float)
+        finite = losses[np.isfinite(losses)]
+        if not finite.size:
+            continue
+        rows.append(
+            {
+                "label": run["label"],
+                "seed": run["seed"],
+                "run_dir": run["run_dir"],
+                "best_loss": float(finite.min()),
+                "final_over_best": float(losses[-1] / finite.min()) if finite.min() > 0 else np.nan,
+            }
+        )
+    if not rows:
+        return pd.DataFrame(columns=["label", "seed", "run_dir", "best_loss", "final_over_best"])
+    return pd.DataFrame(rows).nsmallest(int(top_n), "best_loss").reset_index(drop=True)
+
+
+def loss_versus_reconstruction(quality: pd.DataFrame, ranked: pd.DataFrame) -> pd.DataFrame:
+    """Best loss against mean R^2 per run, so the loss can be checked as a proxy.
+
+    Selection in this notebook is made on the loss. That is only legitimate if runs the
+    loss prefers are also the runs that reconstruct the data best, which is a claim about
+    these fits and not a general truth -- a model can drive a derivative term down while
+    smoothing away the transients the trace plots exist to show.
+    """
+    per_run = (
+        quality.groupby(["label", "seed", "space"])["r2"]
+        .mean()
+        .unstack("space")
+        .reset_index()
+        .rename(columns={"pc": "mean_pc_r2", "fr": "mean_fr_r2"})
+    )
+    return per_run.merge(ranked[["label", "seed", "best_loss", "final_over_best"]],
+                         on=["label", "seed"], how="left")
+
+
+def extract_pc_traces(
+    run_dir: str | Path,
+    *,
+    n_components: int = 3,
+    device: str = "cpu",
+) -> pd.DataFrame:
+    """Observed and reconstructed PC trajectories for the leading components."""
+    from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import replay_fixation_mrnn_run
+
+    replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
+    checkpoint = replay["checkpoint"]
+    timeline = np.asarray(checkpoint["timeline_s"], dtype=float)
+    rows: list[dict[str, object]] = []
+    for region in replay["region_order"]:
+        observed = np.asarray(checkpoint["target_by_region"][region], dtype=float)
+        predicted = replay["output_by_region"][region].detach().cpu().numpy().astype(float)
+        for condition_index, condition in enumerate(replay["condition_order"]):
+            for component in range(min(int(n_components), observed.shape[-1])):
+                for time_index, time_s in enumerate(timeline):
+                    rows.append(
+                        {
+                            "region": region,
+                            "condition": condition,
+                            "component": component,
+                            "time_s": float(time_s),
+                            "observed": float(observed[condition_index, time_index, component]),
+                            "predicted": float(predicted[condition_index, time_index, component]),
+                        }
+                    )
+    return pd.DataFrame(rows)
+
+
+def extract_firing_rate_traces(
+    run_dir: str | Path,
+    *,
+    unit_rank: str = "median",
+    device: str = "cpu",
+) -> pd.DataFrame:
+    """Backprojected firing-rate traces for one example unit per region.
+
+    The target is the observed PC scores back-projected into rate space, not the raw
+    recorded rate: the 42-component truncation discards variance the model was never
+    asked to reproduce, and scoring against the raw rate would charge the model for it.
+
+    ``unit_rank`` selects which unit to show -- ``"best"``, ``"median"`` or ``"worst"`` by
+    that unit's own R^2. Showing the median and the worst is the point; showing only the
+    best would make the figure decoration rather than verification.
+    """
+    from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import (
+        backproject_replay_outputs_to_firing_rates,
+        replay_fixation_mrnn_run,
+    )
+
+    replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
+    checkpoint = replay["checkpoint"]
+    timeline = np.asarray(checkpoint["timeline_s"], dtype=float)
+    predicted_by_region = backproject_replay_outputs_to_firing_rates(replay)
+
+    rows: list[dict[str, object]] = []
+    for region in replay["region_order"]:
+        observed = np.asarray(checkpoint["pc_reconstructed_raw_by_region"][region], dtype=float)
+        predicted = np.asarray(predicted_by_region[region], dtype=float)
+        residual = np.sum((observed - predicted) ** 2, axis=(0, 1))
+        total = np.sum((observed - observed.mean(axis=(0, 1), keepdims=True)) ** 2, axis=(0, 1))
+        unit_r2 = 1.0 - np.divide(residual, np.maximum(total, 1e-12))
+        order = np.argsort(unit_r2)
+        if unit_rank == "worst":
+            unit = int(order[0])
+        elif unit_rank == "best":
+            unit = int(order[-1])
+        else:
+            unit = int(order[len(order) // 2])
+        for condition_index, condition in enumerate(replay["condition_order"]):
+            for time_index, time_s in enumerate(timeline):
+                rows.append(
+                    {
+                        "region": region,
+                        "condition": condition,
+                        "unit_index": unit,
+                        "unit_r2": float(unit_r2[unit]),
+                        "unit_rank": str(unit_rank),
+                        "time_s": float(time_s),
+                        "observed": float(observed[condition_index, time_index, unit]),
+                        "predicted": float(predicted[condition_index, time_index, unit]),
+                    }
+                )
+    return pd.DataFrame(rows)
+
+
 __all__ = [
+    "running_job_state",
+    "run_reconstruction_quality",
+    "rank_runs_by_loss",
+    "loss_versus_reconstruction",
+    "extract_pc_traces",
+    "extract_firing_rate_traces",
+    "collect_reconstruction_quality",
     "survey_legacy_instability",
     "spike_positions",
     "objective_is_deterministic",

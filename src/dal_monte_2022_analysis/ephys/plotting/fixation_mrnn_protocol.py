@@ -16,12 +16,18 @@ import numpy as np
 import pandas as pd
 
 from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
+    CONDITION_COLORS,
+    CONDITION_ORDER,
+    CONDITION_SHORT_LABELS,
     INK,
     MUTED_INK,
     NEUTRAL_EDGE,
     NEUTRAL_FILL,
     nice_axis,
+    region_label,
 )
+
+MODEL_REGION_ORDER: tuple[str, ...] = ("ofc", "bla", "dmpfc", "accg")
 
 PASS_COLOR = "#2a6f4e"
 FAIL_COLOR = "#c1121f"
@@ -340,7 +346,162 @@ def plot_protocol_results(
     return fig
 
 
+def plot_reconstruction_quality(
+    quality: pd.DataFrame,
+    *,
+    figsize: tuple[float, float] = (7.4, 3.0),
+):
+    """R^2 per region and condition, in both spaces, for the runs scored.
+
+    Two spaces because they can disagree. The PC target weights all 42 components
+    equally; firing-rate space is dominated by the high-variance ones. A model that
+    loses the small PCs is visible on the left and invisible on the right.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
+    regions = [r for r in MODEL_REGION_ORDER if r in set(quality["region"])]
+    conditions = [c for c in CONDITION_ORDER if c in set(quality["condition"])]
+    width = 0.8 / max(len(conditions), 1)
+
+    for ax, space, title in zip(axes, ("pc", "fr"), ("region PC space", "PC-backprojected firing rates")):
+        block = quality[quality["space"] == space]
+        for condition_index, condition in enumerate(conditions):
+            values, errors = [], []
+            for region in regions:
+                cell = block[(block["region"] == region) & (block["condition"] == condition)]["r2"]
+                values.append(float(cell.median()) if len(cell) else np.nan)
+                errors.append(float(cell.max() - cell.min()) / 2 if len(cell) > 1 else 0.0)
+            x = np.arange(len(regions)) + condition_index * width - 0.4 + width / 2
+            ax.bar(x, values, yerr=errors, width=width * 0.9,
+                   color=CONDITION_COLORS[condition], edgecolor=INK, linewidth=0.6,
+                   error_kw=dict(elinewidth=0.7, capsize=1.5),
+                   label=CONDITION_SHORT_LABELS[condition], zorder=2)
+        ax.set_xticks(np.arange(len(regions)))
+        ax.set_xticklabels([region_label(r) for r in regions], fontsize=7)
+        ax.set_title(title, fontsize=7.5, pad=5)
+        ax.set_ylim(0, 1.04)
+        ax.axhline(1.0, color=MUTED_INK, linewidth=0.6, linestyle=":")
+        nice_axis(ax)
+
+    axes[0].set_ylabel("$R^2$")
+    axes[0].legend(fontsize=6, loc="lower left", ncol=3, columnspacing=0.7, handletextpad=0.4)
+    _panel(axes[0], "A")
+    _panel(axes[1], "B")
+    fig.tight_layout()
+    return fig
+
+
+def plot_loss_versus_reconstruction(
+    comparison: pd.DataFrame,
+    *,
+    figsize: tuple[float, float] = (7.4, 2.6),
+):
+    """Is the training loss a good proxy for reconstruction quality on these fits?
+
+    Selection is made on the loss, which is only legitimate if the runs the loss prefers
+    are the runs that reconstruct best. Scatter rather than assert it.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    for ax, column, label in zip(axes, ("mean_pc_r2", "mean_fr_r2"), ("mean PC $R^2$", "mean firing-rate $R^2$")):
+        ax.scatter(comparison["best_loss"], comparison[column], s=30,
+                   color=NEUTRAL_FILL, edgecolor=NEUTRAL_EDGE, linewidth=0.7, zorder=3)
+        finite = comparison[np.isfinite(comparison["best_loss"]) & np.isfinite(comparison[column])]
+        if len(finite) > 2:
+            rho = finite["best_loss"].corr(finite[column], method="spearman")
+            ax.set_title(f"Spearman ρ = {rho:+.2f}  (n = {len(finite)})", fontsize=7, color=MUTED_INK, pad=5)
+        ax.set_xscale("log")
+        ax.set_xlabel("best training loss")
+        ax.set_ylabel(label)
+        nice_axis(ax)
+    _panel(axes[0], "A")
+    _panel(axes[1], "B")
+    fig.tight_layout()
+    return fig
+
+
+def _overlay_panels(traces: pd.DataFrame, value_columns: tuple[str, str], title: str,
+                    figsize: tuple[float, float], series_column: str | None):
+    regions = [r for r in MODEL_REGION_ORDER if r in set(traces["region"])]
+    conditions = [c for c in CONDITION_ORDER if c in set(traces["condition"])]
+    fig, axes = plt.subplots(len(regions), len(conditions), figsize=figsize,
+                             sharex=True, squeeze=False)
+    observed_column, predicted_column = value_columns
+    for row, region in enumerate(regions):
+        for column, condition in enumerate(conditions):
+            ax = axes[row][column]
+            block = traces[(traces["region"] == region) & (traces["condition"] == condition)]
+            series = sorted(block[series_column].unique()) if series_column else [None]
+            for index, key in enumerate(series):
+                panel = block if key is None else block[block[series_column] == key]
+                panel = panel.sort_values("time_s")
+                alpha = 1.0 - 0.28 * index
+                ax.plot(panel["time_s"], panel[observed_column],
+                        color=CONDITION_COLORS[condition], linewidth=1.1, alpha=alpha, zorder=3)
+                ax.plot(panel["time_s"], panel[predicted_column],
+                        color=INK, linewidth=0.9, linestyle="--", alpha=alpha, zorder=4)
+            ax.axvline(0.0, color=MUTED_INK, linewidth=0.6, linestyle=":", zorder=1)
+            if row == 0:
+                ax.set_title(CONDITION_SHORT_LABELS[condition], fontsize=7.5, pad=4)
+            if column == 0:
+                ax.set_ylabel(region_label(region), fontsize=7.5)
+            if row == len(regions) - 1:
+                ax.set_xlabel("time from fixation (s)", fontsize=7)
+            nice_axis(ax, y_ticks=3)
+    handles = [
+        plt.Line2D([], [], color=INK, linewidth=1.2, label="observed"),
+        plt.Line2D([], [], color=INK, linewidth=1.0, linestyle="--", label="mRNN"),
+    ]
+    fig.legend(handles=handles, fontsize=6.5, ncol=2, loc="upper right",
+               bbox_to_anchor=(0.99, 1.0), frameon=False)
+    fig.suptitle(title, fontsize=8.5, y=1.015)
+    fig.tight_layout()
+    return fig
+
+
+def plot_pc_trace_overlay(
+    traces: pd.DataFrame,
+    *,
+    title: str = "Region PC trajectories — observed against mRNN",
+    figsize: tuple[float, float] = (7.4, 6.2),
+):
+    """Observed and reconstructed PC trajectories, region by condition.
+
+    Coloured solid lines are observed, dark dashed are the model, and successive
+    components fade. This is the check the loss cannot give: whether a well-scoring fit
+    tracks the shape of the transients or has smoothed them into a slow drift.
+    """
+    return _overlay_panels(traces, ("observed", "predicted"), title, figsize, "component")
+
+
+def plot_firing_rate_trace_overlay(
+    traces: pd.DataFrame,
+    *,
+    title: str | None = None,
+    figsize: tuple[float, float] = (7.4, 6.2),
+):
+    """One example unit per region, in PC-backprojected firing-rate space."""
+    if title is None:
+        rank = str(traces["unit_rank"].iloc[0]) if len(traces) else "example"
+        title = f"Backprojected firing rate — {rank}-fitting unit per region"
+    labelled = traces.copy()
+    figure = _overlay_panels(labelled, ("observed", "predicted"), title, figsize, None)
+    regions = [r for r in MODEL_REGION_ORDER if r in set(traces["region"])]
+    for row, region in enumerate(regions):
+        cell = traces[traces["region"] == region]
+        if not len(cell):
+            continue
+        figure.axes[row * 3].text(
+            0.02, 0.94, f"unit {int(cell['unit_index'].iloc[0])}, $R^2$ = {float(cell['unit_r2'].iloc[0]):.3f}",
+            transform=figure.axes[row * 3].transAxes, fontsize=5.8, color=MUTED_INK,
+            va="top", ha="left",
+        )
+    return figure
+
+
 __all__ = [
+    "plot_reconstruction_quality",
+    "plot_pc_trace_overlay",
+    "plot_loss_versus_reconstruction",
+    "plot_firing_rate_trace_overlay",
     "plot_gradient_norm_diagnosis",
     "plot_instability_problem",
     "plot_legacy_learning_rate_survey",

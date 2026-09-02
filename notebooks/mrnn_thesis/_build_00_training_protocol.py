@@ -44,6 +44,7 @@ is stable, we cannot tell a real property of the model class from optimiser nois
 | 4 | The sweep design, and the bar it has to clear |
 | 5 | Run state, and submission (off by default) |
 | 6 | Result and selection |
+| 7 | Reconstruction quality — does a good loss mean a faithful trace? |
 
 **Nothing here submits a job unless you set `SUBMIT = True` in Section 5.** Every other
 cell reads what is already on disk and is safe to re-run at any time.
@@ -440,6 +441,11 @@ S5_TEXT = r"""## 5. Run state and submission
 Re-running this notebook is always safe. Submission happens **only** if you set
 `SUBMIT = True` below; otherwise the cell prints what it *would* submit and stops.
 
+It is also blocked while the array from a previous submission is still on the queue. A
+cell writes its checkpoint only when it finishes, so a sweep that is running looks
+identical on disk to one that was never started — without that check, re-running this
+section mid-sweep would queue a duplicate of every unfinished cell.
+
 Submission is a **dSQ array job**: one SLURM array task per sweep cell, each on its own
 GPU, so the cells train in parallel rather than in sequence. Concurrency is capped by the
 per-user GPU limit (20 at a time), and the array simply queues the rest behind it.
@@ -460,20 +466,36 @@ commands, run_dirs = protocol.protocol_job_commands(
 )
 inventory = protocol.index_protocol_runs(SWEEP_ROOT, configs, seeds)
 
+# A cell writes its checkpoint only at the end, so a sweep that is running looks exactly
+# like one that was never submitted. Check the queue before offering to submit anything.
+job_state = protocol.running_job_state(SWEEP_ROOT / "_jobs")
+
 display(Markdown(
     f"**{int(inventory['complete'].sum())} complete**, "
     f"**{int(inventory['diverged'].sum())} diverged**, "
     f"**{int(inventory['pending'].sum())} not yet run** "
-    f"of {len(inventory)} cells.\n\n"
-    f"{len(commands)} run(s) would be submitted."
+    f"of {len(inventory)} cells."
 ))
-if commands:
+if job_state["active"]:
+    display(Markdown(
+        f"⚠️ **Job array `{job_state['job_id']}` is still on the queue** "
+        f"({', '.join(f'{n} {state.lower()}' for state, n in sorted(job_state['states'].items()))}). "
+        f"Submission is blocked — the missing cells are already training. Re-run this notebook "
+        f"when the array finishes."
+    ))
+elif commands:
+    display(Markdown(f"{len(commands)} run(s) would be submitted."))
     print("first command:\n")
     print(commands[0])
 '''
 
 S5B_CODE = r'''
-if SUBMIT and commands:
+if job_state["active"]:
+    display(Markdown(
+        f"Nothing submitted: job array `{job_state['job_id']}` is still running. Poll it with "
+        f"`squeue -j {job_state['job_id']}`."
+    ))
+elif SUBMIT and commands:
     from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
 
     jobs_dir = SWEEP_ROOT / "_jobs"
@@ -565,7 +587,115 @@ else:
 '''
 
 
-S7 = r"""## 7. What this settles, and what comes next
+S7_TEXT = r"""## 7. Does a good loss mean a faithful trace?
+
+Selection in Section 6 is made on the training loss, which is a weighted sum of a
+pointwise term and two temporal-difference terms. It is not on a scale anyone can read,
+and it is not the quantity any downstream claim rests on. Two checks before the recipe is
+accepted:
+
+1. **Quantitatively** — $R^2$ against the observed trajectories, in region PC space *and*
+   in PC-backprojected firing-rate space. The two can disagree: the PC target weights all
+   42 components equally, while firing-rate space is dominated by the high-variance ones,
+   so a model that loses the small PCs looks bad on one and perfect on the other.
+2. **Visually** — the traces themselves, for the **three best-fitting runs**. A model can
+   drive the derivative and curvature terms down by smoothing transients into a slow
+   drift, which costs little loss and destroys exactly the dynamics the modelling is
+   about. Only a trace plot shows that.
+
+The firing-rate target is the observed PC scores back-projected into rate space, not the
+raw recorded rate: the 42-component truncation discards variance the model was never
+asked to reproduce, and scoring against the raw rate would charge it for that.
+"""
+
+S7_CODE = r'''
+top_runs = protocol.rank_runs_by_loss(inventory, top_n=3)
+
+if len(top_runs) == 0:
+    display(Markdown("No completed runs yet — this section fills in as the sweep lands."))
+else:
+    display(top_runs[["label", "seed", "best_loss", "final_over_best"]].round(6))
+    top_quality = protocol.collect_reconstruction_quality(
+        inventory[inventory["run_dir"].isin(top_runs["run_dir"])]
+    )
+    display(
+        top_quality.groupby(["space", "region"])["r2"]
+        .agg(["median", "min"])
+        .unstack("space")
+        .round(4)
+    )
+    show(viz.plot_reconstruction_quality(top_quality), "fig07_reconstruction_quality")
+'''
+
+S7B_CODE = r'''
+if len(top_runs):
+    worst_cell = top_quality[top_quality["space"] == "pc"].nsmallest(1, "r2").iloc[0]
+    by_condition = top_quality[top_quality["space"] == "pc"].groupby("condition")["r2"].median()
+    display(Markdown(
+        f"Across the top {len(top_runs)} runs, median PC $R^2$ is "
+        f"**{top_quality.loc[top_quality['space'] == 'pc', 'r2'].median():.3f}** and median "
+        f"firing-rate $R^2$ is **{top_quality.loc[top_quality['space'] == 'fr', 'r2'].median():.4f}**. "
+        f"The gap between the two spaces is the 42-PC truncation: rate space is carried by the "
+        f"leading components, so it flatters the fit.\n\n"
+        f"By condition, median PC $R^2$ is "
+        + ", ".join(f"**{c.replace('_', ' ')}** {v:.3f}" for c, v in by_condition.items())
+        + f". The worst single cell is **{worst_cell['region']} / "
+        f"{worst_cell['condition'].replace('_', ' ')}** at $R^2$ = {worst_cell['r2']:.3f}."
+    ))
+'''
+
+S7C_TEXT = r"""### 7a. The traces
+
+Coloured solid lines are observed, dark dashed are the model. The PC panel shows the
+leading three components per region, with later components faded.
+"""
+
+S7C_CODE = r'''
+if len(top_runs):
+    best_run = top_runs.iloc[0]
+    pc_traces = protocol.extract_pc_traces(best_run["run_dir"], n_components=3)
+    show(
+        viz.plot_pc_trace_overlay(
+            pc_traces,
+            title=f"Region PC trajectories — {best_run['label']}, seed {best_run['seed']}",
+        ),
+        "fig08_pc_traces",
+    )
+'''
+
+S7D_TEXT = r"""The firing-rate panels below show the **median-** and **worst-fitting unit** in each
+region, not the best. Showing the best would make this decoration; the question is what
+the failure mode looks like when there is one.
+"""
+
+S7D_CODE = r'''
+if len(top_runs):
+    for rank, stem in (("median", "fig09_fr_traces_median"), ("worst", "fig10_fr_traces_worst")):
+        traces = protocol.extract_firing_rate_traces(best_run["run_dir"], unit_rank=rank)
+        show(viz.plot_firing_rate_trace_overlay(traces), stem)
+'''
+
+S7E_TEXT = r"""### 7b. Is the loss a usable proxy for reconstruction?
+
+Selecting on the loss is only legitimate if the runs the loss prefers are also the runs
+that reconstruct best. That is a claim about *these* fits, not a general truth, so it is
+worth scattering rather than assuming.
+"""
+
+S7E_CODE = r'''
+if int(inventory["complete"].sum()) >= 4:
+    all_quality = protocol.collect_reconstruction_quality(inventory)
+    comparison = protocol.loss_versus_reconstruction(
+        all_quality, protocol.rank_runs_by_loss(inventory, top_n=len(inventory))
+    )
+    show(viz.plot_loss_versus_reconstruction(comparison), "fig11_loss_vs_reconstruction")
+    display(comparison.sort_values("best_loss").round(5).head(10))
+else:
+    display(Markdown("Needs at least four completed runs; re-run once more of the sweep has landed."))
+'''
+
+
+S8 = r"""## 8. What this settles, and what comes next
 
 **Settled, once the sweep completes.** The training recipe: learning rate, schedule,
 clipping, activation and initial spectral radius, chosen against a bar fixed in advance
@@ -579,6 +709,8 @@ and recorded in one file that every later task reads.
 3. A decaying learning rate makes the final iterate the best iterate on every seed. The
    cost is a worse best loss at a fixed peak rate, which is why the peak has to be swept
    rather than assumed.
+4. A converged loss is not the same as a faithful trace, and Section 7 is where the two
+   are checked against each other rather than assumed to agree.
 
 **Still open after this notebook.**
 
@@ -636,7 +768,16 @@ def build() -> dict:
         _cell("markdown", S6_TEXT),
         _cell("code", S6_CODE),
         _cell("code", S6B_CODE),
-        _cell("markdown", S7),
+        _cell("markdown", S7_TEXT),
+        _cell("code", S7_CODE),
+        _cell("code", S7B_CODE),
+        _cell("markdown", S7C_TEXT),
+        _cell("code", S7C_CODE),
+        _cell("markdown", S7D_TEXT),
+        _cell("code", S7D_CODE),
+        _cell("markdown", S7E_TEXT),
+        _cell("code", S7E_CODE),
+        _cell("markdown", S8),
     ]
     return {
         "cells": cells,
