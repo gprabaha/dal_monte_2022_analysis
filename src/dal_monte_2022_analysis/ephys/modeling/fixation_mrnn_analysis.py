@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -26,19 +27,55 @@ def _model_spec_from_checkpoint(checkpoint: Mapping[str, object], *, device: str
     return FixationMRNNModelSpec(**spec)
 
 
+class LegacyDenseRecurrentFixationMRNNModel(FixationMRNNModel):
+    """Replay checkpoints that predate the low-rank block parameterization.
+
+    Runs trained before the inter-regional bottleneck existed stored a single
+    dense masked ``mrnn.W_rec`` rather than per-block parameters. Skipping block
+    creation, never overwriting the loaded matrix, and applying the stored
+    structural mask in the forward pass restores exactly what
+    ``mrnntorch.ElmanmRNN`` did when those runs were trained.
+    """
+
+    def _initialize_recurrent_parameters(self, spec: FixationMRNNModelSpec) -> None:  # noqa: D102
+        return
+
+    def _sync_recurrent_state(self) -> None:  # noqa: D102
+        return
+
+    def recurrent_weight_matrix(self) -> torch.Tensor:  # noqa: D102
+        return self.mrnn.W_rec * self.mrnn.W_rec_mask
+
+
+def is_legacy_dense_checkpoint(checkpoint: Mapping[str, object]) -> bool:
+    """True when a checkpoint stores one dense ``W_rec`` instead of block parameters."""
+    state_dict = checkpoint["model_state_dict"]
+    return not any(str(key).startswith("_within_region_param_") for key in state_dict)
+
+
 def load_fixation_mrnn_checkpoint(
     run_dir: str | Path,
     *,
     device: str = "cpu",
 ) -> tuple[FixationMRNNModel, dict[str, object]]:
-    """Load a trained model and checkpoint."""
+    """Load a trained model and checkpoint.
+
+    Legacy pre-bottleneck checkpoints are detected and loaded through
+    :class:`LegacyDenseRecurrentFixationMRNNModel` so every run in the scratch
+    tree replays through one entry point.
+    """
     resolved_device = resolve_device(device)
     checkpoint = torch.load(
         Path(run_dir) / "checkpoint_final.pth",
         map_location=resolved_device,
         weights_only=False,
     )
-    model = FixationMRNNModel(_model_spec_from_checkpoint(checkpoint, device=resolved_device)).to(resolved_device)
+    spec = _model_spec_from_checkpoint(checkpoint, device=resolved_device)
+    if is_legacy_dense_checkpoint(checkpoint):
+        model = LegacyDenseRecurrentFixationMRNNModel(replace(spec, recurrent_bottleneck_dim=0))
+    else:
+        model = FixationMRNNModel(spec)
+    model = model.to(resolved_device)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
     return model, checkpoint

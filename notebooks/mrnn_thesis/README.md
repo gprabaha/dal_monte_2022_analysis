@@ -1,10 +1,29 @@
 # notebooks/mrnn_thesis
 
 Synthesis of the multi-regional RNN (mRNN) modelling work, and the plan for the
-chapter. **This folder currently holds no notebooks** — it holds the audit of what
-the ~60 existing fits establish, and the list of runs still needed. Notebooks get
-authored here (`_build_*.py` → `.ipynb`, per the pattern in
-[`../population_thesis/`](../population_thesis)) once the missing runs land.
+chapter.
+
+| File | Role |
+|---|---|
+| `mrnn_synthesis.ipynb` | **The notebook.** Reads every fitted network in the scratch tree, scores them on one footing, and works through seven figures: what was fitted, capacity, architecture, the bottleneck, reproducibility, what is invariant, and what is not. Ends with what can be inferred and what still has to be run. |
+| `_build_summary.py` | Authors that notebook from plain-Python source strings. |
+| `README.md` | This file — the same audit in prose, plus the run-by-run detail. |
+
+Regenerate with:
+
+```bash
+conda run -n gaze_processing python notebooks/mrnn_thesis/_build_summary.py
+conda run -n gaze_processing python -m jupyter nbconvert --to notebook --execute \
+    --inplace --ExecutePreprocessor.timeout=2400 notebooks/mrnn_thesis/mrnn_synthesis.ipynb
+```
+
+It runs on CPU in a few minutes and refits nothing. Every number in the prose is
+computed in the cell above it, so the text stays correct as the scratch tree grows.
+Figures (editable PDF + PNG) go to
+`analysis_output_root/ephys/modeling/fixation_mrnn/plots/synthesis/`. All reusable code
+is in `src/` per `AGENTS.md`:
+`ephys/analysis/fixation_mrnn_synthesis.py` and
+`ephys/plotting/fixation_mrnn_synthesis.py`.
 
 The exploratory notebooks this draws on are the loose `fixation_mrnn_*.ipynb` files
 in [`../`](..).
@@ -50,11 +69,18 @@ carry those differences on its face or it is not a comparison.
 
 ## 3. Established results
 
-### R1. Capacity is not the binding constraint; training length is
-The hidden-unit sweep at 20k iterations reaches mean PC R² 0.82 (h40), 0.82 (h50),
-0.88 (h60) — nearly flat in width. The *same* 50-unit architecture reaches
-R² > 0.99 at 50k iterations. **Iterations, not units, buy the fit.** 50 units/region
-is the settled working size; the h40 rows in older sweeps are a capacity probe only.
+### R1. The hidden-unit sweep is confounded by learning rate — the capacity question is open
+The sweep lowered the learning rate as the models got wider (1e-3 for 5–25 units, 3e-4
+at 30, 1e-4 at 40–60), so width and step size vary together. At 50 units and 20,000
+iterations — width and training length both fixed — a learning rate of 1e-4 reaches mean
+PC R² **0.815** while 1e-3 reaches **0.985** (n = 4, range 0.983–0.987). **The entire
+apparent capacity effect is the learning rate.**
+
+What the fits do establish is that 50 units/region is *sufficient*. Whether 20 or 30
+would also do has never been tested at matched settings (G5).
+
+Related: 4 of the 34 50-unit runs in the tree diverged, at learning rates 1e-3, 2e-3 and
+1e-2. 1e-3 is a working band, not a safe one.
 
 ### R2. Inter-regional coupling is required; dense within-region coupling is not
 At 50 units, 50k iterations, one seed each (`model_selection` notebook, Part 1):
@@ -109,8 +135,12 @@ those three points are **not currently readable**.
 This is the problem the chapter has to confront.
 
 100 seeds, unbottlenecked, 100k iters: **25/100 flagged bad** (divergence or failure to
-improve). Among the 75 healthy runs the final loss spans 4.3e−5 to 8.9e−3 — two orders
-of magnitude at identical settings.
+improve). Among the 75 healthy runs the best loss still spans a factor of 5 at identical
+settings.
+
+Separately, across the whole tree **89 of 273 saved checkpoints (33%) sit more than 1.5×
+above the lowest loss their own run reached** — the training loop saves the final
+iterate, not the best one (G2).
 
 Cross-initialization consistency (mean off-diagonal correlation over inits; 1 = identical
 dynamics), 10 seeds each:
@@ -208,13 +238,16 @@ confounded with its size. Section 7 of the model-selection notebook already solv
 the equalizing sizes: **50 / 57 / 90** units for full / cross+self-diag / within-region.
 Not yet trained.
 
-**G5. Any held-out data at all.**
+**G5. A clean hidden-unit sweep** at fixed learning rate (1e-3) and fixed iterations,
+10–60 units. R1's question is currently unanswered. Cheap.
+
+**G6. Any held-out data at all.**
 Every number above is in-sample, on a model with k/n ≈ 1. The training code already
 supports the fix with no new code: set `post_fixation_loss_weight = 0.0`, train on
 pre-fixation bins only, and score the post-fixation half the model must generate by
 rolling its own dynamics forward. Do this for the chosen architecture at rank 3.
 
-**G6. Fix the CCA (blocks R9).**
+**G6b. Fix the CCA (blocks R9).**
 Cross-validated canonical correlations (fit on a subset of condition-time bins, score
 on held-out) plus a circular-shift null, matching the null convention already used in
 `../population_thesis/` and `../signal_correlation/`. Or drop R9 from the chapter.
@@ -229,6 +262,11 @@ effect — ofc +0.042, bla −0.040, dmpfc +0.019 for interactive vs non-interac
 (healthy 7 seeds) — but n = 10 is below the power the contrast needs. Falls out of G1
 for free once those seeds exist.
 
+**G10. Extend the channel-identity test** (R10) to the 100-seed rank-3 ensemble, and ask
+whether the union of a pathway's three channels is more stable than each individually.
+Decides whether R10 is "not identifiable" or "identifiable but underpowered". Falls out
+of G1.
+
 **G9. Dynamical-systems characterization is missing entirely.**
 The current-geometry work projects currents onto progression directions. Nothing yet
 characterizes the *system*: fixed points and their stability (Jacobian eigenspectra
@@ -237,14 +275,19 @@ and orientation of the slow manifold, and whether the interactive-face state's
 compactness (population chapter) shows up as a distinct attractor. This is the natural
 mechanistic payoff and it is entirely unstarted.
 
-**G10. The rank-3 bottleneck's three dimensions are uninterpreted.**
-Rank 3 is a strong result and the *identity* of the three communication axes has never
-been asked. What do they align with — the condition-offset axis, the shared time
-course, the face/object axis, the interactive/non-interactive axis from the population
-chapter? Are they consistent across seeds even when the currents are not? A rotation-
-invariant subspace comparison (principal angles between each seed's 3-D left/right
-subspaces) is cheap and would test whether the *channel* is identifiable even where
-the *traffic* is not. This may be where the real invariant lives.
+### R10. The rank-3 channels are not identifiable across seeds *(new, 2026-09-02)*
+Mapping each pathway's read and write factors into the relevant region's PC space —
+fixed by the data, therefore shared across fits — and comparing by principal angles over
+the 10 rank-3 seeds: cross-seed alignment averages **0.296** against a chance level of
+0.218 (95th percentile 0.313); only 5 of 24 pathway × direction combinations clear that
+percentile. The sharper test is decisive: **a pathway's channel is no more similar to
+itself in another seed than to a different pathway in that seed** (write 0.284 vs 0.284,
+p = 0.27; read 0.309 vs 0.314, p = 0.99).
+
+So the bottleneck constrains *how much* passes between regions without pinning down
+*what* passes. Ten seeds is small, so this stays open pending the 100-seed rank-3
+ensemble (G1 → G10), but a weak effect is not what a mechanistic claim about a
+three-dimensional channel would need.
 
 ---
 
@@ -257,7 +300,7 @@ Working title: *What the regions have to tell each other, and when.*
 | 1 | Architecture and target: what the model sees, what it must produce | — | schematic exists (`plots/model_selection/architecture_schematics_and_performance.pdf`) |
 | 2 | Regions cannot reproduce each other's trajectories alone; dense internal recurrence is dispensable | R2 | needs G3, G4 |
 | 3 | Three dimensions per pathway suffice | R5, R4 | needs G7 |
-| 4 | What those three dimensions *are* | G10 | **unstarted** |
+| 4 | What those three dimensions *are* — and that seeds do not agree on them | R10 | done for 10 seeds; needs G1 |
 | 5 | Fits replicate, circuits do not — and what survives anyway | R6, R7 | needs G1, G2 |
 | 6 | Interactive face fixations are the condition that requires the coupling | R8, R7 | needs G3, G8 |
 | 7 | The dynamical system: fixed points, basins, and the interactive-face state | G9 | **unstarted** |
@@ -275,7 +318,7 @@ about routing, not a measurement of it.
 
 1. **G2** (best-iterate checkpointing) — a code change; everything downstream depends on it.
 2. **G1** (100 seeds × ranks 1/3/5 at 250k) — the big cluster job; launch it early. Gives G8 free.
-3. **G10** (subspace angles of the rank-3 channels) — cheap re-analysis of existing checkpoints, and the best candidate for a genuine invariant. Do it while G1 runs.
+3. **G5** (clean hidden-unit sweep) — cheap, and closes the one question that has been reopened.
 4. **G3 + G4** (architecture ensemble at matched capacity) — second cluster job.
 5. **G9** (fixed points / Jacobians) — new `src/` analysis code, on the G1 ensemble.
 6. **G5**, **G6**, **G7** — the three cleanup runs.
