@@ -121,7 +121,7 @@ def _config(
 def protocol_sweep_grid(
     *,
     learning_rates: Sequence[float] = (3e-4, 1e-3, 3e-3, 1e-2),
-    activations: Sequence[str] = ("tanh", "softplus"),
+    activations: Sequence[str] = ("tanh",),
     spectral_radii: Sequence[float] = (0.9, 1.1),
     reference_activation: str = "tanh",
     reference_spectral_radius: float = 1.1,
@@ -132,11 +132,17 @@ def protocol_sweep_grid(
     A full product over every axis would be 64 configurations, most of them spent on
     questions the existing runs have already answered. The design instead is:
 
-    **Main arm** -- peak learning rate x activation x initial spectral radius, all on a
-    cosine schedule with no clipping. Cosine is fixed here rather than swept because a
-    completed seed-matched block already shows it drives final/best to exactly 1.000 on
-    every seed; what is open is the *peak* rate it can safely carry, since decaying the
-    rate also costs fit.
+    **Main arm** -- peak learning rate x initial spectral radius, on a cosine schedule
+    with no clipping. Cosine is fixed here rather than swept because a completed
+    seed-matched block already shows it drives final/best to exactly 1.000 on every seed;
+    what is open is the *peak* rate it can safely carry, since decaying the rate also
+    costs fit.
+
+    The activation defaults to ``tanh`` alone rather than being swept. That is a reasoned
+    choice, not a measured one, and the chapter should say so: the targets are
+    zero-centred PC scores, ``tanh`` is zero-centred and **bounded** so an overshoot
+    cannot run the hidden state away, and ``softplus`` is positive and unbounded. Pass
+    ``activations=("tanh", "softplus")`` to test it if that prior ever needs defending.
 
     **Schedule control** -- the same learning rates on a constant schedule at the
     reference architecture, so the cosine claim is demonstrated inside this sweep rather

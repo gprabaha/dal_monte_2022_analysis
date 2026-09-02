@@ -88,9 +88,12 @@ SWEEP_ROOT = TASK_ROOT / "sweep"
 FIGURE_DIR = syn.resolve_output_dir(DATASET_CFG_PATH, scope="00_training_protocol")
 FIGURES = ThesisFigureSettings(output_dir=FIGURE_DIR)
 
-#: Iterations per sweep cell. 50,000 matches the pilot, so the two are comparable, and
-#: takes about 50 minutes per cell on a psych_gpu node.
-SWEEP_EPOCHS = 50_000
+#: Iterations per sweep cell. The pilot ran 50,000; the sweep runs 100,000 so that a
+#: configuration has to demonstrate it is *converging*, not merely quiet at the point we
+#: stopped looking. It also changes the cosine trade-off in the sweep's favour: the
+#: schedule is defined over the whole run, so doubling the budget doubles the time spent
+#: near the peak rate before annealing begins.
+SWEEP_EPOCHS = 100_000
 #: Three seeds is a screen, not an estimate: it is enough to eliminate configurations
 #: that are unstable, and the finalists get a proper multi-seed run afterwards.
 SWEEP_SEEDS = 3
@@ -362,20 +365,49 @@ BAR = protocol.ConvergenceBar()
 display(pd.Series(BAR.__dict__, name="convergence bar").to_frame())
 '''
 
-S4B_TEXT = r"""### 4b. The design
+S4B_TEXT = r"""### 4b. What the two schedules are
+
+**Constant** is what every legacy run used: the learning rate is set once and never
+changes, so the optimiser takes the same-sized step at iteration 99,999 as at iteration 1.
+Late in training, when the model is near a solution and the landscape is sharp, a step
+that size keeps overshooting — which is exactly the spike pattern in Figure 4A, running
+all the way to the end.
+
+**Cosine** starts at the same peak rate and follows a half-cosine down to a floor
+(here 1% of the peak) over the course of the run:
+
+$$\eta(t)=\eta_{\min}+\tfrac{1}{2}\,(\eta_{\text{peak}}-\eta_{\min})\left(1+\cos\frac{\pi t}{T}\right)$$
+
+It holds near the peak early, decays fastest in the middle, and flattens out near zero at
+the end. By the last fifth of training the step is small enough that it *cannot* overshoot,
+so the trajectory necessarily settles and the final iterate is the best one — which is why
+Figure 4B collapses to exactly 1.000.
+
+The cost is that time spent at a low rate is not time spent searching, which is why the
+cosine runs in the pilot reached a worse best loss at the same peak rate. **That is also
+why this sweep runs 100,000 iterations rather than the pilot's 50,000**: the schedule is
+defined over the whole run, so a longer budget buys more time near the peak before
+annealing begins, and it forces each configuration to show it is converging rather than
+merely quiet at the point we stopped looking.
+
+### 4c. The design
 
 One factorial plus two control arms, rather than a full product over every axis — most
 of a full product would be spent re-answering what Sections 2 and 3 have settled.
 
-- **Main arm** — peak learning rate × activation × initial spectral radius, all on a
-  cosine schedule with no clipping. `tanh` is bounded and zero-centred, which matches
-  zero-centred PC targets and means an overshoot cannot run the hidden state away;
-  `softplus` is positive and unbounded. A spectral radius above ~1 is what sharpens the
-  landscape through 100 recurrent steps.
+- **Main arm** — peak learning rate × initial spectral radius, on cosine with no
+  clipping. A spectral radius above ~1 is what sharpens the landscape through 100
+  recurrent steps, so 0.9 and 1.1 bracket the edge of chaos.
 - **Schedule control** — the same rates on a constant schedule, so the cosine result is
   demonstrated inside this sweep and not imported from the pilot.
 - **Clipping control** — the same rates with a clip norm of **0.05**, the first threshold
   Section 2b shows actually binds.
+
+**The activation is not swept.** `tanh` is fixed on a reasoned prior rather than a
+measured one, and the chapter should say so: the targets are zero-centred PC scores,
+`tanh` is zero-centred and *bounded* so an overshoot cannot run the hidden state away,
+and `softplus` is positive and unbounded. Sweeping it would cost half the compute to
+confirm something the loss geometry already implies.
 """
 
 S4B_CODE = r'''
@@ -392,10 +424,13 @@ design = pd.DataFrame([
 ])
 display(design.groupby("arm").size().rename("configurations").to_frame())
 display(design)
+minutes_per_run = 100  # 50,000 iterations took ~50 min per cell in the pilot
 display(Markdown(
     f"**{len(configs)} configurations × {len(seeds)} seeds = {len(configs) * len(seeds)} runs** at "
-    f"{SWEEP_EPOCHS:,} iterations. About 50 minutes per run on a `psych_gpu` node, 20 concurrent, "
-    f"so roughly **{len(configs) * len(seeds) * 50 / 20 / 60:.1f} hours** wall-clock."
+    f"{SWEEP_EPOCHS:,} iterations. Submitted as a single SLURM **array job**, so the cells run in "
+    f"parallel — about {minutes_per_run} minutes each, 20 concurrent (the per-user GPU limit), "
+    f"so roughly **{len(configs) * len(seeds) * minutes_per_run / 20 / 60:.1f} hours** wall-clock "
+    f"rather than {len(configs) * len(seeds) * minutes_per_run / 60:.0f} hours serial."
 ))
 '''
 
@@ -404,6 +439,10 @@ S5_TEXT = r"""## 5. Run state and submission
 
 Re-running this notebook is always safe. Submission happens **only** if you set
 `SUBMIT = True` below; otherwise the cell prints what it *would* submit and stops.
+
+Submission is a **dSQ array job**: one SLURM array task per sweep cell, each on its own
+GPU, so the cells train in parallel rather than in sequence. Concurrency is capped by the
+per-user GPU limit (20 at a time), and the array simply queues the rest behind it.
 
 Completed cells are never resubmitted, so this is also how you top up a partially
 finished sweep — run it again and it picks up only what is missing.
