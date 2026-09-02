@@ -464,6 +464,8 @@ def measure_gradient_norms(
     run_dir: str | Path,
     iterations: int = 2000,
     seed: int = 31,
+    cache_path: str | Path | None = None,
+    refresh: bool = False,
 ) -> pd.DataFrame:
     """Train briefly with clipping effectively disabled, recording the gradient norm.
 
@@ -476,6 +478,11 @@ def measure_gradient_norms(
     import torch
 
     from dal_monte_2022_analysis.ephys.modeling import fixation_mrnn_training as training
+
+    # The probe is a couple of thousand training steps, which is minutes on CPU. It is a
+    # property of the architecture rather than of any run, so it is cached.
+    if cache_path is not None and not refresh and Path(cache_path).exists():
+        return pd.read_csv(cache_path)
 
     norms: list[float] = []
     original = torch.nn.utils.clip_grad_norm_
@@ -493,13 +500,17 @@ def measure_gradient_norms(
         torch.nn.utils.clip_grad_norm_ = original
 
     history = result["history"]
-    return pd.DataFrame(
+    measured = pd.DataFrame(
         {
             "iteration": history["iteration"].to_numpy()[: len(norms)],
             "loss": history["loss"].to_numpy()[: len(norms)],
             "gradient_norm": np.asarray(norms, dtype=float),
         }
     )
+    if cache_path is not None:
+        Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
+        measured.to_csv(cache_path, index=False)
+    return measured
 
 
 def clip_threshold_binding_rate(gradient_norms: pd.DataFrame, thresholds: Sequence[float]) -> pd.DataFrame:
@@ -529,6 +540,8 @@ def survey_legacy_instability(
     scratch_root: str | Path,
     *,
     min_iterations: int = 5000,
+    cache_path: str | Path | None = None,
+    refresh: bool = False,
 ) -> pd.DataFrame:
     """Spike rate and final-versus-best gap for every legacy run, with its settings.
 
@@ -538,6 +551,13 @@ def survey_legacy_instability(
     at all, and it is the evidence that picks the sweep's ranges.
     """
     import torch
+
+    # Reading the settings out of every run means loading 270-odd checkpoints, each of
+    # which carries its target tensors and PCA metadata. The legacy tree is frozen, so
+    # the survey is cached: the notebook that uses it is re-run often while a sweep
+    # progresses, and a several-minute first cell would discourage exactly that.
+    if cache_path is not None and not refresh and Path(cache_path).exists():
+        return pd.read_csv(cache_path)
 
     root = Path(scratch_root)
     rows: list[dict[str, object]] = []
@@ -574,7 +594,11 @@ def survey_legacy_instability(
                     "final_is_best": bool(finite.min() > 0 and losses[-1] / finite.min() < 1.01),
                 }
             )
-    return pd.DataFrame(rows)
+    survey = pd.DataFrame(rows)
+    if cache_path is not None:
+        Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
+        survey.to_csv(cache_path, index=False)
+    return survey
 
 
 # --------------------------------------------------------------------------------------

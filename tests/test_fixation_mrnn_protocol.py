@@ -32,17 +32,49 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_protocol import (
 
 
 class TestSweepGrid(unittest.TestCase):
-    def test_grid_is_the_full_product_with_unique_labels(self) -> None:
-        grid = protocol_sweep_grid(learning_rates=(1e-4, 1e-3), gradient_clips=(None, 1.0),
-                                   schedules=("constant", "cosine"))
-        self.assertEqual(len(grid), 8)
-        self.assertEqual(len({config.label for config in grid}), 8)
+    def test_design_is_one_factorial_plus_two_control_arms(self) -> None:
+        grid = protocol_sweep_grid(
+            learning_rates=(1e-3, 3e-3), activations=("tanh", "softplus"), spectral_radii=(0.9, 1.1)
+        )
+        main = [c for c in grid if c.lr_schedule == "cosine" and c.gradient_clip_norm is None]
+        schedule_control = [c for c in grid if c.lr_schedule == "constant"]
+        clip_control = [c for c in grid if c.gradient_clip_norm is not None]
+        self.assertEqual(len(main), 2 * 2 * 2)
+        self.assertEqual(len(schedule_control), 2)
+        self.assertEqual(len(clip_control), 2)
+        self.assertEqual(len(grid), len(main) + len(schedule_control) + len(clip_control))
 
-    def test_labels_survive_a_round_trip_through_a_path(self) -> None:
-        """Labels become directory names, so they must not carry dots or minus signs."""
-        for config in protocol_sweep_grid():
+    def test_labels_are_unique_and_path_safe(self) -> None:
+        """Labels become directory names, so they must not carry dots or separators."""
+        grid = protocol_sweep_grid()
+        self.assertEqual(len({config.label for config in grid}), len(grid))
+        for config in grid:
             self.assertNotIn(".", config.label)
             self.assertNotIn("/", config.label)
+
+    def test_labels_distinguish_every_swept_axis(self) -> None:
+        """Two configurations differing only in activation must not collide on disk."""
+        grid = protocol_sweep_grid(learning_rates=(1e-3,), activations=("tanh", "softplus"),
+                                   spectral_radii=(0.9,))
+        main = [c for c in grid if c.lr_schedule == "cosine" and c.gradient_clip_norm is None]
+        self.assertEqual(len({c.label for c in main}), len(main))
+        self.assertTrue(any("tanh" in c.label for c in main))
+        self.assertTrue(any("softplus" in c.label for c in main))
+
+    def test_clipping_control_uses_a_threshold_that_binds(self) -> None:
+        """The historical value of 1.0 sat 40x above the measured gradients and was inert,
+        so the control arm has to test a threshold in the range the gradients occupy."""
+        clip_control = [c for c in protocol_sweep_grid() if c.gradient_clip_norm is not None]
+        self.assertTrue(clip_control)
+        for config in clip_control:
+            self.assertLess(float(config.gradient_clip_norm), 0.5)
+
+    def test_activation_and_spectral_radius_reach_the_run_settings(self) -> None:
+        config = ProtocolConfig(label="probe", lr=1e-3, gradient_clip_norm=None,
+                                activation="softplus", spectral_radius=0.9)
+        overrides = config.overrides()
+        self.assertEqual(overrides["activation"], "softplus")
+        self.assertEqual(overrides["spectral_radius"], 0.9)
 
     def test_seed_plan_is_deterministic_and_shared(self) -> None:
         """Every configuration must see the same seeds, or the comparison is unpaired."""
@@ -51,11 +83,16 @@ class TestSweepGrid(unittest.TestCase):
 
 
 class TestJobGeneration(unittest.TestCase):
+    @staticmethod
+    def _single_config() -> list[ProtocolConfig]:
+        grid = protocol_sweep_grid(learning_rates=(1e-3,), activations=("tanh",), spectral_radii=(1.1,))
+        return [c for c in grid if c.lr_schedule == "cosine" and c.gradient_clip_norm is None]
+
     def test_divergence_guardrails_are_disabled_in_the_written_config(self) -> None:
         """A retry or an early abort would convert a measured failure into a success."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            configs = protocol_sweep_grid(learning_rates=(1e-3,), gradient_clips=(None,), schedules=("constant",))
+            configs = self._single_config()
             commands, run_dirs = protocol_job_commands(
                 configs, [7], root=root, repo_root=root,
                 mrnn_cfg_path="configs/ephys_fixation_mrnn.yaml", epochs=10,
@@ -65,7 +102,9 @@ class TestJobGeneration(unittest.TestCase):
             self.assertIsNone(payload["divergence_loss_threshold"])
             self.assertEqual(payload["epochs"], 10)
             self.assertEqual(payload["lr"], 1e-3)
-            # The architecture is frozen across the sweep; only the optimiser varies.
+            self.assertEqual(payload["lr_schedule"], "cosine")
+            self.assertEqual(payload["activation"], "tanh")
+            # The architecture stays frozen; only the swept axes move.
             self.assertEqual(payload["hidden_units"], PROTOCOL_ARCHITECTURE["hidden_units"])
             self.assertEqual(payload["recurrent_bottleneck_dim"], PROTOCOL_ARCHITECTURE["recurrent_bottleneck_dim"])
 
@@ -74,9 +113,8 @@ class TestJobGeneration(unittest.TestCase):
         divergence; neither is acceptable here."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            configs = protocol_sweep_grid(learning_rates=(1e-3,), gradient_clips=(None,), schedules=("constant",))
             commands, _ = protocol_job_commands(
-                configs, [7], root=root, repo_root=root,
+                self._single_config(), [7], root=root, repo_root=root,
                 mrnn_cfg_path="configs/ephys_fixation_mrnn.yaml", epochs=10,
             )
             self.assertIn("train_fixation_mrnn_into_run_dir.py", commands[0])
@@ -85,7 +123,7 @@ class TestJobGeneration(unittest.TestCase):
     def test_completed_cells_are_not_resubmitted(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            configs = protocol_sweep_grid(learning_rates=(1e-3,), gradient_clips=(None,), schedules=("constant",))
+            configs = self._single_config()
             run_dir = protocol_run_dir(root, configs[0], 7)
             run_dir.mkdir(parents=True, exist_ok=True)
             (run_dir / "checkpoint_best.pth").write_bytes(b"")
@@ -158,7 +196,8 @@ class TestInventory(unittest.TestCase):
     def test_cells_are_classified_as_complete_diverged_or_pending(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)
-            configs = protocol_sweep_grid(learning_rates=(1e-3,), gradient_clips=(None,), schedules=("constant",))
+            grid = protocol_sweep_grid(learning_rates=(1e-3,), activations=("tanh",), spectral_radii=(1.1,))
+            configs = [c for c in grid if c.lr_schedule == "cosine" and c.gradient_clip_norm is None]
             seeds = [1, 2, 3]
             done = protocol_run_dir(root, configs[0], 1)
             done.mkdir(parents=True, exist_ok=True)

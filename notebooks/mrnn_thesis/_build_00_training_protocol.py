@@ -115,7 +115,12 @@ the best one the run reached.
 """
 
 S1_CODE = r'''
-survey = protocol.survey_legacy_instability(LEGACY_SCRATCH)
+# Cached: reading settings out of ~270 legacy checkpoints takes minutes, and this
+# notebook is meant to be re-run often while a sweep progresses. Pass refresh=True if
+# the legacy tree ever changes.
+survey = protocol.survey_legacy_instability(
+    LEGACY_SCRATCH, cache_path=TASK_ROOT / "_diagnostics" / "legacy_instability_survey.csv"
+)
 
 spike_positions = np.concatenate([
     protocol.spike_positions(pd.read_csv(Path(LEGACY_SCRATCH) / run / "history.csv")["loss"].to_numpy(float))
@@ -197,7 +202,8 @@ steps where the norm actually exceeds it.
 S2B_CODE = r'''
 GRADIENT_PROBE_DIR = TASK_ROOT / "_diagnostics" / "gradient_norm_probe"
 gradient_norms = protocol.measure_gradient_norms(
-    base_settings, run_dir=GRADIENT_PROBE_DIR, iterations=2000, seed=31
+    base_settings, run_dir=GRADIENT_PROBE_DIR, iterations=2000, seed=31,
+    cache_path=TASK_ROOT / "_diagnostics" / "gradient_norm_probe.csv",
 )
 binding = protocol.clip_threshold_binding_rate(
     gradient_norms, thresholds=[0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0]
@@ -485,11 +491,18 @@ else:
 
 S6B_CODE = r'''
 passing = results[results["passes_bar"]] if len(results) else results
+sweep_complete = len(results) > 0 and bool((results["n_complete"] == results["n_seeds"]).all())
 
-if len(passing) == 0:
+if not sweep_complete:
     display(Markdown(
-        "**No configuration clears the bar yet.** If this survives a completed sweep it is itself "
-        "the result, and the next step is the monotone guard: because the objective is deterministic "
+        f"The sweep has not finished — **{int(inventory['complete'].sum())} of {len(inventory)}** cells "
+        f"are trained. Selection is deferred until every configuration has all its seeds, because a "
+        f"bar that requires *all* seeds to pass cannot be applied to a partial configuration."
+    ))
+elif len(passing) == 0:
+    display(Markdown(
+        "**No configuration clears the bar.** That is itself the result, and the next step is "
+        "the monotone guard: because the objective is deterministic "
         "(Section 2a), a step that raises the loss can simply be rejected and retaken at half the "
         "step size. That makes a monotone trajectory a guarantee rather than a tuning outcome, at a "
         "cost of roughly one extra forward pass per iteration."
