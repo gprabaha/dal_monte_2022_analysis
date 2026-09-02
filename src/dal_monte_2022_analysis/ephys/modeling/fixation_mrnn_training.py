@@ -81,6 +81,15 @@ class FixationMRNNRunSettings:
     l2_weight_scale: float = 0.0
     l2_rate_scale: float = 0.0
     gradient_clip_norm: float | None = None
+    #: Learning-rate schedule: "constant" (the historical behaviour), "cosine" (decay to
+    #: ``lr_min_factor * lr`` over the run), or "step" (multiply by ``lr_step_gamma``
+    #: every ``lr_step_size`` iterations). A schedule is the standard remedy for the
+    #: late-training loss spikes these fits show, so it is swept rather than assumed.
+    lr_schedule: str = "constant"
+    lr_warmup_iterations: int = 0
+    lr_min_factor: float = 0.01
+    lr_step_size: int = 10_000
+    lr_step_gamma: float = 0.5
     divergence_loss_threshold: float | None = None
     divergence_patience: int = 100
     divergence_min_iteration: int = 100
@@ -404,6 +413,61 @@ def _write_failed_training_manifest(
             json.dump(payload, f, indent=2, sort_keys=True)
 
 
+def normalize_lr_schedule(schedule: str | None) -> str:
+    """Canonical name for a learning-rate schedule."""
+    name = str(schedule or "constant").strip().lower()
+    if name in {"", "none", "constant", "flat"}:
+        return "constant"
+    if name in {"cosine", "cosine_annealing"}:
+        return "cosine"
+    if name in {"step", "steplr"}:
+        return "step"
+    raise ValueError(f"Unknown lr_schedule: {schedule!r}")
+
+
+def _build_lr_scheduler(optimizer, settings: FixationMRNNRunSettings):
+    """Learning-rate schedule, with an optional linear warmup prepended.
+
+    Returns ``None`` for the constant schedule with no warmup so the training loop keeps
+    exactly its historical behaviour when no schedule is requested.
+    """
+    schedule = normalize_lr_schedule(settings.lr_schedule)
+    warmup = max(int(settings.lr_warmup_iterations), 0)
+    total = int(settings.epochs)
+
+    if schedule == "constant" and warmup == 0:
+        return None
+
+    if schedule == "cosine":
+        main = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(total - warmup, 1),
+            eta_min=float(settings.lr) * float(settings.lr_min_factor),
+        )
+    elif schedule == "step":
+        main = torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=max(int(settings.lr_step_size), 1),
+            gamma=float(settings.lr_step_gamma),
+        )
+    else:
+        main = torch.optim.lr_scheduler.ConstantLR(optimizer, factor=1.0, total_iters=0)
+
+    if warmup == 0:
+        return main
+    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
+        optimizer,
+        start_factor=1.0 / max(warmup, 1),
+        end_factor=1.0,
+        total_iters=warmup,
+    )
+    return torch.optim.lr_scheduler.SequentialLR(
+        optimizer,
+        schedulers=[warmup_scheduler, main],
+        milestones=[warmup],
+    )
+
+
 def train_one_initialization(
     settings: FixationMRNNRunSettings,
     *,
@@ -454,6 +518,7 @@ def train_one_initialization(
     else:
         opt_params = list(model.parameters())
     optimizer = torch.optim.Adam(opt_params, lr=float(settings.lr))
+    scheduler = _build_lr_scheduler(optimizer, settings)
     time_weights = _time_weights(
         targets.timeline_s,
         pre_fixation_weight=float(settings.pre_fixation_loss_weight),
@@ -556,6 +621,7 @@ def train_one_initialization(
             "weight_loss": float(weight.detach().cpu()),
             "l2_rate_loss": float(l2_rate.detach().cpu()),
             "l2_weight_loss": float(l2_weight.detach().cpu()),
+            "learning_rate": float(optimizer.param_groups[0]["lr"]),
         }
         history.append(row)
 
@@ -597,6 +663,8 @@ def train_one_initialization(
         if settings.gradient_clip_norm is not None and float(settings.gradient_clip_norm) > 0:
             torch.nn.utils.clip_grad_norm_(opt_params, max_norm=float(settings.gradient_clip_norm))
         optimizer.step()
+        if scheduler is not None:
+            scheduler.step()
 
     history_df = pd.DataFrame(history)
     history_df.to_csv(run_dir / "history.csv", index=False)
@@ -730,6 +798,7 @@ __all__ = [
     "load_fixation_mrnn_config",
     "load_or_create_seed_plan",
     "make_targets",
+    "normalize_lr_schedule",
     "resolve_device",
     "resolve_fixation_mrnn_output_root",
     "settings_from_config",

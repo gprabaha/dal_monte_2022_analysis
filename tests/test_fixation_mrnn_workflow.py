@@ -27,6 +27,7 @@ from dal_monte_2022_analysis.ephys.modeling import (
     reconstruction_accuracy,
     replay_fixation_mrnn_run,
     replay_fixation_mrnn_run_with_ablations,
+    normalize_lr_schedule,
     resolve_checkpoint_path,
     train_fixation_mrnn_scratch,
     train_one_initialization,
@@ -339,6 +340,62 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             )
             self.assertEqual(ablated["ablated_connections"], (("ofc", "bla"),))
             self.assertEqual(ablated["output"].shape, replay["output"].shape)
+
+    def test_lr_schedule_names_are_normalized(self) -> None:
+        self.assertEqual(normalize_lr_schedule(None), "constant")
+        self.assertEqual(normalize_lr_schedule("none"), "constant")
+        self.assertEqual(normalize_lr_schedule("Cosine"), "cosine")
+        self.assertEqual(normalize_lr_schedule("StepLR"), "step")
+        with self.assertRaises(ValueError):
+            normalize_lr_schedule("triangular")
+
+    def test_schedules_move_the_learning_rate_and_constant_does_not(self) -> None:
+        """The logged learning rate is what makes a schedule auditable after the fact."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            analysis_root = root / "analysis"
+            avg_root = analysis_root / "ephys/psth/fixation_psth_averages"
+            avg_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, analysis_root)
+            _synthetic_combined_dataframe().to_pickle(avg_root / "combined.pkl")
+            with (avg_root / "timeline.pkl").open("wb") as f:
+                pickle.dump(np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float), f)
+
+            base = dict(
+                dataset_cfg_path=str(cfg_path),
+                dataframe_filename="combined.pkl",
+                timeline_filename="timeline.pkl",
+                target_mode="raw_fr",
+                hidden_units=3,
+                epochs=20,
+                lr=1e-2,
+                seed=5,
+                device="cpu",
+                spectral_radius=1.0,
+                temporal_basis_count=0,
+            )
+            rates = {}
+            for name, extra in [
+                ("constant", {}),
+                ("cosine", dict(lr_schedule="cosine", lr_min_factor=0.01)),
+                ("step", dict(lr_schedule="step", lr_step_size=5, lr_step_gamma=0.5)),
+                ("warmup", dict(lr_schedule="constant", lr_warmup_iterations=5)),
+            ]:
+                result = train_one_initialization(
+                    FixationMRNNRunSettings(**base, **extra),
+                    run_dir=root / name,
+                    seed=5,
+                    overwrite=True,
+                )
+                rates[name] = result["history"]["learning_rate"].to_numpy(dtype=float)
+
+            self.assertTrue(np.allclose(rates["constant"], 1e-2))
+            self.assertLess(rates["cosine"][-1], rates["cosine"][0])
+            self.assertLess(rates["step"][-1], rates["step"][0])
+            # Warmup starts below the target rate and climbs back to it.
+            self.assertLess(rates["warmup"][0], 1e-2)
+            self.assertAlmostEqual(float(rates["warmup"][-1]), 1e-2, places=9)
 
     def test_best_iterate_is_checkpointed_separately_from_the_final_one(self) -> None:
         """The saved model must be the best one the run found, not the last one it saw.

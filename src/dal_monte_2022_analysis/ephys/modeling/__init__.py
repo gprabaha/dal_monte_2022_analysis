@@ -52,6 +52,7 @@ from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_targets import (
     summarize_targets,
 )
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_training import (
+    normalize_lr_schedule,
     FixationMRNNRunSettings,
     load_fixation_mrnn_config,
     load_or_create_seed_plan,
@@ -113,6 +114,7 @@ __all__ = [
     "train_fixation_mrnn",
     "train_fixation_mrnn_scratch",
     "is_legacy_dense_checkpoint",
+    "normalize_lr_schedule",
     "resolve_checkpoint_path",
     "train_one_initialization",
     "variance_comparison",
