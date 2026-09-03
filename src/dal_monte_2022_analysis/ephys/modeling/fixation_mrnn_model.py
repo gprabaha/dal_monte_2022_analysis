@@ -24,7 +24,10 @@ class FixationMRNNModelSpec:
     rec_constrained: bool = False
     inp_constrained: bool = False
     recurrent_connectivity: str = "full"
-    recurrent_bottleneck_dim: int = 10
+    #: Rank of every inter-region block. ``None`` means no rank constraint at all: each
+    #: block is a single dense matrix, which is the unconstrained baseline the bottleneck
+    #: results have to be measured against.
+    recurrent_bottleneck_dim: int | None = None
     batch_first: bool = True
     inp_noise: float = 0.0
     act_noise: float = 0.0
@@ -54,10 +57,13 @@ class FixationMRNNModel(nn.Module):
         self.spec = spec
         self.region_order = tuple(spec.region_order)
         self._connectivity_mode = normalize_recurrent_connectivity(spec.recurrent_connectivity)
-        self._bottleneck_dim = int(spec.recurrent_bottleneck_dim)
+        self._bottleneck_dim = (
+            None if spec.recurrent_bottleneck_dim is None else int(spec.recurrent_bottleneck_dim)
+        )
         self._within_region_params: dict[str, nn.Parameter] = {}
         self._inter_region_left_params: dict[tuple[str, str], nn.Parameter] = {}
         self._inter_region_right_params: dict[tuple[str, str], nn.Parameter] = {}
+        self._inter_region_dense_params: dict[tuple[str, str], nn.Parameter] = {}
         try:
             from mrnntorch import ElmanmRNN
         except ModuleNotFoundError as exc:
@@ -158,6 +164,16 @@ class FixationMRNNModel(nn.Module):
                     continue
                 source_units = int(spec.hidden_units_by_region[source])
                 target_units = int(spec.hidden_units_by_region[target])
+                if self._bottleneck_dim is None:
+                    # Unconstrained: one dense matrix per pair. Note this is not the same
+                    # model as a rank-r factorization with r = min(source, target): the
+                    # product parameterization carries twice the parameters and optimizes
+                    # differently, so a genuine "no bottleneck" baseline needs its own path.
+                    dense = nn.Parameter(torch.empty(source_units, target_units, dtype=torch.float32))
+                    nn.init.xavier_uniform_(dense)
+                    self._inter_region_dense_params[(source, target)] = dense
+                    self.register_parameter(f"_inter_dense_{source}_{target}", dense)
+                    continue
                 left = nn.Parameter(torch.empty(source_units, self._bottleneck_dim, dtype=torch.float32))
                 right = nn.Parameter(torch.empty(self._bottleneck_dim, target_units, dtype=torch.float32))
                 nn.init.xavier_uniform_(left)
@@ -200,6 +216,8 @@ class FixationMRNNModel(nn.Module):
             # A rank-r block is ``left @ right``; scaling one factor scales the product.
             for parameter in self._inter_region_left_params.values():
                 parameter.mul_(factor)
+            for parameter in self._inter_region_dense_params.values():
+                parameter.mul_(factor)
         self._sync_recurrent_state()
 
     def _within_region_block(self, region: str) -> torch.Tensor:
@@ -209,6 +227,8 @@ class FixationMRNNModel(nn.Module):
         return parameter
 
     def _inter_region_block(self, source: str, target: str) -> torch.Tensor:
+        if self._bottleneck_dim is None:
+            return self._inter_region_dense_params[(source, target)]
         return self._inter_region_left_params[(source, target)] @ self._inter_region_right_params[(source, target)]
 
     def _build_recurrent_weight_and_mask(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -327,13 +347,23 @@ class FixationMRNNModel(nn.Module):
         return [self._within_region_params[region] for region in self.region_order]
 
     def inter_region_recurrent_parameters(self) -> list[tuple[nn.Parameter, nn.Parameter]]:
-        """Return the trainable low-rank factors for inter-region recurrent connections."""
+        """Trainable low-rank factors for inter-region connections; empty when dense."""
         return [
             (self._inter_region_left_params[(source, target)], self._inter_region_right_params[(source, target)])
             for source in self.region_order
             for target in self.region_order
             if source != target and (source, target) in self._inter_region_left_params
         ]
+
+    @property
+    def has_inter_region_bottleneck(self) -> bool:
+        """Whether inter-region blocks carry a rank constraint."""
+        return self._bottleneck_dim is not None
+
+    @property
+    def inter_region_bottleneck_dim(self) -> int | None:
+        """Rank of each inter-region block, or ``None`` when they are dense."""
+        return self._bottleneck_dim
 
     def within_region_recurrent_l1_penalty(self, *, scale: float) -> torch.Tensor:
         """Apply L1 regularization only to within-region recurrent weights."""

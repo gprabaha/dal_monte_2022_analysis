@@ -422,6 +422,85 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             normalize_loss_weighting("inverse_cubed", allowed=("uniform", "balanced"))
         self.assertEqual(normalize_loss_weighting(None, allowed=("uniform",)), "uniform")
 
+    def test_no_bottleneck_gives_dense_full_rank_inter_region_blocks(self) -> None:
+        """The unconstrained baseline every bottleneck result has to be measured against.
+
+        Before this existed the inter-region blocks were *always* factorized, so there was
+        no way to fit a model with no rank constraint at all.
+        """
+        torch.manual_seed(0)
+        spec = build_model_spec(
+            region_order=("a", "b"),
+            output_dims_by_region={"a": 4, "b": 4},
+            hidden_units=12,
+            device="cpu",
+            input_dim=2,
+            activation="tanh",
+            spectral_radius=1.0,
+            rec_constrained=False,
+            inp_constrained=False,
+            recurrent_connectivity="full",
+            recurrent_bottleneck_dim=None,
+            batch_first=True,
+            inp_noise=0.0,
+            act_noise=0.0,
+        )
+        model = FixationMRNNModel(spec)
+        self.assertFalse(model.has_inter_region_bottleneck)
+        self.assertIsNone(model.inter_region_bottleneck_dim)
+        block = model.recurrent_weight_matrix().detach()[0:12, 12:24]
+        self.assertEqual(int(np.linalg.matrix_rank(block.numpy())), 12)
+
+    def test_rank_constraint_is_visible_in_the_assembled_matrix(self) -> None:
+        for requested in (2, 5):
+            torch.manual_seed(0)
+            spec = build_model_spec(
+                region_order=("a", "b"),
+                output_dims_by_region={"a": 4, "b": 4},
+                hidden_units=12,
+                device="cpu",
+                input_dim=2,
+                activation="tanh",
+                spectral_radius=1.0,
+                rec_constrained=False,
+                inp_constrained=False,
+                recurrent_connectivity="full",
+                recurrent_bottleneck_dim=requested,
+                batch_first=True,
+                inp_noise=0.0,
+                act_noise=0.0,
+            )
+            model = FixationMRNNModel(spec)
+            self.assertTrue(model.has_inter_region_bottleneck)
+            block = model.recurrent_weight_matrix().detach()[0:12, 12:24]
+            self.assertEqual(int(np.linalg.matrix_rank(block.numpy())), requested)
+
+    def test_full_rank_factorization_is_not_the_same_model_as_dense(self) -> None:
+        """``rank = hidden_units`` reaches full rank but carries twice the parameters and
+        optimizes through a product, so it cannot stand in for the dense baseline."""
+        counts = {}
+        for requested in (None, 12):
+            torch.manual_seed(0)
+            spec = build_model_spec(
+                region_order=("a", "b"),
+                output_dims_by_region={"a": 4, "b": 4},
+                hidden_units=12,
+                device="cpu",
+                input_dim=2,
+                activation="tanh",
+                spectral_radius=1.0,
+                rec_constrained=False,
+                inp_constrained=False,
+                recurrent_connectivity="full",
+                recurrent_bottleneck_dim=requested,
+                batch_first=True,
+                inp_noise=0.0,
+                act_noise=0.0,
+            )
+            model = FixationMRNNModel(spec)
+            counts[requested] = sum(p.numel() for p in model.parameters())
+        self.assertGreater(counts[12], counts[None])
+
     def test_initial_spectral_radius_is_actually_applied(self) -> None:
         """The setting was passed to the underlying mrnntorch object whose W_rec this
         wrapper overwrites, so it silently did nothing for every block-parameterized run.
