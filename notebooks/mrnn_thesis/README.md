@@ -17,9 +17,9 @@ work only when you set `SUBMIT = True`.
 | | Notebook | Question | Status |
 |---|---|---|---|
 | 00 | `00_training_protocol.ipynb` | What optimiser settings converge reliably? | **done** — `lr 1e-3, cosine, clip 0.05, tanh, sr 1.1`; every seed ends on its best iterate |
-| 01 | `01_capacity.ipynb` | How narrow can each region be and still fit? | **built**; sweep not yet submitted |
-| 02 | `02_connectivity.ipynb` | Which connections are necessary — within-region, cross-region, individual pathways? | to build |
-| 03 | `03_bottleneck_rank.ipynb` | How narrow can inter-regional communication be? | to build |
+| 01 | `01_capacity.ipynb` | How narrow can each region be and still fit? | **running** — 20/30/40/50/60 units × 5 seeds |
+| 02 | `02_connectivity.ipynb` | Which connections are necessary — within-region, cross-region, individual pathways? | **built**; waits on task 01's width |
+| 03 | `03_bottleneck_rank.ipynb` | How narrow can inter-regional communication be? | **built**; waits on tasks 01–02 |
 | 04 | `04_target_and_loss.ipynb` | Refinement: condition and component weighting, to recover the fast structure | built, deferred |
 | 05 | `05_seed_ensembles.ipynb` | 100 seeds — is the circuit identifiable once fitting is clean? | to build |
 | 06 | `06_invariants.ipynb` | Condition contrast; channel identity | to build |
@@ -39,6 +39,20 @@ constraint is the stronger result.
 Baseline throughout tasks 01–02 is **full all-to-all connectivity with no rank
 constraint**. The rank constraint is imposed and measured in task 03 rather than
 inherited.
+
+Each task freezes its choice to a YAML the next one reads (`selected_capacity.yaml`,
+`connectivity_findings.csv`, `bottleneck_findings.csv`), and refuses to submit while its
+dependency is missing — so the chain cannot silently run at the wrong settings.
+
+Every sweep is scored the same four ways: convergence, fit against the **noise ceiling**,
+parameter cost, and **agreement across seeds**. The last is the one a constrained model can
+win on, and is the reason for running these sweeps at all — removing degrees of freedom
+removes ways of producing the same output, so if anything makes the circuit identifiable,
+a constraint will.
+
+Visual verification does not scale to one plot per model, so each sweep renders a **fit
+gallery**: one row per variant, the same components of the same region throughout, sized
+for scanning. Full-detail traces are reserved for whichever model a task selects.
 
 ### Measured along the way
 
