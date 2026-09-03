@@ -349,6 +349,56 @@ def gallery_traces(
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
+def decompose_isolation_fit(
+    fit: pd.DataFrame,
+    *,
+    isolated_region_by_label: Mapping[str, str],
+    baseline_label: str,
+) -> pd.DataFrame:
+    """Split an isolation variant's fit into the region cut off and the ones left talking.
+
+    Cutting every connection into and out of one region changes two things at once, and
+    the loss is a sum over all four regions' readouts, so a single pooled score cannot
+    say which changed:
+
+    - the isolated region now has to reproduce its own trajectories **autonomously**,
+      driven only by the condition input and its trained initial state;
+    - the remaining three have to reproduce theirs **without** that region's input.
+
+    Those are different questions with different answers, and only the second speaks to
+    whether the region is necessary to the rest of the network. Reporting them separately
+    is the whole point: an isolation that leaves the remaining regions untouched while
+    wrecking the isolated one says that region depends on the others, not the reverse.
+    """
+    reference = fit[fit["label"] == baseline_label]
+    if reference.empty:
+        raise ValueError(f"baseline {baseline_label!r} not present in the fit table")
+    baseline_by_region = reference.groupby("region")["r2_vs_ceiling"].mean()
+
+    rows: list[dict[str, object]] = []
+    for label, region in isolated_region_by_label.items():
+        block = fit[fit["label"] == label]
+        if block.empty:
+            continue
+        by_region = block.groupby("region")["r2_vs_ceiling"].mean()
+        remaining = [r for r in by_region.index if str(r) != str(region)]
+        rows.append(
+            {
+                "label": label,
+                "isolated_region": region,
+                "isolated_fit": float(by_region.get(region, np.nan)),
+                "isolated_baseline": float(baseline_by_region.get(region, np.nan)),
+                "isolated_cost": float(baseline_by_region.get(region, np.nan) - by_region.get(region, np.nan)),
+                "remaining_fit": float(by_region[remaining].mean()) if remaining else np.nan,
+                "remaining_baseline": float(baseline_by_region[remaining].mean()) if remaining else np.nan,
+                "remaining_cost": float(
+                    baseline_by_region[remaining].mean() - by_region[remaining].mean()
+                ) if remaining else np.nan,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def resolve_task_root(task: str, cfg_path: str | Path = "configs/dataset.yaml") -> Path:
     """Output root for one sweep task."""
     return resolve_chapter_root(cfg_path, task=task)
@@ -360,6 +410,7 @@ __all__ = [
     "build_variant_settings",
     "convergence_table",
     "count_trainable_parameters",
+    "decompose_isolation_fit",
     "gallery_traces",
     "index_variant_runs",
     "load_histories",

@@ -218,3 +218,50 @@ class TestInventory(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestIsolationDecomposition(unittest.TestCase):
+    """Cutting a region off changes two things at once; a pooled score cannot say which."""
+
+    @staticmethod
+    def _fit() -> pd.DataFrame:
+        from itertools import product
+
+        rows = []
+        for label, region_scores in {
+            "full": {"a": 1.00, "b": 1.00, "c": 1.00},
+            # 'a' cannot stand alone, but the others do not miss it.
+            "isolate_a": {"a": 0.70, "b": 0.99, "c": 0.99},
+            # 'b' is fine alone, but the others need it.
+            "isolate_b": {"a": 0.80, "b": 0.99, "c": 0.80},
+        }.items():
+            for region, score in region_scores.items():
+                for condition in ("face_interactive", "object"):
+                    rows.append({"label": label, "region": region, "condition": condition,
+                                 "r2_vs_ceiling": score, "seed": 1})
+        return pd.DataFrame(rows)
+
+    def test_the_two_costs_are_reported_separately(self) -> None:
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import decompose_isolation_fit
+
+        result = decompose_isolation_fit(
+            self._fit(),
+            isolated_region_by_label={"isolate_a": "a", "isolate_b": "b"},
+            baseline_label="full",
+        ).set_index("label")
+
+        # 'a' depends on the others: its own fit collapses, theirs does not.
+        self.assertAlmostEqual(float(result.loc["isolate_a", "isolated_cost"]), 0.30, places=6)
+        self.assertAlmostEqual(float(result.loc["isolate_a", "remaining_cost"]), 0.01, places=6)
+
+        # 'b' is the opposite: it survives alone, the others do not survive without it.
+        self.assertAlmostEqual(float(result.loc["isolate_b", "isolated_cost"]), 0.01, places=6)
+        self.assertAlmostEqual(float(result.loc["isolate_b", "remaining_cost"]), 0.20, places=6)
+
+    def test_a_missing_baseline_is_an_error_not_a_nan(self) -> None:
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import decompose_isolation_fit
+
+        with self.assertRaises(ValueError):
+            decompose_isolation_fit(
+                self._fit(), isolated_region_by_label={"isolate_a": "a"}, baseline_label="absent"
+            )

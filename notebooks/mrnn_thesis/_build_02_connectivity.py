@@ -107,7 +107,14 @@ else:
     HIDDEN_UNITS = 50
     CAPACITY_SOURCE = "**provisional fallback** — task 01 has not finished"
 
-SWEEP_SEEDS = 5
+#: Set True to queue this sweep before task 01 has chosen a width. Cluster time is the
+#: scarce resource and these arrays take hours, so waiting for a clean dependency can cost
+#: more than the risk: if task 01 selects a different width, the runs fitted here are at
+#: the wrong one and Section 1 will say so. The width every cell was actually trained at is
+#: recorded in its own run_config.yaml either way, so a mismatch is always detectable.
+ALLOW_PROVISIONAL_WIDTH = False
+
+SWEEP_SEEDS = 3
 GALLERY_REGION = "ofc"
 
 
@@ -127,10 +134,18 @@ S1_TEXT = r"""## 1. The variants
 All four arms share the width from task 01, the recipe from task 00, and dense
 inter-regional blocks. Only the connectivity differs.
 
-The **region isolation** arm removes every connection into *and* out of one region, so
-that region becomes an autonomous system driven only by its condition input while the
-other three keep talking. If the remaining three are reproduced just as well, that region
-contributes nothing the others need.
+The **region isolation** arm removes every connection into *and* out of one region. That
+region keeps its own within-region block, its condition input, its trained initial state
+and its readout — it is still fitted, just autonomously — while the other three keep
+talking to each other.
+
+> **The loss is a sum over all four regions' readouts, so a single pooled score cannot
+> read this arm.** Cutting a region off changes two things at once: the isolated region
+> now has to reproduce its own trajectories without the others' input, *and* the remaining
+> three have to reproduce theirs without its input. Those are different questions — a
+> region can be perfectly reproducible alone while being indispensable to everyone else,
+> or the reverse. Section 4a therefore reports the two costs **separately**, and only the
+> second speaks to whether the region is necessary to the rest of the network.
 
 The **pathway removal** arm takes out one directed block at a time. Twelve pathways is a
 lot of fitting, so the default is the four into and out of BLA — the region the legacy
@@ -174,6 +189,17 @@ seeds = protocol.protocol_seeds(n_seeds=SWEEP_SEEDS)
 BASELINE = "full"
 
 display(Markdown(f"Width **{HIDDEN_UNITS}** units per region, from {CAPACITY_SOURCE}."))
+
+# What the runs on disk were actually fitted at, which may predate task 01's answer.
+_existing = sorted(TASK_ROOT.glob("*/seed=*/run_config.yaml"))
+if _existing:
+    _widths = {int(yaml.safe_load(p.read_text())["hidden_units"]) for p in _existing}
+    if _widths != {HIDDEN_UNITS}:
+        display(Markdown(
+            f"🔴 **Width mismatch.** Runs on disk were fitted at {sorted(_widths)} units, but the "
+            f"current selection is {HIDDEN_UNITS}. Those runs answer the question at the wrong "
+            f"width and should be refitted before the results below are used."
+        ))
 display(pd.DataFrame([{"label": v.label, "arm": v.arm,
                        "connectivity": v.overrides.get("recurrent_connectivity"),
                        "blocked pairs": len(v.overrides.get("recurrent_blocked_pairs", ()))}
@@ -203,9 +229,12 @@ job_state = protocol.running_job_state(TASK_ROOT / "_jobs")
 
 if SELECTED_CAPACITY is None:
     display(Markdown(
-        "⚠️ **Task 01 has not finished.** These cells would be fitted at the provisional "
-        "width of 50 units. Wait for `selected_capacity.yaml` before submitting, or the "
-        "sweep will have to be redone."
+        f"⚠️ **Task 01 has not finished**, so these cells would be fitted at the provisional "
+        f"width of **{HIDDEN_UNITS}** units. "
+        + ("`ALLOW_PROVISIONAL_WIDTH` is set, so submission is allowed — Section 1 will flag a "
+           "mismatch once task 01 reports."
+           if ALLOW_PROVISIONAL_WIDTH else
+           "Submission is blocked; set `ALLOW_PROVISIONAL_WIDTH = True` to queue anyway.")
     ))
 display(Markdown(
     f"**{int(inventory['complete'].sum())} complete**, **{int(inventory['diverged'].sum())} diverged**, "
@@ -225,8 +254,13 @@ elif commands:
 S2B_CODE = r'''
 if job_state["active"]:
     display(Markdown(f"Nothing submitted: job array `{job_state['job_id']}` is still running."))
-elif SUBMIT and commands and SELECTED_CAPACITY is None:
-    display(Markdown("**Refusing to submit**: task 01 has not selected a width yet."))
+elif SUBMIT and commands and SELECTED_CAPACITY is None and not ALLOW_PROVISIONAL_WIDTH:
+    display(Markdown(
+        f"**Not submitted**: task 01 has not selected a width, so these cells would be fitted at "
+        f"the provisional {HIDDEN_UNITS} units. Set `ALLOW_PROVISIONAL_WIDTH = True` to queue them "
+        f"anyway — worth doing when the cluster is the bottleneck, since a mismatch is detectable "
+        f"afterwards and only costs a refit."
+    ))
 elif SUBMIT and commands:
     from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
 
@@ -317,6 +351,47 @@ if histories:
 '''
 
 
+S4C_TEXT = r"""### 4a. Region isolation, decomposed
+
+Each isolation is two experiments in one, and the pooled score above mixes them. Split
+apart:
+
+- **isolated_cost** — how much worse the cut-off region's *own* trajectories are once it
+  has only its condition input and its internal recurrence. A large cost means that region
+  depends on the others.
+- **remaining_cost** — how much worse the *other three* are without it. A large cost means
+  that region is necessary to them.
+
+The second column is the one that speaks to network structure. A region can score badly on
+the first and not at all on the second — that would say it is driven by the network rather
+than driving it.
+"""
+
+S4C_CODE = r'''
+if histories:
+    isolated_by_label = {
+        v.label: v.label.replace("isolate_", "")
+        for v in variants if v.arm == "region isolation" and v.label in labels
+    }
+    if isolated_by_label and BASELINE in labels:
+        isolation = sweep.decompose_isolation_fit(
+            fit, isolated_region_by_label=isolated_by_label, baseline_label=BASELINE
+        )
+        display(isolation.round(4))
+        worst_self = isolation.loc[isolation["isolated_cost"].idxmax()]
+        worst_others = isolation.loc[isolation["remaining_cost"].idxmax()]
+        display(Markdown(
+            f"The region that suffers most from being cut off is **{worst_self['isolated_region']}** "
+            f"(its own fit falls {float(worst_self['isolated_cost']):.4f}), and the region the others "
+            f"miss most is **{worst_others['isolated_region']}** (their fit falls "
+            f"{float(worst_others['remaining_cost']):.4f}). Where those are different regions, the "
+            f"network is asymmetric: one region is a listener and another a driver."
+        ))
+    else:
+        display(Markdown("Needs the baseline and at least one isolation variant."))
+'''
+
+
 S5_TEXT = r"""## 5. The visual check
 
 One row per variant, all showing the same three components of the same region. A
@@ -363,7 +438,9 @@ The three readings to make, in order:
 
 1. **Which removals are free?** A variant within the seed-to-seed spread of the baseline
    removes connections the data does not need. Those are the strongest claims available
-   here, because they survive refitting.
+   here, because they survive refitting. For the isolation arm, read the decomposed costs
+   in Section 4a rather than the pooled score — a region whose removal looks expensive may
+   simply be hard to reproduce alone.
 2. **Which removals cost, and does the cost concentrate in one condition?** A structural
    requirement that appears only during interactive-face fixations would be the
    substantive result.
@@ -432,6 +509,8 @@ def build() -> dict:
         _cell("markdown", S4_TEXT),
         _cell("code", S4_CODE),
         _cell("code", S4B_CODE),
+        _cell("markdown", S4C_TEXT),
+        _cell("code", S4C_CODE),
         _cell("markdown", S5_TEXT),
         _cell("code", S5_CODE),
         _cell("markdown", S6_TEXT),

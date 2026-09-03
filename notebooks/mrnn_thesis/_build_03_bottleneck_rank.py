@@ -111,10 +111,17 @@ else:
     HIDDEN_UNITS = 50
     CAPACITY_SOURCE = "**provisional fallback** — task 01 has not finished"
 
+#: Set True to queue this sweep before task 01 has chosen a width. Cluster time is the
+#: scarce resource and these arrays take hours, so waiting for a clean dependency can cost
+#: more than the risk: if task 01 selects a different width, the runs fitted here are at
+#: the wrong one and Section 1 will say so. The width every cell was actually trained at is
+#: recorded in its own run_config.yaml either way, so a mismatch is always detectable.
+ALLOW_PROVISIONAL_WIDTH = False
+
 #: Ranks to fit, plus a dense baseline. Chosen to span from a single shared dimension up
 #: to and past the hidden width, so the curve can be read end to end at one iteration count.
 RANK_GRID = (1, 2, 3, 5, 10, 20)
-SWEEP_SEEDS = 5
+SWEEP_SEEDS = 3
 GALLERY_REGION = "ofc"
 
 
@@ -160,6 +167,17 @@ seeds = protocol.protocol_seeds(n_seeds=SWEEP_SEEDS)
 BASELINE = "dense"
 
 display(Markdown(f"Width **{HIDDEN_UNITS}** units per region, from {CAPACITY_SOURCE}."))
+
+# What the runs on disk were actually fitted at, which may predate task 01's answer.
+_existing = sorted(TASK_ROOT.glob("*/seed=*/run_config.yaml"))
+if _existing:
+    _widths = {int(yaml.safe_load(p.read_text())["hidden_units"]) for p in _existing}
+    if _widths != {HIDDEN_UNITS}:
+        display(Markdown(
+            f"🔴 **Width mismatch.** Runs on disk were fitted at {sorted(_widths)} units, but the "
+            f"current selection is {HIDDEN_UNITS}. Those runs answer the question at the wrong "
+            f"width and should be refitted before the results below are used."
+        ))
 display(pd.DataFrame([v.describe() for v in variants]))
 display(Markdown(
     f"**{len(variants)} variants × {len(seeds)} seeds = {len(variants) * len(seeds)} runs**, all at "
@@ -182,8 +200,11 @@ job_state = protocol.running_job_state(TASK_ROOT / "_jobs")
 
 if SELECTED_CAPACITY is None:
     display(Markdown(
-        "⚠️ **Task 01 has not finished.** These cells would be fitted at the provisional width "
-        "of 50 units. Wait for `selected_capacity.yaml` before submitting."
+        f"⚠️ **Task 01 has not finished**, so these cells would be fitted at the provisional "
+        f"width of **{HIDDEN_UNITS}** units. "
+        + ("`ALLOW_PROVISIONAL_WIDTH` is set, so submission is allowed."
+           if ALLOW_PROVISIONAL_WIDTH else
+           "Submission is blocked; set `ALLOW_PROVISIONAL_WIDTH = True` to queue anyway.")
     ))
 display(Markdown(
     f"**{int(inventory['complete'].sum())} complete**, **{int(inventory['diverged'].sum())} diverged**, "
@@ -203,8 +224,13 @@ elif commands:
 S2B_CODE = r'''
 if job_state["active"]:
     display(Markdown(f"Nothing submitted: job array `{job_state['job_id']}` is still running."))
-elif SUBMIT and commands and SELECTED_CAPACITY is None:
-    display(Markdown("**Refusing to submit**: task 01 has not selected a width yet."))
+elif SUBMIT and commands and SELECTED_CAPACITY is None and not ALLOW_PROVISIONAL_WIDTH:
+    display(Markdown(
+        f"**Not submitted**: task 01 has not selected a width, so these cells would be fitted at "
+        f"the provisional {HIDDEN_UNITS} units. Set `ALLOW_PROVISIONAL_WIDTH = True` to queue them "
+        f"anyway — worth doing when the cluster is the bottleneck, since a mismatch is detectable "
+        f"afterwards and only costs a refit."
+    ))
 elif SUBMIT and commands:
     from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
 

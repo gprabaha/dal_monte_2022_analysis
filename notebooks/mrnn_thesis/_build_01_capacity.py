@@ -101,8 +101,9 @@ SELECTED_PROTOCOL = sweep.load_selected_protocol(PROTOCOL_ROOT / "selected_proto
 #: Widths to test. Each region reads out 42 PCs, so far above that adds freedom the
 #: target cannot use.
 HIDDEN_UNIT_GRID = (20, 30, 40, 50, 60)
-#: Five seeds: seed agreement is one of the selection axes and three seeds give three pairs.
-SWEEP_SEEDS = 5
+#: Seeds per cell. Three is a screen; seed agreement is measured over the three pairs it
+#: gives, which is thin but enough to rank variants. Raise it for the model that survives.
+SWEEP_SEEDS = 3
 #: Region whose traces the gallery shows. Fixed across the sweep so rows compare.
 GALLERY_REGION = "ofc"
 
