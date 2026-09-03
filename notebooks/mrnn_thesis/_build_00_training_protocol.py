@@ -48,6 +48,17 @@ is stable, we cannot tell a real property of the model class from optimiser nois
 
 **Nothing here submits a job unless you set `SUBMIT = True` in Section 5.** Every other
 cell reads what is already on disk and is safe to re-run at any time.
+
+> **Why this task was re-run.** The first pass tuned the optimiser on an architecture the
+> rest of the chapter no longer fits. Two settings had been inherited from the legacy runs
+> rather than chosen: a rank-3 inter-regional bottleneck, which is the thing task 03 exists
+> to test and so cannot also be a baseline assumption; and `l1_weight_scale = 0.01` on the
+> within-region blocks, which turned out not to be a mild sparsity prior at all — measured
+> on a fitted model it drives those blocks to ~1e-6 against ~1e-1 for the cross-region
+> blocks, **with no change in fit**. That is an ablation, and it silently removed a whole
+> class of connection from every model in the project. Both are now swept explicitly, in
+> tasks 03 and 04, against an unconstrained baseline. The recipe is re-selected here on the
+> architecture that is actually used.
 """
 
 
@@ -271,6 +282,12 @@ S3_TEXT = r"""## 3. A completed pilot
 Twenty runs at `lr = 3e-4`, `tanh`, spectral radius 1.1, 50,000 iterations: a full
 2 × 2 of schedule (constant, cosine) × clipping (none, 1.0), five shared seeds each.
 Because the seeds are shared, the schedule comparison is paired.
+
+These were fitted on the **superseded** architecture — 50 units, rank-3 bottleneck,
+within-region L1 at 0.01. They are kept because what they establish is about the optimiser
+rather than the model: that a decaying rate makes the final iterate the best iterate, and
+that clipping at 1.0 does nothing. Section 4's sweep re-tests both on the corrected
+architecture, so nothing downstream depends on this section.
 """
 
 S3_CODE = r'''
@@ -412,7 +429,25 @@ confirm something the loss geometry already implies.
 """
 
 S4B_CODE = r'''
+#: The first pass swept 16 configurations and only four cleared the bar, all of them
+#: cosine. Re-sweeping all 16 on the corrected architecture costs four hours to re-derive
+#: an answer the first pass already narrowed. The default is therefore a confirmation set:
+#: the configurations that passed, plus their immediate neighbours in learning rate, so a
+#: shifted optimum would still be visible. Set CONFIRMATION_ONLY = False for the full grid.
+CONFIRMATION_ONLY = True
+
 configs = protocol.protocol_sweep_grid()
+if CONFIRMATION_ONLY:
+    keep = {
+        "lr0p001_cosine_clip0p05_tanh_sr1p1",     # selected on the first pass
+        "lr0p0003_cosine_clip0p05_tanh_sr1p1",    # passed
+        "lr0p0003_cosine_clipnone_tanh_sr1p1",    # passed
+        "lr0p0003_cosine_clipnone_tanh_sr0p9",    # passed
+        "lr0p001_cosine_clipnone_tanh_sr1p1",     # neighbour: does clipping still matter
+        "lr0p003_cosine_clip0p05_tanh_sr1p1",     # neighbour: fitted best, failed the bar
+        "lr0p001_constant_clipnone_tanh_sr1p1",   # the schedule control
+    }
+    configs = [c for c in configs if c.label in keep]
 seeds = protocol.protocol_seeds(n_seeds=SWEEP_SEEDS)
 
 design = pd.DataFrame([
@@ -423,6 +458,7 @@ design = pd.DataFrame([
              else "main")}
     for c in configs
 ])
+display(pd.Series(protocol.PROTOCOL_ARCHITECTURE, name="architecture being tuned on").to_frame())
 display(design.groupby("arm").size().rename("configurations").to_frame())
 display(design)
 minutes_per_run = 100  # 50,000 iterations took ~50 min per cell in the pilot
@@ -465,6 +501,24 @@ commands, run_dirs = protocol.protocol_job_commands(
     epochs=SWEEP_EPOCHS,
 )
 inventory = protocol.index_protocol_runs(SWEEP_ROOT, configs, seeds)
+
+# Runs fitted on a superseded architecture would be selected from silently. Compare what
+# each trained cell actually used against what this sweep is tuning on.
+import yaml as _yaml
+_watch = ("hidden_units", "recurrent_bottleneck_dim", "l1_weight_scale")
+_stale = []
+for _path in SWEEP_ROOT.glob("*/seed=*/run_config.yaml"):
+    if not (_path.parent / "checkpoint_best.pth").exists():
+        continue
+    _cfg = _yaml.safe_load(_path.read_text())
+    if any(_cfg.get(k) != protocol.PROTOCOL_ARCHITECTURE.get(k) for k in _watch):
+        _stale.append(_path.parent)
+if _stale:
+    display(Markdown(
+        f"🔴 **{len(_stale)} trained run(s) used a different architecture** from the one this sweep "
+        f"is tuning on ({', '.join(f'`{k}`' for k in _watch)}). Selecting from them would tune the "
+        f"optimiser on a model the chapter does not fit. Move them aside and re-submit."
+    ))
 
 # A cell writes its checkpoint only at the end, so a sweep that is running looks exactly
 # like one that was never submitted. Check the queue before offering to submit anything.

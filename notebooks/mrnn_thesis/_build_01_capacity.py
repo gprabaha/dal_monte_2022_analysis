@@ -44,6 +44,13 @@ inter-regional connectivity**, and the rank constraint is imposed and measured i
 > equal to the hidden width is not a substitute — the product parameterization carries
 > twice the parameters and optimizes differently.
 
+**And no within-region L1 either.** The first pass inherited `l1_weight_scale = 0.01` from
+the legacy runs. Measured on a fitted model that is not a mild sparsity prior: it drives
+the within-region blocks to ~1e-6 against ~1e-1 for the cross-region blocks — five orders
+of magnitude — **with no change in fit**. So it was silently choosing one of two equally
+good solutions, and removing a whole class of connection from every model in the project.
+Sparsity is swept properly in task 04; the baseline here has none.
+
 | Section | |
 |---|---|
 | 1 | The sweep, and what it inherits |
@@ -64,6 +71,7 @@ import sys
 
 import numpy as np
 import pandas as pd
+import yaml
 from IPython.display import Image, Markdown, display
 
 repo_root = Path.cwd()
@@ -125,10 +133,20 @@ froze, so exactly one thing differs between cells.
 """
 
 S1_CODE = r'''
+# Both structural settings are stated explicitly rather than inherited. The rank
+# constraint is what task 03 tests, and l1_weight_scale = 0.01 -- which the first pass
+# inherited from the legacy runs -- is not a sparsity prior but an ablation: it drives the
+# within-region blocks to ~1e-6 against ~1e-1 for the cross-region blocks with no change
+# in fit. Task 04 sweeps it properly. Stating both here means this task does not depend on
+# task 00 having been re-run first.
 variants = [
     sweep.ModelVariant(
         label=f"h{units:02d}",
-        overrides={"hidden_units": int(units), "recurrent_bottleneck_dim": None},
+        overrides={
+            "hidden_units": int(units),
+            "recurrent_bottleneck_dim": None,
+            "l1_weight_scale": 0.0,
+        },
         arm="capacity",
     )
     for units in HIDDEN_UNIT_GRID
@@ -222,6 +240,21 @@ task-00 convergence bar and red where they did not.
 """
 
 S3_CODE = r'''
+# Runs fitted before the within-region L1 was removed answer a different question, and
+# would be pooled silently with the corrected ones if nobody checked.
+_stale = [
+    path.parent for path in TASK_ROOT.glob("*/seed=*/run_config.yaml")
+    if (path.parent / "checkpoint_best.pth").exists()
+    and float(yaml.safe_load(path.read_text()).get("l1_weight_scale", 0.0)) > 0
+]
+if _stale:
+    display(Markdown(
+        f"🔴 **{len(_stale)} run(s) on disk were fitted with `l1_weight_scale > 0`**, which ablates "
+        f"the within-region blocks rather than merely regularising them. They answer a different "
+        f"question and must be refitted before anything below is read. Delete them, or move them "
+        f"aside, and re-submit."
+    ))
+
 histories = sweep.load_histories(inventory)
 labels = [v.label for v in variants if v.label in histories]
 

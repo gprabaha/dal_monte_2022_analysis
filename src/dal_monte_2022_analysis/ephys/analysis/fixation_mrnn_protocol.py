@@ -34,19 +34,31 @@ from dal_monte_2022_analysis.runtime.io.analysis_index import build_analysis_out
 
 DEFAULT_MODELING_SUBDIR = "ephys/modeling/fixation_mrnn"
 
-#: Architecture held fixed across the whole protocol sweep. These are the settings the
-#: legacy work converged on and that the downstream tasks will vary one at a time; the
-#: point of this sweep is the optimiser, so nothing structural moves here.
+#: Architecture held fixed across the whole protocol sweep. The point of this sweep is the
+#: optimiser, so nothing structural moves here -- but it has to be the architecture the
+#: downstream tasks actually fit, or the recipe is tuned on a different model.
+#:
+#: Two settings were inherited from the legacy runs and are deliberately not carried
+#: forward. ``recurrent_bottleneck_dim = 3`` is a rank constraint that task 03 exists to
+#: test, so it cannot also be a baseline assumption. ``l1_weight_scale = 0.01`` is not the
+#: mild sparsity prior it looks like: measured on a fitted model it drives the
+#: within-region blocks to ~1e-6 against ~1e-1 for the cross-region blocks, with no change
+#: in fit -- an ablation rather than a prior. Both are now swept explicitly, in tasks 03
+#: and 04, against an unconstrained baseline.
+#:
+#: ``hidden_units`` is what task 01 varies, which makes it circular here. It is set to the
+#: middle of that sweep's range; task 01's own convergence table is what checks the recipe
+#: transfers across widths.
 PROTOCOL_ARCHITECTURE: dict[str, object] = {
     "target_mode": "region_pcs",
     "pca_n_components": 42,
-    "hidden_units": 50,
+    "hidden_units": 40,
     "recurrent_connectivity": "full",
-    "recurrent_bottleneck_dim": 3,
+    "recurrent_bottleneck_dim": None,
     "temporal_basis_count": 0,
     "temporal_derivative_loss_scale": 1.0,
     "temporal_curvature_loss_scale": 0.5,
-    "l1_weight_scale": 0.01,
+    "l1_weight_scale": 0.0,
     "train_initial_state": True,
 }
 
