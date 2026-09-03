@@ -16,27 +16,41 @@ work only when you set `SUBMIT = True`.
 
 | | Notebook | Question | Status |
 |---|---|---|---|
-| 00 | `00_training_protocol.ipynb` | What optimiser settings converge reliably? | **done** — `lr 1e-3, cosine, clip 0.05, tanh, sr 1.1`, all seeds end on their best iterate |
-| 01 | `01_target_and_loss.ipynb` | What should the model be fit to, and how should the objective weight it? | **built**; sweep not yet submitted |
-| 02 | `02_capacity.ipynb` | Units per region, at fixed settings | to build |
-| 03 | `03_architecture.ipynb` | full vs cross+diagonal vs within-region, ensembled and capacity-matched | to build |
-| 04 | `04_bottleneck_rank.ipynb` | Ranks 1–30, epoch-matched end to end | to build |
-| 05 | `05_seed_ensembles.ipynb` | 100 seeds — does stable fitting change the reproducibility result? | to build |
+| 00 | `00_training_protocol.ipynb` | What optimiser settings converge reliably? | **done** — `lr 1e-3, cosine, clip 0.05, tanh, sr 1.1`; every seed ends on its best iterate |
+| 01 | `01_capacity.ipynb` | How narrow can each region be and still fit? | **built**; sweep not yet submitted |
+| 02 | `02_connectivity.ipynb` | Which connections are necessary — within-region, cross-region, individual pathways? | to build |
+| 03 | `03_bottleneck_rank.ipynb` | How narrow can inter-regional communication be? | to build |
+| 04 | `04_target_and_loss.ipynb` | Refinement: condition and component weighting, to recover the fast structure | built, deferred |
+| 05 | `05_seed_ensembles.ipynb` | 100 seeds — is the circuit identifiable once fitting is clean? | to build |
 | 06 | `06_invariants.ipynb` | Condition contrast; channel identity | to build |
 | 07 | `07_dynamics.ipynb` | Fixed points, Jacobians, basins | to build |
 | 08 | `08_generalization.ipynb` | Held-out post-fixation half | to build |
 | 09 | `09_chapter.ipynb` | Collated report | to build |
 
+### The framing
+
+With ~23,000 free parameters against 50,400 target numbers, many configurations fit these
+trajectories, so ranking models by loss is not very informative. Tasks 01–03 ask the
+opposite question: **which constraints can the data tolerate?** Each applies one
+restriction — width, then connectivity, then inter-regional rank — and asks whether the
+model still reproduces the trajectories despite it. A fit obtained under a tighter
+constraint is the stronger result.
+
+Baseline throughout tasks 01–02 is **full all-to-all connectivity with no rank
+constraint**. The rank constraint is imposed and measured in task 03 rather than
+inherited.
+
 ### Measured along the way
 
 | | |
 |---|---|
-| Noise ceiling | Region PC trajectories are 0.90–0.998 reliable across all 42 components; single-unit PSTHs are only 0.05–0.13. Every model $R^2$ should be read against the former. |
-| Two inert knobs | `gradient_clip_norm = 1.0` sat 40× above the measured gradients and never bound. `spectral_radius` was never applied to the block parameterization at all — both are fixed. |
-| Seed agreement | Even cleanly converged fits agree at 0.997 on outputs but only 0.52 on latent drive geometry. Fixing convergence did not fix circuit identifiability. |
+| Noise ceiling | Region PC trajectories are 0.90–0.998 reliable across all 42 components; single-unit PSTHs only 0.05–0.13. Every model $R^2$ is read against the former. |
+| Three inert or miscounted things | `gradient_clip_norm = 1.0` sat 40× above the measured gradients and never bound. `spectral_radius` was never applied to the block parameterization at all. `mrnn.W_rec` is a gradient-free copy that inflated every parameter count ~6×. All three fixed. |
+| Model size | The 50-unit model has **23,368** effective parameters against 50,400 target numbers — a ratio of 0.46, not the ~1 the legacy audit reported. |
+| Seed agreement | Cleanly converged fits agree at 0.997 on outputs but only 0.52 on latent drive geometry. Fixing convergence did not fix circuit identifiability. |
 
-The order is forced by what feeds what: 00 fixes the recipe, 01–02 fix the target and
-size, 03–04 are the structural claims, and 05 onwards are the science.
+The order is forced by what feeds what: 00 fixes the recipe, 01–03 establish which
+structural constraints hold, and 05 onwards are the science.
 
 ## The audit of the legacy fits
 

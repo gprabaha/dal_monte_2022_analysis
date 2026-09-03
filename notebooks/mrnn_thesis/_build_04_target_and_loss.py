@@ -13,13 +13,13 @@ import json
 from itertools import count
 from pathlib import Path
 
-OUTPUT_FILENAME = "01_target_and_loss.ipynb"
+OUTPUT_FILENAME = "04_target_and_loss.ipynb"
 _CELL_COUNTER = count(1)
 
 
-HEADER = r"""# 01 · Target and loss — making the model fit the data
+HEADER = r"""# 04 · Target and loss — making the model fit the data
 
-*Task 01 of the rebuilt mRNN analysis. Task 00 settled **how** to train; this settles
+*Task 04 of the rebuilt mRNN analysis. Task 00 settled **how** to train; this settles
 **what to train on**.*
 
 The recipe from task 00 converges cleanly — every seed ends on its best iterate, no late
@@ -88,7 +88,7 @@ PROTOCOL_ROOT = protocol.resolve_chapter_root(DATASET_CFG_PATH, task="00_trainin
 SELECTED_PROTOCOL_PATH = PROTOCOL_ROOT / "selected_protocol.yaml"
 TASK_ROOT = tl.resolve_task_root(DATASET_CFG_PATH)
 CEILING_DIR = ceiling_mod.resolve_output_dir(DATASET_CFG_PATH)
-FIGURE_DIR = syn.resolve_output_dir(DATASET_CFG_PATH, scope="01_target_and_loss")
+FIGURE_DIR = syn.resolve_output_dir(DATASET_CFG_PATH, scope="04_target_and_loss")
 FIGURES = ThesisFigureSettings(output_dir=FIGURE_DIR)
 
 #: Five seeds rather than three: seed agreement is one of the three selection axes, and
@@ -533,7 +533,7 @@ alone. Frozen to `selected_target_loss.yaml`, which task 02 onwards import.
 - Whether the recovered fast structure changes the inter-regional current geometry at all.
   That is the question this task was run to make answerable, and it is answered in task 05.
 
-**Next:** `02_capacity.ipynb` — units per region, at fixed settings, which the task-00
+**Next:** `05_seed_ensembles.ipynb`.
 sweep could not answer because it varied the learning rate along with the width.
 """
 

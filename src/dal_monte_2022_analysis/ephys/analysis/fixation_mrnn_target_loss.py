@@ -467,7 +467,7 @@ def score_variants(
 
 def resolve_task_root(cfg_path: str | Path = "configs/dataset.yaml") -> Path:
     """Output root for this task's runs."""
-    return resolve_chapter_root(cfg_path, task="01_target_and_loss")
+    return resolve_chapter_root(cfg_path, task="04_target_and_loss")
 
 
 __all__ = [
