@@ -265,50 +265,89 @@ def region_condition_ceiling(unit_ceiling: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _stack_halves(
+    unit_ceiling: pd.DataFrame,
+    region: str,
+    unit_ids: Sequence[str],
+    conditions: Sequence[str],
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """``(condition x time, units)`` matrices for the two independent half-averages."""
+    block = unit_ceiling[unit_ceiling["region"] == str(region).strip().lower()]
+    lookup = {
+        (str(unit), str(condition)): index
+        for index, (unit, condition) in enumerate(zip(block["unit_uuid"], block["condition"]))
+    }
+    half_a_all = list(block["half_a"])
+    half_b_all = list(block["half_b"])
+    panels_a, panels_b = [], []
+    for condition in conditions:
+        indices = [lookup.get((str(unit), str(condition))) for unit in unit_ids]
+        if any(index is None for index in indices):
+            return None
+        panels_a.append(np.stack([half_a_all[i] for i in indices], axis=-1))
+        panels_b.append(np.stack([half_b_all[i] for i in indices], axis=-1))
+    return np.concatenate(panels_a, axis=0), np.concatenate(panels_b, axis=0)
+
+
 def population_ceiling_in_pc_space(
     unit_ceiling: pd.DataFrame,
-    pca_by_region: Mapping[str, Mapping[str, object]],
     unit_order_by_region: Mapping[str, Sequence[str]],
     *,
+    n_components: int = 42,
     conditions: Sequence[str] = CONDITION_ORDER,
+    noise_control: bool = True,
+    random_seed: int = 0,
 ) -> pd.DataFrame:
     """Ceiling in the PC space the model is actually fit in.
 
-    Per-unit reliability is not the quantity the mRNN is scored on -- it is scored on
-    region PC trajectories. Projecting the two independent half-averages through the
-    *same* PCA basis the target uses gives the reliability of each PC directly, and shows
-    where in the spectrum the signal stops and the noise begins.
+    Per-unit reliability is not what the mRNN is scored on -- region PC trajectories are,
+    and averaging a few hundred units cancels most of the independent single-unit noise.
+    So the two ceilings are very different numbers, and only this one bounds the model.
+
+    **The basis is fit on half A alone** and applied to both halves. Fitting it on the
+    full average would let each half be scored on directions partly derived from its own
+    noise, which inflates the estimate; the ``noise_control`` column measures exactly
+    that, by running the identical procedure on two independent Gaussian half-matrices of
+    the same shape. A trustworthy ceiling has a control near zero.
     """
+    rng = np.random.default_rng(int(random_seed))
     rows: list[dict[str, object]] = []
     for region, unit_ids in unit_order_by_region.items():
-        pca = pca_by_region.get(region)
-        if pca is None:
+        stacked = _stack_halves(unit_ceiling, region, unit_ids, conditions)
+        if stacked is None:
             continue
-        components = np.asarray(pca["components"], dtype=float)
-        mean = np.asarray(pca["mean"], dtype=float)
-        block = unit_ceiling[unit_ceiling["region"] == str(region).strip().lower()]
-        lookup = {(str(u), str(c)): i for i, (u, c) in enumerate(zip(block["unit_uuid"], block["condition"]))}
-        half_a_all = list(block["half_a"])
-        half_b_all = list(block["half_b"])
-        for condition in conditions:
-            indices = [lookup.get((str(unit), condition)) for unit in unit_ids]
-            if any(index is None for index in indices):
-                continue
-            a = np.stack([half_a_all[i] for i in indices], axis=-1)
-            b = np.stack([half_b_all[i] for i in indices], axis=-1)
-            scores_a = (a - mean) @ components.T
-            scores_b = (b - mean) @ components.T
-            correlations = _pearson(scores_a.T, scores_b.T)
-            for component, correlation in enumerate(correlations):
-                rows.append(
-                    {
-                        "region": region,
-                        "condition": condition,
-                        "component": int(component),
-                        "half_correlation": float(correlation),
-                        "reliability": _spearman_brown(float(correlation)),
-                    }
-                )
+        half_a, half_b = stacked
+        rank = min(int(n_components), min(half_a.shape) - 1)
+
+        mean_a = half_a.mean(axis=0)
+        _, _, basis = np.linalg.svd(half_a - mean_a, full_matrices=False)
+        basis = basis[:rank]
+        scores_a = (half_a - mean_a) @ basis.T
+        scores_b = (half_b - mean_a) @ basis.T
+        correlations = _pearson(scores_a.T, scores_b.T)
+
+        control = np.full(rank, np.nan)
+        if noise_control:
+            noise_a = rng.normal(size=half_a.shape)
+            noise_b = rng.normal(size=half_a.shape)
+            noise_mean = noise_a.mean(axis=0)
+            _, _, noise_basis = np.linalg.svd(noise_a - noise_mean, full_matrices=False)
+            noise_basis = noise_basis[:rank]
+            control = _pearson(
+                ((noise_a - noise_mean) @ noise_basis.T).T,
+                ((noise_b - noise_mean) @ noise_basis.T).T,
+            )
+
+        for component in range(rank):
+            rows.append(
+                {
+                    "region": region,
+                    "component": int(component),
+                    "half_correlation": float(correlations[component]),
+                    "reliability": _spearman_brown(float(correlations[component])),
+                    "noise_control": float(control[component]),
+                }
+            )
     return pd.DataFrame(rows)
 
 
