@@ -90,6 +90,20 @@ class FixationMRNNRunSettings:
     lr_min_factor: float = 0.01
     lr_step_size: int = 10_000
     lr_step_gamma: float = 0.5
+    #: How much each fixation condition contributes to the objective. "uniform" is the
+    #: historical behaviour: because the loss is an absolute MSE, a condition's influence
+    #: is proportional to its target energy, and the conditions differ by ~4x. "balanced"
+    #: rescales each condition so all three contribute equally.
+    condition_loss_weighting: str = "uniform"
+    #: How much each target dimension contributes. "uniform" lets the high-variance
+    #: leading PCs dominate; "whiten" rescales each PC by its own standard deviation so
+    #: every retained component counts equally, which is where fast temporal structure
+    #: lives. "sqrt_whiten" is the half-way point.
+    pc_loss_weighting: str = "uniform"
+    #: Floor on the per-dimension scale used by the PC weightings, as a fraction of the
+    #: largest dimension's scale. Without it a near-empty component is amplified without
+    #: bound and the objective is dominated by numerical dust.
+    pc_loss_weight_floor: float = 0.05
     divergence_loss_threshold: float | None = None
     divergence_patience: int = 100
     divergence_min_iteration: int = 100
@@ -263,6 +277,69 @@ def _time_weights(
     if mean_weight > 0:
         weights = weights / mean_weight
     return torch.as_tensor(weights, dtype=torch.float32, device=device).reshape(1, -1, 1)
+
+
+def normalize_loss_weighting(mode: str | None, *, allowed: Sequence[str]) -> str:
+    """Canonical name for a loss-weighting mode."""
+    name = str(mode or "uniform").strip().lower()
+    if name in {"", "none", "off"}:
+        return "uniform"
+    if name not in set(allowed):
+        raise ValueError(f"Unknown loss weighting {mode!r}; expected one of {sorted(allowed)}")
+    return name
+
+
+def condition_loss_weights(
+    target: torch.Tensor,
+    *,
+    mode: str,
+    device: str,
+) -> torch.Tensor:
+    """Per-condition multipliers of shape ``(n_conditions, 1, 1)``.
+
+    An absolute MSE gives each condition influence in proportion to its target energy.
+    In this dataset the conditions differ by about a factor of four, so the low-energy
+    condition receives a correspondingly small share of the gradient and is fitted
+    worst -- which is a property of the objective rather than of the data.
+    """
+    mode = normalize_loss_weighting(mode, allowed=("uniform", "balanced"))
+    n_conditions = int(target.shape[0])
+    if mode == "uniform":
+        return torch.ones((n_conditions, 1, 1), dtype=torch.float32, device=device)
+    centred = target - target.mean(dim=1, keepdim=True)
+    energy = torch.mean(centred**2, dim=(1, 2))
+    weights = torch.where(energy > 0, 1.0 / energy, torch.zeros_like(energy))
+    weights = weights / torch.mean(weights[weights > 0]) if torch.any(weights > 0) else weights
+    return weights.reshape(n_conditions, 1, 1).to(dtype=torch.float32, device=device)
+
+
+def pc_loss_weights(
+    target: torch.Tensor,
+    *,
+    mode: str,
+    floor: float,
+    device: str,
+) -> torch.Tensor:
+    """Per-dimension multipliers of shape ``(1, 1, n_features)``.
+
+    Under a uniform weighting the leading PCs dominate the objective simply because they
+    carry more variance. Fast temporal structure lives disproportionately in the
+    lower-variance components, so whitening is the knob that decides whether the model is
+    asked to reproduce it.
+    """
+    mode = normalize_loss_weighting(mode, allowed=("uniform", "whiten", "sqrt_whiten"))
+    n_features = int(target.shape[-1])
+    if mode == "uniform":
+        return torch.ones((1, 1, n_features), dtype=torch.float32, device=device)
+    centred = target - target.mean(dim=1, keepdim=True)
+    scale = torch.sqrt(torch.mean(centred**2, dim=(0, 1)))
+    largest = torch.max(scale)
+    if float(largest) <= 0:
+        return torch.ones((1, 1, n_features), dtype=torch.float32, device=device)
+    scale = torch.clamp(scale, min=float(floor) * largest)
+    weights = (largest / scale) ** (1.0 if mode == "whiten" else 0.5)
+    weights = weights / torch.mean(weights)
+    return weights.reshape(1, 1, n_features).to(dtype=torch.float32, device=device)
 
 
 def _temporal_difference_loss(
@@ -525,6 +602,22 @@ def train_one_initialization(
         post_fixation_weight=float(settings.post_fixation_loss_weight),
         device=device,
     )
+    # The weightings act on different axes of the (condition, time, feature) target and
+    # simply multiply: time weighting tilts the window, condition weighting equalises the
+    # fixation categories, PC weighting equalises the target dimensions.
+    #
+    # PC weighting is deliberately *not* carried into the firing-rate terms: those live in
+    # unit space, whose feature axis has a different length and no correspondence to the
+    # components. Only the time and condition factors are shared between the two spaces.
+    shared_weights = time_weights * condition_loss_weights(
+        target, mode=settings.condition_loss_weighting, device=device
+    )
+    pc_weights = shared_weights * pc_loss_weights(
+        target,
+        mode=settings.pc_loss_weighting,
+        floor=float(settings.pc_loss_weight_floor),
+        device=device,
+    )
     history = []
     divergence_count = 0
     # The optimizer's trajectory on this problem is spiky: the loss can jump one to two
@@ -556,20 +649,20 @@ def train_one_initialization(
     for iteration in progress:
         optimizer.zero_grad()
         out = model(inp, h0, noise=False)
-        reconstruction = _weighted_loss(settings.loss_fn, out["output"], target, weights=time_weights)
+        reconstruction = _weighted_loss(settings.loss_fn, out["output"], target, weights=pc_weights)
         derivative = _temporal_difference_loss(
             settings.loss_fn,
             out["output"],
             target,
             order=1,
-            weights=time_weights,
+            weights=pc_weights,
         )
         curvature = _temporal_difference_loss(
             settings.loss_fn,
             out["output"],
             target,
             order=2,
-            weights=time_weights,
+            weights=pc_weights,
         )
         correlation = _temporal_correlation_loss(out["output"], target)
         variance = _variance_loss(out["output"], target)
@@ -581,7 +674,7 @@ def train_one_initialization(
                 fr_components_by_region,
                 fr_means_by_region,
                 region_order=targets.region_order,
-                time_weights=time_weights,
+                time_weights=shared_weights,
             )
         else:
             fr_reconstruction = torch.zeros((), dtype=target.dtype, device=device)
@@ -798,7 +891,10 @@ __all__ = [
     "load_fixation_mrnn_config",
     "load_or_create_seed_plan",
     "make_targets",
+    "condition_loss_weights",
     "normalize_lr_schedule",
+    "normalize_loss_weighting",
+    "pc_loss_weights",
     "resolve_device",
     "resolve_fixation_mrnn_output_root",
     "settings_from_config",

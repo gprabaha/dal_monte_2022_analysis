@@ -27,7 +27,10 @@ from dal_monte_2022_analysis.ephys.modeling import (
     reconstruction_accuracy,
     replay_fixation_mrnn_run,
     replay_fixation_mrnn_run_with_ablations,
+    condition_loss_weights,
+    normalize_loss_weighting,
     normalize_lr_schedule,
+    pc_loss_weights,
     resolve_checkpoint_path,
     train_fixation_mrnn_scratch,
     train_one_initialization,
@@ -340,6 +343,166 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             )
             self.assertEqual(ablated["ablated_connections"], (("ofc", "bla"),))
             self.assertEqual(ablated["output"].shape, replay["output"].shape)
+
+    def test_balanced_condition_weighting_equalises_the_objective(self) -> None:
+        """An absolute MSE gives each condition influence in proportion to its energy,
+        which is why the low-energy condition is fitted worst."""
+        target = torch.randn(3, 100, 8)
+        target[0] *= 0.5  # a quarter of the energy of the other two
+        uniform = condition_loss_weights(target, mode="uniform", device="cpu")
+        balanced = condition_loss_weights(target, mode="balanced", device="cpu")
+        self.assertTrue(torch.allclose(uniform, torch.ones_like(uniform)))
+
+        centred = target - target.mean(dim=1, keepdim=True)
+        energy = torch.mean(centred**2, dim=(1, 2))
+        weighted = energy * balanced.flatten()
+        # Every condition ends up contributing the same weighted energy.
+        self.assertLess(float(weighted.max() / weighted.min()) - 1.0, 1e-4)
+
+    def test_pc_whitening_lifts_the_low_variance_components(self) -> None:
+        scales = torch.tensor([4.0, 2.0, 1.0, 0.5, 0.25])
+        target = torch.randn(3, 200, 5) * scales
+        uniform = pc_loss_weights(target, mode="uniform", floor=0.05, device="cpu").flatten()
+        whiten = pc_loss_weights(target, mode="whiten", floor=0.05, device="cpu").flatten()
+        sqrt_whiten = pc_loss_weights(target, mode="sqrt_whiten", floor=0.05, device="cpu").flatten()
+        self.assertTrue(torch.allclose(uniform, torch.ones_like(uniform)))
+        # Weight rises monotonically as component variance falls.
+        self.assertTrue(bool((torch.diff(whiten) > 0).all()))
+        # sqrt_whiten sits between the two.
+        self.assertTrue(bool((sqrt_whiten[-1] < whiten[-1]).item()))
+        self.assertTrue(bool((sqrt_whiten[-1] > uniform[-1]).item()))
+
+    def test_pc_weight_floor_bounds_the_amplification(self) -> None:
+        """Without a floor a near-empty component is amplified without bound and the
+        objective is dominated by numerical dust."""
+        target = torch.randn(3, 200, 4)
+        target[:, :, 3] *= 1e-8
+        weights = pc_loss_weights(target, mode="whiten", floor=0.05, device="cpu").flatten()
+        self.assertLess(float(weights[3] / weights[0]), 25.0)
+
+    def test_pc_weighting_does_not_reach_the_firing_rate_terms(self) -> None:
+        """Firing-rate targets live in unit space, whose feature axis has a different
+        length and no correspondence to the components. Carrying PC weights into those
+        terms is a shape error waiting to happen, and this is the regression for it."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            analysis_root = root / "analysis"
+            avg_root = analysis_root / "ephys/psth/fixation_psth_averages"
+            avg_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, analysis_root)
+            _synthetic_combined_dataframe().to_pickle(avg_root / "combined.pkl")
+            with (avg_root / "timeline.pkl").open("wb") as f:
+                pickle.dump(np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float), f)
+
+            settings = FixationMRNNRunSettings(
+                dataset_cfg_path=str(cfg_path),
+                dataframe_filename="combined.pkl",
+                timeline_filename="timeline.pkl",
+                target_mode="region_pcs",
+                hidden_units=3,
+                epochs=1,
+                seed=11,
+                device="cpu",
+                spectral_radius=1.0,
+                temporal_basis_count=0,
+                # Both the PC weighting and the firing-rate terms active at once.
+                pc_loss_weighting="whiten",
+                condition_loss_weighting="balanced",
+                fr_reconstruction_loss_scale=1.0,
+                fr_temporal_derivative_loss_scale=1.0,
+            )
+            result = train_one_initialization(settings, run_dir=root / "run", seed=11, overwrite=True)
+            history = result["history"]
+            self.assertTrue(np.isfinite(history["loss"].to_numpy(dtype=float)).all())
+            self.assertGreater(float(history["fr_reconstruction_loss"].iloc[0]), 0.0)
+
+    def test_unknown_weighting_names_are_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            normalize_loss_weighting("inverse_cubed", allowed=("uniform", "balanced"))
+        self.assertEqual(normalize_loss_weighting(None, allowed=("uniform",)), "uniform")
+
+    def test_initial_spectral_radius_is_actually_applied(self) -> None:
+        """The setting was passed to the underlying mrnntorch object whose W_rec this
+        wrapper overwrites, so it silently did nothing for every block-parameterized run.
+
+        The spectral radius sets how long the recurrent modes persist, which is the main
+        handle on how much temporal structure the autonomous dynamics can carry -- a
+        swept axis that does not move is worse than no axis at all.
+        """
+        for requested in (0.5, 0.9, 1.3):
+            torch.manual_seed(0)
+            spec = build_model_spec(
+                region_order=("a", "b"),
+                output_dims_by_region={"a": 3, "b": 3},
+                hidden_units=8,
+                device="cpu",
+                input_dim=2,
+                activation="tanh",
+                spectral_radius=requested,
+                rec_constrained=False,
+                inp_constrained=False,
+                recurrent_connectivity="full",
+                recurrent_bottleneck_dim=2,
+                batch_first=True,
+                inp_noise=0.0,
+                act_noise=0.0,
+            )
+            model = FixationMRNNModel(spec)
+            eigenvalues = torch.linalg.eigvals(model.recurrent_weight_matrix().detach())
+            realised = float(torch.max(torch.abs(eigenvalues)))
+            self.assertAlmostEqual(realised, requested, places=4)
+
+    def test_two_spectral_radii_give_different_initial_weights(self) -> None:
+        """The regression test for how this was found: identical trained weights across
+        a swept axis."""
+        specs = []
+        for requested in (0.9, 1.1):
+            torch.manual_seed(0)
+            specs.append(
+                build_model_spec(
+                    region_order=("a", "b"),
+                    output_dims_by_region={"a": 3, "b": 3},
+                    hidden_units=6,
+                    device="cpu",
+                    input_dim=2,
+                    activation="tanh",
+                    spectral_radius=requested,
+                    rec_constrained=False,
+                    inp_constrained=False,
+                    recurrent_connectivity="full",
+                    recurrent_bottleneck_dim=2,
+                    batch_first=True,
+                    inp_noise=0.0,
+                    act_noise=0.0,
+                )
+            )
+        weights = []
+        for spec in specs:
+            torch.manual_seed(0)
+            weights.append(FixationMRNNModel(spec).recurrent_weight_matrix().detach())
+        self.assertFalse(torch.allclose(weights[0], weights[1]))
+
+    def test_spectral_radius_of_none_leaves_the_initialization_alone(self) -> None:
+        torch.manual_seed(0)
+        spec = build_model_spec(
+            region_order=("a", "b"),
+            output_dims_by_region={"a": 3, "b": 3},
+            hidden_units=6,
+            device="cpu",
+            input_dim=2,
+            activation="tanh",
+            spectral_radius=None,
+            rec_constrained=False,
+            inp_constrained=False,
+            recurrent_connectivity="full",
+            recurrent_bottleneck_dim=2,
+            batch_first=True,
+            inp_noise=0.0,
+            act_noise=0.0,
+        )
+        model = FixationMRNNModel(spec)
+        self.assertTrue(torch.isfinite(model.recurrent_weight_matrix()).all())
 
     def test_lr_schedule_names_are_normalized(self) -> None:
         self.assertEqual(normalize_lr_schedule(None), "constant")

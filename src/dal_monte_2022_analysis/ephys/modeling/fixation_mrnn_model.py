@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import math
+
 import torch
 import torch.nn as nn
 
@@ -166,6 +168,39 @@ class FixationMRNNModel(nn.Module):
                 self._inter_region_right_params[(source, target)] = right
                 self.register_parameter(f"_inter_left_{source}_{target}", left)
                 self.register_parameter(f"_inter_right_{source}_{target}", right)
+
+        self._rescale_to_spectral_radius(spec.spectral_radius)
+
+    def _rescale_to_spectral_radius(self, spectral_radius: float | None) -> None:
+        """Scale the initial recurrent blocks to a requested spectral radius.
+
+        ``spec.spectral_radius`` is handed to the underlying ``mrnntorch`` object, but
+        this wrapper assembles ``W_rec`` from its own block parameters and overwrites
+        whatever that object initialized, so the setting had no effect on any run using
+        the block parameterization. The spectral radius of the recurrent matrix is what
+        sets how long the network's modes persist -- below 1 they decay, near and above 1
+        they sustain -- so leaving it unapplied removes the main handle on how much
+        temporal structure the autonomous dynamics can carry.
+
+        Scaling every block by a common factor scales the assembled matrix's eigenvalues
+        by that factor, so one power iteration on the initial matrix is enough.
+        """
+        if spectral_radius is None or float(spectral_radius) <= 0:
+            return
+        with torch.no_grad():
+            weight, mask, _ = self._build_recurrent_weight_and_mask()
+            effective = (weight * mask).detach()
+            eigenvalues = torch.linalg.eigvals(effective.to(torch.float32))
+            current = float(torch.max(torch.abs(eigenvalues)).item())
+            if not math.isfinite(current) or current <= 1e-12:
+                return
+            factor = float(spectral_radius) / current
+            for parameter in self._within_region_params.values():
+                parameter.mul_(factor)
+            # A rank-r block is ``left @ right``; scaling one factor scales the product.
+            for parameter in self._inter_region_left_params.values():
+                parameter.mul_(factor)
+        self._sync_recurrent_state()
 
     def _within_region_block(self, region: str) -> torch.Tensor:
         parameter = self._within_region_params[region]
