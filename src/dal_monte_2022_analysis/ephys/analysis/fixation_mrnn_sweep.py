@@ -55,10 +55,54 @@ class ModelVariant:
         return {"label": self.label, "arm": self.arm, **dict(self.overrides)}
 
 
+#: Optimiser used when task 00 has not yet frozen a recipe. These are the settings its
+#: first pass selected, and they are about optimization rather than architecture, so they
+#: are a defensible starting point -- but they were chosen on a superseded model, which is
+#: why using them is flagged rather than silent.
+PROVISIONAL_OPTIMIZER: dict[str, object] = {
+    "lr": 1e-3,
+    "gradient_clip_norm": 0.05,
+    "lr_schedule": "cosine",
+    "lr_warmup_iterations": 0,
+    "lr_min_factor": 0.01,
+    "activation": "tanh",
+    "spectral_radius": 1.1,
+}
+PROVISIONAL_EPOCHS = 100_000
+
+
 def load_selected_protocol(path: str | Path) -> dict[str, object]:
     """The training recipe task 00 froze, which every sweep here inherits."""
     with Path(path).open("r", encoding="utf-8") as handle:
         return yaml.safe_load(handle)
+
+
+def load_selected_protocol_or_provisional(path: str | Path) -> tuple[dict[str, object], bool]:
+    """The frozen recipe if task 00 has produced one, otherwise a flagged fallback.
+
+    Returns ``(protocol, is_provisional)``. Loading eagerly and crashing when the file is
+    absent makes a downstream notebook unreadable while its dependency is still running,
+    which is the opposite of useful -- these sweeps take hours and the notebooks are meant
+    to be reviewed before they are submitted.
+
+    The fallback pairs the *current* :data:`PROTOCOL_ARCHITECTURE` with the optimiser task
+    00's first pass chose, so only the optimiser is provisional. Callers are expected to
+    surface that and to gate submission on it.
+    """
+    path = Path(path)
+    if path.exists():
+        return load_selected_protocol(path), False
+    from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_protocol import PROTOCOL_ARCHITECTURE
+
+    return (
+        {
+            "selected_label": "provisional (task 00 has not run)",
+            "epochs": PROVISIONAL_EPOCHS,
+            "optimizer": dict(PROVISIONAL_OPTIMIZER),
+            "architecture": dict(PROTOCOL_ARCHITECTURE),
+        },
+        True,
+    )
 
 
 def build_variant_settings(
@@ -414,7 +458,9 @@ __all__ = [
     "gallery_traces",
     "index_variant_runs",
     "load_histories",
+    "PROVISIONAL_OPTIMIZER",
     "load_selected_protocol",
+    "load_selected_protocol_or_provisional",
     "representative_traces",
     "resolve_task_root",
     "score_variant_fit",

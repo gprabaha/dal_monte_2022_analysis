@@ -92,7 +92,16 @@ CEILING_DIR = ceiling_mod.resolve_output_dir(DATASET_CFG_PATH)
 FIGURE_DIR = syn.resolve_output_dir(DATASET_CFG_PATH, scope="02_connectivity")
 FIGURES = ThesisFigureSettings(output_dir=FIGURE_DIR)
 
-SELECTED_PROTOCOL = sweep.load_selected_protocol(PROTOCOL_ROOT / "selected_protocol.yaml")
+SELECTED_PROTOCOL, PROTOCOL_IS_PROVISIONAL = sweep.load_selected_protocol_or_provisional(
+    PROTOCOL_ROOT / "selected_protocol.yaml"
+)
+
+#: Set True to queue this sweep before task 00 has frozen a recipe. Only the optimiser is
+#: provisional in that case -- the architecture comes from the corrected
+#: PROTOCOL_ARCHITECTURE either way -- and task 00's own confirmation grid is what would
+#: overturn it. Worth doing when the cluster is the bottleneck; the run configs record
+#: exactly what was used, so a mismatch stays detectable.
+ALLOW_PROVISIONAL_PROTOCOL = False
 REGIONS = tuple(SELECTED_PROTOCOL["architecture"].get("region_order", ("ofc", "bla", "dmpfc", "accg")))
 
 #: Width comes from task 01. Until that sweep finishes the notebook falls back to 50 and
@@ -123,7 +132,11 @@ def show(figure, stem: str) -> None:
     display(Image(data=figure_to_png_bytes(figure, dpi=190)))
 
 
+if PROTOCOL_IS_PROVISIONAL:
+    print("recipe       : ** provisional: task 00 has not frozen one **")
 print("regions      :", REGIONS)
+if PROTOCOL_IS_PROVISIONAL:
+    print("recipe       : ** provisional: task 00 has not frozen one **")
 print("hidden units :", HIDDEN_UNITS)
 print("task root    :", TASK_ROOT)
 '''
@@ -242,6 +255,15 @@ commands, run_dirs = sweep.variant_job_commands(
 inventory = sweep.index_variant_runs(TASK_ROOT, variants, seeds)
 job_state = protocol.running_job_state(TASK_ROOT / "_jobs")
 
+if PROTOCOL_IS_PROVISIONAL:
+    display(Markdown(
+        "⚠️ **Task 00 has not frozen a recipe**, so the optimiser here is the provisional one "
+        "(`lr 1e-3`, cosine, clip 0.05). The architecture is not provisional. "
+        + ("`ALLOW_PROVISIONAL_PROTOCOL` is set, so submission is allowed."
+           if ALLOW_PROVISIONAL_PROTOCOL else
+           "Submission is blocked; set `ALLOW_PROVISIONAL_PROTOCOL = True` to queue anyway.")
+    ))
+
 if SELECTED_CAPACITY is None:
     display(Markdown(
         f"⚠️ **Task 01 has not finished**, so these cells would be fitted at the provisional "
@@ -275,6 +297,11 @@ elif SUBMIT and commands and SELECTED_CAPACITY is None and not ALLOW_PROVISIONAL
         f"the provisional {HIDDEN_UNITS} units. Set `ALLOW_PROVISIONAL_WIDTH = True` to queue them "
         f"anyway — worth doing when the cluster is the bottleneck, since a mismatch is detectable "
         f"afterwards and only costs a refit."
+    ))
+elif SUBMIT and commands and PROTOCOL_IS_PROVISIONAL and not ALLOW_PROVISIONAL_PROTOCOL:
+    display(Markdown(
+        "**Not submitted**: task 00 has not frozen a recipe. Set "
+        "`ALLOW_PROVISIONAL_PROTOCOL = True` to queue on the provisional optimiser."
     ))
 elif SUBMIT and commands:
     from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
