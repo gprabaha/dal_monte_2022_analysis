@@ -316,10 +316,14 @@ if histories:
 
 S7_TEXT = r"""## 7. Selection
 
-The rule follows the framing: **the narrowest width whose fit is statistically
-indistinguishable from the widest**, rather than the width with the best fit. Where two
-widths fit equally, the smaller is the stronger result — it says the data can be
-reproduced under a tighter constraint.
+The rule follows the framing: **the narrowest width that reaches the noise ceiling**,
+not the width with the highest score.
+
+That distinction matters here. A ceiling-relative score above 1.0 means the model is
+reproducing more than the split-half reliability says is reproducible — it is fitting
+sampling noise, and "higher is better" stops being true. So width is not a quantity to
+maximise; it is a constraint, and the interesting answer is the tightest one the data
+still tolerates.
 
 Seed agreement is reported alongside but does not override: if a narrower model is
 markedly more identifiable at a small cost in fit, that is a judgement worth making
@@ -344,26 +348,53 @@ else:
     if converged.empty:
         display(Markdown("**No width converged on every seed.** That is the result; report it."))
     else:
-        best = float(converged["mean"].max())
-        # "Indistinguishable" is set at one percent of the ceiling-relative score, which is
-        # comfortably inside the seed-to-seed spread observed in task 00.
-        adequate = converged[converged["mean"] >= best - 0.01]
-        winner = adequate.index[0]
-        display(Markdown(
-            f"**Selected: `{winner}`** — the narrowest width within 0.01 of the best "
-            f"ceiling-relative fit ({float(adequate.loc[winner, 'mean']):.3f} against {best:.3f}), "
-            f"using {int(adequate.loc[winner, 'total']):,} parameters "
-            f"({float(adequate.loc[winner, 'parameters_per_datum']):.2f} per target number) and "
-            f"reaching {float(adequate.loc[winner, 'seed_agreement_geometry']):.3f} seed agreement on "
-            f"latent drive geometry."
-        ))
+        # The target is the ceiling, not the maximum. A score above 1.0 means the model is
+        # reproducing more than the split-half reliability says is reproducible -- that is
+        # overfitting, so "higher is better" is the wrong rule above 1.0.
+        TOLERANCE = 0.01
+        adequate = converged[converged["mean"] >= 1.0 - TOLERANCE]
+        over = converged[converged["mean"] > 1.0 + TOLERANCE]
+        if adequate.empty:
+            winner = converged["mean"].idxmax()
+            verdict = (
+                f"No width reaches the noise ceiling; `{winner}` comes closest at "
+                f"{float(converged.loc[winner, 'mean']):.3f}. Read that as a statement about the "
+                f"model class rather than about width."
+            )
+        else:
+            winner = adequate.index[0]
+            verdict = (
+                f"**Selected: `{winner}`** — the narrowest width that reaches the noise ceiling "
+                f"({float(adequate.loc[winner, 'mean']):.3f}), using "
+                f"{int(adequate.loc[winner, 'total']):,} parameters "
+                f"({float(adequate.loc[winner, 'parameters_per_datum']):.2f} per target number) and "
+                f"reaching {float(adequate.loc[winner, 'seed_agreement_geometry']):.3f} seed agreement "
+                f"on latent drive geometry."
+            )
+        wider = over.drop(index=winner, errors="ignore")
+        if len(wider):
+            verdict += (
+                f"\n\nWider still — {', '.join(f'`{i}`' for i in wider.index)} — scores up to "
+                f"{float(wider['mean'].max()):.3f}, above the ceiling. That is reproducing sampling "
+                f"noise, not fitting better, so width past the selected point buys overfitting "
+                f"rather than accuracy. It is what makes this a constraint result rather than a "
+                f"tuning one."
+            )
+        elif float(converged.loc[winner, "mean"]) > 1.0:
+            verdict += (
+                f"\n\nThe selected width sits marginally above the ceiling "
+                f"({float(converged.loc[winner, 'mean']):.3f}), so it is already at the point where "
+                f"extra capacity starts being spent on sampling noise."
+            )
+        display(Markdown(verdict))
         import yaml as _yaml
         path = TASK_ROOT / "selected_capacity.yaml"
         path.write_text(_yaml.safe_dump({
             "selected_label": str(winner),
             "hidden_units": int(str(winner).lstrip("h")),
-            "selection_rule": "narrowest width within 0.01 of the best ceiling-relative fit, "
-                              "among widths that converged on every seed",
+            "selection_rule": "narrowest width reaching the noise ceiling (R2/ceiling >= 0.99), "
+                              "among widths that converged on every seed; scores above the "
+                              "ceiling indicate noise reproduction and are not preferred",
             "inherited_protocol": str(SELECTED_PROTOCOL["selected_label"]),
             "recurrent_bottleneck_dim": None,
             "scores": {k: float(v) for k, v in summary.loc[winner].items()},

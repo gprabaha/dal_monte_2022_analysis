@@ -168,16 +168,23 @@ BASELINE = "dense"
 
 display(Markdown(f"Width **{HIDDEN_UNITS}** units per region, from {CAPACITY_SOURCE}."))
 
-# What the runs on disk were actually fitted at, which may predate task 01's answer.
-_existing = sorted(TASK_ROOT.glob("*/seed=*/run_config.yaml"))
-if _existing:
-    _widths = {int(yaml.safe_load(p.read_text())["hidden_units"]) for p in _existing}
+# What the *trained* runs were fitted at, which may predate task 01's answer. Only runs
+# with a checkpoint count: generating the job commands writes a run_config.yaml for every
+# cell whether or not it is ever submitted, so staged configs are not evidence of anything.
+_trained = sorted(
+    path for path in TASK_ROOT.glob("*/seed=*/run_config.yaml")
+    if (path.parent / "checkpoint_best.pth").exists()
+)
+if _trained:
+    _widths = {int(yaml.safe_load(path.read_text())["hidden_units"]) for path in _trained}
     if _widths != {HIDDEN_UNITS}:
         display(Markdown(
-            f"🔴 **Width mismatch.** Runs on disk were fitted at {sorted(_widths)} units, but the "
-            f"current selection is {HIDDEN_UNITS}. Those runs answer the question at the wrong "
-            f"width and should be refitted before the results below are used."
+            f"🔴 **Width mismatch.** {len(_trained)} trained run(s) used {sorted(_widths)} units, "
+            f"but the current selection is {HIDDEN_UNITS}. Those runs answer the question at the "
+            f"wrong width and should be refitted before the results below are used."
         ))
+    else:
+        display(Markdown(f"{len(_trained)} trained run(s), all at {HIDDEN_UNITS} units."))
 display(pd.DataFrame([v.describe() for v in variants]))
 display(Markdown(
     f"**{len(variants)} variants × {len(seeds)} seeds = {len(variants) * len(seeds)} runs**, all at "
