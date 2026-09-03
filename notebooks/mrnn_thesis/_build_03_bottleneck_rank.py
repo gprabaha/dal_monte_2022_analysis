@@ -152,7 +152,15 @@ if findings_path.exists():
         f"by setting `recurrent_blocked_pairs` in the overrides below."
     ))
 
-base_overrides = {"hidden_units": HIDDEN_UNITS, "recurrent_connectivity": CONNECTIVITY}
+# l1_weight_scale is set to 0 rather than inherited. The task-00 recipe carries 0.01,
+# which came from the legacy ensembles and was never chosen -- and at that value it is not
+# a sparsity prior but an ablation: in the fitted h40 model it drives the within-region
+# blocks to ~1e-6 against ~1e-1 for the cross-region blocks, five orders of magnitude
+# down. That would make `within_region_only` below a model with almost no recurrence at
+# all, and would make `full` and `cross_plus_self_diagonal` near-duplicates. Sparsity is
+# swept properly in task 04.
+base_overrides = {"hidden_units": HIDDEN_UNITS, "recurrent_connectivity": CONNECTIVITY,
+                  "l1_weight_scale": 0.0}
 
 variants = [
     sweep.ModelVariant(label="dense", arm="baseline",
