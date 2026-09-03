@@ -51,6 +51,13 @@ count that bought it, agreement across seeds, and a visual check of the traces.
 
 
 SETUP = r'''
+# The analysis code these notebooks call lives in src/ and is edited between runs. Without
+# autoreload a kernel keeps whatever it imported first, so a function added to src after
+# the kernel started raises AttributeError until it is restarted -- which is easy to
+# misread as a bug in the code rather than in the kernel's cache.
+%load_ext autoreload
+%autoreload 2
+
 from __future__ import annotations
 
 from pathlib import Path

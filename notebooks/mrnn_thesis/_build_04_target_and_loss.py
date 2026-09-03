@@ -52,6 +52,13 @@ face. That content is real: split-half reliability of the region PC trajectories
 
 
 SETUP = r'''
+# The analysis code these notebooks call lives in src/ and is edited between runs. Without
+# autoreload a kernel keeps whatever it imported first, so a function added to src after
+# the kernel started raises AttributeError until it is restarted -- which is easy to
+# misread as a bug in the code rather than in the kernel's cache.
+%load_ext autoreload
+%autoreload 2
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -69,6 +76,7 @@ if str(repo_root / "src") not in sys.path:
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_protocol as protocol
+from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_sweep as sweep
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_synthesis as syn
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_target_loss as tl
 from dal_monte_2022_analysis.ephys.analysis import fixation_psth_noise_ceiling as ceiling_mod
@@ -95,7 +103,10 @@ FIGURES = ThesisFigureSettings(output_dir=FIGURE_DIR)
 #: three seeds give only three pairs to average over.
 VARIANT_SEEDS = 5
 
-SELECTED_PROTOCOL = tl.load_selected_protocol(SELECTED_PROTOCOL_PATH)
+SELECTED_PROTOCOL, PROTOCOL_IS_PROVISIONAL = sweep.load_selected_protocol_or_provisional(
+    SELECTED_PROTOCOL_PATH
+)
+ALLOW_PROVISIONAL_PROTOCOL = False
 
 
 def show(figure, stem: str) -> None:
@@ -104,6 +115,8 @@ def show(figure, stem: str) -> None:
 
 
 print("inherited recipe :", SELECTED_PROTOCOL["selected_label"])
+if PROTOCOL_IS_PROVISIONAL:
+    print("                   ** provisional: task 00 has not frozen a recipe **")
 print("task root        :", TASK_ROOT)
 '''
 
@@ -132,8 +145,24 @@ frozen config rather than restating it, so this stays true if the recipe changes
 S1_CODE = r'''
 import yaml
 
-winning_run = next((PROTOCOL_ROOT / "sweep" / SELECTED_PROTOCOL["selected_label"]).glob("seed=*"))
-run_config = yaml.safe_load((winning_run / "run_config.yaml").read_text())
+# Read the objective off a run that was actually trained under the selected recipe, so
+# this section cannot drift from what the models were fitted with. Falls back to the
+# frozen protocol itself when task 00 has not produced runs yet.
+_winning = sorted((PROTOCOL_ROOT / "sweep" / str(SELECTED_PROTOCOL["selected_label"])).glob("seed=*"))
+if _winning and (_winning[0] / "run_config.yaml").exists():
+    run_config = yaml.safe_load((_winning[0] / "run_config.yaml").read_text())
+else:
+    display(Markdown(
+        "⚠️ Task 00 has no trained runs, so the objective below is read from the frozen "
+        "protocol rather than from a fitted model."
+    ))
+    run_config = {**SELECTED_PROTOCOL["architecture"], **SELECTED_PROTOCOL["optimizer"],
+                  "epochs": SELECTED_PROTOCOL["epochs"], "loss_fn": "mse",
+                  "condition_order": ("face_interactive", "face_non_interactive", "object"),
+                  "correlation_loss_scale": 0.0, "variance_loss_scale": 0.0,
+                  "fr_reconstruction_loss_scale": 0.0, "fr_temporal_derivative_loss_scale": 0.0,
+                  "fr_temporal_curvature_loss_scale": 0.0, "l1_rate_scale": 0.0,
+                  "l2_weight_scale": 0.0, "l2_rate_scale": 0.0}
 
 loss_terms = {
     "pointwise reconstruction (PC space)": 1.0,
@@ -205,46 +234,60 @@ display(
     .round(4)
 )
 
-baseline_runs = sorted(str(d) for d in (PROTOCOL_ROOT / "sweep" / SELECTED_PROTOCOL["selected_label"]).glob("seed=*"))
-baseline_fit = pd.concat([tl.ceiling_relative_fit(d, ceiling_by_region) for d in baseline_runs])
-baseline_recovery = pd.concat([tl.spectral_recovery(d) for d in baseline_runs])
-baseline_agreement = tl.inter_seed_agreement(baseline_runs)
+baseline_runs = sorted(
+    str(d) for d in (PROTOCOL_ROOT / "sweep" / str(SELECTED_PROTOCOL["selected_label"])).glob("seed=*")
+    if (d / "checkpoint_best.pth").exists()
+)
+HAVE_BASELINE = bool(baseline_runs)
+if not HAVE_BASELINE:
+    display(Markdown(
+        "**Task 00 has no trained runs under the selected recipe**, so there is no baseline to "
+        "characterise yet. Run task 00, then re-run this section — the diagnosis it sets up is "
+        "what the variants in Section 3 are designed against."
+    ))
+else:
+    baseline_fit = pd.concat([tl.ceiling_relative_fit(d, ceiling_by_region) for d in baseline_runs])
+    baseline_recovery = pd.concat([tl.spectral_recovery(d) for d in baseline_runs])
+    baseline_agreement = tl.inter_seed_agreement(baseline_runs)
 
-display(Markdown("**Fit, as a fraction of what the data determines:**"))
-display(baseline_fit.groupby("condition")[["r2", "ceiling", "r2_vs_ceiling"]].mean().round(4))
-display(Markdown("**Fraction of observed power reproduced:**"))
-display(baseline_recovery.pivot_table(index="band", columns="condition", values="power_ratio").round(3))
-display(Markdown("**Agreement between the seeds of this one configuration:**"))
-display(baseline_agreement.round(4))
+    display(Markdown("**Fit, as a fraction of what the data determines:**"))
+    display(baseline_fit.groupby("condition")[["r2", "ceiling", "r2_vs_ceiling"]].mean().round(4))
+    display(Markdown("**Fraction of observed power reproduced:**"))
+    display(baseline_recovery.pivot_table(index="band", columns="condition", values="power_ratio").round(3))
+    display(Markdown("**Agreement between the seeds of this one configuration:**"))
+    display(baseline_agreement.round(4))
 '''
 
 S2B_CODE = r'''
-interactive_high = baseline_recovery[
+if not HAVE_BASELINE:
+    display(Markdown("Deferred: no trained baseline runs."))
+else:
+  interactive_high = baseline_recovery[
     (baseline_recovery["condition"] == "face_interactive") & (baseline_recovery["band"] == "10-20 Hz")
 ]["power_ratio"].mean()
-other_high = baseline_recovery[
+  other_high = baseline_recovery[
     (baseline_recovery["condition"] != "face_interactive") & (baseline_recovery["band"] == "10-20 Hz")
 ]["power_ratio"].mean()
-geometry = float(baseline_agreement.set_index("feature").loc["latent drive geometry", "mean_agreement"])
-outputs = float(baseline_agreement.set_index("feature").loc["output trajectories", "mean_agreement"])
+  geometry = float(baseline_agreement.set_index("feature").loc["latent drive geometry", "mean_agreement"])
+  outputs = float(baseline_agreement.set_index("feature").loc["output trajectories", "mean_agreement"])
 
-display(Markdown(
-    f"**Read together, three things.**\n\n"
-    f"1. In variance terms the model is essentially at the ceiling — interactive face scores "
-    f"{baseline_fit[baseline_fit['condition'] == 'face_interactive']['r2_vs_ceiling'].mean():.3f}, "
-    f"the other conditions slightly *above* 1.0, which means a little sampling noise is being "
-    f"reproduced. So $R^2$ says the fit is close to as good as the data allows.\n\n"
-    f"2. In spectral terms it is not. At 10–20 Hz the model reproduces "
-    f"**{100 * interactive_high:.0f}%** of interactive-face power against "
-    f"**{100 * other_high:.0f}%** for the other conditions. The reason $R^2$ misses this is that "
-    f"high-frequency content carries very little variance: the deficit is **small in variance and "
-    f"large in shape**, which is why it was visible by eye before it was visible in a number.\n\n"
-    f"3. Seeds agree almost perfectly on *what the model outputs* "
-    f"({outputs:.3f}) and much less on *how it produces it* — latent drive geometry "
-    f"{geometry:.3f}. Task 00 fixed convergence; it did **not** fix this. Any circuit-level "
-    f"claim still rests on something the seeds do not agree about, and carrying that number "
-    f"forward as a selection axis is how this notebook avoids making it worse."
-))
+  display(Markdown(
+      f"**Read together, three things.**\n\n"
+      f"1. In variance terms the model is essentially at the ceiling — interactive face scores "
+      f"{baseline_fit[baseline_fit['condition'] == 'face_interactive']['r2_vs_ceiling'].mean():.3f}, "
+      f"the other conditions slightly *above* 1.0, which means a little sampling noise is being "
+      f"reproduced. So $R^2$ says the fit is close to as good as the data allows.\n\n"
+      f"2. In spectral terms it is not. At 10–20 Hz the model reproduces "
+      f"**{100 * interactive_high:.0f}%** of interactive-face power against "
+      f"**{100 * other_high:.0f}%** for the other conditions. The reason $R^2$ misses this is that "
+      f"high-frequency content carries very little variance: the deficit is **small in variance and "
+      f"large in shape**, which is why it was visible by eye before it was visible in a number.\n\n"
+      f"3. Seeds agree almost perfectly on *what the model outputs* "
+      f"({outputs:.3f}) and much less on *how it produces it* — latent drive geometry "
+      f"{geometry:.3f}. Task 00 fixed convergence; it did **not** fix this. Any circuit-level "
+      f"claim still rests on something the seeds do not agree about, and carrying that number "
+      f"forward as a selection axis is how this notebook avoids making it worse."
+  ))
 '''
 
 
@@ -322,6 +365,14 @@ commands, run_dirs = tl.variant_job_commands(
 inventory = tl.index_variant_runs(TASK_ROOT, variants, seeds)
 job_state = protocol.running_job_state(TASK_ROOT / "_jobs")
 
+if PROTOCOL_IS_PROVISIONAL:
+    display(Markdown(
+        "⚠️ **Task 00 has not frozen a recipe**, so the optimiser here is provisional. "
+        + ("`ALLOW_PROVISIONAL_PROTOCOL` is set, so submission is allowed."
+           if ALLOW_PROVISIONAL_PROTOCOL else
+           "Submission is blocked; set `ALLOW_PROVISIONAL_PROTOCOL = True` to queue anyway.")
+    ))
+
 display(Markdown(
     f"**{int(inventory['complete'].sum())} complete**, "
     f"**{int(inventory['diverged'].sum())} diverged**, "
@@ -342,6 +393,8 @@ elif commands:
 S4B_CODE = r'''
 if job_state["active"]:
     display(Markdown(f"Nothing submitted: job array `{job_state['job_id']}` is still running."))
+elif SUBMIT and commands and PROTOCOL_IS_PROVISIONAL and not ALLOW_PROVISIONAL_PROTOCOL:
+    display(Markdown("**Not submitted**: task 00 has not frozen a recipe."))
 elif SUBMIT and commands:
     from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
 
