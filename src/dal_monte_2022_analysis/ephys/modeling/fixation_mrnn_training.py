@@ -80,6 +80,10 @@ class FixationMRNNRunSettings:
     l1_rate_scale: float = 0.0
     l2_weight_scale: float = 0.0
     l2_rate_scale: float = 0.0
+    #: (source, target) region pairs removed from the recurrent connectivity, on top of
+    #: ``recurrent_connectivity``. Used by the connectivity sweep to isolate a region or
+    #: remove a single directed pathway without adding a named mode for each case.
+    recurrent_blocked_pairs: tuple[tuple[str, str], ...] = ()
     gradient_clip_norm: float | None = None
     #: Learning-rate schedule: "constant" (the historical behaviour), "cosine" (decay to
     #: ``lr_min_factor * lr`` over the run), or "step" (multiply by ``lr_step_gamma``
@@ -583,6 +587,7 @@ def train_one_initialization(
         inp_constrained=settings.inp_constrained,
         recurrent_connectivity=normalize_recurrent_connectivity(settings.recurrent_connectivity),
         recurrent_bottleneck_dim=settings.recurrent_bottleneck_dim,
+        recurrent_blocked_pairs=tuple(tuple(pair) for pair in (settings.recurrent_blocked_pairs or ())),
         batch_first=settings.batch_first,
         inp_noise=settings.inp_noise,
         act_noise=settings.act_noise,

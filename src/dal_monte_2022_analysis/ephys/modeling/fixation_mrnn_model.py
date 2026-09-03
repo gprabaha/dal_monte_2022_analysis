@@ -28,6 +28,12 @@ class FixationMRNNModelSpec:
     #: block is a single dense matrix, which is the unconstrained baseline the bottleneck
     #: results have to be measured against.
     recurrent_bottleneck_dim: int | None = None
+    #: ``(source, target)`` pairs removed on top of ``recurrent_connectivity``. The named
+    #: modes cover the global structures; this covers everything else -- isolating one
+    #: region, removing a single directed pathway, or any other lesion the sweep needs --
+    #: without a new mode for each. Blocked pairs get no parameters at all, so a model
+    #: fitted with them is genuinely smaller rather than merely masked.
+    recurrent_blocked_pairs: tuple[tuple[str, str], ...] = ()
     batch_first: bool = True
     inp_noise: float = 0.0
     act_noise: float = 0.0
@@ -60,6 +66,9 @@ class FixationMRNNModel(nn.Module):
         self._bottleneck_dim = (
             None if spec.recurrent_bottleneck_dim is None else int(spec.recurrent_bottleneck_dim)
         )
+        self._blocked_pairs = {
+            (str(source), str(target)) for source, target in (spec.recurrent_blocked_pairs or ())
+        }
         self._within_region_params: dict[str, nn.Parameter] = {}
         self._inter_region_left_params: dict[tuple[str, str], nn.Parameter] = {}
         self._inter_region_right_params: dict[tuple[str, str], nn.Parameter] = {}
@@ -98,8 +107,11 @@ class FixationMRNNModel(nn.Module):
             sign="pos",
             device=str(spec.device),
         )
+        blocked = {(str(a), str(b)) for a, b in (spec.recurrent_blocked_pairs or ())}
         for source in self.region_order:
             for target in self.region_order:
+                if (source, target) in blocked:
+                    continue
                 if _region_pair_connected(source, target, spec.recurrent_connectivity):
                     self.mrnn.add_recurrent_connection(source, target)
         for target in self.region_order:
@@ -161,6 +173,8 @@ class FixationMRNNModel(nn.Module):
         for source in self.region_order:
             for target in self.region_order:
                 if source == target or not _region_pair_connected(source, target, spec.recurrent_connectivity):
+                    continue
+                if (source, target) in self._blocked_pairs:
                     continue
                 source_units = int(spec.hidden_units_by_region[source])
                 target_units = int(spec.hidden_units_by_region[target])
@@ -262,7 +276,10 @@ class FixationMRNNModel(nn.Module):
                         # In cross-region-only mode, the within-region block is
                         # restricted to a diagonal matrix.
                         block_mask = torch.eye(block.shape[0], device=block.device, dtype=block_mask.dtype)
-                elif _region_pair_connected(source, target, self.spec.recurrent_connectivity):
+                elif (
+                    (source, target) not in self._blocked_pairs
+                    and _region_pair_connected(source, target, self.spec.recurrent_connectivity)
+                ):
                     block = self._inter_region_block(source, target)
                     block_mask = torch.ones_like(block)
                 else:

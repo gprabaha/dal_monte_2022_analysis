@@ -422,6 +422,83 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             normalize_loss_weighting("inverse_cubed", allowed=("uniform", "balanced"))
         self.assertEqual(normalize_loss_weighting(None, allowed=("uniform",)), "uniform")
 
+    def test_blocked_pairs_remove_both_the_block_and_its_parameters(self) -> None:
+        """The named connectivity modes cover global structures; blocked pairs cover
+        everything else -- isolating a region, removing one directed pathway -- without a
+        new mode for each. A blocked pair must get no parameters at all, so the model is
+        genuinely smaller rather than merely masked."""
+        regions = ("a", "b", "c")
+
+        def build(blocked):
+            torch.manual_seed(0)
+            spec = build_model_spec(
+                region_order=regions,
+                output_dims_by_region={r: 3 for r in regions},
+                hidden_units=6,
+                device="cpu",
+                input_dim=2,
+                activation="tanh",
+                spectral_radius=1.0,
+                rec_constrained=False,
+                inp_constrained=False,
+                recurrent_connectivity="full",
+                recurrent_bottleneck_dim=None,
+                recurrent_blocked_pairs=blocked,
+                batch_first=True,
+                inp_noise=0.0,
+                act_noise=0.0,
+            )
+            return FixationMRNNModel(spec)
+
+        intact = build(())
+        lesioned = build((("a", "b"),))
+
+        weight = lesioned.recurrent_weight_matrix().detach().numpy()
+        # Row block b, column block a is the a -> b pathway.
+        self.assertLess(float(np.abs(weight[6:12, 0:6]).sum()), 1e-9)
+        # Its neighbour is untouched.
+        self.assertGreater(float(np.abs(weight[12:18, 0:6]).sum()), 1e-9)
+
+        def trainable(model):
+            return sum(p.numel() for n, p in model.named_parameters() if n.startswith("_inter"))
+
+        self.assertLess(trainable(lesioned), trainable(intact))
+
+    def test_blocked_pairs_survive_the_training_and_replay_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            analysis_root = root / "analysis"
+            avg_root = analysis_root / "ephys/psth/fixation_psth_averages"
+            avg_root.mkdir(parents=True, exist_ok=True)
+            cfg_path = root / "dataset.yaml"
+            _write_dataset_cfg(cfg_path, analysis_root)
+            _synthetic_combined_dataframe().to_pickle(avg_root / "combined.pkl")
+            with (avg_root / "timeline.pkl").open("wb") as f:
+                pickle.dump(np.asarray([-0.02, -0.01, 0.0, 0.01], dtype=float), f)
+
+            settings = FixationMRNNRunSettings(
+                dataset_cfg_path=str(cfg_path),
+                dataframe_filename="combined.pkl",
+                timeline_filename="timeline.pkl",
+                target_mode="raw_fr",
+                hidden_units=4,
+                epochs=2,
+                seed=3,
+                device="cpu",
+                spectral_radius=1.0,
+                temporal_basis_count=0,
+                recurrent_bottleneck_dim=None,
+                recurrent_blocked_pairs=(("ofc", "bla"),),
+            )
+            run_dir = root / "run"
+            train_one_initialization(settings, run_dir=run_dir, seed=3, overwrite=True)
+            replay = replay_fixation_mrnn_run(run_dir, device="cpu")
+            model = replay["model"]
+            slices = model.hidden_region_slices()
+            weight = model.recurrent_weight_matrix().detach().numpy()
+            block = weight[slices["bla"], slices["ofc"]]
+            self.assertLess(float(np.abs(block).sum()), 1e-9)
+
     def test_the_copied_recurrent_matrix_receives_no_gradient(self) -> None:
         """``mrnn.W_rec`` is a copy the forward pass overwrites from the block parameters.
 
