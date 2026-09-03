@@ -422,6 +422,44 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             normalize_loss_weighting("inverse_cubed", allowed=("uniform", "balanced"))
         self.assertEqual(normalize_loss_weighting(None, allowed=("uniform",)), "uniform")
 
+    def test_the_copied_recurrent_matrix_receives_no_gradient(self) -> None:
+        """``mrnn.W_rec`` is a copy the forward pass overwrites from the block parameters.
+
+        It is registered as a parameter, so any count taken from ``model.parameters()``
+        includes it and overstates the model's real size roughly six-fold — which is how
+        the \"as many parameters as data points\" reading of these fits arose. Pinning
+        that it never receives a gradient is what licenses excluding it.
+        """
+        torch.manual_seed(0)
+        spec = build_model_spec(
+            region_order=("a", "b"),
+            output_dims_by_region={"a": 4, "b": 4},
+            hidden_units=10,
+            device="cpu",
+            input_dim=3,
+            activation="tanh",
+            spectral_radius=1.1,
+            rec_constrained=False,
+            inp_constrained=False,
+            recurrent_connectivity="full",
+            recurrent_bottleneck_dim=3,
+            batch_first=True,
+            inp_noise=0.0,
+            act_noise=0.0,
+        )
+        model = FixationMRNNModel(spec)
+        outputs = model(torch.randn(3, 20, 3), torch.zeros(3, 20), noise=False)
+        sum(v.pow(2).mean() for v in outputs["output_by_region"].values()).backward()
+
+        gradients = {name: parameter.grad is not None for name, parameter in model.named_parameters()}
+        self.assertFalse(gradients["mrnn.W_rec"])
+        self.assertFalse(gradients["mrnn.W_rec_mask"])
+        # The blocks that actually drive the dynamics do get gradients.
+        self.assertTrue(gradients["_within_region_param_a"])
+        self.assertTrue(gradients["_inter_left_a_b"])
+        self.assertTrue(gradients["mrnn.W_inp"])
+        self.assertTrue(gradients["output_heads.a.weight"])
+
     def test_no_bottleneck_gives_dense_full_rank_inter_region_blocks(self) -> None:
         """The unconstrained baseline every bottleneck result has to be measured against.
 
