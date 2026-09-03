@@ -16,8 +16,8 @@ work only when you set `SUBMIT = True`.
 
 | | Notebook | Question | Status |
 |---|---|---|---|
-| 00 | `00_training_protocol.ipynb` | What optimiser settings converge reliably? | **built**; sweep not yet submitted |
-| 01 | `01_target_and_loss.ipynb` | How many PCs, weighted how; derivative and curvature weights | to build |
+| 00 | `00_training_protocol.ipynb` | What optimiser settings converge reliably? | **done** — `lr 1e-3, cosine, clip 0.05, tanh, sr 1.1`, all seeds end on their best iterate |
+| 01 | `01_target_and_loss.ipynb` | What should the model be fit to, and how should the objective weight it? | **built**; sweep not yet submitted |
 | 02 | `02_capacity.ipynb` | Units per region, at fixed settings | to build |
 | 03 | `03_architecture.ipynb` | full vs cross+diagonal vs within-region, ensembled and capacity-matched | to build |
 | 04 | `04_bottleneck_rank.ipynb` | Ranks 1–30, epoch-matched end to end | to build |
@@ -26,6 +26,14 @@ work only when you set `SUBMIT = True`.
 | 07 | `07_dynamics.ipynb` | Fixed points, Jacobians, basins | to build |
 | 08 | `08_generalization.ipynb` | Held-out post-fixation half | to build |
 | 09 | `09_chapter.ipynb` | Collated report | to build |
+
+### Measured along the way
+
+| | |
+|---|---|
+| Noise ceiling | Region PC trajectories are 0.90–0.998 reliable across all 42 components; single-unit PSTHs are only 0.05–0.13. Every model $R^2$ should be read against the former. |
+| Two inert knobs | `gradient_clip_norm = 1.0` sat 40× above the measured gradients and never bound. `spectral_radius` was never applied to the block parameterization at all — both are fixed. |
+| Seed agreement | Even cleanly converged fits agree at 0.997 on outputs but only 0.52 on latent drive geometry. Fixing convergence did not fix circuit identifiability. |
 
 The order is forced by what feeds what: 00 fixes the recipe, 01–02 fix the target and
 size, 03–04 are the structural claims, and 05 onwards are the science.
