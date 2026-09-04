@@ -33,7 +33,8 @@ that has an interpretable answer.
 | baseline | nothing | how well can this be fitted at all |
 | global structure | all cross-region blocks, or the dense within-region blocks | do regions need each other, and do they need internal recurrence |
 | region isolation | every connection into and out of one region | can the other three be reproduced without it |
-| pathway removal | one directed pathway | is any single route load-bearing |
+| directed removal | one directed pathway | is any single route load-bearing |
+| bidirectional cut | both directions between one pair | do these two regions need to exchange |
 
 Every arm is scored the same way: fit against the measured noise ceiling, the parameter
 count that bought it, agreement across seeds, and a visual check of the traces.
@@ -94,7 +95,7 @@ apply_thesis_plot_style(load_config(repo_root / "configs" / "plotting.yaml"))
 
 PROTOCOL_ROOT = protocol.resolve_chapter_root(DATASET_CFG_PATH, task="00_training_protocol")
 CAPACITY_ROOT = sweep.resolve_task_root("01_capacity", DATASET_CFG_PATH)
-TASK_ROOT = sweep.resolve_task_root("02_connectivity", DATASET_CFG_PATH)
+TASK_ROOT = sweep.resolve_task_root("03_connectivity", DATASET_CFG_PATH)
 CEILING_DIR = ceiling_mod.resolve_output_dir(DATASET_CFG_PATH)
 FIGURE_DIR = syn.resolve_output_dir(DATASET_CFG_PATH, scope="03_connectivity")
 FIGURES = ThesisFigureSettings(output_dir=FIGURE_DIR)
@@ -167,15 +168,33 @@ talking to each other.
 > or the reverse. Section 4a therefore reports the two costs **separately**, and only the
 > second speaks to whether the region is necessary to the rest of the network.
 
-The **pathway removal** arm takes out one directed block at a time. Twelve pathways is a
-lot of fitting, so the default is the four into and out of BLA — the region the legacy
-ensemble singled out as changing its drive share during interactive-face fixations. Widen
-`PATHWAYS_TO_TEST` if the result warrants it.
+The **pathway** arm comes in two forms, and the first is the reason for the second.
+
+*Directed removal* takes out one block at a time — `a → b` while `b → a` stays. Measured on
+the first pass, that is too weak a perturbation to read: every directed removal cost between
+0.0001 and 0.0012 in ceiling-relative fit, against a baseline seed-to-seed spread of 0.0002.
+Most were indistinguishable from noise. With twelve blocks between four regions, removing
+one leaves eleven and the network simply reroutes.
+
+*Bidirectional removal* severs a pair of regions from each other entirely — both `a → b`
+and `b → a` — while each stays connected to the other two. Six unordered pairs. This sits
+between the directed arm (2 of 12 blocks removed rather than 1) and region isolation (which
+removes 6), and it is the granularity at which "these two regions need to talk to each
+other" becomes a testable claim.
+
+Both arms are kept. The directed one is what justifies the bidirectional one, and "single
+directed pathways are individually dispensable" is a result in its own right.
 """
 
 S1_CODE = r'''
+from itertools import combinations
+
+#: Directed removals, kept from the first pass: they establish that one-way cuts are too
+#: weak to read, which is what motivates the bidirectional arm.
 PATHWAYS_TO_TEST = [(source, "bla") for source in REGIONS if source != "bla"] + \
                    [("bla", target) for target in REGIONS if target != "bla"]
+#: Every unordered pair, severed in both directions. Six of them for four regions.
+PAIRS_TO_CUT = list(combinations(REGIONS, 2))
 
 # l1_weight_scale is set to 0 rather than inherited. The task-00 recipe carries 0.01,
 # which came from the legacy ensembles and was never chosen -- and at that value it is not
@@ -208,9 +227,15 @@ for region in REGIONS:
     ))
 for source, target in PATHWAYS_TO_TEST:
     variants.append(sweep.ModelVariant(
-        label=f"drop_{source}_to_{target}", arm="pathway removal",
+        label=f"drop_{source}_to_{target}", arm="directed removal",
         overrides={**base_overrides, "recurrent_connectivity": "full",
                    "recurrent_blocked_pairs": ((source, target),)},
+    ))
+for first, second in PAIRS_TO_CUT:
+    variants.append(sweep.ModelVariant(
+        label=f"cut_{first}_{second}", arm="bidirectional cut",
+        overrides={**base_overrides, "recurrent_connectivity": "full",
+                   "recurrent_blocked_pairs": ((first, second), (second, first))},
     ))
 
 seeds = protocol.protocol_seeds(n_seeds=SWEEP_SEEDS)
@@ -551,6 +576,10 @@ The three readings to make, in order:
    here, because they survive refitting. For the isolation arm, read the decomposed costs
    in Section 4a rather than the pooled score — a region whose removal looks expensive may
    simply be hard to reproduce alone.
+
+   Read the arms as a ladder of severity: one directed block, then a pair severed both
+   ways, then a region cut off entirely. A cost that appears only at the second rung says
+   the two regions need a bidirectional exchange rather than a one-way input.
 2. **Which removals cost, and does the cost concentrate in one condition?** A structural
    requirement that appears only during interactive-face fixations would be the
    substantive result.
