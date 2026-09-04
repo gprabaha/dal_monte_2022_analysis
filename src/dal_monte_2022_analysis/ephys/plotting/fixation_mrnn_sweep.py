@@ -244,8 +244,63 @@ def plot_seed_agreement_by_variant(
     return fig
 
 
+def plot_sparsity_interaction(
+    fit: pd.DataFrame,
+    sparsity: pd.DataFrame,
+    *,
+    figsize: tuple[float, float] = (7.6, 2.9),
+):
+    """Whether the tolerable within-region sparsity depends on the inter-regional rank.
+
+    ``fit`` and ``sparsity`` both need ``rank`` and ``l1`` columns. Sequential selection --
+    fix the rank, then sweep the penalty -- would be valid only if the two did not interact.
+    They plausibly do: with a wide inter-regional channel the model can route around its
+    within-region blocks and discard them for free, while a narrow one has to keep them.
+    The right-hand panel is what shows whether the penalty is producing sparsity or an
+    ablation.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    ranks = sorted(fit["rank"].dropna().unique())
+    colours = plt.cm.viridis(np.linspace(0.1, 0.85, max(len(ranks), 1)))
+
+    ax = axes[0]
+    for rank, colour in zip(ranks, colours):
+        block = fit[fit["rank"] == rank].groupby("l1")["r2_vs_ceiling"].mean().sort_index()
+        ax.plot(block.index.to_numpy() + 1e-6, block.to_numpy(), marker="o", markersize=4,
+                linewidth=1.2, color=colour, label=f"rank {rank:g}" if np.isfinite(rank) else "dense")
+    ax.axhline(1.0, color=INK, linewidth=0.9, linestyle="--")
+    ax.text(1.2e-6, 1.002, "the noise ceiling", fontsize=5.8, color=INK, va="bottom")
+    ax.set_xscale("log")
+    ax.set_xlabel("within-region $L_1$ scale  (leftmost point is 0)")
+    ax.set_ylabel("$R^2$ / noise ceiling")
+    ax.legend(fontsize=6, loc="lower left", ncol=2)
+    ax.set_title("does a narrower channel need its internal blocks?", fontsize=7, color=MUTED_INK, pad=5)
+    nice_axis(ax)
+    _panel(ax, "A")
+
+    ax = axes[1]
+    for rank, colour in zip(ranks, colours):
+        block = sparsity[sparsity["rank"] == rank].groupby("l1")["within_to_cross_norm"].mean().sort_index()
+        ax.plot(block.index.to_numpy() + 1e-6, block.to_numpy(), marker="o", markersize=4,
+                linewidth=1.2, color=colour)
+    ax.axhline(1.0, color=MUTED_INK, linewidth=0.8, linestyle=":")
+    ax.text(1.2e-6, 1.02, "as strong as the unpenalised blocks", fontsize=5.8, color=MUTED_INK, va="bottom")
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("within-region $L_1$ scale")
+    ax.set_ylabel("within-block norm /\ncross-block norm")
+    ax.set_title("sparsity, or ablation?", fontsize=7, color=MUTED_INK, pad=5)
+    nice_axis(ax)
+    ax.yaxis.set_major_locator(mpl.ticker.LogLocator(base=10.0, numticks=8))
+    _panel(ax, "B")
+
+    fig.tight_layout()
+    return fig
+
+
 __all__ = [
     "plot_fit_gallery",
+    "plot_sparsity_interaction",
     "plot_fit_versus_constraint",
     "plot_seed_agreement_by_variant",
     "plot_sweep_loss_trajectories",

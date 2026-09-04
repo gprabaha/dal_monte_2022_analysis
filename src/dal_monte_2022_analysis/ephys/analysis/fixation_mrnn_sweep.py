@@ -533,6 +533,130 @@ def decompose_isolation_fit(
     return pd.DataFrame(rows)
 
 
+# --------------------------------------------------------------------------------------
+# Within-region sparsity
+# --------------------------------------------------------------------------------------
+
+
+def within_region_sparsity(run_dir: str | Path, *, device: str = "cpu") -> pd.DataFrame:
+    """How concentrated each region's internal recurrent block actually is.
+
+    An L1 penalty is an *input*; sparsity is the *outcome*, and the map between them is
+    steep enough that the scale cannot stand in for the result -- on this model a penalty
+    of 0.01 produces not a sparse block but an absent one, with weights five orders of
+    magnitude below the cross-region blocks.
+
+    Three measures, because each fails differently:
+
+    - ``participation_ratio`` -- :math:`(\sum|w|)^2/\sum w^2`, the effective number of
+      contributing weights. Threshold-free, and directly comparable to the block size.
+    - ``gini`` -- concentration on a 0-1 scale, invariant to overall magnitude, so it
+      separates "shrunk uniformly" from "genuinely sparse".
+    - ``fraction_near_zero`` -- readable, but depends on the threshold, so it is reported
+      alongside rather than alone.
+
+    The cross-region blocks are measured too. They carry no penalty, so they are the
+    within-subject control for what an unregularised block of this model looks like.
+
+    **Read the scale-free measures together with the norm.** An L1 penalty can produce two
+    very different outcomes that Gini and the participation ratio cannot tell apart: a few
+    large weights surviving (genuine sparsity, Gini rises) or every weight shrinking
+    together (an ablation, Gini barely moves). Measured on this model, a penalty of 0.01
+    gives the second -- Gini moves 0.37 to 0.43 while the block norm collapses by five
+    orders of magnitude. :func:`summarize_sparsity` therefore reports the within-to-cross
+    norm ratio alongside, which is the measure that separates them.
+    """
+    replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
+    model = replay["model"]
+    slices = model.hidden_region_slices()
+    weight = model.recurrent_weight_matrix().detach().cpu().numpy()
+
+    def describe(block: np.ndarray, reference: float) -> dict[str, float]:
+        magnitude = np.abs(block).ravel()
+        total = float(magnitude.sum())
+        squared = float((magnitude ** 2).sum())
+        ordered = np.sort(magnitude)
+        n = ordered.size
+        gini = (
+            float((2.0 * np.sum(np.arange(1, n + 1) * ordered)) / (n * total) - (n + 1) / n)
+            if total > 0 else np.nan
+        )
+        return {
+            "n_weights": int(n),
+            "frobenius": float(np.linalg.norm(block)),
+            "median_abs": float(np.median(magnitude)),
+            "participation_ratio": float(total ** 2 / squared) if squared > 0 else 0.0,
+            "gini": gini,
+            "fraction_near_zero": float(np.mean(magnitude < 0.01 * reference)) if reference > 0 else np.nan,
+        }
+
+    reference = float(np.abs(weight).max())
+    rows: list[dict[str, object]] = []
+    for region in model.region_order:
+        rows.append({"block": "within", "region": region,
+                     **describe(weight[slices[region], slices[region]], reference)})
+    for source in model.region_order:
+        for target in model.region_order:
+            if source == target:
+                continue
+            rows.append({"block": "cross", "region": f"{source}→{target}",
+                         **describe(weight[slices[target], slices[source]], reference)})
+    frame = pd.DataFrame(rows)
+    frame["effective_fraction"] = frame["participation_ratio"] / frame["n_weights"]
+    return frame.assign(run_dir=str(run_dir))
+
+
+def summarize_sparsity(inventory: pd.DataFrame, *, device: str = "cpu") -> pd.DataFrame:
+    """Achieved within-region sparsity per variant, with the cross-region blocks alongside."""
+    rows: list[dict[str, object]] = []
+    for _, run in inventory[inventory["complete"].astype(bool)].iterrows():
+        measured = within_region_sparsity(run["run_dir"], device=device)
+        within = measured[measured["block"] == "within"]
+        cross = measured[measured["block"] == "cross"]
+        cross_norm = float(cross["frobenius"].mean())
+        rows.append({
+            "label": run["label"],
+            "seed": run["seed"],
+            # The headline: how much within-region weight survives, relative to the
+            # unpenalised cross-region blocks of the same model. Near 0 means the penalty
+            # removed the blocks rather than sparsified them.
+            "within_to_cross_norm": float(within["frobenius"].mean() / cross_norm) if cross_norm > 0 else np.nan,
+            "within_effective_fraction": float(within["effective_fraction"].mean()),
+            "within_gini": float(within["gini"].mean()),
+            "within_fraction_near_zero": float(within["fraction_near_zero"].mean()),
+            "cross_effective_fraction": float(cross["effective_fraction"].mean()),
+            "cross_gini": float(cross["gini"].mean()),
+        })
+    return pd.DataFrame(rows)
+
+
+def lowest_adequate_rank(
+    fit: pd.DataFrame,
+    *,
+    baseline_label: str = "dense",
+    tolerance_multiple: float = 2.0,
+) -> int | None:
+    """The lowest constrained rank whose fit is indistinguishable from the dense baseline.
+
+    "Indistinguishable" is measured against the baseline's own seed-to-seed spread rather
+    than a fixed threshold, so the criterion scales with how reproducible the fits are.
+    Returns ``None`` when no constrained rank qualifies.
+    """
+    baseline = fit[fit["label"] == baseline_label]
+    if baseline.empty:
+        return None
+    spread = float(baseline.groupby("seed")["r2_vs_ceiling"].mean().std())
+    reference = float(baseline["r2_vs_ceiling"].mean())
+    ranks: list[tuple[int, float]] = []
+    for label, block in fit.groupby("label"):
+        if not str(label).startswith("rank"):
+            continue
+        ranks.append((int(str(label).replace("rank", "").split("__")[0]),
+                      float(block["r2_vs_ceiling"].mean())))
+    adequate = [r for r, value in sorted(ranks) if reference - value <= tolerance_multiple * spread]
+    return adequate[0] if adequate else None
+
+
 def resolve_task_root(task: str, cfg_path: str | Path = "configs/dataset.yaml") -> Path:
     """Output root for one sweep task."""
     return resolve_chapter_root(cfg_path, task=task)
@@ -553,6 +677,9 @@ __all__ = [
     "load_histories",
     "PROVISIONAL_OPTIMIZER",
     "load_selected_protocol",
+    "lowest_adequate_rank",
+    "summarize_sparsity",
+    "within_region_sparsity",
     "load_selected_protocol_or_provisional",
     "representative_traces",
     "resolve_task_root",

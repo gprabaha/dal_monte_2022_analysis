@@ -51,7 +51,8 @@ fitted and reported separately.
 | 5 | The visual check across ranks |
 | 6 | Seed agreement — does a narrower channel make the circuit identifiable? |
 | 7 | What rank the unconstrained model actually used |
-| 8 | Reading the result |
+| 8 | Reading the rank result |
+| 9 | Within-region sparsity, crossed with rank |
 """
 
 
@@ -588,7 +589,175 @@ else:
 '''
 
 
-S9 = r"""## 9. What comes next
+S9_TEXT = r"""## 9. Within-region sparsity, crossed with rank
+
+Everything above holds the within-region blocks unpenalised. That was a deliberate
+correction — the inherited `l1_weight_scale = 0.01` turned out to drive those blocks to
+~1e-6 against ~1e-1 for the cross-region blocks — but "no penalty" then became a default
+rather than a tested choice, which is the same mistake in the other direction.
+
+**Why this is crossed with rank rather than run after it.** The two plausibly interact,
+and the archived runs already hint at it: with *dense* cross-region blocks the same
+penalty annihilated the within-region ones, while with a *rank-3* channel they survived —
+the L1 term was still 12% of the reconstruction loss at the end of training. With a wide
+inter-regional channel the model can route around its internal blocks and discard them for
+free; with a narrow one it cannot afford to. Fixing the rank first and then sweeping the
+penalty would measure the tolerable sparsity at one point of an interaction and report it
+as a general result.
+
+**Sparsity is measured, not assumed.** The penalty scale is an input; what matters is what
+the fitted blocks look like, and the map between them is steep. Two outcomes that a
+penalty can produce look identical to any scale-free measure — a few large weights
+surviving (sparsity) or every weight shrinking together (ablation). Gini moves from 0.37
+to 0.43 across that entire difference. The **within-to-cross norm ratio** is what separates
+them: 1.03 when the blocks are intact, 0.00001 when they have been erased.
+"""
+
+S9_CODE = r'''
+#: Penalties to test, spanning "off" to the value that was inherited and turned out to be
+#: an ablation. Log-spaced, because the effect is not close to linear in the scale.
+L1_GRID = (0.0, 1e-4, 1e-3, 1e-2)
+#: Overwritten below once the rank sweep identifies its knee. The placeholder keeps the
+#: section readable — and the variant list well defined — while that sweep is still running.
+RANKS_FOR_SPARSITY = [3]
+
+if not histories:
+    display(Markdown(
+        "The rank sweep has to finish before the sparsity arm can be centred on its knee. "
+        f"Until then the arm is shown at a placeholder rank of {RANKS_FOR_SPARSITY[0]}, which is "
+        "**not** a selection — do not submit it before Section 4 reports."
+    ))
+else:
+    knee = sweep.lowest_adequate_rank(fit, baseline_label=BASELINE)
+    if knee is None:
+        display(Markdown(
+            "**No constrained rank matched the dense baseline**, so there is no knee to centre on. "
+            "Run the sparsity arm at the ranks you want to defend instead, by setting "
+            "`RANKS_FOR_SPARSITY` directly."
+        ))
+        RANKS_FOR_SPARSITY = [3]
+    else:
+        # Bracket the knee: one below it, the knee itself, and one comfortably above, so the
+        # interaction can be seen rather than inferred from a single rank.
+        candidates = sorted({max(1, knee - 1), knee, min(max(RANK_GRID), knee + 2)})
+        RANKS_FOR_SPARSITY = candidates
+        display(Markdown(
+            f"The lowest rank indistinguishable from dense is **{knee}**, so the sparsity arm runs at "
+            f"ranks {RANKS_FOR_SPARSITY} — bracketing it, so an interaction shows up as the curves "
+            f"separating rather than having to be inferred from one rank."
+        ))
+
+sparsity_variants = [
+    sweep.ModelVariant(
+        label=f"rank{rank:02d}_l1{l1:g}".replace(".", "p").replace("-", "m"),
+        arm="sparsity",
+        overrides={**base_overrides, "recurrent_bottleneck_dim": int(rank), "l1_weight_scale": float(l1)},
+    )
+    for rank in RANKS_FOR_SPARSITY for l1 in L1_GRID
+]
+display(pd.DataFrame([v.describe() for v in sparsity_variants]))
+display(Markdown(
+    f"**{len(sparsity_variants)} cells × {len(seeds)} seeds = {len(sparsity_variants) * len(seeds)} runs.** "
+    f"The `l1 = 0` column duplicates the rank sweep above at those ranks, which is deliberate: it is "
+    f"the within-arm reference, fitted under identical conditions."
+))
+'''
+
+
+S9B_CODE = r'''
+SUBMIT_SPARSITY = False   # <-- set to True to submit the sparsity arm
+
+sparsity_commands, _ = sweep.variant_job_commands(
+    sparsity_variants, seeds, root=TASK_ROOT, repo_root=repo_root,
+    protocol=SELECTED_PROTOCOL, mrnn_cfg_path=MRNN_CFG_PATH,
+)
+sparsity_inventory = sweep.index_variant_runs(TASK_ROOT, sparsity_variants, seeds)
+display(Markdown(
+    f"**{int(sparsity_inventory['complete'].sum())} complete**, "
+    f"**{int(sparsity_inventory['pending'].sum())} not yet run** of {len(sparsity_inventory)} cells."
+))
+if job_state["active"]:
+    display(Markdown(f"Job array `{job_state['job_id']}` is still running; submission blocked."))
+elif SUBMIT_SPARSITY and sparsity_commands:
+    from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
+
+    jobs_dir = TASK_ROOT / "_jobs_sparsity"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    job_file = jobs_dir / "sparsity.txt"
+    write_job_file(job_file, sparsity_commands)
+    sparsity_id = submit_dsq_array_job(
+        job_file_path=job_file, sbatch_script_path=jobs_dir / "sparsity.sh",
+        log_dir=jobs_dir / "logs", job_name="mrnn_sparsity", partition="psych_gpu",
+        cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
+    )
+    (jobs_dir / "job_id.txt").write_text(str(sparsity_id) + "\n")
+    display(Markdown(f"Submitted **{len(sparsity_commands)}** runs as job array **{sparsity_id}**."))
+elif sparsity_commands:
+    display(Markdown("`SUBMIT_SPARSITY` is **False** — nothing was submitted."))
+'''
+
+
+S9C_CODE = r'''
+sparsity_histories = sweep.load_histories(sparsity_inventory)
+if not sparsity_histories:
+    display(Markdown("No sparsity runs yet — this section fills in as the arm lands."))
+else:
+    display(sweep.convergence_table(sparsity_histories).round(6))
+    sparsity_fit = sweep.score_variant_fit(sparsity_inventory, ceiling_by_region)
+    achieved = sweep.summarize_sparsity(sparsity_inventory)
+
+    def _decode(label):
+        rank = int(str(label).split("_")[0].replace("rank", ""))
+        token = str(label).split("_l1")[1].replace("p", ".").replace("m", "-")
+        return rank, float(token)
+
+    for frame in (sparsity_fit, achieved):
+        decoded = [_decode(v) for v in frame["label"]]
+        frame["rank"] = [r for r, _ in decoded]
+        frame["l1"] = [l for _, l in decoded]
+
+    display(Markdown("**Fit and achieved sparsity**, by rank and penalty:"))
+    display(sparsity_fit.groupby(["rank", "l1"])["r2_vs_ceiling"].mean().unstack("l1").round(4))
+    display(achieved.groupby(["rank", "l1"])[
+        ["within_to_cross_norm", "within_gini", "within_fraction_near_zero"]].mean().round(5))
+    show(viz.plot_sparsity_interaction(sparsity_fit, achieved), "fig06_sparsity_interaction")
+'''
+
+
+S9D_CODE = r'''
+if sparsity_histories:
+    baseline_spread = float(
+        sparsity_fit[sparsity_fit["l1"] == 0.0].groupby(["rank", "seed"])["r2_vs_ceiling"]
+        .mean().groupby("rank").std().mean()
+    )
+    rows = []
+    for rank, block in sparsity_fit.groupby("rank"):
+        reference = float(block[block["l1"] == 0.0]["r2_vs_ceiling"].mean())
+        for l1, cell in block.groupby("l1"):
+            if l1 == 0.0:
+                continue
+            norm = float(achieved[(achieved["rank"] == rank) & (achieved["l1"] == l1)]["within_to_cross_norm"].mean())
+            rows.append({"rank": rank, "l1": l1,
+                         "fit_cost": reference - float(cell["r2_vs_ceiling"].mean()),
+                         "within_to_cross_norm": norm,
+                         "free": (reference - float(cell["r2_vs_ceiling"].mean())) <= 2 * baseline_spread})
+    verdict = pd.DataFrame(rows)
+    display(verdict.round(5))
+    display(Markdown(
+        f"A penalty counts as free when it costs less than twice the unpenalised seed-to-seed "
+        f"spread ({baseline_spread:.4f}).\n\n"
+        f"**Read the two columns together.** A penalty that is free *and* leaves "
+        f"`within_to_cross_norm` well below 1 has genuinely removed within-region weight the data "
+        f"did not need — the result this arm is for. A penalty that is free while that ratio stays "
+        f"near 1 has done nothing. And one that drives the ratio toward zero has ablated the blocks "
+        f"rather than sparsified them, whatever it did to the fit.\n\n"
+        f"**If the free penalty differs by rank, the two constraints interact** and neither can be "
+        f"chosen without the other — which is the reason this arm is a grid rather than a sequence."
+    ))
+'''
+
+
+S10 = r"""## 10. What comes next
 
 Tasks 01–03 together fix the model the rest of the chapter uses: how wide, what is
 connected, and how much passes between regions — each chosen because the data still
@@ -638,7 +807,12 @@ def build() -> dict:
         _cell("code", S7_CODE),
         _cell("markdown", S8_TEXT),
         _cell("code", S8_CODE),
-        _cell("markdown", S9),
+        _cell("markdown", S9_TEXT),
+        _cell("code", S9_CODE),
+        _cell("code", S9B_CODE),
+        _cell("code", S9C_CODE),
+        _cell("code", S9D_CODE),
+        _cell("markdown", S10),
     ]
     return {
         "cells": cells,
