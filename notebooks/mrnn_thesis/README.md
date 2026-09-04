@@ -31,6 +31,12 @@ Task 02 is the hinge: it collates what 00 and 01 established, diagnoses why inte
 fixations fit worst, and fixes the base model every constraint task is measured against.
 The earlier `04_target_and_loss` notebook is retired — its content is task 02's.
 
+`selected_base_model.yaml` carries **the condition weighting as well as the width**, and
+tasks 03–04 inherit both. That matters more than it looks: a constraint result measured
+under an objective that under-fits one condition fivefold is partly a statement about the
+objective. Fixing it once, at the hinge, means every later comparison is made on a model
+that reproduces all three fixation types to the same standard.
+
 ### The framing
 
 With ~23,000 free parameters against 50,400 target numbers, many configurations fit these
@@ -66,6 +72,8 @@ for scanning. Full-detail traces are reserved for whichever model a task selects
 | Three inert or miscounted things | `gradient_clip_norm = 1.0` sat 40× above the measured gradients and never bound. `spectral_radius` was never applied to the block parameterization at all. `mrnn.W_rec` is a gradient-free copy that inflated every parameter count ~6×. All three fixed. |
 | Model size | The 50-unit model has **23,368** effective parameters against 50,400 target numbers — a ratio of 0.46, not the ~1 the legacy audit reported. |
 | Seed agreement | Cleanly converged fits agree at 0.997 on outputs but only 0.52 on latent drive geometry. Fixing convergence did not fix circuit identifiability. |
+| Regions need the network, not each other | Every region loses 0.021–0.029 of ceiling-relative fit when cut off from the other three, while the remaining three lose only 0.003–0.005 when any one is removed. No single region is a driver. |
+| Directed cuts are too weak to read | Removing one of twelve directed blocks costs 0.0001–0.0012 against a 0.0002 seed spread — the network reroutes through the other eleven. Pairs are severed bidirectionally instead. |
 | Interactive face | Systematically the hardest condition to reproduce, and **not** because the network is too small. It has 5× more trials than the others, hence the cleanest PSTH, the least variance and the least high-frequency power — so an absolute-error objective weights it in inverse proportion to how well it was measured. Width compensates only by letting the other conditions overfit. |
 | The recipe is architecture-dependent | The optimal learning rate moved threefold (1e-3 → 3e-4) when the rank constraint and within-region penalty were removed, so tasks 03–04 retry a failing variant at a lower rate before scoring it. |
 

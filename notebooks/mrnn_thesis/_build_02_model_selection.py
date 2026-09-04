@@ -664,8 +664,13 @@ loss value, and both minimal in the sense that nothing smaller reaches that ceil
 
 **Next:** `03_connectivity.ipynb` — with the base model fixed, which connections are
 necessary. Then `04_bottleneck_rank.ipynb` for how narrow inter-regional communication can be.
-Both are constraint questions, and both are measured against this model rather than against
-one chosen for them.
+
+Both import `selected_base_model.yaml`, which carries **the condition weighting as well as
+the width**. That matters more than it looks: a constraint result measured under an
+objective that under-fits one condition fivefold is partly a statement about the objective.
+Fixing the weighting here means every later comparison — which connections are necessary,
+how narrow the inter-regional channel can be, whether independently seeded fits agree — is
+made on a model that reproduces all three fixation types to the same standard.
 """
 
 

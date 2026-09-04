@@ -95,6 +95,7 @@ apply_thesis_plot_style(load_config(repo_root / "configs" / "plotting.yaml"))
 
 PROTOCOL_ROOT = protocol.resolve_chapter_root(DATASET_CFG_PATH, task="00_training_protocol")
 CAPACITY_ROOT = sweep.resolve_task_root("01_capacity", DATASET_CFG_PATH)
+MODEL_SELECTION_ROOT = sweep.resolve_task_root("02_model_selection", DATASET_CFG_PATH)
 TASK_ROOT = sweep.resolve_task_root("03_connectivity", DATASET_CFG_PATH)
 CEILING_DIR = ceiling_mod.resolve_output_dir(DATASET_CFG_PATH)
 FIGURE_DIR = syn.resolve_output_dir(DATASET_CFG_PATH, scope="03_connectivity")
@@ -114,21 +115,39 @@ REGIONS = tuple(SELECTED_PROTOCOL["architecture"].get("region_order", ("ofc", "b
 
 #: Width comes from task 01. Until that sweep finishes the notebook falls back to 50 and
 #: says so, so it can be read and reviewed before the dependency lands.
+# The base model comes from task 02, which fixes both the width and how the objective
+# weights the fixation conditions. Both matter here: a constraint result measured under an
+# objective that under-fits one condition fivefold is a statement about the objective as
+# much as about the constraint, so every variant below inherits the weighting too.
+BASE_MODEL_PATH = MODEL_SELECTION_ROOT / "selected_base_model.yaml"
 CAPACITY_PATH = CAPACITY_ROOT / "selected_capacity.yaml"
-if CAPACITY_PATH.exists():
+if BASE_MODEL_PATH.exists():
+    BASE_MODEL = yaml.safe_load(BASE_MODEL_PATH.read_text())
+    HIDDEN_UNITS = int(BASE_MODEL["hidden_units"])
+    CONDITION_WEIGHTING = str(BASE_MODEL["condition_loss_weighting"])
+    SELECTED_CAPACITY = BASE_MODEL
+    CAPACITY_SOURCE = f"task 02 (`{HIDDEN_UNITS}` units, `{CONDITION_WEIGHTING}` weighting)"
+elif CAPACITY_PATH.exists():
+    BASE_MODEL = None
     SELECTED_CAPACITY = yaml.safe_load(CAPACITY_PATH.read_text())
     HIDDEN_UNITS = int(SELECTED_CAPACITY["hidden_units"])
-    CAPACITY_SOURCE = f"task 01 (`{SELECTED_CAPACITY['selected_label']}`)"
+    CONDITION_WEIGHTING = "uniform"
+    CAPACITY_SOURCE = (f"task 01 (`{SELECTED_CAPACITY['selected_label']}`) with **provisional "
+                       f"uniform weighting** — task 02 has not finished")
 else:
+    BASE_MODEL = None
     SELECTED_CAPACITY = None
     HIDDEN_UNITS = 50
-    CAPACITY_SOURCE = "**provisional fallback** — task 01 has not finished"
+    CONDITION_WEIGHTING = "uniform"
+    CAPACITY_SOURCE = "**provisional fallback** — tasks 01 and 02 have not finished"
 
 #: Set True to queue this sweep before task 01 has chosen a width. Cluster time is the
 #: scarce resource and these arrays take hours, so waiting for a clean dependency can cost
 #: more than the risk: if task 01 selects a different width, the runs fitted here are at
 #: the wrong one and Section 1 will say so. The width every cell was actually trained at is
 #: recorded in its own run_config.yaml either way, so a mismatch is always detectable.
+#: Set True to queue before task 02 has fixed the base model. Both the width and the
+#: condition weighting would then be provisional.
 ALLOW_PROVISIONAL_WIDTH = False
 
 SWEEP_SEEDS = 3
@@ -204,7 +223,8 @@ PAIRS_TO_CUT = list(combinations(REGIONS, 2))
 # all, and would make `full` and `cross_plus_self_diagonal` near-duplicates. Sparsity is
 # swept properly in task 04.
 base_overrides = {"hidden_units": HIDDEN_UNITS, "recurrent_bottleneck_dim": None,
-                  "l1_weight_scale": 0.0}
+                  "l1_weight_scale": 0.0,
+                  "condition_loss_weighting": CONDITION_WEIGHTING}
 
 variants = [
     sweep.ModelVariant(label="full", arm="baseline",
@@ -296,10 +316,11 @@ if PROTOCOL_IS_PROVISIONAL:
            "Submission is blocked; set `ALLOW_PROVISIONAL_PROTOCOL = True` to queue anyway.")
     ))
 
-if SELECTED_CAPACITY is None:
+if BASE_MODEL is None:
     display(Markdown(
-        f"⚠️ **Task 01 has not finished**, so these cells would be fitted at the provisional "
-        f"width of **{HIDDEN_UNITS}** units. "
+        f"⚠️ **Task 02 has not fixed the base model**, so these cells would be fitted at the "
+        f"provisional width of **{HIDDEN_UNITS}** units with **{CONDITION_WEIGHTING}** condition "
+        f"weighting. "
         + ("`ALLOW_PROVISIONAL_WIDTH` is set, so submission is allowed — Section 1 will flag a "
            "mismatch once task 01 reports."
            if ALLOW_PROVISIONAL_WIDTH else
@@ -323,9 +344,9 @@ elif commands:
 S2B_CODE = r'''
 if job_state["active"]:
     display(Markdown(f"Nothing submitted: job array `{job_state['job_id']}` is still running."))
-elif SUBMIT and commands and SELECTED_CAPACITY is None and not ALLOW_PROVISIONAL_WIDTH:
+elif SUBMIT and commands and BASE_MODEL is None and not ALLOW_PROVISIONAL_WIDTH:
     display(Markdown(
-        f"**Not submitted**: task 01 has not selected a width, so these cells would be fitted at "
+        f"**Not submitted**: task 02 has not fixed the base model, so these cells would be fitted at "
         f"the provisional {HIDDEN_UNITS} units. Set `ALLOW_PROVISIONAL_WIDTH = True` to queue them "
         f"anyway — worth doing when the cluster is the bottleneck, since a mismatch is detectable "
         f"afterwards and only costs a refit."
