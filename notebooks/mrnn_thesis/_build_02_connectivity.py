@@ -351,6 +351,67 @@ else:
 '''
 
 
+S3B_TEXT = r"""### 3a. Constraints that need a smaller step
+
+The recipe is selected on the **unconstrained** model, and the optimum is
+architecture-dependent — on this problem the best learning rate moved by a factor of three
+when the rank constraint and the within-region penalty were removed. So a constrained
+variant that fails the bar has two possible explanations, and they mean opposite things:
+
+- the data cannot be reproduced under that constraint — the result this sweep is for;
+- the inherited recipe cannot *optimise* it — a statement about the optimiser, not the brain.
+
+Scoring a failure without separating them would report the second as the first. Any variant
+that fails is therefore refitted at successively lower learning rates, and which rate each
+one needed is reported rather than hidden: "this constraint required a smaller step" is
+itself informative about the loss landscape it induces.
+"""
+
+S3B_CODE = r'''
+if histories:
+    retries = sweep.retry_variants_for_nonconverged(
+        variants, convergence, inherited_lr=float(SELECTED_PROTOCOL["optimizer"]["lr"])
+    )
+    if not retries:
+        display(Markdown("Every variant converged at the inherited learning rate; no retries needed."))
+    else:
+        retry_commands, _ = sweep.variant_job_commands(
+            retries, seeds, root=TASK_ROOT, repo_root=repo_root,
+            protocol=SELECTED_PROTOCOL, mrnn_cfg_path=MRNN_CFG_PATH,
+        )
+        retry_inventory = sweep.index_variant_runs(TASK_ROOT, retries, seeds)
+        display(Markdown(
+            f"**{len(set(r.label.split('__')[0] for r in retries))} variant(s) failed the bar**, "
+            f"giving {len(retries)} retry configurations "
+            f"({int(retry_inventory['complete'].sum())} already trained, {len(retry_commands)} to run). "
+            f"Submit them the same way as Section 2, then re-run this notebook."
+        ))
+        if retry_commands and SUBMIT and not job_state["active"]:
+            from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
+
+            jobs_dir = TASK_ROOT / "_jobs_retry"
+            jobs_dir.mkdir(parents=True, exist_ok=True)
+            job_file = jobs_dir / "retry.txt"
+            write_job_file(job_file, retry_commands)
+            retry_id = submit_dsq_array_job(
+                job_file_path=job_file, sbatch_script_path=jobs_dir / "retry.sh",
+                log_dir=jobs_dir / "logs", job_name="mrnn_retry", partition="psych_gpu",
+                cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
+            )
+            (jobs_dir / "job_id.txt").write_text(str(retry_id) + "\n")
+            display(Markdown(f"Submitted **{len(retry_commands)}** retries as job array **{retry_id}**."))
+
+        retry_histories = sweep.load_histories(retry_inventory)
+        if retry_histories:
+            combined = pd.concat([convergence, sweep.convergence_table(retry_histories)], ignore_index=True)
+            resolved = sweep.resolve_best_converged(combined, base_labels=[v.label for v in variants])
+            display(resolved.round(6))
+            inventory = pd.concat([inventory, retry_inventory], ignore_index=True)
+            histories = {**histories, **retry_histories}
+            labels = list(resolved.loc[resolved["converged"], "used_label"])
+'''
+
+
 S4_TEXT = r"""## 4. Fit, and what it cost
 
 Scored against the measured noise ceiling. The parameter count matters more here than in
@@ -555,6 +616,8 @@ def build() -> dict:
         _cell("code", S2B_CODE),
         _cell("markdown", S3_TEXT),
         _cell("code", S3_CODE),
+        _cell("markdown", S3B_TEXT),
+        _cell("code", S3B_CODE),
         _cell("markdown", S4_TEXT),
         _cell("code", S4_CODE),
         _cell("code", S4B_CODE),

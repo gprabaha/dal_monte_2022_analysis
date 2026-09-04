@@ -42,7 +42,7 @@ is stable, we cannot tell a real property of the model class from optimiser nois
 | 2 | Diagnosis — three things the spikes are *not*, and the one thing they are |
 | 3 | A completed pilot: what a decaying learning rate already buys |
 | 4 | The sweep design, and the bar it has to clear |
-| 5 | Run state, and submission (off by default) |
+| 5 | Run state, submission (off by default), and loss trajectories |
 | 6 | Result and selection |
 | 7 | Reconstruction quality — does a good loss mean a faithful trace? |
 
@@ -589,6 +589,40 @@ if len(inventory):
 '''
 
 
+S5D_TEXT = r"""### 5a. Loss trajectories
+
+Every configuration, all seeds overlaid. This is the panel the convergence bar is
+measured on, so it belongs next to the run state rather than buried in the selection: a
+configuration that ends at a low loss after thrashing the whole way is not the same
+result as one that settled, and only the trajectory shows the difference.
+
+Panel titles are green where every seed cleared the bar and red where they did not.
+"""
+
+S5D_CODE = r'''
+from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_sweep as sweep_shared
+from dal_monte_2022_analysis.ephys.plotting import fixation_mrnn_sweep as sweep_viz
+
+sweep_histories = {}
+for _config in configs:
+    _runs = []
+    for _seed in seeds:
+        _path = protocol.protocol_run_dir(SWEEP_ROOT, _config, _seed) / "history.csv"
+        if _path.exists():
+            _runs.append(pd.read_csv(_path))
+    if _runs:
+        sweep_histories[_config.label] = _runs
+
+if not sweep_histories:
+    display(Markdown("No completed runs yet."))
+else:
+    sweep_convergence = sweep_shared.convergence_table(sweep_histories)
+    display(sweep_convergence.round(5))
+    show(sweep_viz.plot_sweep_loss_trajectories(sweep_histories, convergence=sweep_convergence,
+                                                n_columns=3), "fig05b_sweep_loss_trajectories")
+'''
+
+
 S6_TEXT = r"""## 6. Result and selection
 
 This section is inert until the sweep finishes. It applies the Section 4a bar to every
@@ -826,6 +860,8 @@ def build() -> dict:
         _cell("code", S5_CODE),
         _cell("code", S5B_CODE),
         _cell("code", S5C_CODE),
+        _cell("markdown", S5D_TEXT),
+        _cell("code", S5D_CODE),
         _cell("markdown", S6_TEXT),
         _cell("code", S6_CODE),
         _cell("code", S6B_CODE),

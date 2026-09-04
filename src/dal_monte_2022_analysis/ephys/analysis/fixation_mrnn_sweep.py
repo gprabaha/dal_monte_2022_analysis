@@ -252,6 +252,95 @@ def convergence_table(
     return pd.DataFrame(rows)
 
 
+#: Learning rates tried, in order, when a variant fails to converge at the inherited one.
+#: The ladder exists because the optimum is architecture-dependent: on this problem the
+#: best learning rate moved by a factor of three when the rank constraint and the
+#: within-region penalty were removed, so a recipe tuned on the unconstrained model is not
+#: guaranteed to optimise a constrained one.
+LEARNING_RATE_LADDER: tuple[float, ...] = (3e-4, 1e-4, 3e-5)
+
+
+def retry_variants_for_nonconverged(
+    variants: Sequence[ModelVariant],
+    convergence: pd.DataFrame,
+    *,
+    inherited_lr: float,
+    ladder: Sequence[float] = LEARNING_RATE_LADDER,
+) -> list[ModelVariant]:
+    """Re-fit variants that failed the convergence bar, at successively lower learning rates.
+
+    Without this a constraint sweep cannot distinguish its two possible failures. A variant
+    that scores badly may be telling us the data cannot be reproduced under that
+    constraint -- the result the sweep is for -- or merely that the inherited recipe cannot
+    optimise it, which is a statement about the optimiser and not about the brain. Since the
+    recipe is selected on the *unconstrained* model, the second failure is the more likely
+    one, and it would masquerade as the first.
+
+    Retrying only the failures, and recording which learning rate each variant needed,
+    turns that confound into a reported quantity: "this constraint required a smaller step"
+    is itself informative about the loss landscape it induces.
+    """
+    if convergence.empty:
+        return []
+    failed = set(
+        convergence.loc[convergence["n_converged"] < convergence["n_seeds"], "label"]
+    )
+    lower = [rate for rate in ladder if float(rate) < float(inherited_lr)]
+    retries: list[ModelVariant] = []
+    for variant in variants:
+        if variant.label not in failed:
+            continue
+        for rate in lower:
+            retries.append(
+                ModelVariant(
+                    label=f"{variant.label}__lr{rate:g}".replace(".", "p").replace("-", "m"),
+                    overrides={**dict(variant.overrides), "lr": float(rate)},
+                    arm=f"{variant.arm} (retry)",
+                )
+            )
+    return retries
+
+
+def resolve_best_converged(
+    convergence: pd.DataFrame,
+    *,
+    base_labels: Sequence[str],
+) -> pd.DataFrame:
+    """For each base variant, the run that converged, whatever learning rate it needed.
+
+    Retry labels carry a ``__lr`` suffix, so a base variant and its retries collapse to one
+    row here. Reporting the learning rate each variant ended up needing keeps the
+    comparison honest: variants fitted at different step sizes are still comparable on fit,
+    but the difference has to be visible rather than hidden in the label.
+    """
+    rows: list[dict[str, object]] = []
+    for base in base_labels:
+        candidates = convergence[
+            (convergence["label"] == base) | (convergence["label"].str.startswith(f"{base}__lr"))
+        ]
+        if candidates.empty:
+            continue
+        converged = candidates[candidates["n_converged"] == candidates["n_seeds"]]
+        chosen = (
+            converged.sort_values("median_best_loss").iloc[0]
+            if len(converged)
+            else candidates.sort_values("n_converged", ascending=False).iloc[0]
+        )
+        label = str(chosen["label"])
+        rows.append(
+            {
+                "variant": base,
+                "used_label": label,
+                "needed_lower_lr": "__lr" in label,
+                "converged": int(chosen["n_converged"]) == int(chosen["n_seeds"]),
+                "n_converged": int(chosen["n_converged"]),
+                "n_seeds": int(chosen["n_seeds"]),
+                "median_best_loss": float(chosen["median_best_loss"]),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def count_trainable_parameters(run_dir: str | Path, *, device: str = "cpu") -> dict[str, int]:
     """Free parameters that actually influence the output, split by role.
 
@@ -452,7 +541,10 @@ __all__ = [
     "CONDITION_ORDER",
     "ModelVariant",
     "build_variant_settings",
+    "LEARNING_RATE_LADDER",
     "convergence_table",
+    "resolve_best_converged",
+    "retry_variants_for_nonconverged",
     "count_trainable_parameters",
     "decompose_isolation_fit",
     "gallery_traces",

@@ -265,3 +265,80 @@ class TestIsolationDecomposition(unittest.TestCase):
             decompose_isolation_fit(
                 self._fit(), isolated_region_by_label={"isolate_a": "a"}, baseline_label="absent"
             )
+
+
+class TestLearningRateRetry(unittest.TestCase):
+    """A constraint sweep has two possible failures and must not confuse them: the data
+    cannot be reproduced under the constraint, or the inherited recipe cannot optimise it.
+    Since the recipe is selected on the unconstrained model, the second is the likelier."""
+
+    @staticmethod
+    def _variants():
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import ModelVariant
+
+        return [
+            ModelVariant(label="dense", overrides={"recurrent_bottleneck_dim": None}, arm="baseline"),
+            ModelVariant(label="rank03", overrides={"recurrent_bottleneck_dim": 3}, arm="rank"),
+        ]
+
+    @staticmethod
+    def _convergence(rank_converged: int):
+        return pd.DataFrame([
+            {"label": "dense", "n_seeds": 3, "n_converged": 3, "median_best_loss": 1.5e-4},
+            {"label": "rank03", "n_seeds": 3, "n_converged": rank_converged, "median_best_loss": 2.0e-4},
+        ])
+
+    def test_only_failures_are_retried(self) -> None:
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import retry_variants_for_nonconverged
+
+        retries = retry_variants_for_nonconverged(
+            self._variants(), self._convergence(rank_converged=1), inherited_lr=3e-4
+        )
+        self.assertTrue(all(r.label.startswith("rank03__lr") for r in retries))
+        self.assertFalse(any("dense" in r.label for r in retries))
+
+    def test_nothing_is_retried_when_everything_converged(self) -> None:
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import retry_variants_for_nonconverged
+
+        self.assertEqual(
+            retry_variants_for_nonconverged(
+                self._variants(), self._convergence(rank_converged=3), inherited_lr=3e-4
+            ),
+            [],
+        )
+
+    def test_retries_only_go_downward_in_learning_rate(self) -> None:
+        """Retrying upward would make an unstable variant less stable, not more."""
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import retry_variants_for_nonconverged
+
+        retries = retry_variants_for_nonconverged(
+            self._variants(), self._convergence(rank_converged=0), inherited_lr=1e-4
+        )
+        for retry in retries:
+            self.assertLess(float(retry.overrides["lr"]), 1e-4)
+
+    def test_a_variant_that_needed_a_lower_rate_is_reported_as_such(self) -> None:
+        """Variants fitted at different step sizes stay comparable on fit, but the
+        difference has to be visible rather than hidden in the label."""
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import resolve_best_converged
+
+        convergence = pd.concat([
+            self._convergence(rank_converged=1),
+            pd.DataFrame([{"label": "rank03__lr1em04", "n_seeds": 3, "n_converged": 3,
+                           "median_best_loss": 2.2e-4}]),
+        ])
+        resolved = resolve_best_converged(convergence, base_labels=["dense", "rank03"]).set_index("variant")
+        self.assertFalse(bool(resolved.loc["dense", "needed_lower_lr"]))
+        self.assertTrue(bool(resolved.loc["rank03", "needed_lower_lr"]))
+        self.assertTrue(bool(resolved.loc["rank03", "converged"]))
+
+    def test_a_variant_that_never_converges_is_not_silently_passed(self) -> None:
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import resolve_best_converged
+
+        convergence = pd.concat([
+            self._convergence(rank_converged=1),
+            pd.DataFrame([{"label": "rank03__lr1em04", "n_seeds": 3, "n_converged": 2,
+                           "median_best_loss": 2.2e-4}]),
+        ])
+        resolved = resolve_best_converged(convergence, base_labels=["rank03"]).set_index("variant")
+        self.assertFalse(bool(resolved.loc["rank03", "converged"]))
