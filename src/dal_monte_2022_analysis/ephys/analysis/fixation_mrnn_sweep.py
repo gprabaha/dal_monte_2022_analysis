@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Collection, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -147,9 +147,19 @@ def variant_job_commands(
     mrnn_cfg_path: str | Path,
     conda_env: str = "gaze_processing",
     skip_existing: bool = True,
+    exclude_run_dirs: Collection[str | Path] = (),
 ) -> tuple[list[str], list[Path]]:
-    """One shell command per missing (variant, seed) cell, each with a frozen config."""
+    """One shell command per missing (variant, seed) cell, each with a frozen config.
+
+    ``exclude_run_dirs`` holds cells that some other array has already claimed but has not
+    finished, from :func:`in_flight_run_dirs`. They are invisible on disk -- a queued cell
+    and a never-submitted one look identical, because the checkpoint is written only at the
+    end -- so without it a second submission while an array is in flight would queue a
+    duplicate of every unfinished cell, and the duplicate would train into the same
+    directory as the original.
+    """
     repo_root = Path(repo_root)
+    claimed = {str(Path(path).resolve()) for path in exclude_run_dirs}
     commands: list[str] = []
     run_dirs: list[Path] = []
     for variant in variants:
@@ -157,6 +167,8 @@ def variant_job_commands(
             run_dir = variant_run_dir(root, variant, seed)
             run_dirs.append(run_dir)
             if skip_existing and (run_dir / "checkpoint_best.pth").exists():
+                continue
+            if str(run_dir.resolve()) in claimed:
                 continue
             run_dir.mkdir(parents=True, exist_ok=True)
             settings = build_variant_settings(
@@ -190,14 +202,22 @@ def index_variant_runs(
     root: str | Path,
     variants: Sequence[ModelVariant],
     seeds: Sequence[int],
+    *,
+    in_flight: Collection[str | Path] = (),
 ) -> pd.DataFrame:
-    """One row per (variant, seed) cell with its completion state."""
+    """One row per (variant, seed) cell with its completion state.
+
+    ``pending`` counts only cells that nothing has claimed, so it is what a submission
+    would actually queue; cells sitting in a live array are reported as ``queued`` instead.
+    """
+    claimed = {str(Path(path).resolve()) for path in in_flight}
     rows: list[dict[str, object]] = []
     for variant in variants:
         for seed in seeds:
             run_dir = variant_run_dir(root, variant, seed)
             complete = (run_dir / "checkpoint_best.pth").exists()
             failed = (run_dir / "training_failed.json").exists()
+            queued = not complete and not failed and str(run_dir.resolve()) in claimed
             rows.append(
                 {
                     **variant.describe(),
@@ -205,10 +225,180 @@ def index_variant_runs(
                     "run_dir": str(run_dir),
                     "complete": bool(complete),
                     "diverged": bool(failed and not complete),
-                    "pending": not complete and not failed,
+                    "queued": bool(queued),
+                    "pending": not complete and not failed and not queued,
                 }
             )
     return pd.DataFrame(rows)
+
+
+# --------------------------------------------------------------------------------------
+# Which cells a live array has already claimed
+# --------------------------------------------------------------------------------------
+#
+# A cell writes its checkpoint only when training ends, so on disk a cell that is queued
+# looks exactly like a cell that was never submitted. The first version of these notebooks
+# handled that by refusing to submit anything at all while any array was live, which is
+# safe but blocks every independent arm behind the slowest one -- with a 20-GPU cap and
+# six-hour runs that costs days. Recording what each submission claimed makes the
+# distinction explicit, so a rerun can queue the arms that nothing owns.
+
+
+def submission_record_path(jobs_dir: str | Path, job_id: str | int) -> Path:
+    return Path(jobs_dir) / f"submitted_{job_id}.json"
+
+
+def record_submission(
+    jobs_dir: str | Path,
+    *,
+    job_id: str | int,
+    run_dirs: Sequence[str | Path],
+    label: str = "",
+) -> Path:
+    """Write down which cells a submitted array owns."""
+    import json
+    from datetime import datetime, timezone
+
+    path = submission_record_path(jobs_dir, job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "job_id": str(job_id),
+        "label": label,
+        "submitted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "run_dirs": [str(Path(run_dir).resolve()) for run_dir in run_dirs],
+    }
+    with path.open("w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+    return path
+
+
+def _run_dirs_in_job_file(job_file: str | Path) -> list[str]:
+    """The ``--run-dir`` arguments of every command in a dSQ job file."""
+    import shlex
+
+    run_dirs: list[str] = []
+    for line in Path(job_file).read_text().splitlines():
+        tokens = shlex.split(line)
+        for index, token in enumerate(tokens[:-1]):
+            if token == "--run-dir":
+                run_dirs.append(str(Path(tokens[index + 1]).resolve()))
+    return run_dirs
+
+
+def backfill_submission_records(jobs_dir: str | Path) -> list[Path]:
+    """Reconstruct records for arrays submitted before submissions were recorded.
+
+    The job file dSQ was handed is the exact list of commands that were queued, and
+    ``job_id.txt`` names the array they became, so the pairing is recoverable rather than
+    lost. Without this, an array submitted by the earlier code would look unclaimed and be
+    duplicated by the first rerun.
+    """
+    jobs_dir = Path(jobs_dir)
+    id_file = jobs_dir / "job_id.txt"
+    if not id_file.exists():
+        return []
+    job_id = id_file.read_text().strip()
+    if not job_id or submission_record_path(jobs_dir, job_id).exists():
+        return []
+    candidates = [path for path in sorted(jobs_dir.glob("*.txt")) if path.name != "job_id.txt"]
+    if not candidates:
+        return []
+    newest = max(candidates, key=lambda path: path.stat().st_mtime)
+    return [
+        record_submission(
+            jobs_dir,
+            job_id=job_id,
+            run_dirs=_run_dirs_in_job_file(newest),
+            label=f"backfilled from {newest.name}",
+        )
+    ]
+
+
+def _array_job_states(job_ids: Sequence[str]) -> dict[str, dict[str, int]]:
+    """Per-array task-state counts from one ``squeue`` call.
+
+    ``%F`` is the base array id, so tasks of ``29250099_[18-20]`` are attributed to
+    ``29250099`` rather than counted as separate jobs.
+    """
+    import subprocess
+
+    if not job_ids:
+        return {}
+    try:
+        result = subprocess.run(
+            ["squeue", "-j", ",".join(sorted(set(job_ids))), "-h", "-o", "%F %T"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    states: dict[str, dict[str, int]] = {}
+    for line in result.stdout.splitlines():
+        parts = line.split()
+        if len(parts) != 2:
+            continue
+        base, state = parts
+        states.setdefault(base, {})
+        states[base][state] = states[base].get(state, 0) + 1
+    return states
+
+
+#: Slurm states that mean a cell is still owned by its array.
+LIVE_JOB_STATES: frozenset[str] = frozenset(
+    {"PENDING", "RUNNING", "CONFIGURING", "COMPLETING", "SUSPENDED", "REQUEUED"}
+)
+
+
+def in_flight_run_dirs(*jobs_dirs: str | Path) -> dict[str, object]:
+    """Cells owned by an array that is still on the queue, across several job directories.
+
+    Returns ``{"run_dirs": set[str], "jobs": [...]}``. Arms of one task submit into
+    separate job directories, and a rerun has to know about all of them at once, so this
+    takes as many as it is given.
+    """
+    import json
+
+    records: list[dict[str, object]] = []
+    for jobs_dir in jobs_dirs:
+        jobs_dir = Path(jobs_dir)
+        if not jobs_dir.exists():
+            continue
+        backfill_submission_records(jobs_dir)
+        for path in sorted(jobs_dir.glob("submitted_*.json")):
+            with path.open("r", encoding="utf-8") as handle:
+                records.append(json.load(handle))
+    states = _array_job_states([str(record["job_id"]) for record in records])
+    claimed: set[str] = set()
+    jobs: list[dict[str, object]] = []
+    for record in records:
+        job_id = str(record["job_id"])
+        job_states = states.get(job_id, {})
+        active = any(state in LIVE_JOB_STATES for state in job_states)
+        if active:
+            claimed.update(str(path) for path in record["run_dirs"])
+        jobs.append(
+            {
+                "job_id": job_id,
+                "label": record.get("label", ""),
+                "active": active,
+                "cells": len(record["run_dirs"]),
+                "states": job_states,
+            }
+        )
+    return {"run_dirs": claimed, "jobs": jobs}
+
+
+def describe_in_flight(state: Mapping[str, object]) -> str:
+    """One markdown line per live array, for the submission cell to display."""
+    lines = []
+    for job in state["jobs"]:  # type: ignore[index]
+        if not job["active"]:
+            continue
+        detail = ", ".join(f"{n} {s.lower()}" for s, n in sorted(job["states"].items()))
+        label = f" ({job['label']})" if job["label"] else ""
+        lines.append(f"- array `{job['job_id']}`{label}: {job['cells']} cells — {detail}")
+    if not lines:
+        return "No array from this task is on the queue."
+    return "**Live arrays owning cells in this task:**\n" + "\n".join(lines)
 
 
 def load_histories(inventory: pd.DataFrame) -> dict[str, list[pd.DataFrame]]:
@@ -628,6 +818,44 @@ def summarize_sparsity(inventory: pd.DataFrame, *, device: str = "cpu") -> pd.Da
             "cross_gini": float(cross["gini"].mean()),
         })
     return pd.DataFrame(rows)
+
+
+def adequacy_table(
+    fit: pd.DataFrame,
+    *,
+    baseline_label: str = "dense",
+    tolerance_multiple: float = 2.0,
+) -> pd.DataFrame:
+    """Per-variant fit against an unconstrained baseline, with an adequacy flag.
+
+    Adequacy is judged on the **worst condition**, not the mean. A constraint that leaves
+    the average fit intact by trading interactive-face structure for object structure has
+    not been tolerated by the data; it has been absorbed by the condition the objective
+    already finds easy. The tolerance scales with the baseline's own seed-to-seed spread
+    rather than being a fixed number, so it tightens as the fits become more reproducible.
+
+    This is the *constraint* half of the selection rule. Among the variants it marks
+    adequate, the one to keep is chosen on reproducibility and cost -- never on fit, which
+    beyond the ceiling is measuring noise.
+    """
+    per_seed = (
+        fit.groupby(["label", "seed", "condition"])["r2_vs_ceiling"].mean().reset_index()
+    )
+    worst = per_seed.groupby(["label", "seed"])["r2_vs_ceiling"].min().reset_index()
+    summary = worst.groupby("label")["r2_vs_ceiling"].agg(
+        worst_condition="mean", seed_spread="std"
+    )
+    summary["mean_all"] = fit.groupby("label")["r2_vs_ceiling"].mean()
+    if baseline_label in summary.index:
+        reference = float(summary.loc[baseline_label, "worst_condition"])
+        spread = float(summary.loc[baseline_label, "seed_spread"])
+    else:
+        reference, spread = float("nan"), float("nan")
+    tolerance = tolerance_multiple * spread
+    summary["cost_vs_baseline"] = reference - summary["worst_condition"]
+    summary["tolerance"] = tolerance
+    summary["adequate"] = summary["cost_vs_baseline"] <= tolerance
+    return summary.reset_index()
 
 
 def lowest_adequate_rank(

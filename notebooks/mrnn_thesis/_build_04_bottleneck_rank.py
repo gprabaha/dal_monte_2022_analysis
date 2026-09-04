@@ -52,7 +52,8 @@ fitted and reported separately.
 | 6 | Seed agreement — does a narrower channel make the circuit identifiable? |
 | 7 | What rank the unconstrained model actually used |
 | 8 | Reading the rank result |
-| 9 | Within-region sparsity, crossed with rank |
+| 9 | Sparsity and low rank as a matched-budget comparison |
+| 10 | The combination, verified jointly |
 """
 
 
@@ -259,17 +260,25 @@ S2_TEXT = r"""## 2. Run state and submission"""
 S2_CODE = r'''
 SUBMIT = False   # <-- set to True to actually submit the missing cells
 
+# Every job directory this task submits into. A live array in any of them owns cells that
+# are indistinguishable on disk from cells that were never run -- a checkpoint is written
+# only when training ends -- so all of them have to be consulted before deciding what is
+# genuinely unqueued. That includes the sparsity arm in Section 9, which submits
+# separately and may well be in flight while this section is re-run.
+JOBS_DIRS = [TASK_ROOT / "_jobs", TASK_ROOT / "_jobs_sparsity", TASK_ROOT / "_jobs_retry"]
+flight = sweep.in_flight_run_dirs(*JOBS_DIRS)
+
 commands, run_dirs = sweep.variant_job_commands(
     variants, seeds, root=TASK_ROOT, repo_root=repo_root,
     protocol=SELECTED_PROTOCOL, mrnn_cfg_path=MRNN_CFG_PATH,
+    exclude_run_dirs=flight["run_dirs"],
 )
-inventory = sweep.index_variant_runs(TASK_ROOT, variants, seeds)
-job_state = protocol.running_job_state(TASK_ROOT / "_jobs")
+inventory = sweep.index_variant_runs(TASK_ROOT, variants, seeds, in_flight=flight["run_dirs"])
 
 if PROTOCOL_IS_PROVISIONAL:
     display(Markdown(
         "⚠️ **Task 00 has not frozen a recipe**, so the optimiser here is the provisional one "
-        "(`lr 1e-3`, cosine, clip 0.05). The architecture is not provisional. "
+        "(`lr 3e-4`, cosine, clip 0.05). The architecture is not provisional. "
         + ("`ALLOW_PROVISIONAL_PROTOCOL` is set, so submission is allowed."
            if ALLOW_PROVISIONAL_PROTOCOL else
            "Submission is blocked; set `ALLOW_PROVISIONAL_PROTOCOL = True` to queue anyway.")
@@ -284,25 +293,24 @@ if BASE_MODEL is None:
            if ALLOW_PROVISIONAL_WIDTH else
            "Submission is blocked; set `ALLOW_PROVISIONAL_WIDTH = True` to queue anyway.")
     ))
+
 display(Markdown(
-    f"**{int(inventory['complete'].sum())} complete**, **{int(inventory['diverged'].sum())} diverged**, "
-    f"**{int(inventory['pending'].sum())} not yet run** of {len(inventory)} cells."
+    f"**{int(inventory['complete'].sum())} complete**, **{int(inventory['queued'].sum())} on the "
+    f"queue**, **{int(inventory['diverged'].sum())} diverged**, "
+    f"**{int(inventory['pending'].sum())} unqueued** of {len(inventory)} cells."
 ))
-if job_state["active"]:
+display(Markdown(sweep.describe_in_flight(flight)))
+if commands:
     display(Markdown(
-        f"⚠️ **Job array `{job_state['job_id']}` is still on the queue** "
-        f"({', '.join(f'{n} {s.lower()}' for s, n in sorted(job_state['states'].items()))})."
+        f"{len(commands)} run(s) would be submitted — the unqueued cells only. Cells a live array "
+        f"already owns are skipped, so this is safe to re-run while jobs are on the queue."
     ))
-elif commands:
-    display(Markdown(f"{len(commands)} run(s) would be submitted."))
     print("first command:\n")
     print(commands[0])
 '''
 
 S2B_CODE = r'''
-if job_state["active"]:
-    display(Markdown(f"Nothing submitted: job array `{job_state['job_id']}` is still running."))
-elif SUBMIT and commands and BASE_MODEL is None and not ALLOW_PROVISIONAL_WIDTH:
+if SUBMIT and commands and BASE_MODEL is None and not ALLOW_PROVISIONAL_WIDTH:
     display(Markdown(
         f"**Not submitted**: task 02 has not fixed the base model, so these cells would be fitted at "
         f"the provisional {HIDDEN_UNITS} units. Set `ALLOW_PROVISIONAL_WIDTH = True` to queue them "
@@ -315,21 +323,33 @@ elif SUBMIT and commands and PROTOCOL_IS_PROVISIONAL and not ALLOW_PROVISIONAL_P
         "`ALLOW_PROVISIONAL_PROTOCOL = True` to queue on the provisional optimiser."
     ))
 elif SUBMIT and commands:
+    from datetime import datetime
+
     from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
 
     jobs_dir = TASK_ROOT / "_jobs"
     jobs_dir.mkdir(parents=True, exist_ok=True)
-    job_file = jobs_dir / "bottleneck.txt"
+    # Timestamped, so a submission made while an earlier array is still live keeps its own
+    # command list and logs instead of overwriting the record of what is running.
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    job_file = jobs_dir / f"bottleneck_{stamp}.txt"
     write_job_file(job_file, commands)
+    submitted = [Path(line.split("--run-dir ")[1].split()[0]) for line in commands]
     job_id = submit_dsq_array_job(
-        job_file_path=job_file, sbatch_script_path=jobs_dir / "bottleneck.sh",
+        job_file_path=job_file, sbatch_script_path=jobs_dir / f"bottleneck_{stamp}.sh",
         log_dir=jobs_dir / "logs", job_name="mrnn_bottleneck", partition="psych_gpu",
         cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
     )
+    sweep.record_submission(jobs_dir, job_id=job_id, run_dirs=submitted, label=f"rank {stamp}")
     (jobs_dir / "job_id.txt").write_text(str(job_id) + "\n")
     display(Markdown(f"Submitted **{len(commands)}** runs as job array **{job_id}**."))
 elif commands:
     display(Markdown("`SUBMIT` is **False** — nothing was submitted."))
+elif int(inventory["queued"].sum()):
+    display(Markdown(
+        f"Nothing to submit: the {int(inventory['queued'].sum())} outstanding cells are already "
+        f"on the queue."
+    ))
 else:
     display(Markdown("Every cell is already trained; go on to Section 3."))
 '''
@@ -384,25 +404,35 @@ if histories:
         retry_commands, _ = sweep.variant_job_commands(
             retries, seeds, root=TASK_ROOT, repo_root=repo_root,
             protocol=SELECTED_PROTOCOL, mrnn_cfg_path=MRNN_CFG_PATH,
+            exclude_run_dirs=flight["run_dirs"],
         )
-        retry_inventory = sweep.index_variant_runs(TASK_ROOT, retries, seeds)
+        retry_inventory = sweep.index_variant_runs(
+            TASK_ROOT, retries, seeds, in_flight=flight["run_dirs"]
+        )
         display(Markdown(
             f"**{len(set(r.label.split('__')[0] for r in retries))} variant(s) failed the bar**, "
             f"giving {len(retries)} retry configurations "
             f"({int(retry_inventory['complete'].sum())} already trained, {len(retry_commands)} to run). "
             f"Submit them the same way as Section 2, then re-run this notebook."
         ))
-        if retry_commands and SUBMIT and not job_state["active"]:
+        if retry_commands and SUBMIT:
+            from datetime import datetime
+
             from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
 
             jobs_dir = TASK_ROOT / "_jobs_retry"
             jobs_dir.mkdir(parents=True, exist_ok=True)
-            job_file = jobs_dir / "retry.txt"
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            job_file = jobs_dir / f"retry_{stamp}.txt"
             write_job_file(job_file, retry_commands)
+            retry_dirs = [Path(line.split("--run-dir ")[1].split()[0]) for line in retry_commands]
             retry_id = submit_dsq_array_job(
-                job_file_path=job_file, sbatch_script_path=jobs_dir / "retry.sh",
+                job_file_path=job_file, sbatch_script_path=jobs_dir / f"retry_{stamp}.sh",
                 log_dir=jobs_dir / "logs", job_name="mrnn_retry", partition="psych_gpu",
                 cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
+            )
+            sweep.record_submission(
+                jobs_dir, job_id=retry_id, run_dirs=retry_dirs, label=f"retry {stamp}"
             )
             (jobs_dir / "job_id.txt").write_text(str(retry_id) + "\n")
             display(Markdown(f"Submitted **{len(retry_commands)}** retries as job array **{retry_id}**."))
@@ -589,184 +619,479 @@ else:
 '''
 
 
-S9_TEXT = r"""## 9. Within-region sparsity, crossed with rank
+S9_TEXT = r"""
+## 9. Sparsity and low rank as a matched-budget comparison
 
-Everything above holds the within-region blocks unpenalised. That was a deliberate
-correction — the inherited `l1_weight_scale = 0.01` turned out to drive those blocks to
-~1e-6 against ~1e-1 for the cross-region blocks — but "no penalty" then became a default
-rather than a tested choice, which is the same mistake in the other direction.
+Sections 4-8 constrain the inter-regional channel one way: force each block through a
+product of a left and a right factor, so everything passing from one region to another
+passes through $r$ shared dimensions. That restricts the **rank** of the pathway. It is not
+the only way to make a pathway cheap, and the alternative asks a different question.
 
-**Why this is crossed with rank rather than run after it.** The two plausibly interact,
-and the archived runs already hint at it: with *dense* cross-region blocks the same
-penalty annihilated the within-region ones, while with a *rank-3* channel they survived —
-the L1 term was still 12% of the reconstruction loss at the end of training. With a wide
-inter-regional channel the model can route around its internal blocks and discard them for
-free; with a narrow one it cannot afford to. Fixing the rank first and then sweeping the
-penalty would measure the tolerable sparsity at one point of an interaction and report it
-as a general result.
+**Sparsity and low rank are independent.** A block that keeps a quarter of its entries is
+still full rank; a rank-5 block is still fully dense. Measured directly on this
+architecture:
 
-**Sparsity is measured, not assumed.** The penalty scale is an input; what matters is what
-the fitted blocks look like, and the map between them is steep. Two outcomes that a
-penalty can produce look identical to any scale-free measure — a few large weights
-surviving (sparsity) or every weight shrinking together (ablation). Gini moves from 0.37
-to 0.43 across that entire difference. The **within-to-cross norm ratio** is what separates
-them: 1.03 when the blocks are intact, 0.00001 when they have been erased.
+| constraint | density | rank | live entries |
+|---|---|---|---|
+| dense (baseline) | 100.0% | 20 | 1600 |
+| 25% of entries kept | 25.5% | 20 | 1008 |
+| rank 5 (same cost) | 100.0% | 5 | 1600 |
+| 10% of entries kept | 10.2% | 16 | 879 |
+| rank 2 (same cost) | 100.0% | 2 | 1600 |
+
+So "make the pathway smaller" is really two claims that one sweep cannot separate:
+*communication is confined to few dimensions* (rank) versus *communication runs over few
+connections* (sparsity). They can be made to cost the same. On a $40\times40$ block, rank
+$r$ costs $2\times40\times r = 80r$ free parameters and density $d$ costs $1600d$, so the
+two are matched when **$d = r/20$**. Any difference at matched budget is attributable to
+the *structure* of the constraint rather than to how much of it there is.
+
+**Three prongs, each measured against the same dense baseline.**
+
+| prong | what is constrained | grid |
+|---|---|---|
+| A · within-region sparsity | each region's own recurrent block | density 0.05, 0.10, 0.25, 0.50 |
+| B · cross-region sparsity | the 12 inter-regional blocks | density 0.05, 0.10, 0.25, 0.50 |
+| C · cross-region low rank | the 12 inter-regional blocks | rank 1, 2, 5, 10 — **already fitted in Section 4** |
+
+Prong C costs nothing extra: `RANK_GRID` already contains the matched ranks, so those runs
+are read out of the sweep above rather than repeated. Only A and B are submitted here, and
+neither depends on the rank sweep's answer, so both can be queued while Section 4 is still
+running.
+
+Prong B is what makes prong C interpretable. Cross-region sparsity and cross-region low
+rank spend an identical budget on an identical set of blocks, so if the low-rank models
+turn out to be the more reproducible across seeds, that is because rank is the right
+description of inter-regional communication — not because the constraint happened to be
+the tighter of the two.
+
+**Why the L1 arm was dropped.** An earlier version of this section swept an L1 penalty
+scale. That measured the wrong thing twice over: the penalty is an *input* and sparsity is
+the *outcome*, and on this model the map between them is not gradual — at 0.01 the
+within-region blocks land five orders of magnitude below the cross-region ones, which is
+not a sparse network but an ablated one. A density mask states the constraint directly, so
+the surviving fraction is set rather than hoped for, and leaves the surviving weights free
+to take whatever magnitude they need. `l1_weight_scale` stays pinned at 0 throughout.
+
+**Sparsity is still measured, not assumed.** Two outcomes that look identical to any
+scale-free measure — a few large weights surviving, or every weight shrinking together —
+are separated by the **within-to-cross norm ratio**: 1.03 when the blocks are intact,
+0.00001 when they have been erased. Gini moves only from 0.37 to 0.43 across that whole
+difference, which is why it is reported but not relied on.
 """
 
 S9_CODE = r'''
-#: Penalties to test, spanning "off" to the value that was inherited and turned out to be
-#: an ablation. Log-spaced, because the effect is not close to linear in the scale.
-L1_GRID = (0.0, 1e-4, 1e-3, 1e-2)
-#: Overwritten below once the rank sweep identifies its knee. The placeholder keeps the
-#: section readable — and the variant list well defined — while that sweep is still running.
-RANKS_FOR_SPARSITY = [3]
+#: Matched budgets. On a 40x40 block, rank r costs 80r free parameters and density d costs
+#: 1600d, so d = r/20 spends the same. Prong C is read from RANK_GRID, not refitted.
+MATCHED_RANKS = tuple(rank for rank in (1, 2, 5, 10) if rank in RANK_GRID)
+DENSITY_GRID = tuple(rank / 20.0 for rank in MATCHED_RANKS)   # 0.05, 0.10, 0.25, 0.50
+BLOCK_ENTRIES = HIDDEN_UNITS * HIDDEN_UNITS
 
-if not histories:
-    display(Markdown(
-        "The rank sweep has to finish before the sparsity arm can be centred on its knee. "
-        f"Until then the arm is shown at a placeholder rank of {RANKS_FOR_SPARSITY[0]}, which is "
-        "**not** a selection — do not submit it before Section 4 reports."
-    ))
-else:
-    knee = sweep.lowest_adequate_rank(fit, baseline_label=BASELINE)
-    if knee is None:
-        display(Markdown(
-            "**No constrained rank matched the dense baseline**, so there is no knee to centre on. "
-            "Run the sparsity arm at the ranks you want to defend instead, by setting "
-            "`RANKS_FOR_SPARSITY` directly."
-        ))
-        RANKS_FOR_SPARSITY = [3]
-    else:
-        # Bracket the knee: one below it, the knee itself, and one comfortably above, so the
-        # interaction can be seen rather than inferred from a single rank.
-        candidates = sorted({max(1, knee - 1), knee, min(max(RANK_GRID), knee + 2)})
-        RANKS_FOR_SPARSITY = candidates
-        display(Markdown(
-            f"The lowest rank indistinguishable from dense is **{knee}**, so the sparsity arm runs at "
-            f"ranks {RANKS_FOR_SPARSITY} — bracketing it, so an interaction shows up as the curves "
-            f"separating rather than having to be inferred from one rank."
-        ))
+
+def matched_budget(rank: int) -> int:
+    """Free parameters a rank-r factorization of one block costs."""
+    return 2 * HIDDEN_UNITS * int(rank)
+
 
 sparsity_variants = [
     sweep.ModelVariant(
-        label=f"rank{rank:02d}_l1{l1:g}".replace(".", "p").replace("-", "m"),
-        arm="sparsity",
-        overrides={**base_overrides, "recurrent_bottleneck_dim": int(rank), "l1_weight_scale": float(l1)},
+        label=f"within_d{density:g}".replace(".", "p"),
+        arm="A · within-region sparsity",
+        overrides={**base_overrides, "recurrent_bottleneck_dim": None,
+                   "within_region_density": float(density)},
     )
-    for rank in RANKS_FOR_SPARSITY for l1 in L1_GRID
+    for density in DENSITY_GRID
+] + [
+    sweep.ModelVariant(
+        label=f"cross_d{density:g}".replace(".", "p"),
+        arm="B · cross-region sparsity",
+        overrides={**base_overrides, "recurrent_bottleneck_dim": None,
+                   "cross_region_density": float(density)},
+    )
+    for density in DENSITY_GRID
 ]
+
+display(Markdown("**Matched budget.** Each row costs the same however it is spent."))
+display(pd.DataFrame({
+    "rank (prong C)": MATCHED_RANKS,
+    "density (prongs A, B)": DENSITY_GRID,
+    "free parameters per block": [matched_budget(rank) for rank in MATCHED_RANKS],
+    "of dense": [f"{matched_budget(rank) / BLOCK_ENTRIES:.0%}" for rank in MATCHED_RANKS],
+}))
 display(pd.DataFrame([v.describe() for v in sparsity_variants]))
 display(Markdown(
-    f"**{len(sparsity_variants)} cells × {len(seeds)} seeds = {len(sparsity_variants) * len(seeds)} runs.** "
-    f"The `l1 = 0` column duplicates the rank sweep above at those ranks, which is deliberate: it is "
-    f"the within-arm reference, fitted under identical conditions."
+    f"**{len(sparsity_variants)} cells × {len(seeds)} seeds = {len(sparsity_variants) * len(seeds)} "
+    f"runs** for prongs A and B. Prong C adds nothing to submit: ranks {MATCHED_RANKS} are already "
+    f"in `RANK_GRID`, and all three prongs share the dense baseline."
 ))
 '''
 
 
 S9B_CODE = r'''
-SUBMIT_SPARSITY = False   # <-- set to True to submit the sparsity arm
+SUBMIT_SPARSITY = False   # <-- set to True to submit prongs A and B
 
 sparsity_commands, _ = sweep.variant_job_commands(
     sparsity_variants, seeds, root=TASK_ROOT, repo_root=repo_root,
     protocol=SELECTED_PROTOCOL, mrnn_cfg_path=MRNN_CFG_PATH,
+    exclude_run_dirs=flight["run_dirs"],
 )
-sparsity_inventory = sweep.index_variant_runs(TASK_ROOT, sparsity_variants, seeds)
+sparsity_inventory = sweep.index_variant_runs(
+    TASK_ROOT, sparsity_variants, seeds, in_flight=flight["run_dirs"]
+)
 display(Markdown(
     f"**{int(sparsity_inventory['complete'].sum())} complete**, "
-    f"**{int(sparsity_inventory['pending'].sum())} not yet run** of {len(sparsity_inventory)} cells."
+    f"**{int(sparsity_inventory['queued'].sum())} on the queue**, "
+    f"**{int(sparsity_inventory['pending'].sum())} unqueued** of {len(sparsity_inventory)} cells."
 ))
-if job_state["active"]:
-    display(Markdown(f"Job array `{job_state['job_id']}` is still running; submission blocked."))
+
+if SUBMIT_SPARSITY and sparsity_commands and BASE_MODEL is None and not ALLOW_PROVISIONAL_WIDTH:
+    display(Markdown(
+        "**Not submitted**: task 02 has not fixed the base model. Set "
+        "`ALLOW_PROVISIONAL_WIDTH = True` to queue at the provisional width anyway."
+    ))
+elif SUBMIT_SPARSITY and sparsity_commands and PROTOCOL_IS_PROVISIONAL and not ALLOW_PROVISIONAL_PROTOCOL:
+    display(Markdown(
+        "**Not submitted**: task 00 has not frozen a recipe. Set "
+        "`ALLOW_PROVISIONAL_PROTOCOL = True` to queue on the provisional optimiser."
+    ))
 elif SUBMIT_SPARSITY and sparsity_commands:
+    from datetime import datetime
+
     from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
 
     jobs_dir = TASK_ROOT / "_jobs_sparsity"
     jobs_dir.mkdir(parents=True, exist_ok=True)
-    job_file = jobs_dir / "sparsity.txt"
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    job_file = jobs_dir / f"sparsity_{stamp}.txt"
     write_job_file(job_file, sparsity_commands)
+    submitted = [Path(line.split("--run-dir ")[1].split()[0]) for line in sparsity_commands]
     sparsity_id = submit_dsq_array_job(
-        job_file_path=job_file, sbatch_script_path=jobs_dir / "sparsity.sh",
+        job_file_path=job_file, sbatch_script_path=jobs_dir / f"sparsity_{stamp}.sh",
         log_dir=jobs_dir / "logs", job_name="mrnn_sparsity", partition="psych_gpu",
         cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
     )
+    sweep.record_submission(
+        jobs_dir, job_id=sparsity_id, run_dirs=submitted, label=f"sparsity {stamp}"
+    )
     (jobs_dir / "job_id.txt").write_text(str(sparsity_id) + "\n")
-    display(Markdown(f"Submitted **{len(sparsity_commands)}** runs as job array **{sparsity_id}**."))
+    display(Markdown(
+        f"Submitted **{len(sparsity_commands)}** runs as job array **{sparsity_id}**. They queue "
+        f"behind whatever is already in flight; the per-user GPU cap decides when they start."
+    ))
 elif sparsity_commands:
     display(Markdown("`SUBMIT_SPARSITY` is **False** — nothing was submitted."))
+elif int(sparsity_inventory["queued"].sum()):
+    display(Markdown("Nothing to submit: the outstanding cells are already on the queue."))
+else:
+    display(Markdown("Prongs A and B are fully trained."))
 '''
 
 
 S9C_CODE = r'''
+#: Which agreement features count towards "is the solution unique". "output trajectories"
+#: is excluded on purpose: it is what training optimises, so two seeds agreeing on it says
+#: the optimiser worked, not that the circuits match. It is displayed, never scored.
+TAUTOLOGICAL_FEATURES = ("output trajectories",)
+
+
+def _prong_and_budget(label: str) -> tuple[str, float]:
+    """Constraint family and free parameters per constrained block, from the label."""
+    text = str(label)
+    if text.startswith("within_d"):
+        return "A · within-region sparsity", float(text[8:].replace("p", ".")) * BLOCK_ENTRIES
+    if text.startswith("cross_d"):
+        return "B · cross-region sparsity", float(text[7:].replace("p", ".")) * BLOCK_ENTRIES
+    if text.startswith("rank"):
+        return "C · cross-region low rank", float(matched_budget(int(text[4:])))
+    return "dense", float(BLOCK_ENTRIES)
+
+
+def _scored_agreement(inventory_frame: pd.DataFrame) -> pd.DataFrame:
+    complete = inventory_frame[inventory_frame["complete"].astype(bool)]
+    if complete.empty:
+        return pd.DataFrame(columns=["label", "feature", "mean_agreement"])
+    return pd.concat([
+        tl.inter_seed_agreement(list(block["run_dir"])).assign(label=label)
+        for label, block in complete.groupby("label", sort=False)
+    ], ignore_index=True)
+
+
 sparsity_histories = sweep.load_histories(sparsity_inventory)
 if not sparsity_histories:
-    display(Markdown("No sparsity runs yet — this section fills in as the arm lands."))
+    display(Markdown(
+        "No prong A or B runs have finished yet — this section fills in as the arm lands. "
+        "Prong C is already reported in Section 4."
+    ))
 else:
-    display(sweep.convergence_table(sparsity_histories).round(6))
+    sparsity_convergence = sweep.convergence_table(sparsity_histories)
+    display(sparsity_convergence.round(6))
+    # Always look at the trajectories before the numbers: a constraint that merely makes
+    # the problem harder to optimise and one the data cannot tolerate produce the same
+    # final loss, and only the shape of the descent tells them apart.
+    show(viz.plot_sweep_loss_trajectories(sparsity_histories, convergence=sparsity_convergence),
+         "fig06_sparsity_losses")
+
     sparsity_fit = sweep.score_variant_fit(sparsity_inventory, ceiling_by_region)
     achieved = sweep.summarize_sparsity(sparsity_inventory)
-
-    def _decode(label):
-        rank = int(str(label).split("_")[0].replace("rank", ""))
-        token = str(label).split("_l1")[1].replace("p", ".").replace("m", "-")
-        return rank, float(token)
-
-    for frame in (sparsity_fit, achieved):
-        decoded = [_decode(v) for v in frame["label"]]
-        frame["rank"] = [r for r, _ in decoded]
-        frame["l1"] = [l for _, l in decoded]
-
-    display(Markdown("**Fit and achieved sparsity**, by rank and penalty:"))
-    display(sparsity_fit.groupby(["rank", "l1"])["r2_vs_ceiling"].mean().unstack("l1").round(4))
-    display(achieved.groupby(["rank", "l1"])[
+    display(Markdown(
+        "**Achieved sparsity.** The mask sets the surviving fraction; this checks what the "
+        "surviving weights did with it. A ratio near 1 means the blocks are intact and merely "
+        "thinner; a ratio near 0 means they were erased, whatever the fit says."
+    ))
+    display(achieved.groupby("label")[
         ["within_to_cross_norm", "within_gini", "within_fraction_near_zero"]].mean().round(5))
-    show(viz.plot_sparsity_interaction(sparsity_fit, achieved), "fig06_sparsity_interaction")
+
+    # Prong C is read out of Section 4 rather than refitted, so all three families are
+    # scored from runs trained under identical settings apart from the constraint itself.
+    combined_fit = pd.concat([fit, sparsity_fit], ignore_index=True)
+    agreement_all = pd.concat(
+        [_scored_agreement(inventory), _scored_agreement(sparsity_inventory)], ignore_index=True
+    )
+    scored = agreement_all[~agreement_all["feature"].isin(TAUTOLOGICAL_FEATURES)]
+    agreement_by_label = scored.groupby("label")["mean_agreement"].mean()
+
+    adequacy = sweep.adequacy_table(combined_fit, baseline_label=BASELINE)
+    adequacy["prong"] = [_prong_and_budget(label)[0] for label in adequacy["label"]]
+    adequacy["budget"] = [_prong_and_budget(label)[1] for label in adequacy["label"]]
+    adequacy["agreement"] = [float(agreement_by_label.get(label, np.nan))
+                             for label in adequacy["label"]]
+
+    matched_only = adequacy[
+        adequacy["prong"].isin(["A · within-region sparsity", "B · cross-region sparsity",
+                                "C · cross-region low rank"])
+        & adequacy["budget"].round(2).isin([round(matched_budget(r), 2) for r in MATCHED_RANKS])
+    ].copy()
+    matched_only = matched_only.rename(columns={"worst_condition": "fit_vs_ceiling"})
+    if BASELINE in set(adequacy["label"]):
+        matched_only["dense_fit"] = float(
+            adequacy.loc[adequacy["label"] == BASELINE, "worst_condition"].iloc[0])
+        matched_only["dense_agreement"] = float(agreement_by_label.get(BASELINE, np.nan))
+
+    display(Markdown(
+        "**All three prongs at matched budget.** `fit_vs_ceiling` is the *worst* condition, not "
+        "the mean — a constraint that keeps the average by giving up interactive-face structure "
+        "has not been tolerated by the data."
+    ))
+    display(matched_only[["prong", "label", "budget", "fit_vs_ceiling", "cost_vs_baseline",
+                          "adequate", "agreement"]].sort_values(["prong", "budget"]).round(4))
+    show(viz.plot_matched_budget_prongs(matched_only), "fig07_matched_budget_prongs")
 '''
 
 
 S9D_CODE = r'''
 if sparsity_histories:
-    baseline_spread = float(
-        sparsity_fit[sparsity_fit["l1"] == 0.0].groupby(["rank", "seed"])["r2_vs_ceiling"]
-        .mean().groupby("rank").std().mean()
-    )
-    rows = []
-    for rank, block in sparsity_fit.groupby("rank"):
-        reference = float(block[block["l1"] == 0.0]["r2_vs_ceiling"].mean())
-        for l1, cell in block.groupby("l1"):
-            if l1 == 0.0:
-                continue
-            norm = float(achieved[(achieved["rank"] == rank) & (achieved["l1"] == l1)]["within_to_cross_norm"].mean())
-            rows.append({"rank": rank, "l1": l1,
-                         "fit_cost": reference - float(cell["r2_vs_ceiling"].mean()),
-                         "within_to_cross_norm": norm,
-                         "free": (reference - float(cell["r2_vs_ceiling"].mean())) <= 2 * baseline_spread})
-    verdict = pd.DataFrame(rows)
-    display(verdict.round(5))
+    # The selection rule, stated once. Fit is a *constraint*: a model has to stay within the
+    # baseline's own seed spread on its worst condition. Past the noise ceiling, further loss
+    # reduction is fitting sampling error, so fit is not the thing being maximised. Among the
+    # models that clear the bar, the one to keep is the most reproducible across seeds at the
+    # smallest budget -- reproducibility is the objective, because a circuit claim that
+    # changes with the random seed is not a claim about the brain.
+    knees = []
+    for prong, block in matched_only.groupby("prong"):
+        ok = block[block["adequate"]]
+        if ok.empty:
+            knees.append({"prong": prong, "tightest_adequate": None, "budget": np.nan,
+                          "fit_vs_ceiling": np.nan, "agreement": np.nan})
+            continue
+        pick = ok.loc[ok["budget"].idxmin()]
+        knees.append({"prong": prong, "tightest_adequate": pick["label"],
+                      "budget": float(pick["budget"]),
+                      "fit_vs_ceiling": float(pick["fit_vs_ceiling"]),
+                      "agreement": float(pick["agreement"])})
+    knee_table = pd.DataFrame(knees)
+    display(Markdown("**Tightest setting each family can sustain**, and what it buys:"))
+    display(knee_table.round(4))
+
+    # The comparison the arm exists for. B and C spend the same budget on the same blocks
+    # and differ only in the structure of the constraint, so a gap between them is evidence
+    # about what inter-regional communication *is*, not about how much of it was removed.
+    b = knee_table[knee_table["prong"].str.startswith("B")]
+    c = knee_table[knee_table["prong"].str.startswith("C")]
+    if len(b) and len(c) and np.isfinite(b["budget"].iloc[0]) and np.isfinite(c["budget"].iloc[0]):
+        paired = matched_only[matched_only["prong"].str.startswith(("B", "C"))]
+        contrast = paired.pivot_table(index="budget", columns="prong",
+                                      values=["fit_vs_ceiling", "agreement"])
+        display(Markdown(
+            "**Sparsity against low rank, budget for budget.** Same parameters, same blocks, "
+            "different structure:"
+        ))
+        display(contrast.round(4))
+
+    findings_path = TASK_ROOT / "sparsity_findings.csv"
+    matched_only.to_csv(findings_path, index=False)
+    knee_table.to_csv(TASK_ROOT / "prong_knees.csv", index=False)
     display(Markdown(
-        f"A penalty counts as free when it costs less than twice the unpenalised seed-to-seed "
-        f"spread ({baseline_spread:.4f}).\n\n"
-        f"**Read the two columns together.** A penalty that is free *and* leaves "
-        f"`within_to_cross_norm` well below 1 has genuinely removed within-region weight the data "
-        f"did not need — the result this arm is for. A penalty that is free while that ratio stays "
-        f"near 1 has done nothing. And one that drives the ratio toward zero has ablated the blocks "
-        f"rather than sparsified them, whatever it did to the fit.\n\n"
-        f"**If the free penalty differs by rank, the two constraints interact** and neither can be "
-        f"chosen without the other — which is the reason this arm is a grid rather than a sequence."
+        f"Written to `{findings_path}` and `{TASK_ROOT / 'prong_knees.csv'}`. Section 10 uses "
+        f"the knees to define the one combination that gets verified jointly."
     ))
 '''
 
 
-S10 = r"""## 10. What comes next
+S10_TEXT = r"""
+## 10. The combination, verified jointly
 
-Tasks 01–03 together fix the model the rest of the chapter uses: how wide, what is
-connected, and how much passes between regions — each chosen because the data still
-supports the fit under that constraint, not because it minimised a loss.
+Sections 4 and 9 explore the three families **coordinate-wise**: each is varied on its own
+against the same dense baseline, which is what makes the comparison between them clean.
+Coordinate-wise exploration does not license a coordinate-wise *conclusion*. The
+constraints plausibly interact — with a wide inter-regional channel a region can route
+around its own thinned internal block, and with a narrow one it cannot — so the setting
+each family tolerates alone is not necessarily the setting it tolerates alongside the
+others.
 
-**Next:** `05_seed_ensembles.ipynb` fits that model at a hundred initializations and asks
-the question this whole rebuild exists to answer — whether independently fitted networks
-agree about the circuit once the fitting itself is sound. Task 04 (target and loss) is
-available if the fast-structure deficit turns out to matter for that answer.
+So the corner defined by the three knees is fitted as its own model and reported next to
+what the coordinate-wise result predicted for it. Two outcomes, both worth having:
+
+- **It holds.** The constraints are separable at these budgets, the coordinate-wise sweep
+  was the right experiment, and the combined model is the one the rest of the chapter uses.
+- **It does not.** The gap is the interaction, measured rather than assumed, and the
+  selection falls back to the tightest corner that does clear the bar.
+
+Only this one corner is fitted, not the full grid. The grid would be the right experiment
+if the interaction were the question; here it is a risk to be checked, and one corner
+checks it.
+"""
+
+
+S10_CODE = r'''
+SUBMIT_COMBINED = False   # <-- set to True to submit the joint corner
+
+combined_variants: list = []
+if not sparsity_histories:
+    display(Markdown(
+        "Section 9 has to report before the corner is defined. Nothing to submit yet."
+    ))
+elif knee_table["tightest_adequate"].isna().all():
+    display(Markdown(
+        "🔴 **No family sustained any constraint at matched budget.** There is no corner to "
+        "verify: the dense model is the selection, and that itself is the result — the data "
+        "does not tolerate a cheaper inter-regional channel at this width."
+    ))
+else:
+    corner: dict[str, object] = {**base_overrides, "recurrent_bottleneck_dim": None}
+    chosen: list[str] = []
+    for _, row in knee_table.iterrows():
+        if row["tightest_adequate"] is None or not isinstance(row["tightest_adequate"], str):
+            continue
+        label = str(row["tightest_adequate"])
+        prong = str(row["prong"])
+        if prong.startswith("A"):
+            corner["within_region_density"] = float(label[8:].replace("p", "."))
+        elif prong.startswith("B"):
+            corner["cross_region_density"] = float(label[7:].replace("p", "."))
+        elif prong.startswith("C"):
+            corner["recurrent_bottleneck_dim"] = int(label[4:])
+        chosen.append(f"{prong} → `{label}`")
+
+    # B and C constrain the same blocks two different ways. Imposing both would confound the
+    # comparison the arm was built to make, so the corner keeps whichever of the two survived
+    # at the smaller budget and drops the other.
+    cross_prongs = knee_table[knee_table["prong"].str.startswith(("B", "C"))].dropna(subset=["budget"])
+    if len(cross_prongs) == 2:
+        loser = cross_prongs.loc[cross_prongs["budget"].idxmax(), "prong"]
+        if str(loser).startswith("B"):
+            corner.pop("cross_region_density", None)
+        else:
+            corner["recurrent_bottleneck_dim"] = None
+        display(Markdown(
+            f"Both cross-region families cleared the bar; the corner keeps the one that did it at "
+            f"the smaller budget and drops **{loser}**, since imposing both would confound them."
+        ))
+
+    combined_variants = [sweep.ModelVariant(label="combined", arm="joint corner", overrides=corner)]
+    display(Markdown("**The corner:** " + "; ".join(chosen)))
+    display(pd.DataFrame([combined_variants[0].describe()]))
+
+if combined_variants:
+    combined_commands, _ = sweep.variant_job_commands(
+        combined_variants, seeds, root=TASK_ROOT, repo_root=repo_root,
+        protocol=SELECTED_PROTOCOL, mrnn_cfg_path=MRNN_CFG_PATH,
+        exclude_run_dirs=flight["run_dirs"],
+    )
+    combined_inventory = sweep.index_variant_runs(
+        TASK_ROOT, combined_variants, seeds, in_flight=flight["run_dirs"]
+    )
+    display(Markdown(
+        f"**{int(combined_inventory['complete'].sum())} complete**, "
+        f"**{int(combined_inventory['queued'].sum())} on the queue**, "
+        f"**{int(combined_inventory['pending'].sum())} unqueued** of {len(combined_inventory)} cells."
+    ))
+    if SUBMIT_COMBINED and combined_commands:
+        from datetime import datetime
+
+        from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
+
+        jobs_dir = TASK_ROOT / "_jobs_combined"
+        jobs_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        job_file = jobs_dir / f"combined_{stamp}.txt"
+        write_job_file(job_file, combined_commands)
+        submitted = [Path(line.split("--run-dir ")[1].split()[0]) for line in combined_commands]
+        combined_id = submit_dsq_array_job(
+            job_file_path=job_file, sbatch_script_path=jobs_dir / f"combined_{stamp}.sh",
+            log_dir=jobs_dir / "logs", job_name="mrnn_combined", partition="psych_gpu",
+            cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
+        )
+        sweep.record_submission(
+            jobs_dir, job_id=combined_id, run_dirs=submitted, label=f"combined {stamp}"
+        )
+        (jobs_dir / "job_id.txt").write_text(str(combined_id) + "\n")
+        display(Markdown(f"Submitted **{len(combined_commands)}** runs as array **{combined_id}**."))
+    elif combined_commands:
+        display(Markdown("`SUBMIT_COMBINED` is **False** — nothing was submitted."))
+
+    combined_histories = sweep.load_histories(combined_inventory)
+    if combined_histories:
+        display(sweep.convergence_table(combined_histories).round(6))
+        show(viz.plot_sweep_loss_trajectories(combined_histories), "fig08_combined_losses")
+        combined_score = sweep.score_variant_fit(combined_inventory, ceiling_by_region)
+        joint = sweep.adequacy_table(
+            pd.concat([fit, combined_score], ignore_index=True), baseline_label=BASELINE
+        )
+        row = joint[joint["label"] == "combined"]
+        predicted = float(knee_table["fit_vs_ceiling"].min())
+        display(joint[joint["label"].isin([BASELINE, "combined"])].round(4))
+        display(Markdown(
+            f"**Coordinate-wise prediction {predicted:.4f} against joint result "
+            f"{float(row['worst_condition'].iloc[0]):.4f}.** A gap here is the interaction between "
+            f"the constraints; it is reported whichever way it falls, and it decides whether the "
+            f"corner or a looser setting goes forward to task 05."
+        ))
+
+        selection = {
+            "hidden_units": HIDDEN_UNITS,
+            "condition_loss_weighting": CONDITION_WEIGHTING,
+            "l1_weight_scale": 0.0,
+            **{k: v for k, v in combined_variants[0].overrides.items()
+               if k in ("within_region_density", "cross_region_density", "recurrent_bottleneck_dim")},
+            "inherited_protocol": SELECTED_PROTOCOL.get("selected_label"),
+            "epochs": int(SELECTED_PROTOCOL["epochs"]),
+            "worst_condition_vs_ceiling": float(row["worst_condition"].iloc[0]),
+            "adequate": bool(row["adequate"].iloc[0]),
+            "selection_rule": ("fit is a constraint (worst condition within twice the dense seed "
+                               "spread); among adequate models, most reproducible at least cost"),
+        }
+        path = TASK_ROOT / "selected_constrained_model.yaml"
+        path.write_text(yaml.safe_dump(selection, sort_keys=False))
+        display(Markdown(f"Selection written to `{path}` — task 05 reads it from there."))
+'''
+
+
+S11 = r"""
+## 11. What comes next
+
+Tasks 01–04 together fix the model the rest of the chapter uses: how wide, what is
+connected, how much passes between regions, and over how many connections — each chosen
+because the data still supports the fit under that constraint, not because it minimised a
+loss.
+
+**Next:** `05_seed_ensembles.ipynb` takes the selected model and asks the question this
+whole rebuild exists to answer — whether independently fitted networks agree about the
+circuit once the fitting itself is sound. It runs a small ensemble first, and only scales
+up if the small one agrees: a hundred seeds of an unidentifiable model is a hundred copies
+of the same non-result. Agreement is scored against a null rather than a threshold, and on
+quantities that are invariant to the signed permutation of hidden units — the exact
+symmetry of a tanh network with a linear readout — so that relabelling units cannot be
+mistaken for a difference in circuits.
 """
 
 
@@ -812,7 +1137,9 @@ def build() -> dict:
         _cell("code", S9B_CODE),
         _cell("code", S9C_CODE),
         _cell("code", S9D_CODE),
-        _cell("markdown", S10),
+        _cell("markdown", S10_TEXT),
+        _cell("code", S10_CODE),
+        _cell("markdown", S11),
     ]
     return {
         "cells": cells,

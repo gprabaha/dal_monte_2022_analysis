@@ -342,3 +342,110 @@ class TestLearningRateRetry(unittest.TestCase):
         ])
         resolved = resolve_best_converged(convergence, base_labels=["rank03"]).set_index("variant")
         self.assertFalse(bool(resolved.loc["rank03", "converged"]))
+
+
+class TestSubmissionClaims(unittest.TestCase):
+    """A queued cell and a never-submitted cell are identical on disk.
+
+    The checkpoint is written only when training ends, so nothing about a run directory
+    distinguishes "waiting on the queue" from "never run". Submitting the difference
+    between the variant list and what is on disk would therefore queue a duplicate of
+    every unfinished cell, and the duplicate would train into the same directory as the
+    original. These tests pin the record that makes the distinction, including the
+    reconstruction of it for arrays submitted before the record existed.
+    """
+
+    def _variants(self):
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import ModelVariant
+
+        return [ModelVariant(label="dense"), ModelVariant(label="rank03")]
+
+    def test_claimed_cells_are_excluded_from_commands_and_counted_separately(self) -> None:
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import (
+            index_variant_runs,
+            variant_job_commands,
+            variant_run_dir,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            variants = self._variants()
+            seeds = [1, 2]
+            claimed = variant_run_dir(root, variants[0], 1)
+
+            commands, _ = variant_job_commands(
+                variants, seeds, root=root, repo_root=root,
+                protocol={"architecture": {}, "optimizer": {}, "epochs": 10},
+                mrnn_cfg_path=Path("configs/ephys_fixation_mrnn.yaml"),
+                exclude_run_dirs=[claimed],
+            )
+            self.assertEqual(len(commands), 3)
+            self.assertNotIn(str(claimed), " ".join(commands))
+
+            inventory = index_variant_runs(root, variants, seeds, in_flight=[claimed])
+            queued = inventory[inventory["queued"]]
+            self.assertEqual(len(queued), 1)
+            self.assertEqual(queued.iloc[0]["run_dir"], str(claimed))
+            # A queued cell is not also pending: pending is what a submission would queue.
+            self.assertEqual(int(inventory["pending"].sum()), 3)
+
+    def test_a_record_only_claims_cells_while_its_array_is_live(self) -> None:
+        from unittest.mock import patch
+
+        from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_sweep as sweep
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            jobs_dir = Path(tmp_dir) / "_jobs"
+            sweep.record_submission(jobs_dir, job_id="4242", run_dirs=[Path(tmp_dir) / "a"])
+
+            with patch.object(sweep, "_array_job_states", return_value={"4242": {"RUNNING": 2}}):
+                self.assertEqual(len(sweep.in_flight_run_dirs(jobs_dir)["run_dirs"]), 1)
+            # Once the array leaves the queue its cells are free again, so a failed cell
+            # can be resubmitted rather than being claimed forever by a dead job.
+            with patch.object(sweep, "_array_job_states", return_value={}):
+                self.assertEqual(len(sweep.in_flight_run_dirs(jobs_dir)["run_dirs"]), 0)
+
+    def test_arrays_submitted_before_records_existed_are_reconstructed(self) -> None:
+        from unittest.mock import patch
+
+        from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_sweep as sweep
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            jobs_dir = Path(tmp_dir) / "_jobs"
+            jobs_dir.mkdir(parents=True)
+            run_dir = Path(tmp_dir) / "dense" / "seed=1"
+            (jobs_dir / "bottleneck.txt").write_text(
+                f"cd /repo && python train.py --run-dir {run_dir} --seed 1 --overwrite\n"
+            )
+            (jobs_dir / "job_id.txt").write_text("29250099\n")
+
+            with patch.object(sweep, "_array_job_states",
+                              return_value={"29250099": {"PENDING": 1}}):
+                claimed = sweep.in_flight_run_dirs(jobs_dir)["run_dirs"]
+            self.assertEqual(claimed, {str(run_dir.resolve())})
+            self.assertTrue(sweep.submission_record_path(jobs_dir, "29250099").exists())
+
+
+class TestAdequacy(unittest.TestCase):
+    def test_adequacy_is_judged_on_the_worst_condition_not_the_mean(self) -> None:
+        """A constraint that trades one condition for another has not been tolerated.
+
+        Interactive-face fixations are the condition the objective finds hardest and the
+        one the chapter is about, so a variant that keeps its average fit by giving up
+        interactive-face structure must not pass.
+        """
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import adequacy_table
+
+        rows = []
+        for label, offsets in (
+            ("dense", {"face_interactive": 0.0, "object": 0.0}),
+            ("traded", {"face_interactive": 0.10, "object": -0.10}),
+        ):
+            for seed in (1, 2, 3):
+                for condition, offset in offsets.items():
+                    rows.append({"label": label, "seed": seed, "condition": condition,
+                                 "r2_vs_ceiling": 1.0 - offset})
+        table = adequacy_table(pd.DataFrame(rows)).set_index("label")
+        self.assertAlmostEqual(float(table.loc["traded", "mean_all"]), 1.0, places=6)
+        self.assertFalse(bool(table.loc["traded", "adequate"]))
+        self.assertTrue(bool(table.loc["dense", "adequate"]))

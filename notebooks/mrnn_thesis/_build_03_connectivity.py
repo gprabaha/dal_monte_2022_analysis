@@ -307,19 +307,26 @@ display(Markdown(
 
 S2_TEXT = r"""## 2. Run state and submission
 
-Submission happens **only** if you set `SUBMIT = True`, and is blocked while a previously
+Submission happens **only** if you set `SUBMIT = True`, and covers only cells no live array
+already owns, so this is safe to re-run while jobs are on the queue. It was previously
 submitted array is still on the queue.
 """
 
 S2_CODE = r'''
 SUBMIT = False   # <-- set to True to actually submit the missing cells
 
+# Every job directory this task submits into. A live array in any of them owns cells that
+# look identical on disk to cells that were never run -- the checkpoint is written only when
+# training ends -- so all of them are consulted before deciding what is genuinely unqueued.
+JOBS_DIRS = [TASK_ROOT / "_jobs", TASK_ROOT / "_jobs_retry"]
+flight = sweep.in_flight_run_dirs(*JOBS_DIRS)
+
 commands, run_dirs = sweep.variant_job_commands(
     variants, seeds, root=TASK_ROOT, repo_root=repo_root,
     protocol=SELECTED_PROTOCOL, mrnn_cfg_path=MRNN_CFG_PATH,
+    exclude_run_dirs=flight["run_dirs"],
 )
-inventory = sweep.index_variant_runs(TASK_ROOT, variants, seeds)
-job_state = protocol.running_job_state(TASK_ROOT / "_jobs")
+inventory = sweep.index_variant_runs(TASK_ROOT, variants, seeds, in_flight=flight["run_dirs"])
 
 if PROTOCOL_IS_PROVISIONAL:
     display(Markdown(
@@ -341,24 +348,19 @@ if BASE_MODEL is None:
            "Submission is blocked; set `ALLOW_PROVISIONAL_WIDTH = True` to queue anyway.")
     ))
 display(Markdown(
-    f"**{int(inventory['complete'].sum())} complete**, **{int(inventory['diverged'].sum())} diverged**, "
-    f"**{int(inventory['pending'].sum())} not yet run** of {len(inventory)} cells."
+    f"**{int(inventory['complete'].sum())} complete**, **{int(inventory['queued'].sum())} on the "
+    f"queue**, **{int(inventory['diverged'].sum())} diverged**, "
+    f"**{int(inventory['pending'].sum())} unqueued** of {len(inventory)} cells."
 ))
-if job_state["active"]:
-    display(Markdown(
-        f"⚠️ **Job array `{job_state['job_id']}` is still on the queue** "
-        f"({', '.join(f'{n} {s.lower()}' for s, n in sorted(job_state['states'].items()))})."
-    ))
-elif commands:
+display(Markdown(sweep.describe_in_flight(flight)))
+if commands:
     display(Markdown(f"{len(commands)} run(s) would be submitted."))
     print("first command:\n")
     print(commands[0])
 '''
 
 S2B_CODE = r'''
-if job_state["active"]:
-    display(Markdown(f"Nothing submitted: job array `{job_state['job_id']}` is still running."))
-elif SUBMIT and commands and BASE_MODEL is None and not ALLOW_PROVISIONAL_WIDTH:
+if SUBMIT and commands and BASE_MODEL is None and not ALLOW_PROVISIONAL_WIDTH:
     display(Markdown(
         f"**Not submitted**: task 02 has not fixed the base model, so these cells would be fitted at "
         f"the provisional {HIDDEN_UNITS} units. Set `ALLOW_PROVISIONAL_WIDTH = True` to queue them "
@@ -371,21 +373,35 @@ elif SUBMIT and commands and PROTOCOL_IS_PROVISIONAL and not ALLOW_PROVISIONAL_P
         "`ALLOW_PROVISIONAL_PROTOCOL = True` to queue on the provisional optimiser."
     ))
 elif SUBMIT and commands:
+    from datetime import datetime
+
     from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
 
     jobs_dir = TASK_ROOT / "_jobs"
     jobs_dir.mkdir(parents=True, exist_ok=True)
-    job_file = jobs_dir / "connectivity.txt"
+    # Timestamped, so a submission made while an earlier array is still live keeps its own
+    # command list and logs instead of overwriting the record of what is running.
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    job_file = jobs_dir / f"connectivity_{stamp}.txt"
     write_job_file(job_file, commands)
+    submitted = [Path(line.split("--run-dir ")[1].split()[0]) for line in commands]
     job_id = submit_dsq_array_job(
-        job_file_path=job_file, sbatch_script_path=jobs_dir / "connectivity.sh",
+        job_file_path=job_file, sbatch_script_path=jobs_dir / f"connectivity_{stamp}.sh",
         log_dir=jobs_dir / "logs", job_name="mrnn_connectivity", partition="psych_gpu",
         cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
+    )
+    sweep.record_submission(
+        jobs_dir, job_id=job_id, run_dirs=submitted, label=f"connectivity {stamp}"
     )
     (jobs_dir / "job_id.txt").write_text(str(job_id) + "\n")
     display(Markdown(f"Submitted **{len(commands)}** runs as job array **{job_id}**."))
 elif commands:
     display(Markdown("`SUBMIT` is **False** — nothing was submitted."))
+elif int(inventory["queued"].sum()):
+    display(Markdown(
+        f"Nothing to submit: the {int(inventory['queued'].sum())} outstanding cells are already "
+        f"on the queue."
+    ))
 else:
     display(Markdown("Every cell is already trained; go on to Section 3."))
 '''
@@ -439,24 +455,33 @@ if histories:
             retries, seeds, root=TASK_ROOT, repo_root=repo_root,
             protocol=SELECTED_PROTOCOL, mrnn_cfg_path=MRNN_CFG_PATH,
         )
-        retry_inventory = sweep.index_variant_runs(TASK_ROOT, retries, seeds)
+        retry_inventory = sweep.index_variant_runs(
+            TASK_ROOT, retries, seeds, in_flight=flight["run_dirs"]
+        )
         display(Markdown(
             f"**{len(set(r.label.split('__')[0] for r in retries))} variant(s) failed the bar**, "
             f"giving {len(retries)} retry configurations "
             f"({int(retry_inventory['complete'].sum())} already trained, {len(retry_commands)} to run). "
             f"Submit them the same way as Section 2, then re-run this notebook."
         ))
-        if retry_commands and SUBMIT and not job_state["active"]:
+        if retry_commands and SUBMIT:
+            from datetime import datetime
+
             from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
 
             jobs_dir = TASK_ROOT / "_jobs_retry"
             jobs_dir.mkdir(parents=True, exist_ok=True)
-            job_file = jobs_dir / "retry.txt"
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            job_file = jobs_dir / f"retry_{stamp}.txt"
             write_job_file(job_file, retry_commands)
+            retry_dirs = [Path(line.split("--run-dir ")[1].split()[0]) for line in retry_commands]
             retry_id = submit_dsq_array_job(
-                job_file_path=job_file, sbatch_script_path=jobs_dir / "retry.sh",
+                job_file_path=job_file, sbatch_script_path=jobs_dir / f"retry_{stamp}.sh",
                 log_dir=jobs_dir / "logs", job_name="mrnn_retry", partition="psych_gpu",
                 cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
+            )
+            sweep.record_submission(
+                jobs_dir, job_id=retry_id, run_dirs=retry_dirs, label=f"retry {stamp}"
             )
             (jobs_dir / "job_id.txt").write_text(str(retry_id) + "\n")
             display(Markdown(f"Submitted **{len(retry_commands)}** retries as job array **{retry_id}**."))

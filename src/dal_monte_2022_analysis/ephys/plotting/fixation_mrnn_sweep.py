@@ -298,8 +298,59 @@ def plot_sparsity_interaction(
     return fig
 
 
+def plot_matched_budget_prongs(
+    budget: pd.DataFrame,
+    *,
+    figsize: tuple[float, float] = (7.8, 2.9),
+):
+    """Fit and seed agreement against parameter budget, one curve per constraint family.
+
+    ``budget`` needs ``prong``, ``budget`` (free parameters per constrained block),
+    ``fit_vs_ceiling`` and ``agreement``; ``dense_fit`` and ``dense_agreement`` are read
+    from the first row if present and drawn as reference lines.
+
+    The x axis is the parameter budget rather than the constraint's own units, which is
+    what makes the families comparable: a rank-5 block and a 25%-dense block cost the same
+    and differ only in how the budget is spent. Two panels rather than one because fit and
+    agreement play different roles -- fit is a constraint the model has to satisfy, and
+    agreement is the quantity being maximised among the models that do.
+    """
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    prongs = list(dict.fromkeys(budget["prong"]))
+    colours = plt.cm.viridis(np.linspace(0.1, 0.8, max(len(prongs), 1)))
+
+    for ax, column, label, title in (
+        (axes[0], "fit_vs_ceiling", "$R^2$ / noise ceiling", "does the constraint cost fit?"),
+        (axes[1], "agreement", "inter-seed agreement", "does it make the solution unique?"),
+    ):
+        if column not in budget.columns:
+            ax.set_axis_off()
+            continue
+        for prong, colour in zip(prongs, colours):
+            block = budget[budget["prong"] == prong].sort_values("budget")
+            ax.plot(block["budget"].to_numpy(), block[column].to_numpy(), marker="o",
+                    markersize=4, linewidth=1.2, color=colour, label=str(prong))
+        reference = f"dense_{'fit' if column == 'fit_vs_ceiling' else 'agreement'}"
+        if reference in budget.columns and np.isfinite(budget[reference].iloc[0]):
+            ax.axhline(float(budget[reference].iloc[0]), color=MUTED_INK,
+                       linewidth=0.9, linestyle="--")
+            ax.text(budget["budget"].min(), float(budget[reference].iloc[0]),
+                    " dense, unconstrained", fontsize=5.8, color=MUTED_INK, va="bottom")
+        ax.set_xscale("log")
+        ax.set_xlabel("free parameters per constrained block")
+        ax.set_ylabel(label)
+        ax.set_title(title, fontsize=7, color=MUTED_INK, pad=5)
+        nice_axis(ax)
+    axes[0].legend(fontsize=6, loc="lower right")
+    _panel(axes[0], "A")
+    _panel(axes[1], "B")
+    fig.tight_layout()
+    return fig
+
+
 __all__ = [
     "plot_fit_gallery",
+    "plot_matched_budget_prongs",
     "plot_sparsity_interaction",
     "plot_fit_versus_constraint",
     "plot_seed_agreement_by_variant",
