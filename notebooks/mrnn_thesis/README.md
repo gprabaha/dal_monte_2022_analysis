@@ -16,16 +16,20 @@ work only when you set `SUBMIT = True`.
 
 | | Notebook | Question | Status |
 |---|---|---|---|
-| 00 | `00_training_protocol.ipynb` | What optimiser settings converge reliably? | **done** — `lr 1e-3, cosine, clip 0.05, tanh, sr 1.1`; every seed ends on its best iterate |
-| 01 | `01_capacity.ipynb` | How narrow can each region be and still fit? | **running** — 20/30/40/50/60 units × 5 seeds |
-| 02 | `02_connectivity.ipynb` | Which connections are necessary — within-region, cross-region, individual pathways? | **built**; waits on task 01's width |
-| 03 | `03_bottleneck_rank.ipynb` | How narrow can inter-regional communication be? | **built**; waits on tasks 01–02 |
-| 04 | `04_target_and_loss.ipynb` | Refinement: condition and component weighting, to recover the fast structure | built, deferred |
+| 00 | `00_training_protocol.ipynb` | What optimiser settings converge reliably? | **done** — `lr 3e-4, cosine, clip 0.05, tanh, sr 1.1` |
+| 01 | `01_capacity.ipynb` | How narrow can each region be and still fit? | **done** — 20–60 units, all converged |
+| 02 | `02_model_selection.ipynb` | **Synthesis.** What is the base model — minimal, and fitting every fixation type to the ceiling? | **built**; balanced sweep not yet submitted |
+| 03 | `03_connectivity.ipynb` | Which connections are necessary? | built; waits on the base model |
+| 04 | `04_bottleneck_rank.ipynb` | How narrow can inter-regional communication be? | built; waits on tasks 02–03 |
 | 05 | `05_seed_ensembles.ipynb` | 100 seeds — is the circuit identifiable once fitting is clean? | to build |
 | 06 | `06_invariants.ipynb` | Condition contrast; channel identity | to build |
 | 07 | `07_dynamics.ipynb` | Fixed points, Jacobians, basins | to build |
 | 08 | `08_generalization.ipynb` | Held-out post-fixation half | to build |
 | 09 | `09_chapter.ipynb` | Collated report | to build |
+
+Task 02 is the hinge: it collates what 00 and 01 established, diagnoses why interactive-face
+fixations fit worst, and fixes the base model every constraint task is measured against.
+The earlier `04_target_and_loss` notebook is retired — its content is task 02's.
 
 ### The framing
 
@@ -62,6 +66,8 @@ for scanning. Full-detail traces are reserved for whichever model a task selects
 | Three inert or miscounted things | `gradient_clip_norm = 1.0` sat 40× above the measured gradients and never bound. `spectral_radius` was never applied to the block parameterization at all. `mrnn.W_rec` is a gradient-free copy that inflated every parameter count ~6×. All three fixed. |
 | Model size | The 50-unit model has **23,368** effective parameters against 50,400 target numbers — a ratio of 0.46, not the ~1 the legacy audit reported. |
 | Seed agreement | Cleanly converged fits agree at 0.997 on outputs but only 0.52 on latent drive geometry. Fixing convergence did not fix circuit identifiability. |
+| Interactive face | Systematically the hardest condition to reproduce, and **not** because the network is too small. It has 5× more trials than the others, hence the cleanest PSTH, the least variance and the least high-frequency power — so an absolute-error objective weights it in inverse proportion to how well it was measured. Width compensates only by letting the other conditions overfit. |
+| The recipe is architecture-dependent | The optimal learning rate moved threefold (1e-3 → 3e-4) when the rank constraint and within-region penalty were removed, so tasks 03–04 retry a failing variant at a lower rate before scoring it. |
 
 The order is forced by what feeds what: 00 fixes the recipe, 01–03 establish which
 structural constraints hold, and 05 onwards are the science.

@@ -1,6 +1,6 @@
-"""Author the bottleneck-rank notebook (task 03 of the rebuilt mRNN analysis).
+"""Author the connectivity notebook (task 02 of the rebuilt mRNN analysis).
 
-    conda run -n gaze_processing python notebooks/mrnn_thesis/_build_03_bottleneck_rank.py
+    conda run -n gaze_processing python notebooks/mrnn_thesis/_build_02_connectivity.py
 """
 
 from __future__ import annotations
@@ -9,49 +9,44 @@ import json
 from itertools import count
 from pathlib import Path
 
-OUTPUT_FILENAME = "03_bottleneck_rank.ipynb"
+OUTPUT_FILENAME = "03_connectivity.ipynb"
 _CELL_COUNTER = count(1)
 
 
-HEADER = r"""# 03 · Inter-regional bottleneck — how narrow can the channel be?
+HEADER = r"""# 03 · Connectivity — which connections are necessary?
 
-*Task 03 of the rebuilt mRNN analysis. Task 01 fixed the width, task 02 established which
-blocks have to exist; this asks how much has to pass through the ones that do.*
+*Task 03 of the rebuilt mRNN analysis. The base model is fixed by task 02; this asks what has to be
+wired to what.*
 
-Each inter-regional block is written $W_{s\to t}=LR$ with $L$ of shape
-$(n_s\times r)$ and $R$ of shape $(r\times n_t)$, so all communication from one region to
-another passes through $r$ dimensions. The **dense, unconstrained block is the baseline**,
-and every rank is measured against it.
+**The baseline is the unconstrained model**: every region connected to every other, with
+dense full-rank inter-regional blocks and no bottleneck. Each variant then removes
+something and is **refitted from scratch**, so the question is always "can the data still
+be reproduced without this?" rather than "how much does breaking a fitted model hurt?".
 
-**What the legacy analysis got wrong here, and what this fixes.**
+Those are different questions and the legacy analysis conflated them. Deleting a block
+from an already-fitted network drove $R^2$ from 0.998 to about −2 for *every* block, which
+says only that the readouts were tuned to the intact dynamics. Refitting asks the question
+that has an interpretable answer.
 
-| | legacy | here |
+| Arm | What it removes | Asks |
 |---|---|---|
-| baseline | none — every run was already factorized | dense blocks, fitted alongside |
-| training length | ranks 1–5 at 100k, ranks 10–30 at 50k | every rank at the same iteration count |
-| checkpoint | final iterate | best iterate |
-| seeds | one per rank | five per rank |
-| scored against | 1.0 | the measured noise ceiling |
+| baseline | nothing | how well can this be fitted at all |
+| global structure | all cross-region blocks, or the dense within-region blocks | do regions need each other, and do they need internal recurrence |
+| region isolation | every connection into and out of one region | can the other three be reproduced without it |
+| pathway removal | one directed pathway | is any single route load-bearing |
 
-The legacy sweep concluded that fit is *non-monotone* in rank — flat from 3 to 5, worse at
-10 and 20, partially recovering at 30 — which a correctly converged sweep cannot produce,
-since a rank-20 model contains every rank-5 model as a special case. That was a
-training-length artefact. Epoch-matching is the point of redoing it.
-
-**Note that `rank = hidden width` is not the dense baseline.** The product parameterization
-reaches full rank but carries twice the parameters and optimizes differently, so both are
-fitted and reported separately.
+Every arm is scored the same way: fit against the measured noise ceiling, the parameter
+count that bought it, agreement across seeds, and a visual check of the traces.
 
 | Section | |
 |---|---|
-| 1 | What the earlier tasks settled, and the variants |
+| 1 | What task 01 settled, and the variants |
 | 2 | Run state and submission (off by default) |
 | 3 | Loss trajectories and convergence |
-| 4 | Fit against the ceiling, by rank |
-| 5 | The visual check across ranks |
-| 6 | Seed agreement — does a narrower channel make the circuit identifiable? |
-| 7 | What rank the unconstrained model actually used |
-| 8 | Reading the result |
+| 4 | Fit against the ceiling, and parameter cost |
+| 5 | The visual check across the sweep |
+| 6 | Seed agreement |
+| 7 | Reading the result |
 """
 
 
@@ -85,7 +80,6 @@ from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_sweep as sweep
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_synthesis as syn
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_target_loss as tl
 from dal_monte_2022_analysis.ephys.analysis import fixation_psth_noise_ceiling as ceiling_mod
-from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import load_fixation_mrnn_checkpoint
 from dal_monte_2022_analysis.ephys.plotting import fixation_mrnn_sweep as viz
 from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     ThesisFigureSettings,
@@ -100,10 +94,9 @@ apply_thesis_plot_style(load_config(repo_root / "configs" / "plotting.yaml"))
 
 PROTOCOL_ROOT = protocol.resolve_chapter_root(DATASET_CFG_PATH, task="00_training_protocol")
 CAPACITY_ROOT = sweep.resolve_task_root("01_capacity", DATASET_CFG_PATH)
-CONNECTIVITY_ROOT = sweep.resolve_task_root("02_connectivity", DATASET_CFG_PATH)
-TASK_ROOT = sweep.resolve_task_root("03_bottleneck_rank", DATASET_CFG_PATH)
+TASK_ROOT = sweep.resolve_task_root("02_connectivity", DATASET_CFG_PATH)
 CEILING_DIR = ceiling_mod.resolve_output_dir(DATASET_CFG_PATH)
-FIGURE_DIR = syn.resolve_output_dir(DATASET_CFG_PATH, scope="03_bottleneck_rank")
+FIGURE_DIR = syn.resolve_output_dir(DATASET_CFG_PATH, scope="03_connectivity")
 FIGURES = ThesisFigureSettings(output_dir=FIGURE_DIR)
 
 SELECTED_PROTOCOL, PROTOCOL_IS_PROVISIONAL = sweep.load_selected_protocol_or_provisional(
@@ -116,7 +109,10 @@ SELECTED_PROTOCOL, PROTOCOL_IS_PROVISIONAL = sweep.load_selected_protocol_or_pro
 #: overturn it. Worth doing when the cluster is the bottleneck; the run configs record
 #: exactly what was used, so a mismatch stays detectable.
 ALLOW_PROVISIONAL_PROTOCOL = False
+REGIONS = tuple(SELECTED_PROTOCOL["architecture"].get("region_order", ("ofc", "bla", "dmpfc", "accg")))
 
+#: Width comes from task 01. Until that sweep finishes the notebook falls back to 50 and
+#: says so, so it can be read and reviewed before the dependency lands.
 CAPACITY_PATH = CAPACITY_ROOT / "selected_capacity.yaml"
 if CAPACITY_PATH.exists():
     SELECTED_CAPACITY = yaml.safe_load(CAPACITY_PATH.read_text())
@@ -134,9 +130,6 @@ else:
 #: recorded in its own run_config.yaml either way, so a mismatch is always detectable.
 ALLOW_PROVISIONAL_WIDTH = False
 
-#: Ranks to fit, plus a dense baseline. Chosen to span from a single shared dimension up
-#: to and past the hidden width, so the curve can be read end to end at one iteration count.
-RANK_GRID = (1, 2, 3, 5, 10, 20)
 SWEEP_SEEDS = 3
 GALLERY_REGION = "ofc"
 
@@ -148,6 +141,9 @@ def show(figure, stem: str) -> None:
 
 if PROTOCOL_IS_PROVISIONAL:
     print("recipe       : ** provisional: task 00 has not frozen one **")
+print("regions      :", REGIONS)
+if PROTOCOL_IS_PROVISIONAL:
+    print("recipe       : ** provisional: task 00 has not frozen one **")
 print("hidden units :", HIDDEN_UNITS)
 print("task root    :", TASK_ROOT)
 '''
@@ -155,20 +151,31 @@ print("task root    :", TASK_ROOT)
 
 S1_TEXT = r"""## 1. The variants
 
-Every cell shares the width from task 01, the connectivity task 02 supports, and the
-recipe from task 00 — **including the iteration count**, which is the thing the legacy
-sweep failed to hold fixed.
+All four arms share the width from task 01, the recipe from task 00, and dense
+inter-regional blocks. Only the connectivity differs.
+
+The **region isolation** arm removes every connection into *and* out of one region. That
+region keeps its own within-region block, its condition input, its trained initial state
+and its readout — it is still fitted, just autonomously — while the other three keep
+talking to each other.
+
+> **The loss is a sum over all four regions' readouts, so a single pooled score cannot
+> read this arm.** Cutting a region off changes two things at once: the isolated region
+> now has to reproduce its own trajectories without the others' input, *and* the remaining
+> three have to reproduce theirs without its input. Those are different questions — a
+> region can be perfectly reproducible alone while being indispensable to everyone else,
+> or the reverse. Section 4a therefore reports the two costs **separately**, and only the
+> second speaks to whether the region is necessary to the rest of the network.
+
+The **pathway removal** arm takes out one directed block at a time. Twelve pathways is a
+lot of fitting, so the default is the four into and out of BLA — the region the legacy
+ensemble singled out as changing its drive share during interactive-face fixations. Widen
+`PATHWAYS_TO_TEST` if the result warrants it.
 """
 
 S1_CODE = r'''
-CONNECTIVITY = "full"
-findings_path = CONNECTIVITY_ROOT / "connectivity_findings.csv"
-if findings_path.exists():
-    display(Markdown(
-        f"Task 02 findings are available at `{findings_path}`. Connectivity here is `{CONNECTIVITY}`; "
-        f"if task 02 showed some blocks are dispensable, restrict this sweep to the surviving ones "
-        f"by setting `recurrent_blocked_pairs` in the overrides below."
-    ))
+PATHWAYS_TO_TEST = [(source, "bla") for source in REGIONS if source != "bla"] + \
+                   [("bla", target) for target in REGIONS if target != "bla"]
 
 # l1_weight_scale is set to 0 rather than inherited. The task-00 recipe carries 0.01,
 # which came from the legacy ensembles and was never chosen -- and at that value it is not
@@ -177,20 +184,37 @@ if findings_path.exists():
 # down. That would make `within_region_only` below a model with almost no recurrence at
 # all, and would make `full` and `cross_plus_self_diagonal` near-duplicates. Sparsity is
 # swept properly in task 04.
-base_overrides = {"hidden_units": HIDDEN_UNITS, "recurrent_connectivity": CONNECTIVITY,
+base_overrides = {"hidden_units": HIDDEN_UNITS, "recurrent_bottleneck_dim": None,
                   "l1_weight_scale": 0.0}
 
 variants = [
-    sweep.ModelVariant(label="dense", arm="baseline",
-                       overrides={**base_overrides, "recurrent_bottleneck_dim": None}),
+    sweep.ModelVariant(label="full", arm="baseline",
+                       overrides={**base_overrides, "recurrent_connectivity": "full"}),
+    sweep.ModelVariant(label="within_region_only", arm="global structure",
+                       overrides={**base_overrides, "recurrent_connectivity": "within_region"}),
+    sweep.ModelVariant(label="cross_plus_self_diagonal", arm="global structure",
+                       overrides={**base_overrides,
+                                  "recurrent_connectivity": "cross_region_with_self_diagonal"}),
 ]
-variants += [
-    sweep.ModelVariant(label=f"rank{rank:02d}", arm="rank constrained",
-                       overrides={**base_overrides, "recurrent_bottleneck_dim": int(rank)})
-    for rank in RANK_GRID
-]
+for region in REGIONS:
+    blocked = tuple(
+        [(region, other) for other in REGIONS if other != region]
+        + [(other, region) for other in REGIONS if other != region]
+    )
+    variants.append(sweep.ModelVariant(
+        label=f"isolate_{region}", arm="region isolation",
+        overrides={**base_overrides, "recurrent_connectivity": "full",
+                   "recurrent_blocked_pairs": blocked},
+    ))
+for source, target in PATHWAYS_TO_TEST:
+    variants.append(sweep.ModelVariant(
+        label=f"drop_{source}_to_{target}", arm="pathway removal",
+        overrides={**base_overrides, "recurrent_connectivity": "full",
+                   "recurrent_blocked_pairs": ((source, target),)},
+    ))
+
 seeds = protocol.protocol_seeds(n_seeds=SWEEP_SEEDS)
-BASELINE = "dense"
+BASELINE = "full"
 
 display(Markdown(f"Width **{HIDDEN_UNITS}** units per region, from {CAPACITY_SOURCE}."))
 
@@ -211,15 +235,22 @@ if _trained:
         ))
     else:
         display(Markdown(f"{len(_trained)} trained run(s), all at {HIDDEN_UNITS} units."))
-display(pd.DataFrame([v.describe() for v in variants]))
+display(pd.DataFrame([{"label": v.label, "arm": v.arm,
+                       "connectivity": v.overrides.get("recurrent_connectivity"),
+                       "blocked pairs": len(v.overrides.get("recurrent_blocked_pairs", ()))}
+                      for v in variants]))
 display(Markdown(
-    f"**{len(variants)} variants × {len(seeds)} seeds = {len(variants) * len(seeds)} runs**, all at "
+    f"**{len(variants)} variants × {len(seeds)} seeds = {len(variants) * len(seeds)} runs** at "
     f"{SELECTED_PROTOCOL['epochs']:,} iterations."
 ))
 '''
 
 
-S2_TEXT = r"""## 2. Run state and submission"""
+S2_TEXT = r"""## 2. Run state and submission
+
+Submission happens **only** if you set `SUBMIT = True`, and is blocked while a previously
+submitted array is still on the queue.
+"""
 
 S2_CODE = r'''
 SUBMIT = False   # <-- set to True to actually submit the missing cells
@@ -244,7 +275,8 @@ if SELECTED_CAPACITY is None:
     display(Markdown(
         f"⚠️ **Task 01 has not finished**, so these cells would be fitted at the provisional "
         f"width of **{HIDDEN_UNITS}** units. "
-        + ("`ALLOW_PROVISIONAL_WIDTH` is set, so submission is allowed."
+        + ("`ALLOW_PROVISIONAL_WIDTH` is set, so submission is allowed — Section 1 will flag a "
+           "mismatch once task 01 reports."
            if ALLOW_PROVISIONAL_WIDTH else
            "Submission is blocked; set `ALLOW_PROVISIONAL_WIDTH = True` to queue anyway.")
     ))
@@ -283,11 +315,11 @@ elif SUBMIT and commands:
 
     jobs_dir = TASK_ROOT / "_jobs"
     jobs_dir.mkdir(parents=True, exist_ok=True)
-    job_file = jobs_dir / "bottleneck.txt"
+    job_file = jobs_dir / "connectivity.txt"
     write_job_file(job_file, commands)
     job_id = submit_dsq_array_job(
-        job_file_path=job_file, sbatch_script_path=jobs_dir / "bottleneck.sh",
-        log_dir=jobs_dir / "logs", job_name="mrnn_bottleneck", partition="psych_gpu",
+        job_file_path=job_file, sbatch_script_path=jobs_dir / "connectivity.sh",
+        log_dir=jobs_dir / "logs", job_name="mrnn_connectivity", partition="psych_gpu",
         cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
     )
     (jobs_dir / "job_id.txt").write_text(str(job_id) + "\n")
@@ -301,10 +333,8 @@ else:
 
 S3_TEXT = r"""## 3. Loss trajectories and convergence
 
-The legacy sweep's non-monotone rank curve was a training-length artefact. With the
-iteration count held fixed, any remaining non-monotonicity has to be explained here — a
-higher rank that fits worse than a lower one is either an optimisation failure, visible in
-these trajectories, or a genuine finding about the loss landscape.
+A constraint that merely makes optimisation harder looks the same in the final loss as
+one the data cannot tolerate. Only the trajectory separates them, so this comes first.
 """
 
 S3_CODE = r'''
@@ -382,10 +412,13 @@ if histories:
 '''
 
 
-S4_TEXT = r"""## 4. Fit by rank
+S4_TEXT = r"""## 4. Fit, and what it cost
 
-The question is where the curve flattens: the lowest rank whose fit is indistinguishable
-from dense is the width of the inter-regional channel the data actually requires.
+Scored against the measured noise ceiling. The parameter count matters more here than in
+task 01: every constraint in this sweep also *removes* parameters, so a variant that fits
+as well as the baseline with fewer of them is the interesting outcome, and one that fits
+worse has to be checked against how much smaller it is before that is called a structural
+result.
 """
 
 S4_CODE = r'''
@@ -397,30 +430,83 @@ if not histories:
 else:
     fit = sweep.score_variant_fit(inventory, ceiling_by_region)
     parameters = pd.DataFrame([
-        {"label": label, **sweep.count_trainable_parameters(
-            inventory[(inventory["label"] == label) & inventory["complete"]].iloc[0]["run_dir"])}
+        {"label": label, "arm": inventory[inventory["label"] == label]["arm"].iloc[0],
+         **sweep.count_trainable_parameters(
+             inventory[(inventory["label"] == label) & inventory["complete"]].iloc[0]["run_dir"])}
         for label in labels
     ])
     summary = (
         fit.groupby("label")["r2_vs_ceiling"].agg(["mean", "min"])
-        .join(parameters.set_index("label")[["inter_region", "total", "parameters_per_datum"]])
+        .join(parameters.set_index("label")[["arm", "inter_region", "total", "parameters_per_datum"]])
         .loc[labels]
     )
     reference = float(summary.loc[BASELINE, "mean"]) if BASELINE in summary.index else np.nan
-    summary["cost_vs_dense"] = reference - summary["mean"]
-    display(summary.round(4))
+    summary["cost_vs_baseline"] = reference - summary["mean"]
+    display(summary.sort_values("cost_vs_baseline").round(4))
     show(viz.plot_fit_versus_constraint(fit, parameters, order=labels,
-                                        x_label="inter-regional rank"), "fig02_fit_vs_rank")
-    display(Markdown("By condition:"))
-    display(fit.groupby(["label", "condition"])["r2_vs_ceiling"].mean().unstack().loc[labels].round(4))
+                                        x_label="connectivity variant"), "fig02_fit_vs_connectivity")
+'''
+
+S4B_CODE = r'''
+if histories:
+    by_condition = (
+        fit.groupby(["label", "condition"])["r2_vs_ceiling"].mean().unstack().loc[labels]
+    )
+    display(Markdown(
+        "Broken down by condition. The legacy single-seed comparison found the cost of removing "
+        "inter-regional coupling several times larger for interactive-face fixations than for the "
+        "others; whether that survives refitting across seeds is the question this table answers."
+    ))
+    display(by_condition.round(4))
 '''
 
 
-S5_TEXT = r"""## 5. The visual check across ranks
+S4C_TEXT = r"""### 4a. Region isolation, decomposed
 
-A rank low enough to distort the trajectories will usually show it as smoothing before it
-shows it in $R^2$, so this gallery is the check that decides whether a "free" rank
-reduction is really free.
+Each isolation is two experiments in one, and the pooled score above mixes them. Split
+apart:
+
+- **isolated_cost** — how much worse the cut-off region's *own* trajectories are once it
+  has only its condition input and its internal recurrence. A large cost means that region
+  depends on the others.
+- **remaining_cost** — how much worse the *other three* are without it. A large cost means
+  that region is necessary to them.
+
+The second column is the one that speaks to network structure. A region can score badly on
+the first and not at all on the second — that would say it is driven by the network rather
+than driving it.
+"""
+
+S4C_CODE = r'''
+if histories:
+    isolated_by_label = {
+        v.label: v.label.replace("isolate_", "")
+        for v in variants if v.arm == "region isolation" and v.label in labels
+    }
+    if isolated_by_label and BASELINE in labels:
+        isolation = sweep.decompose_isolation_fit(
+            fit, isolated_region_by_label=isolated_by_label, baseline_label=BASELINE
+        )
+        display(isolation.round(4))
+        worst_self = isolation.loc[isolation["isolated_cost"].idxmax()]
+        worst_others = isolation.loc[isolation["remaining_cost"].idxmax()]
+        display(Markdown(
+            f"The region that suffers most from being cut off is **{worst_self['isolated_region']}** "
+            f"(its own fit falls {float(worst_self['isolated_cost']):.4f}), and the region the others "
+            f"miss most is **{worst_others['isolated_region']}** (their fit falls "
+            f"{float(worst_others['remaining_cost']):.4f}). Where those are different regions, the "
+            f"network is asymmetric: one region is a listener and another a driver."
+        ))
+    else:
+        display(Markdown("Needs the baseline and at least one isolation variant."))
+'''
+
+
+S5_TEXT = r"""## 5. The visual check
+
+One row per variant, all showing the same three components of the same region. A
+constraint can leave $R^2$ almost untouched and still visibly change the shape of the
+trajectory, which is exactly what happened to interactive face in task 00.
 """
 
 S5_CODE = r'''
@@ -431,25 +517,13 @@ if histories:
          "fig03_gallery_pc")
 '''
 
-S5B_CODE = r'''
-if histories:
-    fr_traces = sweep.gallery_traces(inventory, region=GALLERY_REGION, space="fr", indices=(0, 80, 160))
-    show(viz.plot_fit_gallery(fr_traces, order=labels,
-                              title=f"{GALLERY_REGION.upper()} — three example units, backprojected firing rate"),
-         "fig04_gallery_fr")
-'''
 
+S6_TEXT = r"""## 6. Seed agreement
 
-S6_TEXT = r"""## 6. Does a narrower channel make the circuit identifiable?
-
-This is the reason the bottleneck was introduced in the first place. Independently seeded
-fits of the unconstrained model agree on their outputs and not on their inter-regional
-currents; squeezing communication through $r$ dimensions removes ways of producing the
-same output, so it should raise agreement if anything can.
-
-The legacy ensembles hinted at this — rank-3 scored higher than rank-1 on every
-consistency measure — but the two were trained for different numbers of iterations, so
-the comparison was confounded. Here they are not.
+The axis on which a constrained model can beat the unconstrained one. Removing
+connections removes ways of producing the same output, so if any structural constraint
+makes the solution more identifiable, it should show here — and identifiability is what
+every downstream circuit claim needs.
 """
 
 S6_CODE = r'''
@@ -460,109 +534,61 @@ if histories:
     ], ignore_index=True)
     display(agreement.pivot_table(index="label", columns="feature", values="mean_agreement")
             .loc[labels].round(4))
-    show(viz.plot_seed_agreement_by_variant(agreement, order=labels), "fig05_seed_agreement")
+    show(viz.plot_seed_agreement_by_variant(agreement, order=labels), "fig04_seed_agreement")
 '''
 
 
-S7_TEXT = r"""## 7. What rank did the unconstrained model use?
+S7_TEXT = r"""## 7. Reading the result
 
-The dense baseline was free to use any rank. Its singular spectrum says what it chose,
-and is the natural companion to the constrained sweep: if the constrained fits are as good
-at rank 3 while the dense blocks spread their energy over many more directions, then that
-spread was slack rather than signal — an unpenalised optimiser has no reason to
-concentrate a block.
+Nothing is "selected" here — connectivity is the object of study, not a hyperparameter.
+What the sweep produces is a statement about which constraints the data tolerates, and it
+is written to `connectivity_findings.csv` for the chapter.
+
+The three readings to make, in order:
+
+1. **Which removals are free?** A variant within the seed-to-seed spread of the baseline
+   removes connections the data does not need. Those are the strongest claims available
+   here, because they survive refitting. For the isolation arm, read the decomposed costs
+   in Section 4a rather than the pooled score — a region whose removal looks expensive may
+   simply be hard to reproduce alone.
+2. **Which removals cost, and does the cost concentrate in one condition?** A structural
+   requirement that appears only during interactive-face fixations would be the
+   substantive result.
+3. **Does any constraint raise seed agreement?** If a smaller model is more identifiable
+   at no cost in fit, that is the model tasks 05–07 should be built on.
 """
 
 S7_CODE = r'''
-if histories and BASELINE in labels:
-    dense_runs = inventory[(inventory["label"] == BASELINE) & inventory["complete"]]
-    rows = []
-    for _, run in dense_runs.iterrows():
-        model, _ = load_fixation_mrnn_checkpoint(Path(run["run_dir"]), device="cpu")
-        slices = model.hidden_region_slices()
-        weight = model.recurrent_weight_matrix().detach().cpu().numpy()
-        for source in model.region_order:
-            for target in model.region_order:
-                if source == target:
-                    continue
-                block = weight[slices[target], slices[source]]
-                singular = np.linalg.svd(block, compute_uv=False)
-                energy = np.cumsum(singular**2) / max(np.sum(singular**2), 1e-12)
-                rows.append({
-                    "seed": int(run["seed"]), "pathway": f"{source}→{target}",
-                    "numerical_rank": int(np.linalg.matrix_rank(block)),
-                    "dims_for_50pct": int(np.searchsorted(energy, 0.50) + 1),
-                    "dims_for_90pct": int(np.searchsorted(energy, 0.90) + 1),
-                })
-    spectra = pd.DataFrame(rows)
-    display(spectra.groupby("pathway")[["numerical_rank", "dims_for_50pct", "dims_for_90pct"]]
-            .median().round(1))
-    display(Markdown(
-        f"Across {spectra['seed'].nunique()} seeds and {spectra['pathway'].nunique()} pathways, the "
-        f"unconstrained blocks are numerically rank "
-        f"{spectra['numerical_rank'].median():.0f} and need a median of "
-        f"**{spectra['dims_for_90pct'].median():.0f}** directions to carry 90% of their energy — "
-        f"against **{spectra['dims_for_50pct'].median():.0f}** for half of it. Read that as an upper "
-        f"bound rather than a requirement: it says the unconstrained fit did not spontaneously "
-        f"discover a bottleneck, not that a bottleneck would hurt. Section 4 is what tests that."
-    ))
-'''
-
-
-S8_TEXT = r"""## 8. Reading the result
-
-Three statements the sweep can support, written to `bottleneck_findings.csv`:
-
-1. **The lowest rank indistinguishable from dense.** Reported with the baseline's own
-   seed-to-seed spread as the yardstick, and cross-checked against the gallery in Section 5,
-   since a rank can look free in $R^2$ and visibly smooth the trajectories.
-2. **Whether the curve is monotone once training length is held fixed.** The legacy sweep's
-   non-monotonicity was an artefact; if it survives here it is a real finding and needs the
-   convergence table in Section 3 to interpret.
-3. **Whether constraining the channel buys identifiability.** If seed agreement on the
-   latent drive geometry rises as rank falls, the bottleneck is doing what it was
-   introduced to do — and the rank at which agreement peaks, not the rank at which fit
-   peaks, is the model tasks 05–07 should use.
-"""
-
-S8_CODE = r'''
 if not histories:
     display(Markdown("Deferred until the sweep completes."))
 else:
     spread = float(fit[fit["label"] == BASELINE].groupby("seed")["r2_vs_ceiling"].mean().std())
     geometry = agreement[agreement["feature"] == "latent drive geometry"].set_index("label")["mean_agreement"]
     findings = summary.join(geometry.rename("seed_agreement_geometry"))
-    findings["indistinguishable_from_dense"] = findings["cost_vs_dense"] <= 2 * spread
-    findings.to_csv(TASK_ROOT / "bottleneck_findings.csv")
+    findings["free_removal"] = findings["cost_vs_baseline"] <= 2 * spread
+    findings["more_identifiable"] = (
+        findings["seed_agreement_geometry"] > float(geometry.get(BASELINE, np.nan))
+    )
+    findings.to_csv(TASK_ROOT / "connectivity_findings.csv")
     display(findings.round(4))
-
-    constrained = findings.drop(index=BASELINE, errors="ignore")
-    free = constrained[constrained["indistinguishable_from_dense"]]
-    lowest = free.index[0] if len(free) else None
-    peak_agreement = geometry.drop(index=BASELINE, errors="ignore").idxmax() if len(geometry) > 1 else None
+    free = [str(i) for i in findings.index[findings["free_removal"]] if str(i) != BASELINE]
     display(Markdown(
-        f"Baseline seed-to-seed spread **{spread:.4f}**; a rank counts as indistinguishable when it "
-        f"costs less than twice that.\n\n"
-        f"**Lowest rank indistinguishable from dense:** "
-        f"{lowest if lowest is not None else 'none — every constraint costs'}.\n\n"
-        f"**Rank with the highest seed agreement on drive geometry:** "
-        f"{peak_agreement if peak_agreement is not None else 'n/a'} "
-        f"(dense: {float(geometry.get(BASELINE, float('nan'))):.3f}).\n\n"
-        f"Written to `{TASK_ROOT / 'bottleneck_findings.csv'}`."
+        f"Baseline seed-to-seed spread in ceiling-relative fit is **{spread:.4f}**, so a removal is "
+        f"called free when it costs less than twice that.\n\n"
+        f"**Free removals:** {', '.join(free) if free else 'none'}.\n\n"
+        f"Written to `{TASK_ROOT / 'connectivity_findings.csv'}`."
     ))
 '''
 
 
-S9 = r"""## 9. What comes next
+S8 = r"""## 8. What comes next
 
-Tasks 01–03 together fix the model the rest of the chapter uses: how wide, what is
-connected, and how much passes between regions — each chosen because the data still
-supports the fit under that constraint, not because it minimised a loss.
+**Next:** `04_bottleneck_rank.ipynb`. This task establishes *which* inter-regional blocks
+have to exist; task 03 asks how much has to pass through the ones that do, by constraining
+each surviving block to rank $r$ and measuring against the dense baseline fitted here.
 
-**Next:** `05_seed_ensembles.ipynb` fits that model at a hundred initializations and asks
-the question this whole rebuild exists to answer — whether independently fitted networks
-agree about the circuit once the fitting itself is sound. Task 04 (target and loss) is
-available if the fast-structure deficit turns out to matter for that answer.
+The two together are the structural claim the chapter rests on, and both are stated as
+"the data still supports this under constraint X" rather than as a model ranking.
 """
 
 
@@ -594,16 +620,16 @@ def build() -> dict:
         _cell("code", S3B_CODE),
         _cell("markdown", S4_TEXT),
         _cell("code", S4_CODE),
+        _cell("code", S4B_CODE),
+        _cell("markdown", S4C_TEXT),
+        _cell("code", S4C_CODE),
         _cell("markdown", S5_TEXT),
         _cell("code", S5_CODE),
-        _cell("code", S5B_CODE),
         _cell("markdown", S6_TEXT),
         _cell("code", S6_CODE),
         _cell("markdown", S7_TEXT),
         _cell("code", S7_CODE),
-        _cell("markdown", S8_TEXT),
-        _cell("code", S8_CODE),
-        _cell("markdown", S9),
+        _cell("markdown", S8),
     ]
     return {
         "cells": cells,

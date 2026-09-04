@@ -55,12 +55,13 @@ class ModelVariant:
         return {"label": self.label, "arm": self.arm, **dict(self.overrides)}
 
 
-#: Optimiser used when task 00 has not yet frozen a recipe. These are the settings its
-#: first pass selected, and they are about optimization rather than architecture, so they
-#: are a defensible starting point -- but they were chosen on a superseded model, which is
-#: why using them is flagged rather than silent.
+#: Optimiser used when task 00 has not yet frozen a recipe. These match what task 00
+#: selected on the corrected architecture. Kept as a fallback rather than removed because
+#: the notebooks have to stay readable while their dependency is running -- but using it is
+#: flagged rather than silent, because the optimum is architecture-dependent: it moved from
+#: 1e-3 to 3e-4 when the rank constraint and the within-region penalty were removed.
 PROVISIONAL_OPTIMIZER: dict[str, object] = {
-    "lr": 1e-3,
+    "lr": 3e-4,
     "gradient_clip_norm": 0.05,
     "lr_schedule": "cosine",
     "lr_warmup_iterations": 0,
