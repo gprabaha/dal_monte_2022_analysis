@@ -84,6 +84,12 @@ class FixationMRNNRunSettings:
     #: ``recurrent_connectivity``. Used by the connectivity sweep to isolate a region or
     #: remove a single directed pathway without adding a named mode for each case.
     recurrent_blocked_pairs: tuple[tuple[str, str], ...] = ()
+    #: Fraction of entries kept in each within-region and each inter-region block. Masked
+    #: entries are structurally absent rather than penalised, so a sparse block is a
+    #: genuinely smaller model. Sparsity and low rank are independent constraints: a
+    #: sparse block can stay full rank, and a low-rank block can stay fully dense.
+    within_region_density: float = 1.0
+    cross_region_density: float = 1.0
     gradient_clip_norm: float | None = None
     #: Learning-rate schedule: "constant" (the historical behaviour), "cosine" (decay to
     #: ``lr_min_factor * lr`` over the run), or "step" (multiply by ``lr_step_gamma``
@@ -588,6 +594,11 @@ def train_one_initialization(
         recurrent_connectivity=normalize_recurrent_connectivity(settings.recurrent_connectivity),
         recurrent_bottleneck_dim=settings.recurrent_bottleneck_dim,
         recurrent_blocked_pairs=tuple(tuple(pair) for pair in (settings.recurrent_blocked_pairs or ())),
+        within_region_density=float(settings.within_region_density),
+        cross_region_density=float(settings.cross_region_density),
+        # Tie the mask to the run seed so which connections survive is part of the
+        # seed-to-seed variation being measured, not a fixed choice in every run.
+        sparsity_seed=int(seed),
         batch_first=settings.batch_first,
         inp_noise=settings.inp_noise,
         act_noise=settings.act_noise,

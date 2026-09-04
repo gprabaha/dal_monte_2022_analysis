@@ -898,3 +898,66 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSparsityMasks(unittest.TestCase):
+    """Sparsity and low rank are independent constraints, and the code must keep them so."""
+
+    @staticmethod
+    def _model(**overrides):
+        base = dict(
+            region_order=("a", "b"), output_dims_by_region={"a": 4, "b": 4}, hidden_units=16,
+            device="cpu", input_dim=3, activation="tanh", spectral_radius=1.0,
+            rec_constrained=False, inp_constrained=False, recurrent_connectivity="full",
+            recurrent_bottleneck_dim=None, batch_first=True, inp_noise=0.0, act_noise=0.0,
+        )
+        base.update(overrides)
+        torch.manual_seed(0)
+        return FixationMRNNModel(build_model_spec(**base))
+
+    def _cross_block(self, model):
+        slices = model.hidden_region_slices()
+        return model.recurrent_weight_matrix().detach().numpy()[slices["b"], slices["a"]]
+
+    def test_a_sparse_block_stays_high_rank(self) -> None:
+        """The whole point of testing both: 25% of entries is not the same constraint as
+        rank 4, even at the same parameter cost."""
+        block = self._cross_block(self._model(cross_region_density=0.25))
+        self.assertLess(float(np.mean(np.abs(block) > 1e-12)), 0.4)
+        self.assertGreater(int(np.linalg.matrix_rank(block)), 8)
+
+    def test_a_low_rank_block_stays_dense(self) -> None:
+        block = self._cross_block(self._model(recurrent_bottleneck_dim=4))
+        self.assertGreater(float(np.mean(np.abs(block) > 1e-12)), 0.9)
+        self.assertEqual(int(np.linalg.matrix_rank(block)), 4)
+
+    def test_masked_entries_receive_no_gradient_and_stay_zero(self) -> None:
+        """Masked entries must be structurally absent, not merely initialised small --
+        otherwise the constraint is a penalty and the model is not actually smaller."""
+        model = self._model(cross_region_density=0.3)
+        outputs = model(torch.randn(2, 12, 3), torch.zeros(2, 32), noise=False)
+        sum(v.pow(2).mean() for v in outputs["output_by_region"].values()).backward()
+
+        mask = model._block_masks[("a", "b")].numpy()
+        parameter = model._inter_region_dense_params[("a", "b")]
+        gradient = parameter.grad.detach().numpy()
+        # Where the mask is zero the parameter cannot influence the loss.
+        self.assertEqual(mask.shape, gradient.shape)
+        self.assertLess(float(np.abs(gradient[mask == 0]).max()), 1e-12)
+        # And the assembled block carries the same number of zeros the mask specifies.
+        block = self._cross_block(model)
+        self.assertEqual(int(np.sum(np.abs(block) < 1e-12)), int(np.sum(mask == 0)))
+
+    def test_masked_entries_are_not_counted_as_present(self) -> None:
+        dense = self._model().effective_recurrent_connections
+        sparse = self._model(cross_region_density=0.25).effective_recurrent_connections
+        self.assertLess(sparse, dense)
+
+    def test_within_and_cross_density_act_independently(self) -> None:
+        model = self._model(within_region_density=0.2, cross_region_density=1.0)
+        slices = model.hidden_region_slices()
+        weight = model.recurrent_weight_matrix().detach().numpy()
+        within = weight[slices["a"], slices["a"]]
+        cross = weight[slices["b"], slices["a"]]
+        self.assertLess(float(np.mean(np.abs(within) > 1e-12)), 0.35)
+        self.assertGreater(float(np.mean(np.abs(cross) > 1e-12)), 0.9)

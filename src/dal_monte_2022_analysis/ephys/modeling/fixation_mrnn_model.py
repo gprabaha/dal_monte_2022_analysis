@@ -34,6 +34,21 @@ class FixationMRNNModelSpec:
     #: without a new mode for each. Blocked pairs get no parameters at all, so a model
     #: fitted with them is genuinely smaller rather than merely masked.
     recurrent_blocked_pairs: tuple[tuple[str, str], ...] = ()
+    #: Fraction of entries kept in each within-region block, and in each inter-region
+    #: block. 1.0 leaves them dense. Masked entries are structurally absent -- they are
+    #: fixed at zero and never contribute -- so a sparse block is a genuinely smaller
+    #: model rather than a shrunk one.
+    #:
+    #: Sparsity and low rank are different constraints and neither implies the other: a
+    #: permutation matrix is maximally sparse and full rank, a rank-1 matrix can be
+    #: entirely dense. Low rank says regions communicate through a low-dimensional
+    #: channel; sparsity says they are joined by few connections that can carry anything.
+    within_region_density: float = 1.0
+    cross_region_density: float = 1.0
+    #: Seed for the random masks. Tied to the run seed by the sweep machinery, so which
+    #: connections survive is part of the seed-to-seed variation being measured rather
+    #: than a fixed choice smuggled into every run.
+    sparsity_seed: int = 0
     batch_first: bool = True
     inp_noise: float = 0.0
     act_noise: float = 0.0
@@ -69,6 +84,7 @@ class FixationMRNNModel(nn.Module):
         self._blocked_pairs = {
             (str(source), str(target)) for source, target in (spec.recurrent_blocked_pairs or ())
         }
+        self._block_masks: dict[tuple[str, str], torch.Tensor] = {}
         self._within_region_params: dict[str, nn.Parameter] = {}
         self._inter_region_left_params: dict[tuple[str, str], nn.Parameter] = {}
         self._inter_region_right_params: dict[tuple[str, str], nn.Parameter] = {}
@@ -199,7 +215,44 @@ class FixationMRNNModel(nn.Module):
                 self.register_parameter(f"_inter_left_{source}_{target}", left)
                 self.register_parameter(f"_inter_right_{source}_{target}", right)
 
+        self._build_sparsity_masks(spec)
         self._rescale_to_spectral_radius(spec.spectral_radius)
+
+    def _build_sparsity_masks(self, spec: FixationMRNNModelSpec) -> None:
+        """Fix a random subset of each block's entries to zero, permanently.
+
+        The mask is drawn once and registered as a buffer, so it survives saving and
+        reloading and is identical on every forward pass. Masked entries are multiplied
+        out wherever the block is used, so they receive no gradient and stay at zero:
+        the model is smaller, not merely penalised toward being smaller.
+        """
+        generator = torch.Generator().manual_seed(int(spec.sparsity_seed))
+        for region in self.region_order:
+            density = float(spec.within_region_density)
+            if density >= 1.0:
+                continue
+            units = int(spec.hidden_units_by_region[region])
+            mask = (torch.rand(units, units, generator=generator) < density).to(torch.float32)
+            self._block_masks[(region, region)] = mask
+            self.register_buffer(f"_mask_{region}_{region}", mask)
+        for source in self.region_order:
+            for target in self.region_order:
+                if source == target or (source, target) in self._blocked_pairs:
+                    continue
+                if not _region_pair_connected(source, target, spec.recurrent_connectivity):
+                    continue
+                density = float(spec.cross_region_density)
+                if density >= 1.0:
+                    continue
+                # Shaped to match the parameter it multiplies, which the block builders
+                # create as (source_units, target_units). Every region here has the same
+                # width so the two orientations happen to be interchangeable, but relying
+                # on that would break silently the moment they differ.
+                shape = (int(spec.hidden_units_by_region[source]),
+                         int(spec.hidden_units_by_region[target]))
+                mask = (torch.rand(*shape, generator=generator) < density).to(torch.float32)
+                self._block_masks[(source, target)] = mask
+                self.register_buffer(f"_mask_{source}_{target}", mask)
 
     def _rescale_to_spectral_radius(self, spectral_radius: float | None) -> None:
         """Scale the initial recurrent blocks to a requested spectral radius.
@@ -238,12 +291,23 @@ class FixationMRNNModel(nn.Module):
         parameter = self._within_region_params[region]
         if self._connectivity_mode == "cross_region_with_self_diagonal":
             return torch.diag(parameter)
-        return parameter
+        mask = self._block_masks.get((region, region))
+        return parameter if mask is None else parameter * mask.to(parameter.device)
 
     def _inter_region_block(self, source: str, target: str) -> torch.Tensor:
         if self._bottleneck_dim is None:
-            return self._inter_region_dense_params[(source, target)]
-        return self._inter_region_left_params[(source, target)] @ self._inter_region_right_params[(source, target)]
+            block = self._inter_region_dense_params[(source, target)]
+        else:
+            block = (self._inter_region_left_params[(source, target)]
+                     @ self._inter_region_right_params[(source, target)])
+        mask = self._block_masks.get((source, target))
+        return block if mask is None else block * mask.to(block.device)
+
+    @property
+    def effective_recurrent_connections(self) -> int:
+        """Recurrent entries that are structurally present, after masking and blocking."""
+        weight, mask, _ = self._build_recurrent_weight_and_mask()
+        return int(torch.count_nonzero(mask).item())
 
     def _build_recurrent_weight_and_mask(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Assemble the full dense recurrent weight matrix and its mask/sign tensors.
@@ -290,6 +354,16 @@ class FixationMRNNModel(nn.Module):
                         device=self.mrnn.device,
                     )
                     block_mask = torch.zeros_like(block)
+
+                # A sparsity mask makes entries structurally absent, so it belongs in the
+                # mask tensor as well as in the weight -- otherwise anything counting
+                # present connections from the mask would report the block as dense.
+                sparsity_mask = self._block_masks.get((source, target))
+                if sparsity_mask is not None:
+                    block_mask = block_mask * sparsity_mask.to(block_mask.device)
+                    # block_mask follows `block`, which the assembly writes into
+                    # weight[target, source]; the density is what is being counted and it
+                    # is orientation-independent.
 
                 # Write the selected block into the full dense matrix.
                 weight[target_slice, source_slice] = block
