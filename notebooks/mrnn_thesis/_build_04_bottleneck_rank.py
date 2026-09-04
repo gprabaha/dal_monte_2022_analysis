@@ -222,15 +222,29 @@ _trained = sorted(
     if (path.parent / "checkpoint_best.pth").exists()
 )
 if _trained:
-    _widths = {int(yaml.safe_load(path.read_text())["hidden_units"]) for path in _trained}
-    if _widths != {HIDDEN_UNITS}:
+    # Compare every setting the base model fixes, not just the width. A run fitted under a
+    # different objective answers a different question, and pooling it with the others
+    # would be invisible in the results table.
+    _configs = [yaml.safe_load(path.read_text()) for path in _trained]
+    _expected = {"hidden_units": HIDDEN_UNITS, "condition_loss_weighting": CONDITION_WEIGHTING,
+                 "l1_weight_scale": 0.0, "recurrent_bottleneck_dim": None}
+    _stale = {
+        key: sorted({str(cfg.get(key)) for cfg in _configs})
+        for key, want in _expected.items()
+        if {str(cfg.get(key)) for cfg in _configs} != {str(want)}
+    }
+    if _stale:
         display(Markdown(
-            f"🔴 **Width mismatch.** {len(_trained)} trained run(s) used {sorted(_widths)} units, "
-            f"but the current selection is {HIDDEN_UNITS}. Those runs answer the question at the "
-            f"wrong width and should be refitted before the results below are used."
+            f"🔴 **{len(_trained)} trained run(s) do not match the base model.** "
+            + "; ".join(f"`{k}` is {v} but should be `{_expected[k]}`" for k, v in _stale.items())
+            + ". Those runs answer the question under different settings and must be refitted "
+              "before anything below is read — move them aside and re-submit."
         ))
     else:
-        display(Markdown(f"{len(_trained)} trained run(s), all at {HIDDEN_UNITS} units."))
+        display(Markdown(
+            f"{len(_trained)} trained run(s), all matching the base model "
+            f"({HIDDEN_UNITS} units, `{CONDITION_WEIGHTING}` weighting)."
+        ))
 display(pd.DataFrame([v.describe() for v in variants]))
 display(Markdown(
     f"**{len(variants)} variants × {len(seeds)} seeds = {len(variants) * len(seeds)} runs**, all at "

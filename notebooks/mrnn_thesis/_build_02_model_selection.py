@@ -533,6 +533,23 @@ if histories:
     display(table)
 '''
 
+S8B2_CODE = r'''
+if histories:
+    balanced_params = pd.DataFrame([
+        {"label": v.label, **sweep.count_trainable_parameters(
+            inventory[(inventory["label"] == v.label) & inventory["complete"]].iloc[0]["run_dir"])}
+        for v in balanced_variants
+        if inventory[(inventory["label"] == v.label) & inventory["complete"]].shape[0]
+    ])
+    all_params = pd.concat([capacity_params, balanced_params], ignore_index=True)
+    order = ([f"h{u:02d}" for u in HIDDEN_UNIT_GRID if f"h{u:02d}" in set(both["label"])]
+             + [f"h{u:02d}_balanced" for u in HIDDEN_UNIT_GRID if f"h{u:02d}_balanced" in set(both["label"])])
+    show(viz.plot_fit_versus_constraint(both, all_params, order=order,
+                                        x_label="width and condition weighting"),
+         "fig02_fit_vs_ceiling")
+'''
+
+
 S8C_CODE = r'''
 if histories:
     balanced_recovery = pd.concat([
@@ -586,60 +603,89 @@ if histories:
     order = [label for label in order if label in set(gallery["label"])]
     show(viz.plot_fit_gallery(gallery, order=order,
                               title=f"{GALLERY_REGION.upper()} — top three PCs, uniform above, balanced below"),
-         "fig02_gallery_uniform_vs_balanced")
+         "fig03_gallery_uniform_vs_balanced")
 '''
 
 
 S9_TEXT = r"""## 9. The base model
 
-The rule follows the aim: **the narrowest configuration that reaches the noise ceiling on
-every condition, without exceeding it on any.** Exceeding the ceiling is not a better fit;
-it is reproducing sampling noise, and it costs the parameters that later constraint results
-have to be measured against.
+The aim is a network that reproduces **every** fixation type to the limit the data
+supports, using as few parameters as possible. Both halves of that matter: undershooting
+the ceiling means the condition is not fitted, and overshooting it means reproducing
+sampling noise, which is not a better fit and costs the parameters every later constraint
+result is measured against.
+
+So the criterion is **minimax**: the configuration whose *worst* condition is closest to
+its ceiling, in either direction. That needs no tolerance to be chosen — a fixed threshold
+would reject a configuration that misses by 0.002 while the ceiling itself is an estimate
+with more uncertainty than that. Ties go to the narrower network.
 """
 
 S9_CODE = r'''
 if not histories:
     display(Markdown("Selection is deferred until the balanced sweep completes."))
 else:
-    TOLERANCE = 0.015
-    candidates = []
+    rows = []
+    param_lookup = pd.concat([capacity_params, balanced_params], ignore_index=True).set_index("label")
     for (width, weighting), row in table.iterrows():
-        reaches = float(row.min()) >= 1.0 - TOLERANCE
-        exceeds = float(row.max()) > 1.0 + TOLERANCE
-        candidates.append({"width": width, "weighting": weighting,
-                           "worst_condition": float(row.min()), "best_condition": float(row.max()),
-                           "reaches_ceiling": reaches, "exceeds_ceiling": exceeds})
-    candidates = pd.DataFrame(candidates)
-    display(candidates.round(4))
-    usable = candidates[candidates["reaches_ceiling"] & ~candidates["exceeds_ceiling"]]
-    if usable.empty:
-        display(Markdown(
-            "**No configuration reaches every condition's ceiling without exceeding it on another.** "
-            "That is itself the result: on this data the conditions cannot be fitted to the same "
-            "standard simultaneously, and any downstream claim has to carry that."
-        ))
-    else:
-        winner = usable.sort_values("width").iloc[0]
-        selected = {
-            "hidden_units": int(winner["width"]),
-            "condition_loss_weighting": str(winner["weighting"]),
-            "recurrent_bottleneck_dim": None,
-            "l1_weight_scale": 0.0,
-            "recurrent_connectivity": "full",
-            "inherited_protocol": str(SELECTED_PROTOCOL["selected_label"]),
-            "epochs": int(SELECTED_PROTOCOL["epochs"]),
-            "selection_rule": "narrowest configuration reaching every condition's noise ceiling "
-                              f"without exceeding it, tolerance {TOLERANCE}",
-            "worst_condition_r2_vs_ceiling": float(winner["worst_condition"]),
-        }
-        (TASK_ROOT / "selected_base_model.yaml").write_text(yaml.safe_dump(selected, sort_keys=False))
-        display(Markdown(
-            f"**Base model: {int(winner['width'])} units per region, {winner['weighting']} condition "
-            f"weighting**, dense all-to-all connectivity, no within-region penalty. Worst condition "
-            f"sits at {float(winner['worst_condition']):.3f} of its ceiling.\n\n"
-            f"Frozen to `{TASK_ROOT / 'selected_base_model.yaml'}`, which tasks 03 and 04 import."
-        ))
+        label = f"h{width:02d}" + ("_balanced" if weighting == "balanced" else "")
+        rows.append({
+            "width": width, "weighting": weighting,
+            "worst_condition": float(row.min()), "best_condition": float(row.max()),
+            # How far the furthest condition sits from the ceiling, in either direction.
+            "max_deviation": float(np.abs(row - 1.0).max()),
+            "spread_across_conditions": float(row.max() - row.min()),
+            "parameters": int(param_lookup.loc[label, "total"]) if label in param_lookup.index else np.nan,
+        })
+    selection = pd.DataFrame(rows).sort_values(["max_deviation", "parameters"])
+    display(selection.round(4))
+
+    winner = selection.iloc[0]
+    runner_up = selection.iloc[1]
+    selected = {
+        "hidden_units": int(winner["width"]),
+        "condition_loss_weighting": str(winner["weighting"]),
+        "recurrent_bottleneck_dim": None,
+        "l1_weight_scale": 0.0,
+        "recurrent_connectivity": "full",
+        "inherited_protocol": str(SELECTED_PROTOCOL["selected_label"]),
+        "epochs": int(SELECTED_PROTOCOL["epochs"]),
+        "selection_rule": "minimax: smallest maximum deviation from the noise ceiling across "
+                          "conditions, ties to the narrower network",
+        "max_deviation_from_ceiling": float(winner["max_deviation"]),
+        "spread_across_conditions": float(winner["spread_across_conditions"]),
+        "trainable_parameters": int(winner["parameters"]),
+    }
+    (TASK_ROOT / "selected_base_model.yaml").write_text(yaml.safe_dump(selected, sort_keys=False))
+    display(Markdown(
+        f"**Base model: {int(winner['width'])} units per region, `{winner['weighting']}` condition "
+        f"weighting**, dense all-to-all connectivity, no within-region penalty.\n\n"
+        f"Its furthest condition sits **{float(winner['max_deviation']):.3f}** from the ceiling and "
+        f"the three conditions span **{float(winner['spread_across_conditions']):.3f}**, on "
+        f"{int(winner['parameters']):,} trainable parameters. The runner-up "
+        f"(`h{int(runner_up['width'])}` {runner_up['weighting']}) is "
+        f"{float(runner_up['max_deviation']):.3f} away"
+        + (f" on {int(runner_up['parameters']):,} parameters" if np.isfinite(runner_up["parameters"]) else "")
+        + f".\n\nFrozen to `{TASK_ROOT / 'selected_base_model.yaml'}`, which tasks 03 and 04 import."
+    ))
+'''
+
+
+S9B_CODE = r'''
+if histories:
+    display(Markdown(
+        "**Two qualifications to carry forward.**\n\n"
+        "**Nothing sits exactly on the ceiling for all three conditions.** The narrower networks "
+        "undershoot on two conditions, the wider ones overshoot on all three, and the selected "
+        "model overshoots slightly. There is no width at which the three are simultaneously at "
+        "1.000, so the base model is the best available compromise rather than a clean solution — "
+        "and every downstream result inherits that.\n\n"
+        "**Below the selected width, balancing redistributes rather than adds.** At the narrowest "
+        "widths the reweighting lifts interactive face by more than it costs the others, but it "
+        "does cost them: the network is genuinely too small to serve all three. Balancing is a fix "
+        "for how capacity is *allocated*, not a substitute for having enough of it, and the "
+        "selected width is where the two stop trading against each other."
+    ))
 '''
 
 
@@ -712,11 +758,13 @@ def build() -> dict:
         _cell("markdown", S8_TEXT),
         _cell("code", S8_CODE),
         _cell("code", S8B_CODE),
+        _cell("code", S8B2_CODE),
         _cell("code", S8C_CODE),
         _cell("code", S8D_CODE),
         _cell("code", S8E_CODE),
         _cell("markdown", S9_TEXT),
         _cell("code", S9_CODE),
+        _cell("code", S9B_CODE),
         _cell("markdown", S10),
     ]
     return {
