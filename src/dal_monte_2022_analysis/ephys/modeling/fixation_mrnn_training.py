@@ -49,6 +49,17 @@ class FixationMRNNRunSettings:
     region_order: tuple[str, ...] = ("ofc", "bla", "dmpfc", "accg")
     condition_order: tuple[str, ...] = CONDITION_ORDER
     target_mode: str = "raw_fr"
+    #: Replace the target with a surrogate that keeps some of its statistics and destroys
+    #: the rest. Used to put a floor under inter-seed agreement: a model fitted to
+    #: structureless data still has an architecture and an optimiser, and whatever
+    #: agreement those alone produce is not evidence that the circuit was recovered.
+    #: "none" | "phase_randomized" (per-channel spectrum preserved, waveform destroyed)
+    #: | "time_shuffled" (population covariance preserved exactly, temporal order destroyed).
+    target_surrogate: str = "none"
+    #: Fixed on purpose, and deliberately *not* the run seed: every member of a null
+    #: ensemble has to be fitted to the *same* surrogate, or the seeds disagree simply
+    #: because they were shown different data and the null measures nothing.
+    target_surrogate_seed: int = 0
     normalize_targets: bool = True
     normalization_stabilizer: float = 5.0
     pca_variance_threshold: float = 0.95
@@ -226,13 +237,75 @@ def load_or_create_seed_plan(
     return seeds
 
 
+SURROGATE_MODES: tuple[str, ...] = ("none", "phase_randomized", "time_shuffled")
+
+
+def surrogate_target_array(
+    array: np.ndarray,
+    *,
+    mode: str,
+    seed: int,
+) -> np.ndarray:
+    """A target with the same second-order statistics and no usable temporal structure.
+
+    ``array`` is ``(condition, time, channel)``.
+
+    - ``phase_randomized`` randomizes the Fourier phase of every channel independently,
+      which preserves each channel's power spectrum exactly and destroys both the waveform
+      and the relationships between channels.
+    - ``time_shuffled`` applies one permutation of the time axis to every channel of a
+      condition, which preserves the instantaneous population covariance exactly -- the
+      geometry the model could otherwise be credited with recovering -- and destroys only
+      the order in which the states are visited.
+
+    The two fail differently and are meant to be read together: agreement that survives
+    phase randomization comes from the architecture, and agreement that survives time
+    shuffling comes from the geometry rather than from the dynamics.
+    """
+    token = str(mode).strip().lower()
+    if token in {"", "none"}:
+        return array
+    if token not in SURROGATE_MODES:
+        raise ValueError(f"unknown target surrogate {mode!r}; expected one of {SURROGATE_MODES}")
+    rng = np.random.default_rng(int(seed))
+    out = np.asarray(array, dtype=np.float64).copy()
+    n_conditions, n_time, _ = out.shape
+    for condition in range(n_conditions):
+        if token == "time_shuffled":
+            out[condition] = out[condition][rng.permutation(n_time)]
+            continue
+        block = out[condition]
+        mean = block.mean(axis=0, keepdims=True)
+        spectrum = np.fft.rfft(block - mean, axis=0)
+        phases = rng.uniform(0.0, 2.0 * np.pi, size=spectrum.shape)
+        # The DC term carries no phase, and for an even-length series neither does the
+        # Nyquist term; rotating either would move the mean or make the result complex.
+        phases[0] = 0.0
+        if n_time % 2 == 0:
+            phases[-1] = 0.0
+        rotated = np.abs(spectrum) * np.exp(1j * phases)
+        out[condition] = np.fft.irfft(rotated, n=n_time, axis=0) + mean
+    return out.astype(array.dtype, copy=False)
+
+
 def _target_tensors(
     targets: FixationMRNNTargets,
     *,
     target_mode: str,
     device: str,
+    surrogate: str = "none",
+    surrogate_seed: int = 0,
 ) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
     arrays = targets.targets_for_mode(target_mode)
+    if str(surrogate).strip().lower() not in {"", "none"}:
+        # Offset per region in a fixed order, so the whole surrogate is reproducible from
+        # the one seed and does not depend on the run seed.
+        arrays = {
+            region: surrogate_target_array(
+                arrays[region], mode=surrogate, seed=int(surrogate_seed) + index
+            )
+            for index, region in enumerate(targets.region_order)
+        }
     by_region = {
         region: torch.as_tensor(arrays[region], dtype=torch.float32, device=device)
         for region in targets.region_order
@@ -574,7 +647,10 @@ def train_one_initialization(
     device = resolve_device(settings.device)
     target_mode = normalize_target_mode(settings.target_mode)
     targets = make_targets(settings)
-    targets_by_region, target = _target_tensors(targets, target_mode=target_mode, device=device)
+    targets_by_region, target = _target_tensors(
+        targets, target_mode=target_mode, device=device,
+        surrogate=settings.target_surrogate, surrogate_seed=int(settings.target_surrogate_seed),
+    )
     target_fr_by_region, fr_components_by_region, fr_means_by_region = _pc_backprojection_tensors(
         targets,
         device=device,
@@ -789,6 +865,7 @@ def train_one_initialization(
         "settings": asdict(settings),
         "seed": int(seed),
         "target_mode": target_mode,
+        "target_surrogate": str(settings.target_surrogate),
         "region_order": list(targets.region_order),
         "condition_order": list(targets.condition_order),
         "timeline_s": targets.timeline_s,
@@ -829,6 +906,7 @@ def train_one_initialization(
                 "created_at_utc": datetime.now(timezone.utc).isoformat(),
                 "seed": int(seed),
                 "target_mode": target_mode,
+        "target_surrogate": str(settings.target_surrogate),
                 "run_dir": str(run_dir),
                 "final_loss": final_loss,
                 "best_loss": float(best_loss),

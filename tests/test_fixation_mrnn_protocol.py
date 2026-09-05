@@ -449,3 +449,108 @@ class TestAdequacy(unittest.TestCase):
         self.assertAlmostEqual(float(table.loc["traded", "mean_all"]), 1.0, places=6)
         self.assertFalse(bool(table.loc["traded", "adequate"]))
         self.assertTrue(bool(table.loc["dense", "adequate"]))
+
+
+class TestSurrogateTargets(unittest.TestCase):
+    """Surrogates put a floor under inter-seed agreement, so what they preserve matters.
+
+    A null that accidentally kept the temporal structure would be no null at all, and one
+    that destroyed the population covariance as well would make the floor unfairly low.
+    Each mode is pinned to exactly what it claims.
+    """
+
+    def _signal(self) -> np.ndarray:
+        rng = np.random.default_rng(0)
+        time = np.linspace(0.0, 1.0, 100)
+        channels = np.stack(
+            [np.sin(2 * np.pi * 7 * time) + 0.3 * rng.standard_normal(100) for _ in range(4)],
+            axis=-1,
+        )
+        return np.stack([channels, 0.5 * channels + 0.1], axis=0)
+
+    def test_phase_randomization_keeps_the_spectrum_and_destroys_the_waveform(self) -> None:
+        from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_training import (
+            surrogate_target_array,
+        )
+
+        signal = self._signal()
+        surrogate = surrogate_target_array(signal, mode="phase_randomized", seed=0)
+        self.assertTrue(np.isrealobj(surrogate))
+        centred = lambda x: x - x.mean(axis=1, keepdims=True)  # noqa: E731
+        self.assertTrue(np.allclose(
+            np.abs(np.fft.rfft(centred(signal), axis=1)),
+            np.abs(np.fft.rfft(centred(surrogate), axis=1)),
+        ))
+        self.assertTrue(np.allclose(signal.mean(axis=1), surrogate.mean(axis=1)))
+        self.assertFalse(np.allclose(signal, surrogate))
+
+    def test_time_shuffling_keeps_the_population_covariance_exactly(self) -> None:
+        from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_training import (
+            surrogate_target_array,
+        )
+
+        signal = self._signal()
+        surrogate = surrogate_target_array(signal, mode="time_shuffled", seed=0)
+        self.assertTrue(np.allclose(np.cov(signal[0].T), np.cov(surrogate[0].T)))
+        # The order the states are visited in is what this mode removes.
+        original = float(np.corrcoef(signal[0, :-1, 0], signal[0, 1:, 0])[0, 1])
+        shuffled = float(np.corrcoef(surrogate[0, :-1, 0], surrogate[0, 1:, 0])[0, 1])
+        self.assertGreater(original, 0.5)
+        self.assertLess(abs(shuffled), 0.4)
+
+    def test_a_surrogate_is_reproducible_and_none_is_the_identity(self) -> None:
+        from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_training import (
+            surrogate_target_array,
+        )
+
+        signal = self._signal()
+        # Every seed of a null arm must be fitted to the *same* surrogate, or the arm
+        # measures the randomization rather than the model.
+        self.assertTrue(np.allclose(
+            surrogate_target_array(signal, mode="phase_randomized", seed=3),
+            surrogate_target_array(signal, mode="phase_randomized", seed=3),
+        ))
+        self.assertIs(surrogate_target_array(signal, mode="none", seed=0), signal)
+        with self.assertRaises(ValueError):
+            surrogate_target_array(signal, mode="scrambled", seed=0)
+
+
+class TestInvariantMeasures(unittest.TestCase):
+    def test_signed_permutation_leaves_every_invariant_unchanged(self) -> None:
+        """The exact symmetry of the model must not register as a difference.
+
+        Relabelling hidden units and flipping their signs leaves a tanh network's outputs
+        identical, so any measure that moves under it is measuring the labelling.
+        """
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_circuit import (
+            eigenspectrum_agreement,
+            linear_cka,
+            procrustes_similarity,
+        )
+
+        rng = np.random.default_rng(0)
+        size = 12
+        weight = rng.standard_normal((size, size)) / np.sqrt(size)
+        states = rng.standard_normal((200, size))
+
+        order = rng.permutation(size)
+        signs = rng.choice([-1.0, 1.0], size=size)
+        transform = np.zeros((size, size))
+        transform[np.arange(size), order] = signs
+
+        self.assertAlmostEqual(
+            eigenspectrum_agreement(
+                np.linalg.eigvals(weight), np.linalg.eigvals(transform @ weight @ transform.T)
+            ),
+            1.0, places=6,
+        )
+        self.assertAlmostEqual(linear_cka(states, states @ transform.T), 1.0, places=6)
+        self.assertAlmostEqual(procrustes_similarity(states, states @ transform.T), 1.0, places=6)
+
+    def test_unrelated_networks_do_not_look_aligned(self) -> None:
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_circuit import linear_cka
+
+        rng = np.random.default_rng(1)
+        a = rng.standard_normal((300, 16))
+        b = rng.standard_normal((300, 16))
+        self.assertLess(linear_cka(a, b), 0.4)

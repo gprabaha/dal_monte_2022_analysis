@@ -343,6 +343,19 @@ class TestFixationMRNNTorchSmoke(unittest.TestCase):
             )
             self.assertEqual(ablated["ablated_connections"], (("ofc", "bla"),))
             self.assertEqual(ablated["output"].shape, replay["output"].shape)
+            # An ablation has to actually reach the forward pass. Writing into
+            # ``mrnn.W_rec`` does not: the wrapper reassembles its recurrent matrix from
+            # the block parameters on every call and copies the result back over W_rec, so
+            # an ablation applied there is silently discarded and every pathway measures as
+            # free. Check the block is zero in the matrix the forward pass actually uses,
+            # and that the replayed dynamics moved.
+            intact_weight = replay["model"].recurrent_weight_matrix().detach()
+            ablated_weight = ablated["model"].recurrent_weight_matrix().detach()
+            slices = ablated["model"].hidden_region_slices()
+            block = ablated_weight[slices["bla"], slices["ofc"]]
+            self.assertEqual(float(block.abs().max()), 0.0)
+            self.assertGreater(float((intact_weight - ablated_weight).abs().sum()), 0.0)
+            self.assertFalse(torch.allclose(ablated["h_seq"], replay["h_seq"]))
 
     def test_balanced_condition_weighting_equalises_the_objective(self) -> None:
         """An absolute MSE gives each condition influence in proportion to its energy,

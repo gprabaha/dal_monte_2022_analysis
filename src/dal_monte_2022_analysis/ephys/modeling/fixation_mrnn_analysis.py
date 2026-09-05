@@ -160,16 +160,30 @@ def replay_fixation_mrnn_run_with_ablations(
     """Replay a checkpoint after zeroing selected recurrent region blocks.
 
     Each ablation is a ``(source_region, target_region)`` tuple. The
-    corresponding n_source x n_target recurrent block is set to zero before
-    replay, deleting that directed source-to-target current.
+    corresponding block is set to zero before replay, deleting that directed
+    source-to-target current.
+
+    The zeroing goes through the model's block masks rather than through
+    ``mrnn.W_rec``. Writing into ``W_rec`` has no effect: the wrapper's forward pass
+    reassembles the dense matrix from its block parameters on every call and copies the
+    result back over ``W_rec``, so an ablation applied there is silently discarded and
+    every pathway measures as free. Masking also works uniformly across dense, low-rank
+    and sparse blocks, and it propagates into the structural mask, so anything counting
+    live connections sees the ablation too.
     """
     model, checkpoint = load_fixation_mrnn_checkpoint(run_dir, device=device)
-    mrnn = model.mrnn
     with torch.no_grad():
         for source_region, target_region in ablations:
-            source_start, source_stop = mrnn.get_region_indices(source_region)
-            target_start, target_stop = mrnn.get_region_indices(target_region)
-            mrnn.W_rec[target_start:target_stop, source_start:source_stop] = 0.0
+            key = (str(source_region), str(target_region))
+            existing = model._block_masks.get(key)
+            if existing is not None:
+                existing.zero_()
+                continue
+            units = model.spec.hidden_units_by_region
+            model._block_masks[key] = torch.zeros(
+                int(units[target_region]), int(units[source_region]),
+                dtype=torch.float32, device=next(model.parameters()).device,
+            )
     replay = _run_model_replay(model, checkpoint, noise=noise)
     replay["ablated_connections"] = tuple((str(source), str(target)) for source, target in ablations)
     return replay
