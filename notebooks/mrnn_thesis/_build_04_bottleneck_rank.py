@@ -1009,8 +1009,38 @@ else:
         ))
 
     combined_variants = [sweep.ModelVariant(label="combined", arm="joint corner", overrides=corner)]
-    display(Markdown("**The corner:** " + "; ".join(chosen)))
+    # Describe what the corner ended up being, not what each prong proposed: the B-vs-C
+    # step above drops one of the two cross-region constraints, and listing the dropped one
+    # as part of the corner would misreport the model that is actually fitted.
+    applied = [f"`{key}` = {corner[key]}" for key in
+               ("within_region_density", "cross_region_density", "recurrent_bottleneck_dim")
+               if corner.get(key) is not None]
+    display(Markdown("**The corner:** " + ("; ".join(applied) if applied else "no constraint survived")))
     display(pd.DataFrame([combined_variants[0].describe()]))
+
+    # Written now, before the joint fit, so task 05 can queue its ensemble in parallel
+    # rather than waiting out another round trip on the cluster. It is explicitly marked
+    # unverified; the block below rewrites it once the combined runs land, and task 05
+    # reports the flag rather than silently treating the two as equivalent.
+    selection_path = TASK_ROOT / "selected_constrained_model.yaml"
+    selection_path.write_text(yaml.safe_dump({
+        "hidden_units": HIDDEN_UNITS,
+        "condition_loss_weighting": CONDITION_WEIGHTING,
+        "l1_weight_scale": 0.0,
+        **{k: v for k, v in corner.items()
+           if k in ("within_region_density", "cross_region_density", "recurrent_bottleneck_dim")},
+        "inherited_protocol": SELECTED_PROTOCOL.get("selected_label"),
+        "epochs": int(SELECTED_PROTOCOL["epochs"]),
+        "verified": False,
+        "coordinate_wise_prediction": float(knee_table["fit_vs_ceiling"].min()),
+        "selection_rule": ("fit is a constraint (worst condition reaches the noise ceiling "
+                           "within twice the seed spread); among adequate models, most "
+                           "reproducible at least cost"),
+    }, sort_keys=False))
+    display(Markdown(
+        f"Corner definition written to `{selection_path}` and marked **unverified**. Task 05 can "
+        f"queue its ensemble on it now; the joint fit below confirms or overturns it."
+    ))
 
 if combined_variants:
     combined_commands, _ = sweep.variant_job_commands(
@@ -1068,23 +1098,22 @@ if combined_variants:
             f"corner or a looser setting goes forward to task 05."
         ))
 
-        selection = {
-            "hidden_units": HIDDEN_UNITS,
-            "condition_loss_weighting": CONDITION_WEIGHTING,
-            "l1_weight_scale": 0.0,
-            **{k: v for k, v in combined_variants[0].overrides.items()
-               if k in ("within_region_density", "cross_region_density", "recurrent_bottleneck_dim")},
-            "inherited_protocol": SELECTED_PROTOCOL.get("selected_label"),
-            "epochs": int(SELECTED_PROTOCOL["epochs"]),
+        selection = yaml.safe_load(selection_path.read_text())
+        selection.update({
+            "verified": True,
             "worst_condition_vs_ceiling": float(row["worst_condition"].iloc[0]),
             "adequate": bool(row["adequate"].iloc[0]),
-            "selection_rule": ("fit is a constraint (worst condition reaches the noise ceiling "
-                               "within twice the seed spread); among adequate models, most "
-                               "reproducible at least cost"),
-        }
-        path = TASK_ROOT / "selected_constrained_model.yaml"
-        path.write_text(yaml.safe_dump(selection, sort_keys=False))
-        display(Markdown(f"Selection written to `{path}` — task 05 reads it from there."))
+        })
+        selection_path.write_text(yaml.safe_dump(selection, sort_keys=False))
+        if not bool(row["adequate"].iloc[0]):
+            display(Markdown(
+                "🔴 **The corner does not hold jointly.** Each constraint was tolerable on its "
+                "own and the combination is not, which is the interaction this section exists to "
+                "catch. Loosen the tightest prong and re-run, and report the gap — an ensemble "
+                "already fitted on this corner in task 05 is measuring a model that does not "
+                "reproduce the data."
+            ))
+        display(Markdown(f"`{selection_path.name}` updated and marked **verified**."))
 '''
 
 

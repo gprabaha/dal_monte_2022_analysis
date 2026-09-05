@@ -146,11 +146,24 @@ Task 04 writes its choice to `selected_constrained_model.yaml`: the corner of th
 constraint families that still reproduced the data, verified jointly rather than inferred
 from the coordinate-wise sweeps. That file is the input here.
 
-If it does not exist yet the notebook falls back to task 02's unconstrained base model and
-says so. That fallback is not a substitute — the entire hypothesis behind the constraints
-is that they *narrow the solution set*, so measuring identifiability on the unconstrained
-model answers a different question. It is there so the notebook can be read and reviewed
-while task 04 finishes, and every submission is gated on it.
+That file appears in two states, and the difference matters:
+
+- **unverified** — task 04 has found the corner where the three constraint families meet,
+  from the coordinate-wise sweeps, but has not yet fitted it. The corner is written as soon
+  as it is defined precisely so this notebook can queue its ensemble in parallel rather
+  than waiting out another round trip on the cluster.
+- **verified** — task 04 has fitted the corner and confirmed it still reaches the ceiling.
+  If it does not, the constraints interact and the corner is wrong; this notebook says so
+  rather than silently measuring identifiability on a model that does not fit.
+
+Running on the unverified corner is a reasonable bet — the coordinate-wise sweeps have to
+be badly wrong for it to fail — but it is a bet, so it is behind a flag.
+
+If no corner exists at all, the notebook falls back to task 02's unconstrained base model
+and says so. That fallback is not a substitute: the entire hypothesis behind the
+constraints is that they *narrow the solution set*, so identifiability measured on the
+unconstrained model is the **baseline** for that claim rather than a test of it. It is
+still worth fitting for exactly that reason, which is why the flag allows it.
 """
 
 S1_CODE = r'''
@@ -159,38 +172,63 @@ BASE_MODEL_PATH = MODEL_SELECTION_ROOT / "selected_base_model.yaml"
 
 if CONSTRAINED_PATH.exists():
     SELECTION = yaml.safe_load(CONSTRAINED_PATH.read_text())
-    SELECTION_IS_PROVISIONAL = False
-    SOURCE = f"task 04 (`{CONSTRAINED_PATH.name}`)"
+    SELECTION_IS_VERIFIED = bool(SELECTION.get("verified", False))
+    SELECTION_IS_CONSTRAINED = True
+    SOURCE = (f"task 04 (`{CONSTRAINED_PATH.name}`, "
+              f"{'verified' if SELECTION_IS_VERIFIED else '**not yet verified jointly**'})")
 elif BASE_MODEL_PATH.exists():
     SELECTION = yaml.safe_load(BASE_MODEL_PATH.read_text())
-    SELECTION_IS_PROVISIONAL = True
-    SOURCE = "task 02 base model — **task 04 has not chosen a constrained model**"
+    SELECTION_IS_VERIFIED = False
+    SELECTION_IS_CONSTRAINED = False
+    SOURCE = "task 02 base model — **task 04 has not defined a corner**"
 else:
     SELECTION = None
-    SELECTION_IS_PROVISIONAL = True
+    SELECTION_IS_VERIFIED = False
+    SELECTION_IS_CONSTRAINED = False
     SOURCE = "**nothing upstream has been selected**"
 
-#: Set True to fit the ensemble before task 04 has selected a constrained model. The
-#: unconstrained model is a legitimate *comparison* -- it is the thing the constraints are
-#: supposed to improve on -- but it is not the model this section is about.
-ALLOW_PROVISIONAL_SELECTION = False
+#: Set True to fit the ensemble on a corner task 04 has defined but not yet fitted, or on
+#: the unconstrained base model when no corner exists. Both are useful and neither is the
+#: finished article: the unverified corner is a bet on the coordinate-wise sweeps, and the
+#: unconstrained model is the baseline the constraints are supposed to improve on.
+ALLOW_UNVERIFIED_SELECTION = False
 
 STRUCTURAL_KEYS = ("hidden_units", "condition_loss_weighting", "l1_weight_scale",
                    "recurrent_bottleneck_dim", "within_region_density", "cross_region_density",
                    "recurrent_connectivity")
 if SELECTION is None:
     model_overrides = {}
-    display(Markdown("🔴 No upstream selection exists. Run tasks 02 and 04 first."))
+    display(Markdown(
+        f"🔴 **No upstream selection exists.** Neither `{CONSTRAINED_PATH}` nor "
+        f"`{BASE_MODEL_PATH}` is present.\n\n"
+        f"To produce the first: run task 04 through Section 10, which writes the corner as soon "
+        f"as the three prong knees are known — Sections 9 and 10 both have to be executed, and "
+        f"Section 9 needs its sparsity arm trained."
+    ))
 else:
     model_overrides = {key: SELECTION[key] for key in STRUCTURAL_KEYS if key in SELECTION}
     display(Markdown(f"Model under test, from {SOURCE}:"))
     display(pd.DataFrame([model_overrides]))
-    if SELECTION_IS_PROVISIONAL:
+    if not SELECTION_IS_CONSTRAINED:
         display(Markdown(
-            "⚠️ **This is the unconstrained model.** The chapter's hypothesis is that the "
-            "constraints narrow the solution set, so identifiability measured here is a "
-            "*baseline* for that claim rather than a test of it. Submission is blocked unless "
-            "`ALLOW_PROVISIONAL_SELECTION = True`."
+            "⚠️ **This is the unconstrained model**, because task 04 has not defined a corner. "
+            "The chapter's hypothesis is that the constraints narrow the solution set, so "
+            "identifiability measured here is the *baseline* for that claim rather than a test "
+            "of it — worth fitting, but not the model this task is about. Re-run task 04 "
+            "Sections 9 and 10 to define the corner, or set "
+            "`ALLOW_UNVERIFIED_SELECTION = True` to fit the baseline now."
+        ))
+    elif not SELECTION_IS_VERIFIED:
+        display(Markdown(
+            f"⚠️ **The corner has not been verified jointly.** Task 04 found it by varying each "
+            f"constraint family on its own; whether all of them together still reach the ceiling "
+            f"is what its Section 10 fits. Its coordinate-wise prediction is "
+            f"**{SELECTION.get('coordinate_wise_prediction', float('nan')):.4f}**.\n\n"
+            f"Queueing the ensemble now is reasonable — both notebooks would fit the same "
+            f"configuration, and the constraints would have to interact badly for it to fail — "
+            f"but it is a bet, so set `ALLOW_UNVERIFIED_SELECTION = True` to take it. If the "
+            f"joint fit later comes out inadequate, everything below is measuring a model that "
+            f"does not reproduce the data."
         ))
 
 variants = [sweep.ModelVariant(label="ensemble", arm="fitted", overrides=model_overrides)]
@@ -231,7 +269,7 @@ SUBMIT_NULL = False   # <-- set to True to submit the surrogate-target arms
 
 JOBS_DIRS = [TASK_ROOT / "_jobs", TASK_ROOT / "_jobs_null"]
 flight = sweep.in_flight_run_dirs(*JOBS_DIRS)
-blocked = SELECTION is None or (SELECTION_IS_PROVISIONAL and not ALLOW_PROVISIONAL_SELECTION)
+blocked = SELECTION is None or (not SELECTION_IS_VERIFIED and not ALLOW_UNVERIFIED_SELECTION)
 
 
 def plan(variant_list, seed_list):
@@ -281,9 +319,11 @@ display(Markdown(sweep.describe_in_flight(flight)))
 
 if blocked and (commands or null_commands):
     display(Markdown(
-        "**Not submitted**: no constrained model has been selected. Set "
-        "`ALLOW_PROVISIONAL_SELECTION = True` to fit the ensemble on the unconstrained model "
-        "as a baseline."
+        "**Not submitted**: "
+        + ("no upstream selection exists — see Section 1 for which task 04 sections to run."
+           if SELECTION is None else
+           f"the model under test is {'an unverified corner' if SELECTION_IS_CONSTRAINED else 'the unconstrained baseline'}. "
+           f"Set `ALLOW_UNVERIFIED_SELECTION = True` to queue on it anyway.")
     ))
 else:
     if SUBMIT and commands:
