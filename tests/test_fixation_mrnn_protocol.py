@@ -554,3 +554,54 @@ class TestInvariantMeasures(unittest.TestCase):
         a = rng.standard_normal((300, 16))
         b = rng.standard_normal((300, 16))
         self.assertLess(linear_cka(a, b), 0.4)
+
+
+class TestAdequacyBarIsTheCeiling(unittest.TestCase):
+    """The bar is the noise ceiling, not the unconstrained model.
+
+    ``r2_vs_ceiling`` is normalized so 1.0 is reproducing exactly the reproducible part of
+    the signal and above 1.0 is reproducing sampling noise. The unconstrained model
+    usually lands above 1.0, so scoring constrained models against *it* asks them to
+    overfit by the same margin and rejects every constraint that declines to -- which is
+    what happened to all twelve of task 04's constrained variants.
+    """
+
+    def _fit(self, worst_by_label: dict) -> pd.DataFrame:
+        rows = []
+        for label, worst in worst_by_label.items():
+            for seed in (1, 2, 3):
+                offset = 0.0005 * (seed - 2)
+                rows.append({"label": label, "seed": seed, "condition": "face_interactive",
+                             "r2_vs_ceiling": worst + offset})
+                rows.append({"label": label, "seed": seed, "condition": "object",
+                             "r2_vs_ceiling": worst + 0.01 + offset})
+        return pd.DataFrame(rows)
+
+    def test_a_constrained_model_at_the_ceiling_is_adequate_though_below_an_overfitting_baseline(self) -> None:
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import adequacy_table
+
+        # The baseline overfits by ~0.9%, as the real dense h40 model does.
+        table = adequacy_table(
+            self._fit({"dense": 1.009, "constrained": 1.0003}), baseline_label="dense"
+        ).set_index("label")
+        self.assertTrue(bool(table.loc["constrained", "adequate"]))
+        # The gap to the baseline is still reported -- it is just not the criterion.
+        self.assertGreater(float(table.loc["constrained", "cost_vs_baseline"]), 0.008)
+        self.assertGreater(float(table.loc["constrained", "ceiling_margin"]), 0.0)
+
+    def test_a_model_that_misses_the_ceiling_is_still_rejected(self) -> None:
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import adequacy_table
+
+        table = adequacy_table(
+            self._fit({"dense": 1.009, "too_tight": 0.98}), baseline_label="dense"
+        ).set_index("label")
+        self.assertFalse(bool(table.loc["too_tight", "adequate"]))
+
+    def test_the_rule_works_without_a_baseline_in_the_frame(self) -> None:
+        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import adequacy_table
+
+        table = adequacy_table(
+            self._fit({"a": 1.001, "b": 0.97}), baseline_label="absent"
+        ).set_index("label")
+        self.assertTrue(bool(table.loc["a", "adequate"]))
+        self.assertFalse(bool(table.loc["b", "adequate"]))

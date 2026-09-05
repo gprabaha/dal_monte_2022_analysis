@@ -826,17 +826,31 @@ def adequacy_table(
     baseline_label: str = "dense",
     tolerance_multiple: float = 2.0,
 ) -> pd.DataFrame:
-    """Per-variant fit against an unconstrained baseline, with an adequacy flag.
+    """Per-variant fit, and whether it reaches the noise ceiling on its worst condition.
+
+    **The bar is the ceiling, not the unconstrained baseline.** ``r2_vs_ceiling`` is
+    already normalized so that 1.0 means reproducing exactly the reproducible part of the
+    signal and above 1.0 means reproducing sampling noise. The unconstrained model
+    typically lands above 1.0 -- on this dataset the dense h40 model reaches 1.009 -- so
+    scoring constrained models against *it* asks them to overfit by the same margin, and
+    rejects every constraint that declines to. An earlier version of this function did
+    exactly that and marked all twelve constrained variants inadequate while every one of
+    them sat at or near the ceiling.
 
     Adequacy is judged on the **worst condition**, not the mean. A constraint that leaves
-    the average fit intact by trading interactive-face structure for object structure has
-    not been tolerated by the data; it has been absorbed by the condition the objective
-    already finds easy. The tolerance scales with the baseline's own seed-to-seed spread
-    rather than being a fixed number, so it tightens as the fits become more reproducible.
+    the average intact by trading interactive-face structure for object structure has not
+    been tolerated by the data; it has been absorbed by the condition the objective already
+    finds easy.
+
+    The tolerance is the seed-to-seed spread of the fits themselves, so "reaches the
+    ceiling" means "is not distinguishable from the ceiling given how much a refit moves"
+    rather than a number chosen by hand. ``cost_vs_baseline`` is still reported, because
+    how far a constraint falls below the unconstrained fit is worth seeing -- it is just
+    not the criterion.
 
     This is the *constraint* half of the selection rule. Among the variants it marks
-    adequate, the one to keep is chosen on reproducibility and cost -- never on fit, which
-    beyond the ceiling is measuring noise.
+    adequate, the one to keep is chosen on reproducibility and cost, never on fit: past the
+    ceiling, further loss reduction is fitting noise.
     """
     per_seed = (
         fit.groupby(["label", "seed", "condition"])["r2_vs_ceiling"].mean().reset_index()
@@ -846,15 +860,21 @@ def adequacy_table(
         worst_condition="mean", seed_spread="std"
     )
     summary["mean_all"] = fit.groupby("label")["r2_vs_ceiling"].mean()
-    if baseline_label in summary.index:
-        reference = float(summary.loc[baseline_label, "worst_condition"])
+
+    # Prefer the baseline's own spread, since it is the configuration fitted most often,
+    # but fall back to the typical spread so the rule still works without a baseline.
+    if baseline_label in summary.index and np.isfinite(summary.loc[baseline_label, "seed_spread"]):
         spread = float(summary.loc[baseline_label, "seed_spread"])
     else:
-        reference, spread = float("nan"), float("nan")
+        spread = float(summary["seed_spread"].median())
     tolerance = tolerance_multiple * spread
+
+    reference = (float(summary.loc[baseline_label, "worst_condition"])
+                 if baseline_label in summary.index else float("nan"))
+    summary["ceiling_margin"] = summary["worst_condition"] - 1.0
     summary["cost_vs_baseline"] = reference - summary["worst_condition"]
     summary["tolerance"] = tolerance
-    summary["adequate"] = summary["cost_vs_baseline"] <= tolerance
+    summary["adequate"] = summary["worst_condition"] >= 1.0 - tolerance
     return summary.reset_index()
 
 

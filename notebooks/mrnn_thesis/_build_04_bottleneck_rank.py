@@ -870,7 +870,12 @@ else:
     display(Markdown(
         "**All three prongs at matched budget.** `fit_vs_ceiling` is the *worst* condition, not "
         "the mean — a constraint that keeps the average by giving up interactive-face structure "
-        "has not been tolerated by the data."
+        "has not been tolerated by the data.\n\n"
+        "**The bar is 1.0, the noise ceiling — not the dense baseline.** The scale is normalized "
+        "so that 1.0 means reproducing exactly the reproducible part of the signal and above 1.0 "
+        "means reproducing sampling noise. The unconstrained model lands *above* the ceiling, so "
+        "asking a constrained model to match it is asking it to overfit by the same margin. "
+        "`cost_vs_baseline` is reported because the gap is worth seeing; it is not the criterion."
     ))
     display(matched_only[["prong", "label", "budget", "fit_vs_ceiling", "cost_vs_baseline",
                           "adequate", "agreement"]].sort_values(["prong", "budget"]).round(4))
@@ -880,12 +885,14 @@ else:
 
 S9D_CODE = r'''
 if sparsity_histories:
-    # The selection rule, stated once. Fit is a *constraint*: a model has to stay within the
-    # baseline's own seed spread on its worst condition. Past the noise ceiling, further loss
-    # reduction is fitting sampling error, so fit is not the thing being maximised. Among the
-    # models that clear the bar, the one to keep is the most reproducible across seeds at the
-    # smallest budget -- reproducibility is the objective, because a circuit claim that
-    # changes with the random seed is not a claim about the brain.
+    # The selection rule, stated once. Fit is a *constraint*: a model has to reach the noise
+    # ceiling on its worst condition, within the seed-to-seed spread of the fits themselves.
+    # It is deliberately not "match the dense baseline": past the ceiling further loss
+    # reduction is fitting sampling error, the dense model does exactly that, and scoring
+    # against it rejects every constraint that declines to overfit. Among the models that
+    # clear the bar, the one to keep is the most reproducible across seeds at the smallest
+    # budget -- reproducibility is the objective, because a circuit claim that changes with
+    # the random seed is not a claim about the brain.
     knees = []
     for prong, block in matched_only.groupby("prong"):
         ok = block[block["adequate"]]
@@ -899,7 +906,11 @@ if sparsity_histories:
                       "fit_vs_ceiling": float(pick["fit_vs_ceiling"]),
                       "agreement": float(pick["agreement"])})
     knee_table = pd.DataFrame(knees)
-    display(Markdown("**Tightest setting each family can sustain**, and what it buys:"))
+    display(Markdown(
+        "**Tightest setting each family can sustain**, and what it buys. \"Sustain\" means its "
+        "worst condition still reaches the noise ceiling; the smallest budget that does is the "
+        "knee."
+    ))
     display(knee_table.round(4))
 
     # The comparison the arm exists for. B and C spend the same budget on the same blocks
@@ -1067,8 +1078,9 @@ if combined_variants:
             "epochs": int(SELECTED_PROTOCOL["epochs"]),
             "worst_condition_vs_ceiling": float(row["worst_condition"].iloc[0]),
             "adequate": bool(row["adequate"].iloc[0]),
-            "selection_rule": ("fit is a constraint (worst condition within twice the dense seed "
-                               "spread); among adequate models, most reproducible at least cost"),
+            "selection_rule": ("fit is a constraint (worst condition reaches the noise ceiling "
+                               "within twice the seed spread); among adequate models, most "
+                               "reproducible at least cost"),
         }
         path = TASK_ROOT / "selected_constrained_model.yaml"
         path.write_text(yaml.safe_dump(selection, sort_keys=False))
