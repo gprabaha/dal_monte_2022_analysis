@@ -385,3 +385,104 @@ __all__ = [
     "resolve_output_dir",
     "split_half_traces",
 ]
+
+
+def population_ceiling_by_cell(
+    unit_ceiling: pd.DataFrame,
+    *,
+    pca_by_region: Mapping[str, Mapping[str, object]],
+    normalization_scale: float | None,
+    conditions: Sequence[str] = CONDITION_ORDER,
+    trace_to_target_scale: float = 100.0,
+    noise_control: bool = True,
+    random_seed: int = 0,
+) -> pd.DataFrame:
+    """The ceiling the model's R^2 is actually bounded by, per region x condition.
+
+    ``trace_to_target_scale`` converts the stored half-traces into the units of the
+    training export: the ceiling's per-trial pipeline leaves traces in spikes per 10 ms
+    bin, the target export is in Hz, so the factor is 100. It is a units convention, not a
+    data difference -- the two agree to correlation 1.000 once applied -- and because every
+    statistic here is a correlation it does not change the ceiling; it only makes the
+    projected traces reproduce the training target exactly, which is the check that the
+    stored halves are the model's own data.
+
+    :func:`population_ceiling_in_pc_space` estimates reliability per component in a basis
+    fitted on half A, then the chapter averaged those 42 numbers without weighting and
+    pooled the conditions. Three mismatches with the R^2 it was used to divide:
+
+    * the model is scored in the PCA basis fitted on the **full** average, not on half A;
+    * R^2 sums squared error over components, so it is **variance-weighted** -- dominated
+      by the leading components, whose reliability is ~0.999 -- while an unweighted mean
+      over 42 components is pulled down by the tail at 0.91-0.95. Dividing a top-heavy R^2
+      by a tail-heavy mean is how R^2 / ceiling came out above 1;
+    * conditions differ five-fold in trial count, so their reliabilities differ, and a
+      pooled ceiling over-rates the fit on the best-measured condition and under-rates the
+      others.
+
+    This function projects the two independent half-averages onto the model's own basis,
+    centres per component over the pooled (condition x time) trajectory exactly as the R^2
+    does, and takes the split-half correlation of the **whole trajectory** -- covariances
+    and variances summed over components, which weights each by its variance as R^2 does --
+    for every region x condition cell and for each region pooled. Spearman-Brown then gives
+    the reliability of the full average, which is the R^2 a perfect model could reach.
+
+    ``normalization_scale`` is the scalar the training targets were divided by; it is
+    needed only so the stored PCA mean is subtracted in matching units. ``noise_control``
+    runs the identical projection on Gaussian half-matrices and should sit near zero.
+    """
+    rng = np.random.default_rng(int(random_seed))
+    scale = float(normalization_scale) if normalization_scale else 1.0
+    rows: list[dict[str, object]] = []
+
+    def pooled_corr(a: np.ndarray, b: np.ndarray, mask: np.ndarray | None = None) -> float:
+        if mask is not None:
+            a, b = a[mask], b[mask]
+        denominator = float(np.sqrt((a**2).sum() * (b**2).sum()))
+        return float((a * b).sum() / denominator) if denominator > 0 else float("nan")
+
+    for region, meta in pca_by_region.items():
+        units = [str(u) for u in meta["source_features"]]
+        stacked = _stack_halves(unit_ceiling, region, units, conditions)
+        if stacked is None:
+            continue
+        half_a, half_b = stacked
+        mean = np.asarray(meta["mean"], dtype=float)
+        components = np.asarray(meta["components"], dtype=float)
+        scores_a = (half_a * float(trace_to_target_scale) / scale - mean) @ components.T
+        scores_b = (half_b * float(trace_to_target_scale) / scale - mean) @ components.T
+        # Centred per component over the pooled trajectory, as the R^2 denominator is.
+        centred_a = scores_a - scores_a.mean(axis=0)
+        centred_b = scores_b - scores_b.mean(axis=0)
+        n_time = scores_a.shape[0] // len(conditions)
+
+        per_component = np.array([
+            float(np.corrcoef(centred_a[:, j], centred_b[:, j])[0, 1]) for j in range(scores_a.shape[1])
+        ])
+        weight = (centred_a**2).sum(axis=0) + (centred_b**2).sum(axis=0)
+        sb_components = np.array([_spearman_brown(float(r)) for r in per_component])
+        control = float("nan")
+        if noise_control:
+            noise_a = rng.normal(size=half_a.shape) @ components.T
+            noise_b = rng.normal(size=half_b.shape) @ components.T
+            control = pooled_corr(noise_a - noise_a.mean(axis=0), noise_b - noise_b.mean(axis=0))
+
+        pooled = pooled_corr(centred_a, centred_b)
+        rows.append({
+            "region": region, "condition": "all",
+            "half_correlation": pooled, "reliability": _spearman_brown(pooled),
+            "unweighted_component_mean": float(np.mean(sb_components)),
+            "variance_weighted_component_mean": float((sb_components * weight).sum() / weight.sum()),
+            "noise_control": control, "n_components": int(scores_a.shape[1]),
+        })
+        for index, condition in enumerate(conditions):
+            mask = np.zeros(scores_a.shape[0], dtype=bool)
+            mask[index * n_time:(index + 1) * n_time] = True
+            r = pooled_corr(centred_a, centred_b, mask)
+            rows.append({
+                "region": region, "condition": str(condition),
+                "half_correlation": r, "reliability": _spearman_brown(r),
+                "unweighted_component_mean": np.nan, "variance_weighted_component_mean": np.nan,
+                "noise_control": np.nan, "n_components": int(scores_a.shape[1]),
+            })
+    return pd.DataFrame(rows)

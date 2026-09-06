@@ -47,10 +47,28 @@ class LegacyDenseRecurrentFixationMRNNModel(FixationMRNNModel):
         return self.mrnn.W_rec * self.mrnn.W_rec_mask
 
 
+#: Prefixes of every block-parameter tensor the wrapper can register. A checkpoint with
+#: none of them is a legacy run that stored one dense ``W_rec``.
+_BLOCK_PARAMETER_PREFIXES = (
+    "_within_region_param_",
+    "_within_left_", "_within_right_",
+    "_inter_left_", "_inter_right_",
+    "_inter_dense_",
+)
+
+
 def is_legacy_dense_checkpoint(checkpoint: Mapping[str, object]) -> bool:
-    """True when a checkpoint stores one dense ``W_rec`` instead of block parameters."""
+    """True when a checkpoint stores one dense ``W_rec`` instead of block parameters.
+
+    Detected by the absence of *any* block parameter, not of one particular kind: a model
+    whose within-region blocks are rank-constrained registers ``_within_left_*`` rather than
+    ``_within_region_param_*``, and testing for the latter alone sent every such run down
+    the legacy path.
+    """
     state_dict = checkpoint["model_state_dict"]
-    return not any(str(key).startswith("_within_region_param_") for key in state_dict)
+    return not any(
+        str(key).startswith(prefix) for key in state_dict for prefix in _BLOCK_PARAMETER_PREFIXES
+    )
 
 
 def resolve_checkpoint_path(run_dir: str | Path, *, prefer: str = "best") -> Path:
@@ -248,11 +266,18 @@ def reconstruction_accuracy(replay: Mapping[str, object]) -> pd.DataFrame:
     for region in replay["region_order"]:
         observed = np.asarray(checkpoint["target_by_region"][region], dtype=float)
         predicted = replay["output_by_region"][region].detach().cpu().numpy().astype(float, copy=False)
+        # SST is centred **per component over all conditions and time**. That is the
+        # centring the noise ceiling uses (a per-component split-half correlation over the
+        # pooled trajectory) and the only offset the model's shared readout bias can absorb.
+        # The previous grand mean over the flattened (time x component) block gave credit for
+        # each component's offset within a condition -- variance the ceiling never counted --
+        # which is why R^2 / ceiling came out above 1.
+        component_mean = observed.mean(axis=(0, 1), keepdims=True)
         for cond_idx, condition in enumerate(replay["condition_order"]):
             y = observed[cond_idx].reshape(-1)
             yhat = predicted[cond_idx].reshape(-1)
             err = y - yhat
-            ss_tot = float(np.sum((y - np.mean(y)) ** 2))
+            ss_tot = float(np.sum((observed[cond_idx] - component_mean[0]) ** 2))
             ss_res = float(np.sum(err**2))
             rows.append(
                 {

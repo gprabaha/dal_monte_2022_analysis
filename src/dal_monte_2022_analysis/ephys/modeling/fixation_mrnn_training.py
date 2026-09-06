@@ -101,6 +101,35 @@ class FixationMRNNRunSettings:
     #: sparse block can stay full rank, and a low-rank block can stay fully dense.
     within_region_density: float = 1.0
     cross_region_density: float = 1.0
+    #: Rank of each region's own recurrent block; ``None`` leaves it dense. The
+    #: within-region counterpart of ``recurrent_bottleneck_dim`` (which constrains the
+    #: inter-region blocks). See the model spec for why the two are not comparable at equal
+    #: rank.
+    within_region_bottleneck_dim: int | None = None
+    #: How the per-cell losses are combined. ``"sum"`` is the weighted sum the chapter has
+    #: used throughout. ``"minimax"`` scores every region x condition cell by its unexplained
+    #: fraction -- scale-free in both region and condition -- and optimises the worst cell,
+    #: so the model cannot buy a better fit on one fixation type by sacrificing another, and
+    #: no region dominates the objective by having more units. It is the adequacy criterion
+    #: (worst cell against the ceiling) used as the objective. Under ``"minimax"`` the
+    #: condition and PC weightings are not applied to the main term: the per-cell
+    #: normalisation does their job, and stacking both would double-count.
+    loss_aggregation: str = "sum"
+    #: Softness of the maximum: ``tau * logsumexp(cells / tau)``. Small is a hard max, very
+    #: large recovers the mean. Cells' unexplained fractions sit around 0.005-0.05 near the
+    #: ceiling, so 0.01 makes a 0.01 gap between two cells worth a factor of e in weight.
+    minimax_temperature: float = 0.01
+    #: Which random subset of entries the mask keeps. ``None`` ties it to the run seed, so
+    #: the surviving topology varies from seed to seed -- the right choice when the question
+    #: is whether sparsity *as a family* produces reproducible fits, and the behaviour every
+    #: run before this setting existed had.
+    #:
+    #: Pin it to an integer and every seed of the arm shares one topology. That is the
+    #: setting an identifiability question needs: with the mask varying, two fits differ in
+    #: their wiring as well as their weights, and a disagreement between them cannot be
+    #: attributed to the optimisation rather than to the two networks simply being
+    #: different networks.
+    sparsity_seed: int | None = None
     gradient_clip_norm: float | None = None
     #: Learning-rate schedule: "constant" (the historical behaviour), "cosine" (decay to
     #: ``lr_min_factor * lr`` over the run), or "step" (multiply by ``lr_step_gamma``
@@ -444,6 +473,65 @@ def _temporal_difference_loss(
     return _weighted_loss(name, pred_diff, target_diff, weights=diff_weights)
 
 
+def cell_unexplained_fractions(
+    output_by_region: Mapping[str, torch.Tensor],
+    target_by_region: Mapping[str, torch.Tensor],
+    *,
+    region_order: Sequence[str],
+    time_weights: torch.Tensor | None = None,
+    derivative_scale: float = 0.0,
+    curvature_scale: float = 0.0,
+) -> torch.Tensor:
+    """Unexplained variance fraction of every region x condition cell, shape ``(regions, conditions)``.
+
+    Each cell is the sum loss's own numerator for that cell -- squared error on the
+    trajectory plus the derivative and curvature squared errors at their usual scales --
+    divided by **one** denominator, the cell's trajectory SST. Dividing every term by the
+    same SST keeps the sum loss's relative weighting of slow and fast structure exactly;
+    normalising each term by its own SST would turn the (small) derivative errors into
+    O(1) ratios and reweight fast structure roughly tenfold, which is what the first draft
+    of this function did.
+
+    SST is centred **per component over all conditions and time** -- the centring the noise
+    ceiling uses, and the only offset the model's shared readout bias can absorb. Centring
+    per condition would remove between-condition offsets the model has to generate through
+    its dynamics.
+
+    Scale-free in both region and condition, so the cells are comparable and a maximum over
+    them is meaningful. At convergence a cell sits at roughly ``1 - R^2`` plus small
+    derivative terms, which is what the chapter's adequacy criterion reads.
+    """
+    cells = []
+    for region in region_order:
+        pred = output_by_region[region]
+        tgt = target_by_region[region]
+        centred = tgt - tgt.mean(dim=(0, 1), keepdim=True)
+        w0 = time_weights if time_weights is not None else None
+        sst = ((centred ** 2) * w0 if w0 is not None else centred ** 2).sum(dim=(1, 2)).clamp_min(1e-12)
+        numerator = torch.zeros(pred.shape[0], dtype=pred.dtype, device=pred.device)
+        for order, scale in ((0, 1.0), (1, float(derivative_scale)), (2, float(curvature_scale))):
+            if scale <= 0.0:
+                continue
+            p, t = pred, tgt
+            for _ in range(order):
+                p = p[:, 1:, :] - p[:, :-1, :]
+                t = t[:, 1:, :] - t[:, :-1, :]
+            sq_err = (p - t) ** 2
+            if time_weights is not None:
+                sq_err = sq_err * time_weights[:, order:, :]
+            numerator = numerator + scale * sq_err.sum(dim=(1, 2))
+        cells.append(numerator / sst)
+    return torch.stack(cells, dim=0)
+
+
+def soft_maximum(values: torch.Tensor, *, temperature: float) -> torch.Tensor:
+    """``tau * logsumexp(values / tau)`` -- a differentiable maximum."""
+    tau = float(temperature)
+    if tau <= 0.0:
+        return values.max()
+    return tau * torch.logsumexp(values.reshape(-1) / tau, dim=0)
+
+
 def _l1(parameters: Sequence[torch.Tensor], scale: float) -> torch.Tensor:
     if not parameters:
         return torch.zeros(())
@@ -669,12 +757,14 @@ def train_one_initialization(
         inp_constrained=settings.inp_constrained,
         recurrent_connectivity=normalize_recurrent_connectivity(settings.recurrent_connectivity),
         recurrent_bottleneck_dim=settings.recurrent_bottleneck_dim,
+        within_region_bottleneck_dim=settings.within_region_bottleneck_dim,
         recurrent_blocked_pairs=tuple(tuple(pair) for pair in (settings.recurrent_blocked_pairs or ())),
         within_region_density=float(settings.within_region_density),
         cross_region_density=float(settings.cross_region_density),
-        # Tie the mask to the run seed so which connections survive is part of the
-        # seed-to-seed variation being measured, not a fixed choice in every run.
-        sparsity_seed=int(seed),
+        # Default: tie the mask to the run seed, so which connections survive is part of
+        # the seed-to-seed variation being measured. Set ``sparsity_seed`` to share one
+        # topology across an arm instead -- see the field's note.
+        sparsity_seed=int(seed if settings.sparsity_seed is None else settings.sparsity_seed),
         batch_first=settings.batch_first,
         inp_noise=settings.inp_noise,
         act_noise=settings.act_noise,
@@ -776,10 +866,26 @@ def train_one_initialization(
         l2_rate = torch.mean(out["h_seq"] ** 2) * float(settings.l2_rate_scale)
         weight = model.within_region_recurrent_l1_penalty(scale=settings.l1_weight_scale)
         l2_weight = _l2([param for param in model.mrnn.parameters()], settings.l2_weight_scale)
+        # The per-cell unexplained fractions are computed under both aggregations: they are
+        # the objective under minimax and a diagnostic under the sum, and they are what the
+        # adequacy criterion reads, so having them in the history makes convergence and
+        # adequacy the same curve.
+        cells = cell_unexplained_fractions(
+            out["output_by_region"], targets_by_region,
+            region_order=targets.region_order, time_weights=time_weights,
+            derivative_scale=float(settings.temporal_derivative_loss_scale),
+            curvature_scale=float(settings.temporal_curvature_loss_scale),
+        )
+        if str(settings.loss_aggregation).strip().lower() == "minimax":
+            main_term = soft_maximum(cells, temperature=float(settings.minimax_temperature))
+        else:
+            main_term = (
+                reconstruction
+                + float(settings.temporal_derivative_loss_scale) * derivative
+                + float(settings.temporal_curvature_loss_scale) * curvature
+            )
         loss = (
-            reconstruction
-            + float(settings.temporal_derivative_loss_scale) * derivative
-            + float(settings.temporal_curvature_loss_scale) * curvature
+            main_term
             + float(settings.correlation_loss_scale) * correlation
             + float(settings.variance_loss_scale) * variance
             + float(settings.fr_reconstruction_loss_scale) * fr_reconstruction
@@ -797,6 +903,8 @@ def train_one_initialization(
             "mse_loss": float(reconstruction.detach().cpu()),
             "temporal_derivative_loss": float(derivative.detach().cpu()),
             "temporal_curvature_loss": float(curvature.detach().cpu()),
+            "worst_cell_unexplained": float(cells.detach().max().cpu()),
+            "mean_cell_unexplained": float(cells.detach().mean().cpu()),
             "correlation_loss": float(correlation.detach().cpu()),
             "variance_loss": float(variance.detach().cpu()),
             "fr_reconstruction_loss": float(fr_reconstruction.detach().cpu()),
@@ -989,6 +1097,8 @@ __all__ = [
     "normalize_lr_schedule",
     "normalize_loss_weighting",
     "pc_loss_weights",
+    "cell_unexplained_fractions",
+    "soft_maximum",
     "resolve_device",
     "resolve_fixation_mrnn_output_root",
     "settings_from_config",

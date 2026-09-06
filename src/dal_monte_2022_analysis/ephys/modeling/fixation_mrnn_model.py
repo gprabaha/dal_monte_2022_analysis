@@ -28,6 +28,13 @@ class FixationMRNNModelSpec:
     #: block is a single dense matrix, which is the unconstrained baseline the bottleneck
     #: results have to be measured against.
     recurrent_bottleneck_dim: int | None = None
+    #: Rank of each region's own recurrent block, or ``None`` for dense. The within-region
+    #: counterpart of ``recurrent_bottleneck_dim``: a region's self-recurrence then passes
+    #: through this many dimensions. The two constrain different things -- a region's drive
+    #: is one within block plus three cross blocks, so at equal rank the cross constraint
+    #: removes about three times as many drive dimensions -- which is why the grid that uses
+    #: them reports both axes and their marginals rather than comparing ranks directly.
+    within_region_bottleneck_dim: int | None = None
     #: ``(source, target)`` pairs removed on top of ``recurrent_connectivity``. The named
     #: modes cover the global structures; this covers everything else -- isolating one
     #: region, removing a single directed pathway, or any other lesion the sweep needs --
@@ -85,7 +92,12 @@ class FixationMRNNModel(nn.Module):
             (str(source), str(target)) for source, target in (spec.recurrent_blocked_pairs or ())
         }
         self._block_masks: dict[tuple[str, str], torch.Tensor] = {}
+        self._within_bottleneck_dim = (
+            None if spec.within_region_bottleneck_dim is None else int(spec.within_region_bottleneck_dim)
+        )
         self._within_region_params: dict[str, nn.Parameter] = {}
+        self._within_region_left_params: dict[str, nn.Parameter] = {}
+        self._within_region_right_params: dict[str, nn.Parameter] = {}
         self._inter_region_left_params: dict[tuple[str, str], nn.Parameter] = {}
         self._inter_region_right_params: dict[tuple[str, str], nn.Parameter] = {}
         self._inter_region_dense_params: dict[tuple[str, str], nn.Parameter] = {}
@@ -178,6 +190,19 @@ class FixationMRNNModel(nn.Module):
                 # of each within-region block are used.
                 parameter = nn.Parameter(torch.zeros(hidden_units, dtype=torch.float32))
                 nn.init.uniform_(parameter, -0.1, 0.1)
+            elif self._within_bottleneck_dim is not None:
+                # Rank-constrained self-recurrence: the block is ``left @ right`` and the
+                # region's own dynamics pass through ``within_region_bottleneck_dim``
+                # directions. Same parameterization as the inter-region factors.
+                left = nn.Parameter(torch.empty(hidden_units, self._within_bottleneck_dim, dtype=torch.float32))
+                right = nn.Parameter(torch.empty(self._within_bottleneck_dim, hidden_units, dtype=torch.float32))
+                nn.init.xavier_uniform_(left)
+                nn.init.xavier_uniform_(right)
+                self._within_region_left_params[region] = left
+                self._within_region_right_params[region] = right
+                self.register_parameter(f"_within_left_{region}", left)
+                self.register_parameter(f"_within_right_{region}", right)
+                continue
             else:
                 # In the full connectivity mode, each within-region block is a
                 # full dense matrix of shape (hidden_units, hidden_units).
@@ -281,6 +306,8 @@ class FixationMRNNModel(nn.Module):
             for parameter in self._within_region_params.values():
                 parameter.mul_(factor)
             # A rank-r block is ``left @ right``; scaling one factor scales the product.
+            for parameter in self._within_region_left_params.values():
+                parameter.mul_(factor)
             for parameter in self._inter_region_left_params.values():
                 parameter.mul_(factor)
             for parameter in self._inter_region_dense_params.values():
@@ -288,6 +315,10 @@ class FixationMRNNModel(nn.Module):
         self._sync_recurrent_state()
 
     def _within_region_block(self, region: str) -> torch.Tensor:
+        if region in self._within_region_left_params:
+            block = self._within_region_left_params[region] @ self._within_region_right_params[region]
+            mask = self._block_masks.get((region, region))
+            return block if mask is None else block * mask.to(block.device)
         parameter = self._within_region_params[region]
         if self._connectivity_mode == "cross_region_with_self_diagonal":
             return torch.diag(parameter)
@@ -434,8 +465,19 @@ class FixationMRNNModel(nn.Module):
         return weight
 
     def within_region_recurrent_parameters(self) -> list[nn.Parameter]:
-        """Return the trainable within-region recurrent parameters."""
-        return [self._within_region_params[region] for region in self.region_order]
+        """Return the trainable within-region recurrent parameters (factors when rank-constrained)."""
+        out: list[nn.Parameter] = []
+        for region in self.region_order:
+            if region in self._within_region_left_params:
+                out.extend([self._within_region_left_params[region], self._within_region_right_params[region]])
+            else:
+                out.append(self._within_region_params[region])
+        return out
+
+    @property
+    def within_region_bottleneck_dim(self) -> int | None:
+        """Rank of each within-region block, or ``None`` when dense."""
+        return self._within_bottleneck_dim
 
     def inter_region_recurrent_parameters(self) -> list[tuple[nn.Parameter, nn.Parameter]]:
         """Trainable low-rank factors for inter-region connections; empty when dense."""
@@ -458,9 +500,10 @@ class FixationMRNNModel(nn.Module):
 
     def within_region_recurrent_l1_penalty(self, *, scale: float) -> torch.Tensor:
         """Apply L1 regularization only to within-region recurrent weights."""
-        if float(scale) <= 0.0:
-            return torch.zeros((), device=next(iter(self._within_region_params.values())).device)
-        penalty = torch.zeros((), device=next(iter(self._within_region_params.values())).device)
+        parameters = self.within_region_recurrent_parameters()
+        if float(scale) <= 0.0 or not parameters:
+            return torch.zeros((), device=self.mrnn.device)
+        penalty = torch.zeros((), device=parameters[0].device)
         for parameter in self.within_region_recurrent_parameters():
             penalty = penalty + torch.mean(torch.abs(parameter))
         return penalty * float(scale)

@@ -586,6 +586,7 @@ def score_variant_fit(
     inventory: pd.DataFrame,
     ceiling_by_region: Mapping[str, float],
     *,
+    ceiling_by_cell: Mapping[tuple[str, str], float] | None = None,
     device: str = "cpu",
 ) -> pd.DataFrame:
     """Region x condition fit for every completed run, against the noise ceiling."""
@@ -593,7 +594,15 @@ def score_variant_fit(
     for _, run in inventory[inventory["complete"].astype(bool)].iterrows():
         replay = replay_fixation_mrnn_run(Path(run["run_dir"]), device=device)
         accuracy = reconstruction_accuracy(replay)
-        accuracy["ceiling"] = [float(ceiling_by_region.get(str(r), np.nan)) for r in accuracy["region"]]
+        if ceiling_by_cell is not None:
+            # A ceiling per region x condition, matched to the R^2's basis and centring
+            # (fixation_psth_noise_ceiling.population_ceiling_by_cell). Takes precedence.
+            accuracy["ceiling"] = [
+                float(ceiling_by_cell.get((str(r), str(c)), ceiling_by_region.get(str(r), np.nan)))
+                for r, c in zip(accuracy["region"], accuracy["condition"])
+            ]
+        else:
+            accuracy["ceiling"] = [float(ceiling_by_region.get(str(r), np.nan)) for r in accuracy["region"]]
         accuracy["r2_vs_ceiling"] = accuracy["r2"] / accuracy["ceiling"]
         frames.append(accuracy.assign(label=run["label"], seed=run["seed"], run_dir=run["run_dir"]))
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
@@ -905,9 +914,9 @@ def lowest_adequate_rank(
     return adequate[0] if adequate else None
 
 
-def resolve_task_root(task: str, cfg_path: str | Path = "configs/dataset.yaml") -> Path:
-    """Output root for one sweep task."""
-    return resolve_chapter_root(cfg_path, task=task)
+def resolve_task_root(task: str, cfg_path: str | Path = "configs/dataset.yaml", *, tree: str = "chapter") -> Path:
+    """Output root for one sweep task; ``tree`` selects the series (see ``resolve_chapter_root``)."""
+    return resolve_chapter_root(cfg_path, task=task, tree=tree)
 
 
 __all__ = [

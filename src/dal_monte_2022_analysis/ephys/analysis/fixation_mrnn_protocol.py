@@ -201,10 +201,16 @@ def resolve_chapter_root(
     *,
     task: str,
     modeling_subdir: str = DEFAULT_MODELING_SUBDIR,
+    tree: str = "chapter",
 ) -> Path:
-    """Output root for one rebuild task, kept apart from the legacy ``scratch/`` tree."""
+    """Output root for one task, kept apart from the legacy ``scratch/`` tree.
+
+    ``tree`` names the series: ``"chapter"`` is the rebuild (tasks 00-08), ``"final"`` the
+    ladder / rank-grid / ensemble series fitted on the minimax objective and the ceiling-
+    matched R^2. They are separate roots because their runs are not on the same objective.
+    """
     cfg = load_config(cfg_path)
-    path = build_analysis_output_dir(cfg, modeling_subdir) / "chapter" / str(task)
+    path = build_analysis_output_dir(cfg, modeling_subdir) / str(tree) / str(task)
     path.mkdir(parents=True, exist_ok=True)
     return path
 

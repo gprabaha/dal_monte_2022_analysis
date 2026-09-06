@@ -268,16 +268,27 @@ def build_fixation_mrnn_targets_from_dataframe(
         raise ValueError(f"Unsupported conditions: {missing_conditions}")
 
     frame = build_mrnn_training_dataframe(combined_dataframe)
-    region_type = pd.CategoricalDtype(categories=region_order, ordered=True)
+    # ``region_order`` may name a subset of the recorded regions -- a single region, or a
+    # pair -- so that "can this region reproduce itself without the others" can be asked by
+    # fitting it alone. Two things keep such a fit comparable with the full model:
+    #   * each region's PCA is fitted on its own units, so a region's target does not depend
+    #     on which other regions are present; and
+    #   * the normalisation scale is pooled over **every** recorded region, not just the ones
+    #     being fitted, so the target's magnitude -- and with it the loss scale and the
+    #     effective learning rate -- is identical at every rung of the ladder.
+    recorded = tuple(str(value) for value in pd.unique(frame["region"].astype(str)))
+    missing_regions = sorted(set(region_order) - set(recorded))
+    if missing_regions:
+        raise ValueError(f"Training dataframe lacks regions in region_order: {missing_regions}")
+    ordered_recorded = tuple(region_order) + tuple(r for r in recorded if r not in region_order)
+    region_type = pd.CategoricalDtype(categories=ordered_recorded, ordered=True)
     frame["region"] = frame["region"].astype(region_type)
-    if frame["region"].isna().any():
-        raise ValueError("Training dataframe contains regions outside region_order.")
     frame = frame.sort_values(["region", "date", "uuid"]).reset_index(drop=True)
 
     raw_by_region: dict[str, np.ndarray] = {}
     raw_features_by_region: dict[str, tuple[str, ...]] = {}
     matrices_by_region: dict[str, list[np.ndarray]] = {}
-    for region in region_order:
+    for region in ordered_recorded:
         region_frame = frame.loc[frame["region"].astype(str) == region]
         raw_features_by_region[region] = tuple(str(uuid) for uuid in region_frame["uuid"])
         matrices_by_region[region] = [
@@ -294,6 +305,10 @@ def build_fixation_mrnn_targets_from_dataframe(
             pooled,
             stabilizer=float(normalization_stabilizer),
         )
+    # Everything downstream iterates ``region_order``; the extra regions were only needed
+    # for the scale.
+    matrices_by_region = {region: matrices_by_region[region] for region in region_order}
+    raw_features_by_region = {region: raw_features_by_region[region] for region in region_order}
 
     pcs_by_region: dict[str, np.ndarray] = {}
     pc_features_by_region: dict[str, tuple[str, ...]] = {}
