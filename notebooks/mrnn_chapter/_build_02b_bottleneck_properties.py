@@ -13,46 +13,69 @@ OUTPUT_FILENAME = "02b_bottleneck_properties.ipynb"
 _CELL_COUNTER = count(1)
 
 
-HEADER = r"""# 02b · What narrowing the channel does to the network
+HEADER = r"""# 02b · What narrowing the channel does, and to which fixation type
 
-*Companion to task 02. No new fits: every panel reads the 175 grid runs and the ten dense
-fits from task 01.*
+*Companion to task 02. No new fits — every panel reads the 175 grid runs and the ten dense
+fits from task 01. Regions are pooled wherever they make no difference to the conclusion,
+and every plot shows the individual seeds.*
 
-Task 02 established what the bottleneck costs in fit and that within-region rank is free
-while cross-region rank is not. This notebook asks what the constrained networks are
-*doing* differently — where a region's drive comes from, how many dimensions the drive and
-the state occupy, how the flow between regions is arranged in time, and whether any of that
-differs between fixation types.
+**Three conclusions, each with one figure:**
 
-**Three reference cells** carry most of the time-resolved figures:
-
-| cell | $r_w$ | $r_c$ | worst cell | role |
-|---|---|---|---|---|
-| `full` | dense | dense | 0.991 | the unconstrained network (task 01, ten seeds) |
-| `w1_c10` | 1 | 10 | 0.983 | the tightest adequate cell — task 02's selection |
-| `w1_c1` | 1 | 1 | 0.938 | the tightest cell fitted, well below the bar |
-
-Everything scalar is shown along both marginals, so the effect of each constraint can be read
-with the other side dense.
-
-**Two rules carried from the audit.** Raw current magnitudes are not comparable across cells
-(a rank-constrained model compensates with larger weights everywhere) or across fixation
-types (interactive face has half the target variance), so every cross-cell and
-cross-condition claim here rests on **shares, fractions, cosines and participation ratios**.
-And a property that changes with rank is only interesting if it is not simply the target
-showing through, so the state-level quantities are read against what task 07 established
-the target itself carries.
+1. **The cross-region channel is what costs fit, and it costs interactive face most.**
+   Squeezing every self block to rank 1 costs at most 0.003 of ceiling-relative $R^2$, the same
+   for all three fixation types. Squeezing the cross channel to rank 1 costs interactive face
+   0.019 against 0.0145 for the other two, and interactive face is the most expensive at every
+   cross rank. (§2)
+2. **Interactive face is the hardest fixation type at every rank, including dense.** It is the
+   worst-fitted condition in 599 of 600 region-level fits with a constrained channel and in 30
+   of 40 in the dense network. The channel bottleneck widens a gap that is already there; the
+   within-region bottleneck leaves it alone. (§3)
+3. **The constrained network reroutes drive, but rerouted drive does not reproduce the data.**
+   With self-recurrence squeezed, the network takes over a region's drive (share 0.68 → 0.97)
+   almost for free; with the channel squeezed, self-recurrence takes over (share → 0.18) and
+   the fit drops. Interactive face is the fixation type that falls back on self-recurrence
+   most. (§5)
 
 | Section | |
 |---|---|
-| 1 | Fit per fixation type along each marginal |
-| 2 | Where a region's drive comes from |
-| 3 | Drive rank against state rank — how the nonlinearity re-expands a narrow channel |
-| 4 | What the state does: speed and extent |
-| 5 | Flow between regions over time |
-| 6 | Steady or bursty: the network's share of drive within a trial |
-| 7 | With or against: incoming current and a region's own dynamics, in time |
-| 8 | Reading the result |
+| 1 | Definitions, and what the two constraints act on |
+| 2 | The main result: fit per fixation type along each marginal |
+| 3 | Interactive face is hardest everywhere |
+| 4 | Regions, for completeness |
+| 5 | Where a region's drive comes from |
+| 6 | Flow in time: steady versus bursty |
+| 7 | With or against a region's own dynamics |
+| 8 | How many dimensions the drive and the state occupy |
+| 9 | Reading the result |
+"""
+
+
+DEFINITIONS = r"""## 1. Definitions
+
+Region $r$ has a hidden state $h_r(t)\in\mathbb{R}^{40}$, the activity of its 40 units after the
+nonlinearity. The recurrent matrix is sixteen $40\times40$ blocks, $W_{rs}$ mapping region $s$'s
+state into region $r$.
+
+| quantity | definition | what it is |
+|---|---|---|
+| **drive** from $s$ into $r$ | $c_{s\to r}(t) = W_{rs}\,h_s(t)$ | the 40-vector of input region $r$ receives from region $s$ at time $t$. $s=r$ is the region's **self-drive** (its own recurrence). |
+| the update | $h_r(t{+}1)=\tanh\!\big(\sum_s c_{s\to r}(t)+b_r\big)$ | the state is the tanh of the total drive plus a bias |
+| **drive energy** of a pathway | $\lVert c_{s\to r}(t)\rVert^2$ | squared length of that 40-vector |
+| **cross share** | $\dfrac{\sum_{s\neq r}\lVert c_{s\to r}(t)\rVert^2}{\sum_{s}\lVert c_{s\to r}(t)\rVert^2}$ | the fraction of what region $r$ receives that comes from the other three regions rather than from itself. Scale-free, so comparable across cells and fixation types. |
+| **state speed** | $\overline{\lVert h_r(t{+}1)-h_r(t)\rVert}$ | how far the state moves per 10 ms bin |
+| **state extent** | $\overline{\lVert h_r(t)-\bar h_r\rVert}$ | how far the state sits from its mean |
+| **participation ratio** of a trajectory | $(\sum_i\lambda_i)^2/\sum_i\lambda_i^2$ over covariance eigenvalues | the effective number of dimensions it occupies |
+| **alignment** | $\cos\big(c_{s\to r}(t),\,c_{r\to r}(t)\big)$ | does the partner push region $r$ the way its own recurrence is already pushing it (positive) or against it (negative) |
+
+**The two constraints.** $r_w$ = rank of each self block $W_{rr}$; $r_c$ = rank of each of the
+twelve cross blocks $W_{rs}$. A region's total drive therefore has rank at most $r_w + 3r_c$
+— three cross blocks feed each region — which is why the two are not compared at equal rank
+but along their **marginals**: one side squeezed, the other left dense.
+
+**What is not comparable.** Raw drive magnitudes differ across cells (a rank-constrained model
+compensates with larger weights) and across fixation types (interactive face has half the
+target variance). Every cross-cell and cross-condition claim below therefore uses shares,
+fractions, cosines and participation ratios.
 """
 
 
@@ -102,7 +125,6 @@ ADEQUATE_BAR = 0.98
 SELECTED = yaml.safe_load((GRID_ROOT / "selected_bottleneck.yaml").read_text())
 REFERENCE_CELLS = ["full", SELECTED["label"], "w1_c1"]
 
-#: Every grid cell plus the dense corner, labelled so annotate_rank_grid can read the ranks.
 ARMS = {"full": LADDER_ROOT / "full"}
 ARMS.update({v.label: GRID_ROOT / v.label
              for v in audit.rank_grid_variants(RANKS, base_overrides={}, include_marginals=True)})
@@ -128,219 +150,245 @@ def with_ranks(frame: pd.DataFrame) -> pd.DataFrame:
     return audit.annotate_rank_grid(frame, hidden_units=HIDDEN_UNITS)
 
 
+# Fit tables: the grid, and the dense corner from task 01 on the same per-cell ceiling.
+fit = with_ranks(pd.read_csv(GRID_ROOT / "tables" / "grid_fit.csv"))
+dense_fit = pd.read_csv(LADDER_ROOT / "tables" / "ladder_fit_matched.csv")
+dense_fit = dense_fit[dense_fit["label"] == "full"]
+
+show(aviz.plot_bottleneck_schematic(), "fig00_schematic")
 print(f"{len(ARMS)} cells; reference cells {REFERENCE_CELLS}")
 '''
 
 
-S1_TEXT = r"""## 1. Fit per fixation type along each marginal
+S2_TEXT = r"""## 2. The main result
 
-Under the minimax objective the three fixation types are pushed toward the same fit, so any
-gap that remains is one the optimiser could not close. Left: cross-region rank with
-within-region dense. Right: the reverse. Dotted lines are the dense network.
-"""
-
-S1_CODE = r'''
-fit = with_ranks(pd.read_csv(GRID_ROOT / "tables" / "grid_fit.csv"))
-full_fit = pd.read_csv(LADDER_ROOT / "tables" / "ladder_fit_matched.csv")
-full_fit = full_fit[full_fit["label"] == "full"]
-dense_by_condition = full_fit.groupby(["seed", "condition"])["r2_vs_ceiling"].min().groupby("condition").mean().to_dict()
-
-show(aviz.plot_condition_fit_vs_rank(fit, dense_by_condition=dense_by_condition, bar=ADEQUATE_BAR),
-     "fig01_condition_fit_vs_rank")
-worst = fit.groupby(["label", "rank_within", "rank_cross", "seed", "region", "condition"])["r2_vs_ceiling"].mean().unstack("condition")
-by_cross = worst.groupby(level="rank_cross").apply(lambda d: f"{int((d.idxmin(axis=1) == 'face_interactive').sum())}/{len(d)}")
-display(Markdown("**Interactive face is the worst-fitted condition in this many (cell, seed, region) fits, by cross rank:**"))
-display(by_cross.to_frame("interactive face worst"))
-gap = fit[fit["rank_within"] == HIDDEN_UNITS].groupby(["rank_cross", "condition"])["r2_vs_ceiling"].mean().unstack()
-gap["int − non-int"] = gap["face_interactive"] - gap["face_non_interactive"]
-display(gap.round(4))
-'''
-
-
-S2_TEXT = r"""## 2. Where a region's drive comes from
-
-The fraction of a region's total recurrent drive energy that arrives from the other three
-regions rather than from its own recurrent block, for every cell, per region and fixation
-type. This is the quantity task 06's E2 correction was about: reported with the self-block
-included it was uninterpretable, and here it is the whole point.
+Fit per fixation type along each marginal, **regions pooled** (mean over the four regions per
+seed — the region breakdown is in §4 and changes nothing here), **every seed a mark**. Dotted
+lines are the dense network. Then the same data as the **cost** relative to dense, which is the
+direct reading of "how much does this constraint hurt this fixation type".
 """
 
 S2_CODE = r'''
-props = with_ranks(cached("region_state_properties",
-                          lambda: audit.collect_over_arms(ARMS, audit.region_state_properties)))
-cross_dense = props[props["rank_cross"] == HIDDEN_UNITS]
-within_dense = props[props["rank_within"] == HIDDEN_UNITS]
-show(aviz.plot_property_vs_rank(within_dense, "cross_energy_fraction", rank_column="rank_cross",
-                                ylabel="cross-region share of drive energy"),
-     "fig02a_cross_share_vs_cross_rank")
-show(aviz.plot_property_vs_rank(cross_dense, "cross_energy_fraction", rank_column="rank_within",
-                                ylabel="cross-region share of drive energy"),
-     "fig02b_cross_share_vs_within_rank")
-display(props.groupby("label")["cross_energy_fraction"].mean().loc[REFERENCE_CELLS].round(3).to_frame("cross share (mean)"))
+show(aviz.plot_fit_by_condition_pooled(fit, hidden_units=HIDDEN_UNITS, mode="fit", dense=dense_fit, bar=ADEQUATE_BAR),
+     "fig01_fit_by_condition")
+show(aviz.plot_fit_by_condition_pooled(fit, hidden_units=HIDDEN_UNITS, mode="cost", dense=dense_fit),
+     "fig02_cost_by_condition")
+
+per = fit.groupby(["rank_within", "rank_cross", "seed", "condition"])["r2_vs_ceiling"].mean().reset_index()
+dense_ref = dense_fit.groupby("condition")["r2_vs_ceiling"].mean()
+cross_m = per[per["rank_within"] == HIDDEN_UNITS].copy()
+cross_m["cost"] = cross_m["condition"].map(dense_ref) - cross_m["r2_vs_ceiling"]
+cost_table = cross_m.groupby(["rank_cross", "condition"])["cost"].agg(["mean", "std"]).unstack("condition")
+display(Markdown("**Cost of the cross-region bottleneck relative to the dense network** (Δ $R^2$/ceiling, mean ± sd over seeds):"))
+display(cost_table.round(4))
 '''
 
-S2_AFTER = r"""Read the two panels together. Squeezing the **within-region** block to rank 1 with the
-network dense pushes the cross share to ~0.95 — the region stops driving itself and lets the
-network do it, and task 02 showed this costs nothing. Squeezing the **cross-region** channel
-with self-recurrence dense does the mirror image: the cross share falls to ~0.17 and the self
-block takes over the drive. So the network *can* reroute in either direction and does. The
-asymmetry is in what the rerouted drive can achieve: driven by the network, a region
-reproduces its data to the ceiling; driven by its own recurrence, it does not (task 02, cross
-marginal). Self-recurrence is a substitute in energy but not in content.
-
-Interactive face sits lowest at every constrained cross rank in most regions — under a narrow
-channel it is the fixation type that falls back on self-recurrence most, and it is also the
-worst-fitted. The fixation type that most needs the channel is the one a narrow channel serves
-least.
+S2_AFTER = r"""**Conclusion.** The right-hand panels are flat and low: **within-region rank costs 0.002–0.0035
+for every fixation type**, the same at rank 1 as at rank 5, with interactive face only ~0.001
+above the others. The left-hand panels fall, and the interactive-face line falls furthest: at
+cross rank 1 the cost is 0.019 for interactive face against 0.0145 for non-interactive face and
+object, and at every rank in between interactive face is the most expensive. The seed spread
+(sd ≤ 0.0014) is smaller than the gap between the lines. The channel is what carries
+interactive face.
 """
 
 
-S3_TEXT = r"""## 3. Drive rank against state rank
+S3_TEXT = r"""## 3. Interactive face is hardest everywhere
 
-The rank constraints bound the pre-activation: a region's drive lives in at most
-$r_w + 3\,r_c$ dimensions. The readout needs roughly 39 linear dimensions of *state*. What
-closes the gap is the tanh and the trained initial state, and the participation ratios show
-how much re-expansion is being asked of them.
+The difference between interactive face and each other fixation type, per seed, along both
+marginals. Below zero means interactive face is fitted worse. The dotted line is the same gap
+in the dense network — the bottleneck's differential effect is how far the line falls below it.
 """
 
 S3_CODE = r'''
-for prop, label in (("drive_pr", "participation ratio of the drive"),
-                    ("state_pr", "participation ratio of the state")):
-    show(aviz.plot_property_vs_rank(within_dense, prop, rank_column="rank_cross", ylabel=label),
-         f"fig03_{prop}_vs_cross_rank")
-summary = props.groupby("label")[["drive_pr", "self_pr", "cross_pr", "state_pr"]].mean()
-display(summary.loc[REFERENCE_CELLS].round(2))
+show(aviz.plot_condition_gap_vs_rank(fit, hidden_units=HIDDEN_UNITS, dense=dense_fit), "fig03_condition_gap")
+
+worst = fit.groupby(["label", "rank_within", "rank_cross", "seed", "region", "condition"])["r2_vs_ceiling"].mean().unstack("condition")
+worst_fi = (worst.idxmin(axis=1) == "face_interactive")
+dense_worst = dense_fit.groupby(["seed", "region", "condition"])["r2_vs_ceiling"].mean().unstack("condition")
+display(Markdown(
+    f"Interactive face is the worst-fitted condition in **{int(worst_fi[worst.index.get_level_values('rank_cross') < HIDDEN_UNITS].sum())}"
+    f"/{int((worst.index.get_level_values('rank_cross') < HIDDEN_UNITS).sum())}** (cell, seed, region) fits with a constrained cross channel, "
+    f"**{int(worst_fi[worst.index.get_level_values('rank_cross') == HIDDEN_UNITS].sum())}"
+    f"/{int((worst.index.get_level_values('rank_cross') == HIDDEN_UNITS).sum())}** with it dense, and "
+    f"**{int((dense_worst.idxmin(axis=1) == 'face_interactive').sum())}/{len(dense_worst)}** in the fully dense network."))
 '''
 
+S3_AFTER = r"""**Conclusion.** The gap is negative everywhere — interactive face is the hardest fixation
+type in the dense network already (dotted lines: −0.004 against non-interactive face, −0.001
+against object). Along the cross marginal it opens as the channel narrows, to −0.009 and
+−0.005 at rank 1, and every seed follows. Along the within marginal it sits ~0.001 below the
+dense gap and does not move with rank. So the bottleneck does not create the interactive-face
+deficit; it amplifies one the data already imposes, and only the inter-regional channel does
+the amplifying.
+"""
 
-S4_TEXT = r"""## 4. What the state does
 
-Speed and extent of the hidden trajectory per region and fixation type against cross-region
-rank. Task 07 established that interactive face is smaller and slower *in the target*, so a
-difference between fixation types here is expected; what is not given in advance is whether
-the bottleneck changes them, and whether it does so differently per fixation type.
+S4_TEXT = r"""## 4. Regions, for completeness
+
+Every region × condition cell, both marginals. The heatmaps show what the pooled figures
+assumed: the effect is the same in every region. Interactive face is the darkest cell in each
+region at each constrained rank.
 """
 
 S4_CODE = r'''
-for prop, label in (("state_speed", "state speed (per bin)"), ("state_extent", "state extent")):
-    show(aviz.plot_property_vs_rank(within_dense, prop, rank_column="rank_cross", ylabel=label),
-         f"fig04_{prop}_vs_cross_rank")
+dense_annotated = with_ranks(dense_fit)
+for side, other, stem in (("rank_cross", "rank_within", "cross"), ("rank_within", "rank_cross", "within")):
+    block = pd.concat([fit[fit[other] == HIDDEN_UNITS], dense_annotated], ignore_index=True)
+    block["n_partners"] = block[side]   # reuse the ladder heatmap with rank on the x-axis
+    fig = aviz.plot_ladder_cell_heatmap(block, bar=ADEQUATE_BAR)
+    ax = fig.axes[0]
+    ax.set_xticklabels(["dense" if t.get_text() == str(HIDDEN_UNITS) else t.get_text() for t in ax.get_xticklabels()])
+    ax.set_xlabel(f"{stem}-region rank (other side dense)")
+    show(fig, f"fig04_{stem}_marginal_cell_heatmap")
 '''
 
 
-S5_TEXT = r"""## 5. Flow between regions over time
+S5_TEXT = r"""## 5. Where a region's drive comes from
 
-$|c_{s\to t}(\tau)|$ for every source into every target, seed-averaged. The diagonal is each
-region's own recurrence. First as a share of the target's total drive energy at each time
-step — the comparable quantity — then raw, to show what the constrained models actually do
-to the magnitudes.
+The **cross share** — the fraction of a region's drive energy that arrives from the other
+three regions — along each marginal, regions pooled, seeds shown.
 """
 
 S5_CODE = r'''
+props = with_ranks(cached("region_state_properties",
+                          lambda: audit.collect_over_arms(ARMS, audit.region_state_properties)))
+show(aviz.plot_property_vs_rank_pooled(props[props["rank_within"] == HIDDEN_UNITS], "cross_energy_fraction",
+                                       rank_column="rank_cross", hidden_units=HIDDEN_UNITS,
+                                       ylabel="cross share of drive energy"), "fig05a_cross_share_vs_cross_rank")
+show(aviz.plot_property_vs_rank_pooled(props[props["rank_cross"] == HIDDEN_UNITS], "cross_energy_fraction",
+                                       rank_column="rank_within", hidden_units=HIDDEN_UNITS,
+                                       ylabel="cross share of drive energy"), "fig05b_cross_share_vs_within_rank")
+display(props.groupby(["label", "condition"])["cross_energy_fraction"].mean().unstack().loc[REFERENCE_CELLS].round(3))
+'''
+
+S5_AFTER = r"""**Conclusion.** The network reroutes drive in whichever direction the constraint leaves
+open. Squeeze self-recurrence and the network takes over (share 0.68 → 0.97 at within rank 1)
+— §2 showed that costs ≤ 0.003. Squeeze the channel and self-recurrence takes over (share →
+0.18 at cross rank 1) — §2 showed that costs 0.015–0.019. Self-recurrence substitutes for the
+channel in *energy* but not in *content*: it can supply the drive but not reproduce the
+trajectories. Interactive face sits lowest at every constrained cross rank (0.155 against
+0.19 at rank 1, 0.54 against 0.59 at rank 10) — it is the fixation type that falls back on
+self-recurrence most, and the one the narrow channel serves least. The seeds agree on this
+ordering; they disagree most (sd ≈ 0.1) where both sides are squeezed.
+"""
+
+
+S6_TEXT = r"""## 6. Flow in time
+
+The cross share as a time course through the trial, one panel per fixation type, regions
+pooled. **Thin lines are individual seeds**; the heavy line is their mean. Three cells: dense,
+the selected `w1_c10`, and `w1_c1`, well below the bar.
+"""
+
+S6_CODE = r'''
 FLOW_CELLS = [c for c in ["full"] + [v.label for v in audit.rank_grid_variants(RANKS, base_overrides={}, include_marginals=True)
                                      if v.arm != "grid" or v.label in REFERENCE_CELLS] if c in ARMS]
 flow = cached("time_resolved_flow",
               lambda: audit.collect_over_arms({c: ARMS[c] for c in FLOW_CELLS}, audit.time_resolved_flow))
-show(aviz.plot_flow_matrix(flow, cells=REFERENCE_CELLS, condition="face_interactive", normalise="share"),
-     "fig05a_flow_share_int_face")
-show(aviz.plot_flow_matrix(flow, cells=REFERENCE_CELLS, condition="face_interactive"),
-     "fig05b_flow_raw_int_face")
-show(aviz.plot_flow_matrix(flow, cells=[SELECTED["label"]], normalise="share"),
-     "fig05c_flow_share_by_condition_selected")
-'''
-
-S5_AFTER = r"""Two things to see. In the dense network the flow is smooth and nearly constant in time; the
-constrained networks concentrate it into transients. And in the selected cell the diagonal —
-each region's own recurrence — has almost vanished as a share of drive, so what looks like a
-"region's activity" in that model is almost entirely what the other three are sending it.
-"""
-
-
-S6_TEXT = r"""## 6. Steady or bursty
-
-The network's share of a region's drive energy over the trial, per fixation type (rows) and
-region (columns), for the three reference cells. Then the within-trial **modulation** of that
-share — its standard deviation over time — as a property along the cross marginal. A channel
-too narrow to carry everything at once forces the region to alternate between driving itself
-and being driven, and the alternation is the signature.
-"""
-
-S6_CODE = r'''
 decomposed = audit.flow_decomposition(flow)
-show(aviz.plot_flow_time_by_condition(decomposed, cells=REFERENCE_CELLS,
-                                      ylabel="cross-region share of drive energy"),
-     "fig06a_cross_share_over_time")
+show(aviz.plot_flow_time_pooled(decomposed, cells=REFERENCE_CELLS), "fig06a_cross_share_time_pooled")
+
 temporal = with_ranks(audit.flow_temporal_summary(decomposed))
-temporal_within_dense = temporal[temporal["rank_within"] == HIDDEN_UNITS]
-show(aviz.plot_property_vs_rank(temporal_within_dense, "cross_fraction_modulation", rank_column="rank_cross",
-                                ylabel="cross-share modulation\n(sd over time within a trial)"),
-     "fig06b_cross_share_modulation_vs_cross_rank")
-display(temporal.groupby(["label", "condition"])["cross_fraction_modulation"].mean().unstack()
-        .loc[REFERENCE_CELLS].round(3))
+show(aviz.plot_property_vs_rank_pooled(temporal[temporal["rank_within"] == HIDDEN_UNITS], "cross_fraction_modulation",
+                                       rank_column="rank_cross", hidden_units=HIDDEN_UNITS,
+                                       ylabel="within-trial sd of the cross share"), "fig06b_modulation_vs_cross_rank")
 '''
+
+S6_AFTER = r"""**Conclusion.** In the dense network the network's share of a region's drive is steady
+through the trial and nearly identical across seeds, and so is it in the selected cell — a
+rank-10 channel is wide enough to carry everything at once. Below the bar (`w1_c1`) it is not:
+each seed's share swings by 0.2–0.4 within a trial as the region alternates between driving
+itself and being driven, and the seeds disagree on *when* — the heavy mean hides swings that
+every thin line shows. The within-trial modulation rises as the channel narrows (0.06 → 0.10
+for non-interactive face and object); interactive face is steadier at every rank (0.04 → 0.06).
+"""
 
 
 S7_TEXT = r"""## 7. With or against
 
-The cosine between the current a region receives from each partner and the region's own
-recurrent drive, in time. Positive: the partner pushes the region the way its own dynamics
-were already going. Task 06's drive-alignment invariant was the time-average of this; here it
-is resolved, and shown along the cross marginal as a mean.
+Alignment between what a region receives from its partners and what its own recurrence is
+already doing, as a mean along the cross marginal and as a time course, regions pooled, seeds
+shown.
 """
 
 S7_CODE = r'''
 alignment = cached("time_resolved_alignment",
                    lambda: audit.collect_over_arms({c: ARMS[c] for c in FLOW_CELLS}, audit.time_resolved_alignment))
-align_by_target = (alignment.groupby(["label", "seed", "target", "condition", "time_s"])["cosine"].mean()
-                   .reset_index())
-show(aviz.plot_flow_time_by_condition(align_by_target, cells=REFERENCE_CELLS, value="cosine",
-                                      ylabel="cosine(incoming current, own drive)"),
-     "fig07a_alignment_over_time")
 align_mean = with_ranks(alignment.groupby(["label", "seed", "target", "condition"])["cosine"].mean()
                         .reset_index().rename(columns={"target": "region"}))
-show(aviz.plot_property_vs_rank(align_mean[align_mean["rank_within"] == HIDDEN_UNITS], "cosine",
-                                rank_column="rank_cross", reference=0.0,
-                                ylabel="mean cosine(incoming, own drive)"),
-     "fig07b_alignment_vs_cross_rank")
-fi_lowest = (align_mean.groupby(["label", "seed", "region", "condition"])["cosine"].mean().unstack("condition"))
-fi_lowest["fi_lowest"] = fi_lowest.idxmin(axis=1) == "face_interactive"
-per_cell = fi_lowest.groupby(level="label")["fi_lowest"].mean().loc[REFERENCE_CELLS]
-dense_means = fi_lowest.loc["full", ["face_interactive", "face_non_interactive", "object"]].mean()
+show(aviz.plot_property_vs_rank_pooled(align_mean[align_mean["rank_within"] == HIDDEN_UNITS], "cosine",
+                                       rank_column="rank_cross", hidden_units=HIDDEN_UNITS, reference=0.0,
+                                       ylabel="cosine(incoming drive, own drive)"), "fig07a_alignment_vs_cross_rank")
+align_time = (alignment.groupby(["label", "seed", "target", "condition", "time_s"])["cosine"].mean()
+              .reset_index())
+show(aviz.plot_flow_time_pooled(align_time, cells=REFERENCE_CELLS, value="cosine",
+                                ylabel="cosine(incoming drive, own drive)"), "fig07b_alignment_time_pooled")
+
+per_cell = (align_mean.groupby(["label", "seed", "region", "condition"])["cosine"].mean().unstack("condition"))
+fi_lowest = (per_cell.idxmin(axis=1) == "face_interactive").groupby(level="label").mean()
+dense_means = per_cell.loc["full"].mean()
 display(Markdown(
-    "**Is interactive face the least-aligned condition?** In the dense network: "
-    f"{per_cell['full']:.0%} of (seed, region) cells, mean cosine "
-    f"{dense_means['face_interactive']:.3f} against {dense_means['face_non_interactive']:.3f} / "
-    f"{dense_means['object']:.3f}. In `{SELECTED['label']}`: {per_cell[SELECTED['label']]:.0%}. "
-    f"In `w1_c1`: {per_cell['w1_c1']:.0%}."))
-display(align_mean.groupby(["rank_cross", "condition"])["cosine"].mean().unstack().round(3))
+    "**Is interactive face the least-aligned fixation type?** Dense network: "
+    f"{fi_lowest['full']:.0%} of (seed, region) cells, mean cosine {dense_means['face_interactive']:.3f} "
+    f"against {dense_means['face_non_interactive']:.3f} / {dense_means['object']:.3f}. "
+    f"`{SELECTED['label']}`: {fi_lowest[SELECTED['label']]:.0%}. `w1_c1`: {fi_lowest['w1_c1']:.0%}."))
 '''
 
+S7_AFTER = r"""**Conclusion.** In the dense network the partners push mildly *with* a region's own
+recurrence (cosine ≈ 0.12 for non-interactive face and object), and about half as much for
+interactive face (0.065; the lowest fixation type in three-quarters of seed × region cells —
+the audit's I3, at the mean but no longer universal per fit). The time course says where the
+difference comes from: for non-interactive face and object the alignment is at ~0.15 from
+early in the window and stays there, while for interactive face it sits near 0.03 through the
+pre-fixation period and only rises, to ~0.12, about 150 ms after fixation onset. Every dense
+seed shows this. Narrowing the channel drives every fixation type's alignment to **zero** at
+every time: the constrained network sends directions orthogonal to local recurrence rather
+than reinforcing it, and the condition ordering disappears because there is no alignment left
+to order.
+"""
 
-S8 = r"""## 8. Reading the result
 
-What the bottleneck changes, and what it does not:
+S8_TEXT = r"""## 8. Dimensions
 
-- **Where the drive comes from.** Rank-1 self-recurrence hands the region over to the network
-  (cross share 0.68 → 0.95) at no cost. A rank-1 channel hands it back to self-recurrence
-  (cross share → 0.17) — and the fit degrades. The network reroutes freely in both directions;
-  only one direction reproduces the data. Self-recurrence substitutes for the channel in
-  energy, not in content.
-- **How flow is arranged in time.** Dense: steady. Narrow: bursty. Below the bar, a region
-  alternates within a trial between driving itself and being driven, and the timing of those
-  alternations differs by fixation type.
-- **Which fixation type the channel carries.** Interactive face is the worst-fitted condition
-  in essentially every constrained fit, and its gap to the others widens as the channel
-  narrows. It is the fixation type that most needs what the network sends.
-- **With or against.** In the dense network the incoming current is mildly aligned with a
-  region's own drive (cosine ~0.12), and about half as aligned for interactive face (~0.065,
-  the lowest condition in three-quarters of seed × region cells — the audit's I3, at the mean
-  but no longer universal per fit). Narrowing the channel drives every condition's alignment
-  toward **zero**: the constrained network stops reinforcing local recurrence and sends
-  directions orthogonal to it. That is why the condition ordering vanishes under constraint —
-  there is nothing left to order.
+Participation ratios of the drive and of the state along the cross marginal. The rank
+constraint bounds the drive's rank at $r_w + 3r_c$; the readout needs ~39 dimensions of state.
+"""
 
-**Next:** `03_ensemble.ipynb` refits the selected cell ten times and asks what those fits agree
-on, against the ten-seed dense network.
+S8_CODE = r'''
+for prop, label in (("drive_pr", "participation ratio of the drive"), ("state_pr", "participation ratio of the state"),
+                    ("state_speed", "state speed (per bin)")):
+    show(aviz.plot_property_vs_rank_pooled(props[props["rank_within"] == HIDDEN_UNITS], prop,
+                                           rank_column="rank_cross", hidden_units=HIDDEN_UNITS, ylabel=label),
+         f"fig08_{prop}_vs_cross_rank")
+display(props.groupby("label")[["drive_pr", "self_pr", "cross_pr", "state_pr"]].mean().loc[REFERENCE_CELLS].round(2))
+'''
+
+S8_AFTER = r"""**Conclusion.** Even the dense network's drive and state occupy only 3–4 effective
+dimensions; the constraint compresses both further, and the state is re-expanded from the
+drive by the nonlinearity by a roughly constant factor. Interactive face's state is smaller
+and slower at every rank, which is the target's own compactness (task 07) showing through
+rather than an effect of the bottleneck.
+"""
+
+
+S9 = r"""## 9. Reading the result
+
+What the bottleneck does, in three sentences:
+
+- **The inter-regional channel is what costs fit, and it costs interactive face most.**
+  Within-region rank costs ≤ 0.003 and does not distinguish fixation types. Interactive face is
+  already the hardest fixation type in the dense network and the cross-region bottleneck widens
+  that gap monotonically.
+- **The network reroutes drive freely; only one route reproduces the data.** Squeezing
+  self-recurrence hands a region to the network at no cost. Squeezing the channel hands it back
+  to self-recurrence, and the fit drops — self-recurrence substitutes in energy, not content.
+  Interactive face is the fixation type that falls back on self-recurrence most.
+- **A channel wide enough carries everything at once; one too narrow multiplexes.** Below the bar
+  the network's share of a region's drive swings within a trial, and the constrained network
+  sends directions orthogonal to local recurrence rather than reinforcing it.
+
+**Next:** `03_ensemble.ipynb` refits `w1_c10` ten times and asks what those fits agree on.
 """
 
 
@@ -355,15 +403,16 @@ def _cell(kind: str, source: str) -> dict:
 
 def build() -> dict:
     cells = [
-        _cell("markdown", HEADER), _cell("code", SETUP),
-        _cell("markdown", S1_TEXT), _cell("code", S1_CODE),
+        _cell("markdown", HEADER),
+        _cell("markdown", DEFINITIONS), _cell("code", SETUP),
         _cell("markdown", S2_TEXT), _cell("code", S2_CODE), _cell("markdown", S2_AFTER),
-        _cell("markdown", S3_TEXT), _cell("code", S3_CODE),
+        _cell("markdown", S3_TEXT), _cell("code", S3_CODE), _cell("markdown", S3_AFTER),
         _cell("markdown", S4_TEXT), _cell("code", S4_CODE),
         _cell("markdown", S5_TEXT), _cell("code", S5_CODE), _cell("markdown", S5_AFTER),
-        _cell("markdown", S6_TEXT), _cell("code", S6_CODE),
-        _cell("markdown", S7_TEXT), _cell("code", S7_CODE),
-        _cell("markdown", S8),
+        _cell("markdown", S6_TEXT), _cell("code", S6_CODE), _cell("markdown", S6_AFTER),
+        _cell("markdown", S7_TEXT), _cell("code", S7_CODE), _cell("markdown", S7_AFTER),
+        _cell("markdown", S8_TEXT), _cell("code", S8_CODE), _cell("markdown", S8_AFTER),
+        _cell("markdown", S9),
     ]
     return {"cells": cells, "metadata": {
         "kernelspec": {"display_name": "gaze_processing", "language": "python", "name": "python3"},

@@ -9,9 +9,10 @@ numbers are not comparable.
 |---|---|---|---|
 | 01 | `01_ladder.ipynb` | Does a region need the network to reproduce itself? Singles, pairs, triples, full. | 14 × 5 + full × 10 = **80** |
 | 02 | `02_rank_grid.ipynb` | Which is the low-dimensional channel — self-recurrence or inter-regional input? Within × cross rank grid plus both marginals. | 35 × 5 = **175** |
+| 02b | `02b_bottleneck_properties.ipynb` | What does the bottleneck do, and to which fixation type? Fit cost per fixation type along each marginal, regions pooled, every seed shown; then where a region's drive comes from, its time course, alignment with own recurrence, and dimensionality. | none (reads 01 and 02) |
 | 03 | `03_ensemble.ipynb` | What do ten fits of the most constrained adequate model agree on? | 10 (after 02) |
 
-Task 01 writes `final/base_model.yaml`; 02 and 03 read it. Task 02 writes
+Task 01 writes `final/base_model.yaml`; 02, 02b and 03 read it. Task 02b caches its replay tables under `final/02b_bottleneck_properties/tables/` — delete them to recompute. Task 02 writes
 `selected_bottleneck.yaml`; 03 reads it and refuses to queue without it.
 
 ## What changed from the rebuild, and why

@@ -1707,3 +1707,262 @@ __all__ += [
     "plot_flow_time_by_condition",
     "plot_property_vs_rank",
 ]
+
+
+# ======================================================================================
+# 02b, made legible: seeds on every plot, regions pooled where they do not matter
+# ======================================================================================
+
+from matplotlib.patches import Circle, FancyArrowPatch, Rectangle
+
+
+def plot_bottleneck_schematic(figsize: tuple[float, float] = (7.6, 3.0)):
+    """What the two rank constraints act on, and what "drive" means.
+
+    Left: the four regions, self-recurrence (within blocks) and inter-regional pathways
+    (cross blocks). Middle: the recurrent matrix as sixteen blocks, the two kinds coloured.
+    Right: one block written as a product, which is the rank constraint.
+    """
+    within, cross = REPORTED_COLOR, CORRECTED_COLOR
+    fig, axes = plt.subplots(1, 3, figsize=figsize, gridspec_kw={"width_ratios": [1.1, 1.0, 1.0]})
+
+    ax = axes[0]
+    regions = ["ofc", "bla", "dmpfc", "accg"]
+    pos = {"ofc": (0.25, 0.75), "bla": (0.75, 0.75), "dmpfc": (0.25, 0.25), "accg": (0.75, 0.25)}
+    for a in regions:
+        for b in regions:
+            if a == b:
+                continue
+            (x0, y0), (x1, y1) = pos[a], pos[b]
+            ax.add_patch(FancyArrowPatch((x0, y0), (x1, y1), arrowstyle="-|>", mutation_scale=9,
+                                         color=cross, lw=1.0, alpha=0.7, shrinkA=13, shrinkB=13,
+                                         connectionstyle="arc3,rad=0.12"))
+    for r, (x, y) in pos.items():
+        ax.add_patch(Circle((x, y), 0.10, facecolor="white", edgecolor=INK, lw=1.2, zorder=3))
+        ax.add_patch(FancyArrowPatch((x + 0.08, y + 0.09), (x + 0.11, y + 0.02), arrowstyle="-|>",
+                                     mutation_scale=7, color=within, lw=1.4, connectionstyle="arc3,rad=1.6", zorder=4))
+        ax.text(x, y, REGION_LABELS[r], ha="center", va="center", fontsize=7.5, zorder=5)
+    ax.text(0.5, 0.97, "self-recurrence $W_{rr}h_r$", color=within, ha="center", fontsize=7)
+    ax.text(0.5, 0.03, "inter-regional drive $W_{rs}h_s$", color=cross, ha="center", fontsize=7)
+    ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.set_aspect("equal", adjustable="datalim"); ax.axis("off")
+    _panel(ax, "a")
+
+    ax = axes[1]
+    n = 4
+    for i in range(n):
+        for j in range(n):
+            color = within if i == j else cross
+            ax.add_patch(Rectangle((j, n - 1 - i), 1, 1, facecolor=color, alpha=0.85 if i == j else 0.55,
+                                   edgecolor="white", lw=1.5))
+            ax.text(j + 0.5, n - 1 - i + 0.5, "$r_w$" if i == j else "$r_c$", ha="center", va="center",
+                    fontsize=8, color="white")
+    for k, r in enumerate(regions):
+        ax.text(k + 0.5, n + 0.12, REGION_LABELS[r], ha="center", va="bottom", fontsize=6.2)
+        ax.text(-0.15, n - 1 - k + 0.5, REGION_LABELS[r], ha="right", va="center", fontsize=6.2)
+    ax.text(n / 2, n + 0.62, "from region $s$", ha="center", va="bottom", fontsize=6.4, color=MUTED_INK)
+    ax.text(-1.45, n / 2, "into region $r$", ha="center", va="center", rotation=90, fontsize=6.4, color=MUTED_INK)
+    ax.set_xlim(-1.7, n); ax.set_ylim(0, n + 1.0); ax.set_aspect("equal", adjustable="datalim"); ax.axis("off")
+    ax.set_title("recurrent matrix $W$, 16 blocks of 40×40", fontsize=7.5, pad=2)
+    _panel(ax, "b")
+
+    ax = axes[2]
+    ax.add_patch(Rectangle((0.05, 0.42), 0.3, 0.4, facecolor=cross, alpha=0.55, edgecolor="none"))
+    ax.text(0.20, 0.62, "$W_{rs}$\n40×40", ha="center", va="center", fontsize=7.5, color="white")
+    ax.text(0.40, 0.62, "=", ha="center", va="center", fontsize=11)
+    ax.add_patch(Rectangle((0.46, 0.42), 0.08, 0.4, facecolor=cross, alpha=0.85, edgecolor="none"))
+    ax.text(0.50, 0.38, "$L$  40×$r$", ha="center", va="top", fontsize=6.5)
+    ax.add_patch(Rectangle((0.58, 0.74), 0.36, 0.08, facecolor=cross, alpha=0.85, edgecolor="none"))
+    ax.text(0.76, 0.86, "$R$  $r$×40", ha="center", va="bottom", fontsize=6.5)
+    ax.text(0.5, 0.0, "every drive $W_{rs}h_s$ passes through $r$ numbers:\n"
+                      "$r_w$ for a region's own block, $r_c$ for each of the 12 pathways,\n"
+                      "so a region's total drive has rank ≤ $r_w + 3\\,r_c$",
+            ha="center", va="bottom", fontsize=6.4)
+    ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+    ax.set_title("one block as a product (the rank constraint)", fontsize=7.5, pad=2)
+    _panel(ax, "c")
+    fig.tight_layout()
+    return fig
+
+
+def plot_fit_by_condition_pooled(
+    fit: pd.DataFrame,
+    *,
+    hidden_units: int,
+    mode: str = "fit",
+    dense: pd.DataFrame | None = None,
+    bar: float = 0.98,
+    figsize: tuple[float, float] = (7.4, 3.0),
+):
+    """The main result in one row: fit per fixation type along each marginal, regions pooled, seeds shown.
+
+    ``mode="fit"`` plots R^2 / ceiling (mean over regions per seed). ``mode="cost"`` plots the
+    drop from the dense network for the same fixation type, so a line that sits above the
+    others is the fixation type the constraint hurts most. Every seed is a small mark; the
+    line is the mean.
+    """
+    conditions = [c for c in CONDITION_ORDER if c in set(fit["condition"])]
+    per = fit.groupby(["label", "rank_within", "rank_cross", "seed", "condition"])["r2_vs_ceiling"].mean().reset_index()
+    dense_ref = None
+    if dense is not None:
+        dense_ref = dense.groupby("condition")["r2_vs_ceiling"].mean()
+    fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
+    rng = np.random.default_rng(0)
+    for ax, (side, other), letter in zip(axes, (("rank_cross", "rank_within"), ("rank_within", "rank_cross")), "ab"):
+        block = per[(per[other] == hidden_units) & (per[side] < hidden_units)]
+        ax.grid(axis="y", **GRID_KW)
+        ranks = sorted(block[side].unique())
+        for condition in conditions:
+            sub = block[block["condition"] == condition].copy()
+            if mode == "cost" and dense_ref is not None:
+                sub["value"] = dense_ref[condition] - sub["r2_vs_ceiling"]
+            else:
+                sub["value"] = sub["r2_vs_ceiling"]
+            color = CONDITION_COLORS.get(condition, INK)
+            jitter = rng.uniform(-0.06, 0.06, size=len(sub)) * sub[side].values
+            ax.scatter(sub[side] + jitter, sub["value"], s=8, color=color, alpha=0.45, linewidth=0, zorder=3)
+            mean = sub.groupby(side)["value"].mean()
+            ax.plot(mean.index, mean.values, "-o", color=color, markersize=4.5, linewidth=1.6,
+                    label=CONDITION_SHORT_LABELS.get(condition, condition), zorder=4)
+        if mode == "fit":
+            ax.axhline(bar, color=INK, linewidth=0.8, linestyle="--", zorder=2)
+            if dense_ref is not None:
+                for condition in conditions:
+                    ax.axhline(dense_ref[condition], color=CONDITION_COLORS.get(condition, INK),
+                               linewidth=0.7, linestyle=":", zorder=1)
+        else:
+            ax.axhline(0.0, color=INK, linewidth=0.8, zorder=2)
+        ax.set_xscale("log"); ax.set_xticks(ranks); ax.set_xticklabels([f"{r:g}" for r in ranks])
+        ax.set_xlabel(f"{side.replace('rank_', '')}-region rank  (other side dense)")
+        nice_axis(ax); _panel(ax, letter)
+    axes[0].set_ylabel("$R^2$ / ceiling  (mean over regions)" if mode == "fit"
+                       else "cost vs dense network  ($\\Delta R^2$ / ceiling)")
+    axes[0].legend(frameon=False, fontsize=6.4, loc="lower right" if mode == "fit" else "upper right")
+    fig.tight_layout()
+    return fig
+
+
+def plot_condition_gap_vs_rank(
+    fit: pd.DataFrame,
+    *,
+    hidden_units: int,
+    dense: pd.DataFrame | None = None,
+    figsize: tuple[float, float] = (7.4, 2.9),
+):
+    """Interactive face minus each other condition, per seed, along each marginal.
+
+    A negative gap means interactive face is fitted worse. If the gap grows as the rank falls,
+    the constraint is hurting interactive face more than the others -- the direct test of a
+    differential effect. The dense network's gap is the dotted reference.
+    """
+    per = fit.groupby(["label", "rank_within", "rank_cross", "seed", "condition"])["r2_vs_ceiling"].mean().unstack("condition")
+    per["FI − FN"] = per["face_interactive"] - per["face_non_interactive"]
+    per["FI − OBJ"] = per["face_interactive"] - per["object"]
+    per = per.reset_index()
+    dense_gap = None
+    if dense is not None:
+        d = dense.groupby(["seed", "condition"])["r2_vs_ceiling"].mean().unstack("condition")
+        dense_gap = {"FI − FN": float((d["face_interactive"] - d["face_non_interactive"]).mean()),
+                     "FI − OBJ": float((d["face_interactive"] - d["object"]).mean())}
+    fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
+    rng = np.random.default_rng(1)
+    for ax, (side, other), letter in zip(axes, (("rank_cross", "rank_within"), ("rank_within", "rank_cross")), "ab"):
+        block = per[(per[other] == hidden_units) & (per[side] < hidden_units)]
+        ax.grid(axis="y", **GRID_KW)
+        ranks = sorted(block[side].unique())
+        for gap, color in (("FI − FN", CONDITION_COLORS["face_non_interactive"]), ("FI − OBJ", CONDITION_COLORS["object"])):
+            jitter = rng.uniform(-0.06, 0.06, size=len(block)) * block[side].values
+            ax.scatter(block[side] + jitter, block[gap], s=8, color=color, alpha=0.45, linewidth=0, zorder=3)
+            mean = block.groupby(side)[gap].mean()
+            ax.plot(mean.index, mean.values, "-o", color=color, markersize=4.5, linewidth=1.6, label=gap, zorder=4)
+            if dense_gap is not None:
+                ax.axhline(dense_gap[gap], color=color, linewidth=0.7, linestyle=":", zorder=1)
+        ax.axhline(0.0, color=INK, linewidth=0.8, zorder=2)
+        ax.set_xscale("log"); ax.set_xticks(ranks); ax.set_xticklabels([f"{r:g}" for r in ranks])
+        ax.set_xlabel(f"{side.replace('rank_', '')}-region rank  (other side dense)")
+        nice_axis(ax); _panel(ax, letter)
+    axes[0].set_ylabel("interactive face minus other condition\n($R^2$ / ceiling, mean over regions)")
+    axes[1].legend(frameon=False, fontsize=6.4, loc="lower right")
+    fig.tight_layout()
+    return fig
+
+
+def plot_property_vs_rank_pooled(
+    props: pd.DataFrame,
+    prop: str,
+    *,
+    rank_column: str,
+    hidden_units: int,
+    ylabel: str = "",
+    reference: float | None = None,
+    figsize: tuple[float, float] = (4.2, 3.0),
+):
+    """One property against one bottleneck rank, regions pooled, every seed a mark, lines = fixation types."""
+    conditions = [c for c in CONDITION_ORDER if c in set(props["condition"])]
+    per = props.groupby([rank_column, "seed", "condition"])[prop].mean().reset_index()
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.grid(axis="y", **GRID_KW)
+    rng = np.random.default_rng(2)
+    ranks = sorted(per[rank_column].unique())
+    for condition in conditions:
+        sub = per[per["condition"] == condition]
+        color = CONDITION_COLORS.get(condition, INK)
+        jitter = rng.uniform(-0.06, 0.06, size=len(sub)) * sub[rank_column].values
+        ax.scatter(sub[rank_column] + jitter, sub[prop], s=9, color=color, alpha=0.45, linewidth=0, zorder=3)
+        mean = sub.groupby(rank_column)[prop].mean()
+        ax.plot(mean.index, mean.values, "-o", color=color, markersize=4.5, linewidth=1.6,
+                label=CONDITION_SHORT_LABELS.get(condition, condition), zorder=4)
+    if reference is not None:
+        ax.axhline(reference, color=MUTED_INK, linewidth=0.7, linestyle=":", zorder=1)
+    ax.set_xscale("log"); ax.set_xticks(ranks)
+    ax.set_xticklabels(["dense" if r == hidden_units else f"{r:g}" for r in ranks])
+    ax.set_xlabel({"rank_cross": "cross-region rank (within dense)", "rank_within": "within-region rank (cross dense)"}[rank_column])
+    ax.set_ylabel(ylabel or prop)
+    ax.legend(frameon=False, fontsize=6.4)
+    nice_axis(ax)
+    fig.tight_layout()
+    return fig
+
+
+def plot_flow_time_pooled(
+    decomposed: pd.DataFrame,
+    *,
+    cells: Sequence[str],
+    value: str = "cross_fraction",
+    ylabel: str = "network's share of a region's drive",
+    figsize: tuple[float, float] = (7.4, 2.6),
+):
+    """Time course of one flow quantity, regions pooled, one panel per fixation type, one line per cell.
+
+    Thin lines are individual seeds (each averaged over its four regions); the heavy line is
+    the mean over seeds. What varies between seeds and what does not is on the page.
+    """
+    conditions = [c for c in CONDITION_ORDER if c in set(decomposed["condition"])]
+    start = sorted(decomposed["time_s"].unique())[2]
+    block = decomposed[decomposed["label"].isin(cells) & (decomposed["time_s"] >= start)]
+    per_seed = block.groupby(["label", "seed", "condition", "time_s"])[value].mean().reset_index()
+    fig, axes = plt.subplots(1, len(conditions), figsize=figsize, sharey=True)
+    for ax, condition in zip(axes, conditions):
+        ax.grid(axis="y", **GRID_KW)
+        for color, cell in zip(CELL_COLORS, cells):
+            sub = per_seed[(per_seed["label"] == cell) & (per_seed["condition"] == condition)]
+            for _, trace in sub.groupby("seed"):
+                ax.plot(trace["time_s"], trace[value], color=color, linewidth=0.5, alpha=0.35, zorder=2)
+            mean = sub.groupby("time_s")[value].mean()
+            ax.plot(mean.index, mean.values, color=color, linewidth=1.8, label=cell, zorder=4)
+        ax.axvline(0.0, color=MUTED_INK, linewidth=0.6, linestyle=":", zorder=1)
+        ax.set_title(CONDITION_SHORT_LABELS.get(condition, condition), fontsize=8)
+        ax.set_xlabel("time from fixation (s)")
+        nice_axis(ax)
+    axes[0].set_ylabel(ylabel)
+    axes[0].legend(frameon=False, fontsize=6.2, loc="best")
+    fig.tight_layout()
+    return fig
+
+
+__all__ += [
+    "plot_bottleneck_schematic",
+    "plot_condition_gap_vs_rank",
+    "plot_fit_by_condition_pooled",
+    "plot_flow_time_pooled",
+    "plot_property_vs_rank_pooled",
+]
