@@ -1530,6 +1530,7 @@ def plot_flow_matrix(
     or, if the network reroutes, as the diagonal growing to compensate.
     """
     regions = [r for r in REGION_COLORS if r in set(flow["target"])]
+    flow = flow[flow["time_s"] >= sorted(flow["time_s"].unique())[2]]  # drop the initial-state transient
     if normalise == "share":
         # Each pathway's energy as a share of the target's total drive energy at that time
         # step. Raw norms are not comparable across cells -- a rank-1 model compensates with
@@ -1595,7 +1596,9 @@ def plot_flow_time_by_condition(
     """
     regions = [r for r in REGION_COLORS if r in set(decomposed["target"])]
     conditions = [c for c in CONDITION_ORDER if c in set(decomposed["condition"])]
-    block = decomposed[decomposed["label"].isin(cells)]
+    # The first two bins carry the trained initial state's transient, not dynamics.
+    start = sorted(decomposed["time_s"].unique())[2]
+    block = decomposed[decomposed["label"].isin(cells) & (decomposed["time_s"] >= start)]
     mean = block.groupby(["label", "target", "condition", "time_s"])[value].mean().reset_index()
     fig, axes = plt.subplots(len(conditions), len(regions), figsize=figsize, sharex=True, sharey=True)
     for i, condition in enumerate(conditions):
@@ -1646,9 +1649,11 @@ def plot_property_vs_rank(
             ax.axhline(reference, color=MUTED_INK, linewidth=0.7, linestyle=":", zorder=1)
         ax.set_xscale("log")
         ticks = sorted(props[rank_column].unique())
-        ax.set_xticks(ticks); ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+        ax.set_xticks(ticks)
+        # The largest rank is the dense side (the full width); name it as such.
+        ax.set_xticklabels(["dense" if t == max(ticks) and len(ticks) > 1 else f"{t:g}" for t in ticks])
         ax.set_title(REGION_LABELS.get(region, region), fontsize=8)
-        ax.set_xlabel(rank_column.replace("_", " "))
+        ax.set_xlabel({"rank_cross": "cross-region rank", "rank_within": "within-region rank"}.get(rank_column, rank_column))
         nice_axis(ax)
     np.atleast_1d(axes)[0].set_ylabel(ylabel or prop)
     np.atleast_1d(axes)[-1].legend(frameon=False, fontsize=6.0)

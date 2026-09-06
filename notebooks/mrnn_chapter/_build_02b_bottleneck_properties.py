@@ -181,11 +181,17 @@ display(props.groupby("label")["cross_energy_fraction"].mean().loc[REFERENCE_CEL
 
 S2_AFTER = r"""Read the two panels together. Squeezing the **within-region** block to rank 1 with the
 network dense pushes the cross share to ~0.95 — the region stops driving itself and lets the
-network do it, at no cost in fit (task 02). Squeezing the **cross-region** channel with
-self-recurrence dense does the opposite only weakly: even at cross rank 1 the network still
-supplies most of the drive. The self block does not take over when the channel narrows; the
-fit degrades instead. That asymmetry is the mechanistic form of "within-region rank is free,
-cross-region rank is not."
+network do it, and task 02 showed this costs nothing. Squeezing the **cross-region** channel
+with self-recurrence dense does the mirror image: the cross share falls to ~0.17 and the self
+block takes over the drive. So the network *can* reroute in either direction and does. The
+asymmetry is in what the rerouted drive can achieve: driven by the network, a region
+reproduces its data to the ceiling; driven by its own recurrence, it does not (task 02, cross
+marginal). Self-recurrence is a substitute in energy but not in content.
+
+Interactive face sits lowest at every constrained cross rank in most regions — under a narrow
+channel it is the fixation type that falls back on self-recurrence most, and it is also the
+worst-fitted. The fixation type that most needs the channel is the one a narrow channel serves
+least.
 """
 
 
@@ -267,7 +273,7 @@ show(aviz.plot_flow_time_by_condition(decomposed, cells=REFERENCE_CELLS,
 temporal = with_ranks(audit.flow_temporal_summary(decomposed))
 temporal_within_dense = temporal[temporal["rank_within"] == HIDDEN_UNITS]
 show(aviz.plot_property_vs_rank(temporal_within_dense, "cross_fraction_modulation", rank_column="rank_cross",
-                                ylabel="within-trial modulation of cross share (sd over time)"),
+                                ylabel="cross-share modulation\n(sd over time within a trial)"),
      "fig06b_cross_share_modulation_vs_cross_rank")
 display(temporal.groupby(["label", "condition"])["cross_fraction_modulation"].mean().unstack()
         .loc[REFERENCE_CELLS].round(3))
@@ -297,9 +303,16 @@ show(aviz.plot_property_vs_rank(align_mean[align_mean["rank_within"] == HIDDEN_U
                                 ylabel="mean cosine(incoming, own drive)"),
      "fig07b_alignment_vs_cross_rank")
 fi_lowest = (align_mean.groupby(["label", "seed", "region", "condition"])["cosine"].mean().unstack("condition"))
+fi_lowest["fi_lowest"] = fi_lowest.idxmin(axis=1) == "face_interactive"
+per_cell = fi_lowest.groupby(level="label")["fi_lowest"].mean().loc[REFERENCE_CELLS]
+dense_means = fi_lowest.loc["full", ["face_interactive", "face_non_interactive", "object"]].mean()
 display(Markdown(
-    f"Interactive face has the **lowest** alignment in "
-    f"{int((fi_lowest.idxmin(axis=1) == 'face_interactive').sum())}/{len(fi_lowest)} (cell, seed, region) fits."))
+    "**Is interactive face the least-aligned condition?** In the dense network: "
+    f"{per_cell['full']:.0%} of (seed, region) cells, mean cosine "
+    f"{dense_means['face_interactive']:.3f} against {dense_means['face_non_interactive']:.3f} / "
+    f"{dense_means['object']:.3f}. In `{SELECTED['label']}`: {per_cell[SELECTED['label']]:.0%}. "
+    f"In `w1_c1`: {per_cell['w1_c1']:.0%}."))
+display(align_mean.groupby(["rank_cross", "condition"])["cosine"].mean().unstack().round(3))
 '''
 
 
@@ -308,15 +321,23 @@ S8 = r"""## 8. Reading the result
 What the bottleneck changes, and what it does not:
 
 - **Where the drive comes from.** Rank-1 self-recurrence hands the region over to the network
-  (cross share → 0.95) at no cost. A rank-1 channel does not hand the region back to itself —
-  the fit degrades instead. The inter-regional channel is not substitutable by self-recurrence.
+  (cross share 0.68 → 0.95) at no cost. A rank-1 channel hands it back to self-recurrence
+  (cross share → 0.17) — and the fit degrades. The network reroutes freely in both directions;
+  only one direction reproduces the data. Self-recurrence substitutes for the channel in
+  energy, not in content.
 - **How flow is arranged in time.** Dense: steady. Narrow: bursty. Below the bar, a region
   alternates within a trial between driving itself and being driven, and the timing of those
   alternations differs by fixation type.
 - **Which fixation type the channel carries.** Interactive face is the worst-fitted condition
   in essentially every constrained fit, and its gap to the others widens as the channel
-  narrows. It is also the condition whose incoming current is least aligned with the region's
-  own dynamics — the one that most needs what the network sends.
+  narrows. It is the fixation type that most needs what the network sends.
+- **With or against.** In the dense network the incoming current is mildly aligned with a
+  region's own drive (cosine ~0.12), and about half as aligned for interactive face (~0.065,
+  the lowest condition in three-quarters of seed × region cells — the audit's I3, at the mean
+  but no longer universal per fit). Narrowing the channel drives every condition's alignment
+  toward **zero**: the constrained network stops reinforcing local recurrence and sends
+  directions orthogonal to it. That is why the condition ordering vanishes under constraint —
+  there is nothing left to order.
 
 **Next:** `03_ensemble.ipynb` refits the selected cell ten times and asks what those fits agree
 on, against the ten-seed dense network.
