@@ -1491,3 +1491,168 @@ __all__ += [
     "rank_grid_variants",
     "select_bottleneck",
 ]
+
+
+# ======================================================================================
+# Flow over time, and what the bottleneck does to it
+# ======================================================================================
+#
+# The current from region s into region t at time tau is c_{s->t}(tau) = W[t,s] h_s(tau).
+# Summarised as a scalar it is what the rebuild called "current magnitude"; resolved in time
+# it is the closest thing the model has to a picture of information flow -- how much each
+# source drives each target, when, and for which fixation type. Every quantity here is
+# within-model, so it is free of the relabelling ambiguity and comparable across fits, and
+# each is computed for the self block too, so a region's total drive can be decomposed into
+# its own recurrence and each partner's contribution at every time step.
+
+
+def time_resolved_flow(run_dir: str | Path, *, device: str = "cpu") -> pd.DataFrame:
+    """``|c_{s->t}(tau)|`` for every source, target, condition and time bin, self blocks included."""
+    replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
+    currents = extract_region_current_vectors(replay)
+    timeline = np.asarray(replay["checkpoint"]["timeline_s"], dtype=float)
+    conditions = [str(c) for c in replay["condition_order"]]
+    seed = Path(run_dir).name.replace("seed=", "")
+    frames = []
+    for (source, target), current in currents.items():
+        norm = np.linalg.norm(current.numpy(), axis=-1)  # (condition, time)
+        for index, condition in enumerate(conditions):
+            frames.append(pd.DataFrame({
+                "seed": seed, "source": source, "target": target, "condition": condition,
+                "time_s": timeline[: norm.shape[1]], "current_norm": norm[index, : timeline.size],
+            }))
+    return pd.concat(frames, ignore_index=True)
+
+
+def time_resolved_alignment(run_dir: str | Path, *, device: str = "cpu") -> pd.DataFrame:
+    """Cosine between the incoming current from ``source`` and the target's own recurrent drive, in time.
+
+    The time-resolved form of the drive-alignment invariant: positive when a partner pushes
+    a region along the direction its own recurrence was already taking it, negative when it
+    opposes. Resolved in time so the question "when does the network push with or against a
+    region" can be asked per fixation type.
+    """
+    replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
+    currents = extract_region_current_vectors(replay)
+    timeline = np.asarray(replay["checkpoint"]["timeline_s"], dtype=float)
+    conditions = [str(c) for c in replay["condition_order"]]
+    regions = list(replay["region_order"])
+    seed = Path(run_dir).name.replace("seed=", "")
+    frames = []
+    for target in regions:
+        own = currents[(target, target)].numpy()
+        for source in regions:
+            if source == target:
+                continue
+            incoming = currents[(source, target)].numpy()
+            numerator = (incoming * own).sum(axis=-1)
+            denominator = np.linalg.norm(incoming, axis=-1) * np.linalg.norm(own, axis=-1)
+            cosine = np.divide(numerator, denominator, out=np.zeros_like(numerator), where=denominator > 0)
+            for index, condition in enumerate(conditions):
+                frames.append(pd.DataFrame({
+                    "seed": seed, "source": source, "target": target, "condition": condition,
+                    "time_s": timeline[: cosine.shape[1]], "cosine": cosine[index, : timeline.size],
+                }))
+    return pd.concat(frames, ignore_index=True)
+
+
+def flow_decomposition(flow: pd.DataFrame) -> pd.DataFrame:
+    """Per (target, condition, time): self drive, cross drive, and the cross fraction of total drive energy.
+
+    ``cross_fraction`` is ``|cross|^2 / (|self|^2 + |cross|^2)`` where the cross norm pools the
+    three partners. This is the time course of how much of what a region receives comes from
+    the rest of the network rather than from itself.
+    """
+    keys = [k for k in ("label", "seed") if k in flow.columns] + ["target", "condition", "time_s"]
+    own = flow[flow["source"] == flow["target"]].set_index(keys)["current_norm"].rename("self_norm")
+    cross = (flow[flow["source"] != flow["target"]]
+             .assign(sq=lambda d: d["current_norm"] ** 2)
+             .groupby(keys)["sq"].sum().pipe(np.sqrt).rename("cross_norm"))
+    out = pd.concat([own, cross], axis=1).reset_index()
+    total = out["self_norm"] ** 2 + out["cross_norm"] ** 2
+    out["cross_fraction"] = np.where(total > 0, out["cross_norm"] ** 2 / total, np.nan)
+    return out
+
+
+def region_state_properties(run_dir: str | Path, *, device: str = "cpu") -> pd.DataFrame:
+    """Per (region, condition): how many dimensions the drive and the state actually occupy.
+
+    ``drive_pr`` is the participation ratio of a region's pre-activation over time -- bounded
+    by ``r_within + 3 r_cross`` under the rank constraints -- and ``state_pr`` the same for the
+    post-nonlinearity state. The readout needs ~39 linear dimensions of state, so the gap
+    between the two is how much the tanh and the trained initial state re-expand a
+    low-dimensional drive. ``cross_pr`` and ``self_pr`` split the drive by origin.
+    """
+    replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
+    currents = extract_region_current_vectors(replay)
+    regions = list(replay["region_order"])
+    conditions = [str(c) for c in replay["condition_order"]]
+    slices = replay["model"].hidden_region_slices()
+    states = replay["h_seq"].detach().cpu().numpy()
+    seed = Path(run_dir).name.replace("seed=", "")
+
+    def participation(block: np.ndarray) -> float:
+        centred = block - block.mean(axis=0, keepdims=True)
+        energy = np.linalg.svd(centred, compute_uv=False) ** 2
+        return float(energy.sum() ** 2 / (energy ** 2).sum()) if energy.sum() > 0 else np.nan
+
+    rows: list[dict[str, object]] = []
+    for target in regions:
+        own = currents[(target, target)].numpy()
+        cross = sum(currents[(s, target)].numpy() for s in regions if s != target)
+        for index, condition in enumerate(conditions):
+            h = states[index][:, slices[target]]
+            rows.append({
+                "seed": seed, "region": target, "condition": condition,
+                "state_pr": participation(h),
+                "drive_pr": participation(own[index] + cross[index]),
+                "self_pr": participation(own[index]),
+                "cross_pr": participation(cross[index]),
+                "state_speed": float(np.linalg.norm(np.diff(h, axis=0), axis=-1).mean()),
+                "state_extent": float(np.linalg.norm(h - h.mean(axis=0), axis=-1).mean()),
+                "cross_energy_fraction": float((cross[index] ** 2).sum() / ((own[index] ** 2).sum() + (cross[index] ** 2).sum())),
+            })
+    return pd.DataFrame(rows)
+
+
+def collect_over_arms(arm_dirs: Mapping[str, str | Path], function, *, device: str = "cpu") -> pd.DataFrame:
+    """Apply a per-run function to every seed of every arm, tagging rows with the arm label."""
+    frames = []
+    for label, arm in arm_dirs.items():
+        for run_dir in seed_run_dirs(arm):
+            frames.append(function(run_dir, device=device).assign(label=label))
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+__all__ += [
+    "collect_over_arms",
+    "flow_decomposition",
+    "region_state_properties",
+    "time_resolved_alignment",
+    "time_resolved_flow",
+]
+
+
+def flow_temporal_summary(decomposed: pd.DataFrame) -> pd.DataFrame:
+    """Per (label, seed, target, condition): the mean cross share and how much it moves within a trial.
+
+    ``cross_fraction_mean`` is how much of a region's drive comes from the network on average;
+    ``cross_fraction_modulation`` is its standard deviation over time within the trial -- the
+    scale-free measure of whether the network's contribution is steady or comes in bursts.
+    A channel too narrow to carry everything at once shows up here as high modulation: the
+    region alternates between driving itself and being driven.
+    """
+    keys = [k for k in ("label", "seed") if k in decomposed.columns] + ["target", "condition"]
+    grouped = decomposed.groupby(keys)
+    out = grouped.agg(
+        cross_fraction_mean=("cross_fraction", "mean"),
+        cross_fraction_modulation=("cross_fraction", "std"),
+        cross_norm_mean=("cross_norm", "mean"),
+        self_norm_mean=("self_norm", "mean"),
+    ).reset_index()
+    cv = grouped["cross_norm"].agg(lambda s: float(np.std(s) / np.mean(s)) if np.mean(s) > 0 else np.nan)
+    out["cross_norm_cv"] = cv.values
+    return out.rename(columns={"target": "region"})
+
+
+__all__ += ["flow_temporal_summary"]

@@ -1142,7 +1142,7 @@ __all__ += ["plot_fit_versus_identifiability"]
 # The final series
 # ======================================================================================
 
-from dal_monte_2022_analysis.ephys.plotting.thesis_common import REGION_COLORS, REGION_LABELS
+from dal_monte_2022_analysis.ephys.plotting.thesis_common import CONDITION_LABELS, REGION_COLORS, REGION_LABELS
 
 
 def plot_ladder_curves(
@@ -1506,3 +1506,199 @@ def plot_ceiling_comparison(
 
 
 __all__ += ["plot_ceiling_comparison"]
+
+
+# ======================================================================================
+# Flow over time
+# ======================================================================================
+
+CELL_COLORS = ("#2a6f8f", "#b8621f", "#6a6a6a", "#2c6b4f", "#8a4f9e")
+
+
+def plot_flow_matrix(
+    flow: pd.DataFrame,
+    *,
+    cells: Sequence[str],
+    condition: str | None = None,
+    normalise: str = "none",
+    figsize: tuple[float, float] = (7.6, 6.4),
+):
+    """``|c_{s->t}(t)|`` for every source (columns) into every target (rows), one line per cell.
+
+    The diagonal is each region's own recurrence. Seed-averaged, one condition. A narrowing
+    channel shows up as the off-diagonal panels flattening while the diagonal is left alone --
+    or, if the network reroutes, as the diagonal growing to compensate.
+    """
+    regions = [r for r in REGION_COLORS if r in set(flow["target"])]
+    if normalise == "share":
+        # Each pathway's energy as a share of the target's total drive energy at that time
+        # step. Raw norms are not comparable across cells -- a rank-1 model compensates with
+        # larger weights everywhere -- but shares are.
+        keys = [k for k in ("label", "seed") if k in flow.columns] + ["target", "condition", "time_s"]
+        total = flow.assign(sq=flow["current_norm"] ** 2).groupby(keys)["sq"].transform("sum")
+        flow = flow.assign(current_norm=np.where(total > 0, flow["current_norm"] ** 2 / total, np.nan))
+    # Either one condition and several cells (how the channel changes the flow), or one cell
+    # and the three conditions (how the flow differs between fixation types).
+    if condition is not None:
+        block = flow[(flow["condition"] == condition) & (flow["label"].isin(cells))]
+        lines = [(cell, color, block[block["label"] == cell]) for cell, color in zip(cells, CELL_COLORS)]
+        title = f"{CONDITION_LABELS.get(condition, condition)} · inter-regional current over time"
+    else:
+        block = flow[flow["label"] == cells[0]]
+        lines = [(CONDITION_SHORT_LABELS.get(c, c), CONDITION_COLORS.get(c, INK), block[block["condition"] == c])
+                 for c in CONDITION_ORDER if c in set(block["condition"])]
+        title = f"{cells[0]} · inter-regional current over time, by fixation type"
+    fig, axes = plt.subplots(len(regions), len(regions), figsize=figsize, sharex=True,
+                             sharey=(normalise == "share"))
+    for i, target in enumerate(regions):
+        for j, source in enumerate(regions):
+            ax = axes[i, j]
+            ax.grid(axis="y", **GRID_KW)
+            for name, color, sub in lines:
+                trace = (sub[(sub["source"] == source) & (sub["target"] == target)]
+                         .groupby("time_s")["current_norm"].mean())
+                ax.plot(trace.index, trace.values, color=color, linewidth=1.2,
+                        label=name if (i, j) == (0, 1) else None, zorder=3)
+            ax.axvline(0.0, color=MUTED_INK, linewidth=0.6, linestyle=":", zorder=1)
+            if i == j:
+                ax.set_facecolor("#f3f3f3")
+            if i == 0:
+                ax.set_title(f"from {REGION_LABELS.get(source, source)}", fontsize=7.5)
+            if j == 0:
+                ax.set_ylabel(f"into {REGION_LABELS.get(target, target)}\n"
+                              + ("share of drive" if normalise == "share" else "|current|"), fontsize=7)
+            if i == len(regions) - 1:
+                ax.set_xlabel("time from fixation (s)", fontsize=7)
+            ax.tick_params(labelsize=6)
+            nice_axis(ax, y_ticks=3)
+    axes[0, 1].legend(frameon=False, fontsize=6.2, loc="upper right")
+    fig.suptitle(title + (" (share of target's drive energy)" if normalise == "share" else ""),
+                 fontsize=8.5, y=0.995)
+    fig.tight_layout()
+    return fig
+
+
+def plot_flow_time_by_condition(
+    decomposed: pd.DataFrame,
+    *,
+    cells: Sequence[str],
+    value: str = "cross_fraction",
+    ylabel: str = "cross-region share of drive energy",
+    figsize: tuple[float, float] = (7.6, 5.4),
+):
+    """Rows: fixation types. Columns: target regions. Lines: cells. Seed-averaged over time.
+
+    For ``cross_fraction`` this is *when* a region is driven by the network rather than by
+    itself, and how a narrowing channel changes that -- per fixation type, so the question
+    of whether interactive face draws on the network at a different time or to a different
+    degree is answered directly.
+    """
+    regions = [r for r in REGION_COLORS if r in set(decomposed["target"])]
+    conditions = [c for c in CONDITION_ORDER if c in set(decomposed["condition"])]
+    block = decomposed[decomposed["label"].isin(cells)]
+    mean = block.groupby(["label", "target", "condition", "time_s"])[value].mean().reset_index()
+    fig, axes = plt.subplots(len(conditions), len(regions), figsize=figsize, sharex=True, sharey=True)
+    for i, condition in enumerate(conditions):
+        for j, region in enumerate(regions):
+            ax = axes[i, j]
+            ax.grid(axis="y", **GRID_KW)
+            for color, cell in zip(CELL_COLORS, cells):
+                trace = mean[(mean["label"] == cell) & (mean["target"] == region) & (mean["condition"] == condition)]
+                ax.plot(trace["time_s"], trace[value], color=color, linewidth=1.2,
+                        label=cell if (i, j) == (0, 0) else None, zorder=3)
+            ax.axvline(0.0, color=MUTED_INK, linewidth=0.6, linestyle=":", zorder=1)
+            if i == 0:
+                ax.set_title(REGION_LABELS.get(region, region), fontsize=8)
+            if j == 0:
+                ax.set_ylabel(CONDITION_SHORT_LABELS.get(condition, condition), fontsize=7.5)
+            if i == len(conditions) - 1:
+                ax.set_xlabel("time from fixation (s)", fontsize=7)
+            ax.tick_params(labelsize=6)
+            nice_axis(ax, y_ticks=3)
+    axes[0, 0].legend(frameon=False, fontsize=6.2, loc="best")
+    fig.supylabel(ylabel, fontsize=8)
+    fig.tight_layout()
+    return fig
+
+
+def plot_property_vs_rank(
+    props: pd.DataFrame,
+    prop: str,
+    *,
+    rank_column: str,
+    ylabel: str = "",
+    reference: float | None = None,
+    figsize: tuple[float, float] = (7.4, 2.5),
+):
+    """One property against bottleneck rank: panels = regions, lines = fixation types."""
+    regions = [r for r in REGION_COLORS if r in set(props["region"])]
+    conditions = [c for c in CONDITION_ORDER if c in set(props["condition"])]
+    fig, axes = plt.subplots(1, len(regions), figsize=figsize, sharey=True)
+    for ax, region in zip(np.atleast_1d(axes), regions):
+        ax.grid(axis="y", **GRID_KW)
+        for condition in conditions:
+            block = props[(props["region"] == region) & (props["condition"] == condition)]
+            agg = block.groupby(rank_column)[prop].agg(["mean", "std"])
+            ax.errorbar(agg.index, agg["mean"], yerr=agg["std"].fillna(0), fmt="-o",
+                        color=CONDITION_COLORS.get(condition, INK), markersize=3.4, linewidth=1.2,
+                        capsize=1.5, label=CONDITION_SHORT_LABELS.get(condition, condition), zorder=3)
+        if reference is not None:
+            ax.axhline(reference, color=MUTED_INK, linewidth=0.7, linestyle=":", zorder=1)
+        ax.set_xscale("log")
+        ticks = sorted(props[rank_column].unique())
+        ax.set_xticks(ticks); ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+        ax.set_title(REGION_LABELS.get(region, region), fontsize=8)
+        ax.set_xlabel(rank_column.replace("_", " "))
+        nice_axis(ax)
+    np.atleast_1d(axes)[0].set_ylabel(ylabel or prop)
+    np.atleast_1d(axes)[-1].legend(frameon=False, fontsize=6.0)
+    fig.tight_layout()
+    return fig
+
+
+def plot_condition_fit_vs_rank(
+    fit: pd.DataFrame,
+    *,
+    dense_by_condition: Mapping[str, float] | None = None,
+    bar: float = 0.98,
+    figsize: tuple[float, float] = (7.4, 2.8),
+):
+    """Fit per fixation type along each marginal, worst cell over regions and seeds averaged.
+
+    ``fit`` carries ``rank_within`` and ``rank_cross``. Left: cross rank with within dense.
+    Right: within rank with cross dense. If one fixation type's line drops away from the
+    others as the channel narrows, that type is the one the channel is carrying.
+    """
+    conditions = [c for c in CONDITION_ORDER if c in set(fit["condition"])]
+    hidden = int(max(fit["rank_within"].max(), fit["rank_cross"].max()))
+    fig, axes = plt.subplots(1, 2, figsize=figsize, sharey=True)
+    for ax, (side, other), letter in zip(axes, (("rank_cross", "rank_within"), ("rank_within", "rank_cross")), "ab"):
+        block = fit[fit[other] == hidden]
+        block = block[block[side] < hidden]
+        ax.grid(axis="y", **GRID_KW)
+        for condition in conditions:
+            per = (block[block["condition"] == condition]
+                   .groupby([side, "seed"])["r2_vs_ceiling"].min().groupby(level=0).agg(["mean", "std"]))
+            ax.errorbar(per.index, per["mean"], yerr=per["std"].fillna(0), fmt="-o",
+                        color=CONDITION_COLORS.get(condition, INK), markersize=4, linewidth=1.4, capsize=2,
+                        label=CONDITION_SHORT_LABELS.get(condition, condition), zorder=3)
+            if dense_by_condition and condition in dense_by_condition:
+                ax.axhline(dense_by_condition[condition], color=CONDITION_COLORS.get(condition, INK),
+                           linewidth=0.7, linestyle=":", zorder=1)
+        ax.axhline(bar, color=INK, linewidth=0.8, linestyle="--", zorder=2)
+        ax.set_xscale("log"); ticks = sorted(block[side].unique()); ax.set_xticks(ticks)
+        ax.get_xaxis().set_major_formatter(plt.ScalarFormatter())
+        ax.set_xlabel(f"{side.replace('rank_', '')}-region rank (other side dense)")
+        nice_axis(ax); _panel(ax, letter)
+    axes[0].set_ylabel("worst region, $R^2$ / ceiling")
+    axes[0].legend(frameon=False, fontsize=6.2, loc="lower right")
+    fig.tight_layout()
+    return fig
+
+
+__all__ += [
+    "plot_condition_fit_vs_rank",
+    "plot_flow_matrix",
+    "plot_flow_time_by_condition",
+    "plot_property_vs_rank",
+]
