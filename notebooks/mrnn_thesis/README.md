@@ -21,11 +21,21 @@ work only when you set `SUBMIT = True`.
 | 02 | `02_model_selection.ipynb` | **Synthesis.** What is the base model — minimal, and fitting every fixation type to the ceiling? | **built**; balanced sweep not yet submitted |
 | 03 | `03_connectivity.ipynb` | Which connections are necessary? | built; waits on the base model |
 | 04 | `04_bottleneck_rank.ipynb` | How narrow can inter-regional communication be? | built; waits on tasks 02–03 |
-| 05 | `05_seed_ensembles.ipynb` | 100 seeds — is the circuit identifiable once fitting is clean? | to build |
-| 06 | `06_invariants.ipynb` | Condition contrast; channel identity | to build |
-| 07 | `07_dynamics.ipynb` | Fixed points, Jacobians, basins | to build |
+| 05 | `05_ensemble_and_circuit.ipynb` | Is the circuit identifiable once fitting is clean? | **done** — **no**, and by a negative margin against the untrained null |
+| 06 | `06_audit_and_synthesis.ipynb` | What do these measurements measure, and what replicates? | **done** — 4 corrections |
+| 07 | `07_solution_manifold.ipynb` | What can be claimed once the circuit is not identifiable? | **done** — the chapter argument, in figures |
+| 08 | `08_sparse_ensemble.ipynb` | Does a uniformly sparse network, fitted ten times, agree about anything? | **built** — density screen and ensemble not yet submitted |
+| 09 | `09_chapter.ipynb` | Collated figure set | to build, once 08 returns |
+| 07 | `07_dynamics.ipynb` | Fixed points, Jacobians, basins | started inside 05/06; not yet its own task |
 | 08 | `08_generalization.ipynb` | Held-out post-fixation half | to build |
 | 09 | `09_chapter.ipynb` | Collated report | to build |
+
+> **Read `06_audit_and_synthesis.ipynb` before using any number below.** It recomputes four
+> of the quantities tasks 01–05 report and finds them measuring something other than their
+> name. Two conclusions in section 3 reverse (R5/R6 on the bottleneck, R8 on interactive
+> face), the width selection in task 01 loses its support, and three seed-consistent
+> invariants are established that section 3 does not contain. The affected entries below are
+> flagged; nothing has been deleted, so the audit can be checked against what it corrects.
 
 Task 02 is the hinge: it collates what 00 and 01 established, diagnoses why interactive-face
 fixations fit worst, and fixes the base model every constraint task is measured against.
@@ -143,6 +153,11 @@ carry those differences on its face or it is not a comparison.
 ## 3. Established results
 
 ### R1. The hidden-unit sweep is confounded by learning rate — the capacity question is open
+> ⚠ **Still open, for a second reason (task 06, E1).** With 42 PCs read out of $h$
+> units, the achievable $R^2$ is capped by the target's PC spectrum truncated at $h$.
+> As a fraction of that cap the rebuilt capacity curve is 0.966 → 1.000 with no knee,
+> so the clean sweep in `01_capacity` has the same problem in a different form.
+
 The sweep lowered the learning rate as the models got wider (1e-3 for 5–25 units, 3e-4
 at 30, 1e-4 at 40–60), so width and step size vary together. At 50 units and 20,000
 iterations — width and training length both fixed — a learning rate of 1e-4 reaches mean
@@ -186,6 +201,10 @@ rank-constrained fit reaches the same quality at rank 3 (R5). So the broad spect
 is what an unpenalized optimizer produces, not what the function needs.
 
 ### R5. A rank-3 inter-regional bottleneck is free
+> ⚠ **Superseded by task 06 (E1, E2).** Epoch-matched refits in task 04 make the
+> rank curve monotone, and the identifiability half of the claim reverses once the
+> agreement measure excludes within-region self-drive.
+
 Epoch-matched block (ranks 1–5, 100k iters, `l1_weight_scale = 0.01`), per-region PC R²:
 
 | rank | ofc | bla | dmpfc | accg |
@@ -205,6 +224,12 @@ the apparent collapse at rank 20 (PC R² 0.77–0.83) is a training-length artif
 those three points are **not currently readable**.
 
 ### R6. Fits are reproducible; the circuit read off them is not
+> ⚠ **Half superseded by task 06 (E2).** The first clause holds and is strengthened.
+> "The bottleneck raises consistency" does not: the measure it rests on is dominated
+> by the four within-region blocks the bottleneck does not constrain, and their share
+> of it rises from 29% to 81% as rank falls. Restricted to inter-regional blocks the
+> ordering inverts — rank 1 agrees at 0.016, dense at 0.539.
+
 This is the problem the chapter has to confront.
 
 100 seeds, unbottlenecked, 100k iters: **25/100 flagged bad** (divergence or failure to
@@ -256,6 +281,12 @@ the odd condition out.
 100-seed ensemble notebook saves the mean ± SEM but does not run this contrast.)*
 
 ### R8. Interactive face fixations are what inter-regional coupling is *for*
+> ⚠ **Does not replicate (task 06, E4).** The per-condition $R^2$ this rests on is
+> normalised by each condition's own variance, and interactive face has half the
+> variance of the other two — the same confound task 02 diagnosed in the objective,
+> reappearing in the metric. In comparable units the effect vanishes and slightly
+> reverses. In the rebuilt refits it is already reversed before any correction.
+
 Per-condition median R² from the architecture comparison:
 
 | condition | full | cross+self-diag | within-region only | cost of dropping cross-region |
