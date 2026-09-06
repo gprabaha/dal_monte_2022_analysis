@@ -1766,18 +1766,20 @@ def plot_bottleneck_schematic(figsize: tuple[float, float] = (7.6, 3.0)):
     _panel(ax, "b")
 
     ax = axes[2]
-    ax.add_patch(Rectangle((0.05, 0.42), 0.3, 0.4, facecolor=cross, alpha=0.55, edgecolor="none"))
-    ax.text(0.20, 0.62, "$W_{rs}$\n40×40", ha="center", va="center", fontsize=7.5, color="white")
-    ax.text(0.40, 0.62, "=", ha="center", va="center", fontsize=11)
-    ax.add_patch(Rectangle((0.46, 0.42), 0.08, 0.4, facecolor=cross, alpha=0.85, edgecolor="none"))
-    ax.text(0.50, 0.38, "$L$  40×$r$", ha="center", va="top", fontsize=6.5)
-    ax.add_patch(Rectangle((0.58, 0.74), 0.36, 0.08, facecolor=cross, alpha=0.85, edgecolor="none"))
-    ax.text(0.76, 0.86, "$R$  $r$×40", ha="center", va="bottom", fontsize=6.5)
+    side, thin = 0.34, 0.08          # a 40x40 block drawn square; L is 40 x r, R is r x 40
+    top = 0.80
+    ax.add_patch(Rectangle((0.03, top - side), side, side, facecolor=cross, alpha=0.55, edgecolor="none"))
+    ax.text(0.03 + side / 2, top - side / 2, "$W_{rs}$\n40×40", ha="center", va="center", fontsize=7.5, color="white")
+    ax.text(0.45, top - side / 2, "=", ha="center", va="center", fontsize=11)
+    ax.add_patch(Rectangle((0.52, top - side), thin, side, facecolor=cross, alpha=0.85, edgecolor="none"))
+    ax.text(0.52 + thin / 2, top - side - 0.04, "$L$  40×$r$", ha="center", va="top", fontsize=6.5)
+    ax.add_patch(Rectangle((0.64, top - thin), side, thin, facecolor=cross, alpha=0.85, edgecolor="none"))
+    ax.text(0.64 + side / 2, top + 0.03, "$R$  $r$×40", ha="center", va="bottom", fontsize=6.5)
     ax.text(0.5, 0.0, "every drive $W_{rs}h_s$ passes through $r$ numbers:\n"
                       "$r_w$ for a region's own block, $r_c$ for each of the 12 pathways,\n"
                       "so a region's total drive has rank ≤ $r_w + 3\\,r_c$",
             ha="center", va="bottom", fontsize=6.4)
-    ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+    ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.set_aspect("equal", adjustable="datalim"); ax.axis("off")
     ax.set_title("one block as a product (the rank constraint)", fontsize=7.5, pad=2)
     _panel(ax, "c")
     fig.tight_layout()
