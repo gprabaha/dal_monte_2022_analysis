@@ -8,8 +8,8 @@ Every analysed pair is **two units recorded simultaneously, both selective** —
 each significant for at least one of the three pairwise fixation-type contrasts
 after multiple-comparison correction. That rule is applied twice per pair, so it
 costs roughly its own square: BLA has 53% of its units selective and keeps 38% of
-its pairs, and across groups 20–38% of recorded pairs survive. Figure 2 shows
-this. Two things are then measured on those same pairs, so they can be compared
+its pairs, and across groups 20–38% of recorded pairs survive. Figures 2 and 6
+show this. Two things are then measured on those same pairs, so they can be compared
 pair for pair.
 
 | | per-trial spike correlation | mean signal correlation |
@@ -44,16 +44,23 @@ then average). Every figure title, axis label and paragraph uses one of those tw
 
 ## Structure
 
-Eight numbered figures, each with a caption below it in the notebook.
+Nine numbered figures, each with a caption below it in the notebook. The
+within-region and cross-region results are two self-contained sections: each opens
+with its own denominators, so neither has to be read against the other.
 
 1. Method schematic — one set of trials, two orders of operation
-2. Donuts: pairs recorded per group and the fraction analysed, within region and
-   across
-3. **Mean signal**: null-corrected correlation across lags, within region
+
+**Within region**
+
+2. Donuts: pairs recorded per region and the fraction analysed
+3. **Mean signal**: null-corrected correlation across lags
 4. **Per-trial**: observed against null, every region and fixation type
 5. **Both measures side by side**, each reduced to a ±250 ms mean minus its null,
    with the paired contrasts marked
-6–8. The same three figures across regions
+
+**Across regions**
+
+6–9. The same four figures, for BLA × ACCg, BLA × dmPFC and BLA × OFC
 
 The Spearman correlation relating the two measures is reported as a table, not a
 figure: the coefficients are positive in some region-and-condition combinations
@@ -68,14 +75,14 @@ pairs separated by that lag. Chance is roughly `rate₁ × rate₂ × bin width`
 about 0.05 for two 7 Hz units — which is why the observed traces sit where they
 do, and why the null-subtracted excess is around 10⁻³ and the bars are drawn
 ×10⁻³. They are different units and only their *ranks* are compared, in the
-Spearman table. Figures 5 and 8 put the two on adjacent axes precisely because
+Spearman table. Figures 5 and 9 put the two on adjacent axes precisely because
 only the *pattern across fixation types* is comparable, not the magnitudes.
 
 **Every bar panel is scaled to its own decade and names it in the axis label**
 (`, ×10⁻³`). The panels cannot share an axis — a shared one would flatten the
 cross-region bars to a line at zero — so the decade in the label is what makes
 magnitudes comparable *between* figures: the per-trial panel reads ×10⁻³ in
-Figure 5 and ×10⁻⁴ in Figure 8, and the ten-fold drop is a symbol rather than a
+Figure 5 and ×10⁻⁴ in Figure 9, and the ten-fold drop is a symbol rather than a
 count of leading zeros.
 
 ## Two lag windows, two questions

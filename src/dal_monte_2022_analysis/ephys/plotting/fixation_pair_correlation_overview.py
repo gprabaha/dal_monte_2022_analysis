@@ -578,6 +578,7 @@ def plot_analysed_pair_pies(
     summary: pd.DataFrame,
     settings: PairOverviewPlotSettings,
     *,
+    scope: str = "within_region",
     stem: str = "fig02_analysed_pairs",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """One donut per group: pairs recorded, and the share the chapter analyses.
@@ -594,54 +595,53 @@ def plot_analysed_pair_pies(
     that survives, and a filled pie can show only the second.  Both the count and
     the percentage are printed, so nothing has to be estimated from an angle --
     the usual and fair objection to a pie chart.
+
+    One scope per call.  The within-region and cross-region donuts open their own
+    sections of the chapter, and a reader arriving at the cross-region results
+    should meet that section's denominators there rather than having to page back
+    to a combined figure whose top half belongs to the previous section.
     """
     apply_thesis_plot_style()
-    rows = summary.copy()
+    rows = summary.loc[summary["scope"].astype(str) == scope].copy()
     rows["region_pair"] = rows["region_pair"].astype(str)
-    scopes = (("within_region", "Within region"), ("cross_region", "Across regions"))
-    layout = []
-    for scope, label in scopes:
-        available = rows.loc[rows["scope"].astype(str) == scope, "region_pair"]
-        layout.append((scope, label, _group_order(list(available), scope=scope)))
-    columns = max((len(groups) for _, _, groups in layout), default=1)
+    groups = _group_order(list(rows["region_pair"]), scope=scope)
+    if not groups:
+        fig, ax = plt.subplots(figsize=(3.2, 1.4))
+        ax.text(0.5, 0.5, f"No {scope.replace('_', ' ')} groups", ha="center",
+                va="center", fontsize=7, color=MUTED_INK)
+        _bare(ax)
+        return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
 
     fig, axes = plt.subplots(
-        len(layout), columns,
-        figsize=(1.62 * columns + 0.5, 1.92 * len(layout)),
-        squeeze=False,
+        1, len(groups), figsize=(1.62 * len(groups) + 0.4, 2.30), squeeze=False,
     )
-    lookup = rows.set_index(["scope", "region_pair"])
-    for row_index, (scope, label, groups) in enumerate(layout):
-        for column in range(columns):
-            ax = axes[row_index][column]
-            if column >= len(groups):
-                ax.set_visible(False)
-                continue
-            record = lookup.loc[(scope, groups[column])]
-            n_recorded = int(record["n_recorded"])
-            n_analysed = int(record["n_analysed"])
-            percent = 100.0 * n_analysed / n_recorded if n_recorded else 0.0
+    lookup = rows.set_index("region_pair")
+    for ax, group in zip(axes[0], groups):
+        record = lookup.loc[group]
+        n_recorded = int(record["n_recorded"])
+        n_analysed = int(record["n_analysed"])
+        percent = 100.0 * n_analysed / n_recorded if n_recorded else 0.0
 
-            wedges = ax.pie(
-                [max(n_analysed, 0), max(n_recorded - n_analysed, 0)],
-                colors=[INK, "#e3e3e3"], startangle=90, counterclock=False,
-                wedgeprops={"width": 0.38, "edgecolor": "white", "linewidth": 0.7},
-            )[0]
-            ax.set_aspect("equal")
-            ax.text(0, 0.12, f"{n_recorded:,}", ha="center", va="center",
-                    fontsize=8.5, color=MUTED_INK)
-            ax.text(0, -0.14, "recorded", ha="center", va="center",
-                    fontsize=6.0, color=MUTED_INK)
-            ax.text(0, 1.32, f"{n_analysed:,} analysed  ({percent:.0f}%)", ha="center",
-                    va="center", fontsize=6.8, color=INK)
-            ax.set_title(region_label(groups[column]), fontsize=7.2, color=INK, pad=13)
-        axes[row_index][0].set_ylabel(label, fontsize=7.0, color=MUTED_INK)
+        ax.pie(
+            [max(n_analysed, 0), max(n_recorded - n_analysed, 0)],
+            colors=[INK, "#e3e3e3"], startangle=90, counterclock=False,
+            wedgeprops={"width": 0.38, "edgecolor": "white", "linewidth": 0.7},
+        )
+        ax.set_aspect("equal")
+        ax.text(0, 0.12, f"{n_recorded:,}", ha="center", va="center",
+                fontsize=8.5, color=MUTED_INK)
+        ax.text(0, -0.14, "recorded", ha="center", va="center",
+                fontsize=6.0, color=MUTED_INK)
+        ax.text(0, 1.32, f"{n_analysed:,} analysed  ({percent:.0f}%)", ha="center",
+                va="center", fontsize=6.8, color=INK)
+        ax.set_title(region_label(group), fontsize=7.2, color=INK, pad=13)
 
-    fig.suptitle("Simultaneously recorded pairs, and the pairs analysed\n"
+    scope_label = "Within region" if scope == "within_region" else "Across regions"
+    fig.suptitle(f"{scope_label}: pairs recorded, and the pairs analysed\n"
                  "(both units selective for at least one fixation-type contrast)",
                  fontsize=8.0, color=INK, linespacing=1.5)
-    fig.tight_layout(rect=(0, 0, 1, 0.90))
-    return fig, save_thesis_figure(fig, settings, stem)
+    fig.tight_layout(rect=(0, 0, 1, 0.88))
+    return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
 
 
 def plot_correlation_bars(
