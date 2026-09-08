@@ -10,7 +10,7 @@ numbers are not comparable.
 | 01 | `01_ladder.ipynb` | Does a region need the network to reproduce itself? Singles, pairs, triples, full. | 14 × 5 + full × 10 = **80** |
 | 02 | `02_rank_grid.ipynb` | Which is the low-dimensional channel — self-recurrence or inter-regional input? Within × cross rank grid plus both marginals. | 35 × 5 = **175** |
 | 02b | `02b_bottleneck_properties.ipynb` | Which bottleneck costs fit, and does it change which fixation type is hardest? Cost per fixation type along each marginal, regions pooled, every seed shown; where a region's drive comes from; supplementary network properties. | none (reads 01 and 02) |
-| 03 | `03_ensemble.ipynb` | What do ten fits of the most constrained adequate model agree on? | 10 (after 02) |
+| 03 | `03_ensemble.ipynb` | The selected model fitted ten times against the ten dense fits: what the constraint cost each fixation type, whether the two faces are alike (data, state, drives, lesion profile, fixed points), drive and flow, dynamics (fixed points, flow fields, local linearisation), lesions (pairs, per-condition ranking, lesioned dynamics), and a consistency scoreboard. | 10 (done) |
 
 Task 01 writes `final/base_model.yaml`; 02, 02b and 03 read it. Task 02b caches its replay tables under `final/02b_bottleneck_properties/tables/` — delete them to recompute. Task 02 writes
 `selected_bottleneck.yaml`; 03 reads it and refuses to queue without it.
@@ -38,6 +38,8 @@ the sum against **0.442** under minimax, cells within 0.017 of one another inste
 - Lesions need a matched random-weight control.
 - The claim to make about an ensemble is at the highest level of description that clears
   its null: weights, spectra, state geometry, pathway ranking, condition contrast.
+
+Task 03's analyses live in `src/.../ephys/analysis/fixation_mrnn_ensemble.py` and its figures in `src/.../ephys/plotting/fixation_mrnn_ensemble.py`; its tables are cached under `final/03_ensemble/tables/` (delete a file to recompute it).
 
 Regenerate a notebook with its `_build_*.py`, then
 
