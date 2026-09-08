@@ -55,6 +55,7 @@ def build_chapter_text_summary(
     units: pd.DataFrame,
     yield_table: pd.DataFrame,
     preference_table: pd.DataFrame,
+    preference_contrasts: pd.DataFrame,
     upset_counts: pd.DataFrame,
     trace_shape: pd.DataFrame,
     metric_space_summary: pd.DataFrame,
@@ -199,16 +200,27 @@ def build_chapter_text_summary(
         f"with the highest mean was recorded as that unit's preferred category."
     )
     add(
-        "- Each region × category count was tested against **chance (1/3)** with a "
-        "**two-sided exact binomial test**."
+        "- Categories were compared **against each other**, not against a 1/3 reference. "
+        "Each unit has exactly one preferred category, so the three counts form a single "
+        "multinomial over a fixed n; the question of interest is whether more units prefer "
+        "one category than another."
     )
     add(
-        f"- The **{len(regions)} regions × {len(conditions)} categories = "
-        f"{len(regions) * len(conditions)} tests** were corrected together with "
+        "- Two categories were compared by restricting to the units preferring **either** of "
+        "them and testing that split against 0.5 with a **two-sided exact binomial test** — "
+        "the standard cell-versus-cell comparison within a multinomial."
+    )
+    n_pairs = len(conditions) * (len(conditions) - 1) // 2
+    add(
+        f"- The **{len(regions)} regions × {n_pairs} category pairs = "
+        f"{len(regions) * n_pairs} tests** were corrected together with "
         f"**Benjamini–Hochberg FDR** at **α = {alpha}**."
     )
-    add("- Error bars are 95% **Wilson score** intervals on the proportion.\n")
-    add("**Result.**\n")
+    add(
+        "- Error bars are 95% **Wilson score** intervals on the proportion. Only significant "
+        "contrasts are marked on the figure.\n"
+    )
+    add("**Result — composition.**\n")
     for region in regions:
         rows = preference_table.loc[preference_table["region"] == region]
         if rows.empty:
@@ -217,11 +229,24 @@ def build_chapter_text_summary(
         n = int(rows.iloc[0]["n"])
         parts = "; ".join(
             f"{CONDITION_LABELS[r['condition']].lower()} {int(r['k'])}/{n} "
-            f"({r['fraction']:.3f} [{r['ci_low']:.3f}, {r['ci_high']:.3f}], "
-            f"p_adj = {r['p_adj']:.2g} {r['stars']})"
+            f"({r['fraction']:.3f} [{r['ci_low']:.3f}, {r['ci_high']:.3f}])"
             for _, r in rows.iterrows()
         )
         add(f"  - **{label}** — {parts}")
+    add("\n**Result — comparisons between categories.**\n")
+    for region in regions:
+        rows = preference_contrasts.loc[preference_contrasts["region"] == region]
+        if rows.empty:
+            continue
+        label = rows.iloc[0]["region_label"]
+        for _, r in rows.iterrows():
+            add(
+                f"  - **{label}** "
+                f"{CONDITION_LABELS[r['condition_a']].lower()} ({int(r['k_a'])}) vs "
+                f"{CONDITION_LABELS[r['condition_b']].lower()} ({int(r['k_b'])}) — "
+                f"{int(r['k_a'])}/{int(r['n_pair'])} of the units preferring either, "
+                f"p_adj = {r['p_adj']:.3g} {r['stars']}"
+            )
     add("")
 
     # ------------------------------------------------------------ metrics ----

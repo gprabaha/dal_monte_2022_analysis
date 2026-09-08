@@ -101,6 +101,11 @@ minutes rather than a full sweep.
   comparison. Region is the series there and uses the prominent colourblind-safe
   `REGION_COLORS` palette; unit counts are printed on each bar. Sized to work both
   standalone and as one panel row of a larger paper figure.
+- **Statistics are marked only when significant**, as a plain thick bar with no end
+  ticks and stars above (`thesis_common.mark_contrasts`, shared with the mRNN
+  chapter). Non-significant contrasts are not drawn.
+- **No reference line** on the preferred-category figure: categories are compared
+  against each other, not against 1/3.
 - **Violins follow the behavioural convention** — seaborn, `inner="quart"`,
   `cut=0`, so quartile lines sit inside the body and the kernel is truncated at
   the observed range.

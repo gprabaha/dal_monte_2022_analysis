@@ -74,6 +74,7 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     add_analysis_window_bars,
     add_significance_bracket,
     condition_legend_handles,
+    mark_contrasts,
     nice_axis,
     ordinal,
     readable_text_color,
@@ -930,13 +931,19 @@ def plot_preferred_condition_panel(
     figure_height_in: float = 2.9,
     alpha: float = 0.05,
     pvalue_correction: str = "fdr_bh",
-) -> tuple[plt.Figure, pd.DataFrame]:
+) -> tuple[plt.Figure, pd.DataFrame, pd.DataFrame]:
     """Preferred fixation category among modulated units, by region.
 
-    Bars carry the proportion with a Wilson interval and a per-category binomial
-    test against chance (1/3), FDR corrected across the region x category family.
-    The pie inset shows the same composition at a glance -- it cannot show
-    uncertainty, which is why the bars remain the primary encoding.
+    Categories are compared **against each other**, not against a 1/3 reference.
+    Each unit has exactly one preferred category, so the three counts are one
+    multinomial over a fixed n and a per-category test against 1/3 answers a
+    question nobody asked -- what matters is whether more units prefer one
+    category than another. Two categories are therefore compared by restricting
+    to the units preferring either of them and testing that split against 0.5
+    with an exact binomial test, the standard cell-versus-cell comparison within
+    a multinomial.
+
+    Returns ``(figure, proportion_table, contrast_table)``.
     """
     rows = []
     for region in regions:
@@ -945,11 +952,6 @@ def plot_preferred_condition_panel(
         for condition in conditions:
             k = int((region_units[preference_column].astype(str) == condition).sum())
             low, high = wilson_score_interval(k, n_total)
-            p_value = (
-                float(stats.binomtest(k, n_total, 1.0 / len(conditions)).pvalue)
-                if n_total
-                else np.nan
-            )
             rows.append(
                 {
                     "region": region,
@@ -960,21 +962,54 @@ def plot_preferred_condition_panel(
                     "fraction": (k / n_total) if n_total else np.nan,
                     "ci_low": low,
                     "ci_high": high,
-                    "p_vs_chance": p_value,
                 }
             )
     table = pd.DataFrame(rows)
-    table["p_adj"] = adjust_pvalues(table["p_vs_chance"].to_numpy(dtype=float), pvalue_correction)
-    table["stars"] = [significance_stars(p, alpha=alpha) for p in table["p_adj"]]
 
-    fig, axes = plt.subplots(
-        1,
-        len(regions),
-        figsize=(figure_width_in, figure_height_in),
-        sharey=True,
+    contrast_rows = []
+    for region in regions:
+        region_table = table.loc[table["region"] == region].set_index("condition")
+        for index, condition_a in enumerate(conditions):
+            for condition_b in conditions[index + 1 :]:
+                k_a = int(region_table.loc[condition_a, "k"])
+                k_b = int(region_table.loc[condition_b, "k"])
+                n_pair = k_a + k_b
+                p_value = (
+                    float(stats.binomtest(k_a, n_pair, 0.5).pvalue) if n_pair else np.nan
+                )
+                contrast_rows.append(
+                    {
+                        "region": region,
+                        "region_label": region_label(region),
+                        "condition_a": condition_a,
+                        "condition_b": condition_b,
+                        "k_a": k_a,
+                        "k_b": k_b,
+                        "n_pair": n_pair,
+                        "fraction_a": float(region_table.loc[condition_a, "fraction"]),
+                        "fraction_b": float(region_table.loc[condition_b, "fraction"]),
+                        "p_value": p_value,
+                    }
+                )
+    contrasts = pd.DataFrame(contrast_rows)
+    contrasts["p_adj"] = adjust_pvalues(contrasts["p_value"].to_numpy(dtype=float), pvalue_correction)
+    contrasts["stars"] = [significance_stars(p, alpha=alpha) for p in contrasts["p_adj"]]
+    contrasts["significant"] = contrasts["p_adj"] < alpha
+
+    # Pies get their own row rather than an inset: the significance bars span the
+    # full width of a panel, so any in-panel corner for the pie is a corner some
+    # bar has to cross.
+    fig = plt.figure(figsize=(figure_width_in, figure_height_in))
+    grid = fig.add_gridspec(
+        2, len(regions), height_ratios=[0.5, 1.0], hspace=0.02, wspace=0.16,
+        left=0.085, right=0.995, top=0.99, bottom=0.20,
     )
-    axes = np.atleast_1d(axes)
-    for ax, region in zip(axes, regions):
+    axes = [fig.add_subplot(grid[1, index]) for index in range(len(regions))]
+    for index, ax in enumerate(axes[1:], start=1):
+        ax.sharey(axes[0])
+        plt.setp(ax.get_yticklabels(), visible=False)
+
+    for index, (ax, region) in enumerate(zip(axes, regions)):
         region_table = (
             table.loc[table["region"] == region].set_index("condition").loc[list(conditions)]
         )
@@ -998,23 +1033,13 @@ def plot_preferred_condition_panel(
             fmt="none",
             ecolor=INK,
             elinewidth=0.9,
-            capsize=2.0,
+            capsize=0,
             zorder=4,
         )
-        ax.axhline(1 / 3, color=MUTED_INK, linestyle="--", linewidth=0.8, zorder=1)
         for xi, row in zip(x, region_table.itertuples()):
             ax.text(
-                xi,
-                row.ci_high + 0.022,
-                row.stars,
-                ha="center",
-                va="bottom",
-                fontsize=7,
-                color=INK,
-            )
-            ax.text(
-                xi, 0.016, str(int(row.k)), ha="center", va="bottom", fontsize=6, color="white",
-                zorder=5,
+                xi, 0.016, str(int(row.k)), ha="center", va="bottom", fontsize=6,
+                color="white", zorder=5,
             )
         ax.set_xticks(x)
         ax.set_xticklabels(
@@ -1022,15 +1047,12 @@ def plot_preferred_condition_panel(
             rotation=22,
             ha="right",
         )
-        ax.set_title(f"{region_label(region)}  (n = {int(region_table['n'].iloc[0])})", fontsize=8.2)
-        ax.set_ylim(0, 0.80)
+        ax.set_ylim(0, max(0.62, float(table["ci_high"].max()) * 1.02))
         nice_axis(ax, y_ticks=4)
 
-        # The bars already carry counts and proportions; what the pie uniquely
-        # adds is share-of-whole, so it is labelled with percentages.
-        inset = ax.inset_axes([0.575, 0.60, 0.46, 0.46])
+        pie_ax = fig.add_subplot(grid[0, index])
         wedge_colors = [CONDITION_COLORS[condition] for condition in conditions]
-        wedges, _, autotexts = inset.pie(
+        _, _, autotexts = pie_ax.pie(
             region_table["fraction"].to_numpy(),
             colors=wedge_colors,
             startangle=90,
@@ -1038,11 +1060,33 @@ def plot_preferred_condition_panel(
             wedgeprops={"edgecolor": "white", "linewidth": 1.0},
             autopct="%1.0f%%",
             pctdistance=0.62,
-            textprops={"fontsize": 4.8, "fontweight": "bold"},
+            textprops={"fontsize": 5.2, "fontweight": "bold"},
         )
         for autotext, face_color in zip(autotexts, wedge_colors):
             autotext.set_color(readable_text_color(face_color))
-        inset.set_aspect("equal")
+        pie_ax.set_aspect("equal")
+        pie_ax.set_title(
+            f"{region_label(region)}  (n = {int(region_table['n'].iloc[0])})", fontsize=8.2
+        )
+
+        # Only significant contrasts are marked, as plain bars with no end ticks.
+        region_contrasts = contrasts.loc[
+            (contrasts["region"] == region) & contrasts["significant"]
+        ]
+        mark_contrasts(
+            ax,
+            [
+                (
+                    float(conditions.index(row["condition_a"])),
+                    float(conditions.index(row["condition_b"])),
+                    str(row["stars"]),
+                )
+                for _, row in region_contrasts.iterrows()
+            ],
+            top=float(region_table["ci_high"].max()),
+            fontsize=6.6,
+            linewidth=1.8,
+        )
 
     axes[0].set_ylabel("Fraction of modulated units", fontsize=7.5)
     fig.legend(
@@ -1053,18 +1097,13 @@ def plot_preferred_condition_panel(
                 label=CONDITION_LABELS[condition],
             )
             for condition in conditions
-        ]
-        + [
-            Line2D([0], [0], color=MUTED_INK, linestyle="--", linewidth=0.8,
-                   label="Chance (1/3)")
         ],
-        ncol=4,
+        ncol=3,
         loc="lower center",
-        bbox_to_anchor=(0.5, -0.015),
+        bbox_to_anchor=(0.5, 0.0),
         fontsize=7,
     )
-    fig.tight_layout(rect=(0, 0.07, 1, 1))
-    return fig, table
+    return fig, table, contrasts
 
 
 def plot_condition_metric_panel(
@@ -1154,7 +1193,8 @@ def plot_condition_metric_panel(
         )
         bodies = [c for c in ax.collections if isinstance(c, PolyCollection)]
         for body in bodies:
-            body.set_edgecolor("#1f1f1f")
+            body.set_edgecolor("#222222")
+            body.set_linewidth(0.65)
             body.set_alpha(1.0)
         # inner="quart" draws three lines per violin. Colour them for contrast
         # against their own fill -- dark lines vanish on the brown, light lines
@@ -1166,23 +1206,25 @@ def plot_condition_metric_panel(
             line.set_alpha(0.95)
             line.set_linewidth(0.9)
 
-        step = y_max * 0.062
-        region_stats = table.loc[table["region"] == region]
-        for level, condition in enumerate(
-            [c for c in conditions if c != reference_condition]
-        ):
-            match = region_stats.loc[region_stats["condition_b"] == condition]
-            if match.empty:
-                continue
-            add_significance_bracket(
-                ax,
-                conditions.index(reference_condition),
-                conditions.index(condition),
-                y_max + step * (level * 1.5 + 0.6),
-                match.iloc[0]["stars"],
-                fontsize=6.6,
-            )
-        ax.set_ylim(0, y_max + step * 3.0)
+        # Only significant contrasts are marked, as plain bars with no end ticks.
+        region_stats = table.loc[
+            (table["region"] == region) & table["significant"].astype(bool)
+        ]
+        ax.set_ylim(0, y_max)
+        mark_contrasts(
+            ax,
+            [
+                (
+                    float(conditions.index(row["condition_a"])),
+                    float(conditions.index(row["condition_b"])),
+                    str(row["stars"]),
+                )
+                for _, row in region_stats.iterrows()
+            ],
+            top=y_max,
+            fontsize=6.6,
+            linewidth=1.8,
+        )
         ax.set_xlabel("")
         ax.set_xticks(range(len(conditions)))
         ax.set_xticklabels(

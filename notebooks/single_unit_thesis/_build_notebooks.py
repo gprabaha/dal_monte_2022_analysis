@@ -224,9 +224,14 @@ windows (Welch's *t*-test on per-trial window means, FDR corrected across all
 pair × window tests within the unit). For each such unit, the panel below asks
 which category evoked the highest mean rate over the full −500 to +500 ms window.
 
-Bars carry Wilson 95% intervals and a binomial test against chance (1/3), FDR
-corrected across the region × category family; the pie inset shows composition,
-which cannot carry uncertainty and is therefore secondary.
+Categories are compared **against each other** rather than against a 1/3 reference:
+each unit has exactly one preferred category, so the three counts are one multinomial
+over a fixed n, and what matters is whether more units prefer one category than
+another. Two categories are compared by restricting to the units preferring either of
+them and testing that split against 0.5 (exact binomial), FDR corrected across the
+region × pair family. Only significant contrasts are marked. Bars carry Wilson 95%
+intervals; the pies above show composition, which cannot carry uncertainty and is
+therefore secondary.
 """
 )
 
@@ -243,15 +248,22 @@ display(yield_table.round(3))
 
 code(
     '''
-fig, preference_table = figs.plot_preferred_condition_panel(units.loc[units["is_selective"]])
+fig, preference_table, preference_contrasts = figs.plot_preferred_condition_panel(
+    units.loc[units["is_selective"]]
+)
 FIGURE_MANIFEST["fig03_preferred_condition"] = style.save_thesis_figure(
     fig, FIGURE_SETTINGS, "fig03_preferred_condition"
 )
 display(Image(data=style.figure_to_png_bytes(fig)))
 display(
     preference_table.loc[
-        :, ["region_label", "condition", "k", "n", "fraction", "ci_low", "ci_high",
-            "p_adj", "stars"]
+        :, ["region_label", "condition", "k", "n", "fraction", "ci_low", "ci_high"]
+    ].round(4)
+)
+display(
+    preference_contrasts.loc[
+        :, ["region_label", "condition_a", "condition_b", "k_a", "k_b", "n_pair",
+            "p_value", "p_adj", "stars", "significant"]
     ].round(4)
 )
 '''
@@ -462,6 +474,7 @@ chapter_text = text.build_chapter_text_summary(
     units=units,
     yield_table=yield_table,
     preference_table=preference_table,
+    preference_contrasts=preference_contrasts,
     upset_counts=upset_counts,
     trace_shape=trace_shape_all,
     metric_space_summary=metric_space_summary,
@@ -482,6 +495,7 @@ code(
 exports = {
     "unit_yield_by_region.csv": yield_table,
     "preferred_condition_by_region.csv": preference_table,
+    "preferred_condition_contrasts.csv": preference_contrasts,
     "pair_selectivity_upset_counts.csv": upset_counts,
     "metric_space_summary.csv": metric_space_summary,
     "metric_space_corner_units.csv": corner_units.loc[

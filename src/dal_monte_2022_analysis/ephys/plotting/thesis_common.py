@@ -16,6 +16,7 @@ from typing import Iterable, Mapping, Optional, Sequence
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.transforms as mtransforms
 import numpy as np
 
 from dal_monte_2022_analysis.ephys.plotting.common import apply_plotting_config
@@ -295,6 +296,44 @@ def add_analysis_window_bars(
             )
     ax.set_ylim(new_low, y_high)
     return float(new_low)
+
+
+def mark_contrasts(ax, comparisons: Sequence[tuple[float, float, str]], *, top: float | None = None,
+                   fontsize: float = 6.5, pad_frac: float = 0.04, step_frac: float = 0.085, linewidth: float = 1.2) -> None:
+    """Bars with stars for the comparisons handed in -- callers pass only the significant ones.
+
+    A comparison is a plain horizontal bar (no end ticks) with its stars above. Bars are
+    stacked so overlapping spans sit on different levels. They are drawn in axes-fraction y
+    above ``top`` (the highest data value in the panel; the axes' data limit when not
+    given), and the y-limits are extended to make room, so the bars never enter the data
+    limits themselves and shared axes stay intact.
+    """
+    comparisons = [c for c in comparisons if c[2]]
+    if not comparisons:
+        return
+    y_low, y_high = ax.get_ylim()
+    if top is None:
+        top = ax.dataLim.y1 if np.isfinite(ax.dataLim.y1) else y_high
+    top = max(float(top), y_low + 1e-12)
+    placed: list[tuple[float, float, int]] = []
+    levels: list[tuple[float, float, int, str]] = []
+    for x1, x2, label in sorted(comparisons, key=lambda c: abs(c[1] - c[0])):
+        lo, hi = min(x1, x2), max(x1, x2)
+        level = 0
+        while any(not (hi < a - 0.05 or lo > b + 0.05) and lv == level for a, b, lv in placed):
+            level += 1
+        placed.append((lo, hi, level))
+        levels.append((lo, hi, level, label))
+    max_level = max(lv for _, _, lv, _ in levels)
+    room = pad_frac + (max_level + 1) * step_frac + 0.02
+    y_high_new = y_low + (top - y_low) / (1.0 - room)
+    ax.set_ylim(y_low, y_high_new)
+    top_frac = (top - y_low) / (y_high_new - y_low)
+    trans = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
+    for lo, hi, level, label in levels:
+        y = top_frac + pad_frac + level * step_frac
+        ax.plot([lo, hi], [y, y], color=INK, lw=linewidth, solid_capstyle="butt", transform=trans, clip_on=False, zorder=6)
+        ax.text((lo + hi) / 2, y + 0.004, label, ha="center", va="bottom", fontsize=fontsize, color=INK, transform=trans, clip_on=False)
 
 
 def add_significance_bracket(
