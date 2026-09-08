@@ -66,11 +66,11 @@ def _bare(ax) -> None:
 def plot_signal_vs_spike_schematic(
     settings: SignalCorrelationPlotSettings,
     *,
-    stem: str = "fig01_signal_vs_noise_schematic",
+    stem: str = "fig01_signal_vs_spike_schematic",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """What this analysis measures, and how it differs from spike coordination.
 
-    Left: noise correlation, computed on single-fixation spike trains -- do the
+    Left: per-trial spike correlation, computed on single-fixation trains -- do the
     two units fire together on the *same* fixation.  Right: signal correlation,
     computed on the condition average -- do their mean responses have the same
     shape.  Averaging removes trial-by-trial covariation entirely, so the two
@@ -94,7 +94,7 @@ def plot_signal_vs_spike_schematic(
     ax.set_ylabel("fixations", fontsize=6.5)
     ax.text(0, -0.7, "same fixation, same millisecond?", ha="center", fontsize=6, color=INK)
     ax.set_xlim(-620, 560); ax.set_ylim(-1.1, 4.6); _bare(ax)
-    ax.set_title("Noise correlation\n(spike coordination)", fontsize=7.5, color=INK)
+    ax.set_title("Per-trial spike\ncorrelation", fontsize=7.5, color=INK)
 
     ax = axes[1]
     bump = np.exp(-0.5 * ((time - 40) / 110.0) ** 2)
@@ -292,7 +292,7 @@ def plot_signal_vs_spike_correlation(
     correlations: pd.DataFrame,
     settings: SignalCorrelationPlotSettings,
     *,
-    stem: str = "fig05_signal_vs_noise",
+    stem: str = "fig05_signal_vs_spike_correlation",
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """Do pairs with similar mean responses also covary trial to trial?"""
     apply_thesis_plot_style()
@@ -312,7 +312,7 @@ def plot_signal_vs_spike_correlation(
     ax.axhline(0.0, color=MUTED_INK, lw=0.6); ax.axvline(0.0, color=MUTED_INK, lw=0.6)
     ax.legend(frameon=False, fontsize=5.5, markerscale=4, loc="best")
     _finish(ax, xlabel="Signal correlation (zero lag)",
-            ylabel="Noise correlation\n(sharp peak)", title="Within region")
+            ylabel="Per-trial spike correlation\n(sharp peak)", title="Within region")
 
     ax = axes[1]
     if len(correlations):
@@ -334,6 +334,6 @@ def plot_signal_vs_spike_correlation(
         ax.set_xticks(np.arange(len(groups)))
         ax.set_xticklabels([region_label(g) for g in groups], fontsize=6,
                            rotation=25, ha="right")
-    _finish(ax, ylabel="Spearman ρ\n(signal vs noise)", title="Per region and condition")
+    _finish(ax, ylabel="Spearman ρ\n(signal vs per-trial)", title="Per region and condition")
     fig.tight_layout()
     return fig, save_thesis_figure(fig, settings, stem)

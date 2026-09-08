@@ -1,73 +1,88 @@
-# Noise and signal correlation in simultaneously recorded selective pairs
+# Signal and per-trial spike correlation in simultaneously recorded selective pairs
 
-Written as a **thesis chapter**: introduction, methods, results and discussion,
-with the figures inline. Figures are also written as editable PDFs for stitching
-into a paper figure.
+Written as a **thesis chapter**: introduction, a methods section with the full
+equations, results and discussion, with the figures inline. Figures are also
+written as editable PDFs for stitching into a paper figure.
 
-The combined analysis. Every pair is **two FDR-selective units recorded
-simultaneously in the same region**, and two things are measured on those same
-pairs.
+Every pair is **two FDR-selective units recorded simultaneously**, and two things
+are measured on those same pairs, so they can be compared pair for pair.
 
-| | noise correlation | signal correlation |
+| | per-trial spike correlation | signal correlation |
 |---|---|---|
 | computed on | per-fixation 1 ms spike trains | condition-averaged rate timelines |
-| asks | do they fire together on the **same** fixation | do their **mean responses** share a shape |
-| null | circular shift within fixation | unit of the same region, different session |
+| asks | do they fire together **within** a fixation | do their **mean responses** share a shape |
+| null | circular shift within fixation, 50 draws | unit of the same region, different session, 20 draws |
+| summarised as | mean excess over ±250 ms | mean null-corrected ρ over ±250 ms |
 | trial-count matched | yes | no — see caveat |
 
-Averaging over fixations removes trial-by-trial covariation entirely. That is
-the only difference between the two, and it is why a pair can have either
-without the other.
+Averaging over fixations removes trial-by-trial co-firing entirely. That is the
+only difference between the two, and it is why a pair can have either without the
+other.
+
+## Why not "noise correlation"
+
+The second measure is conventionally called noise correlation and that name is
+deliberately not used. Classical noise correlation is **one number per pair**:
+the Pearson correlation, across trials, of the two units' spike *counts* after
+each unit's condition mean is removed. What is computed here is a **full
+cross-correlogram within each fixation**, averaged afterwards — it resolves
+timing that a count correlation integrates away, and being unnormalised it does
+not live on [−1, 1]. Reporting it under the other name would invite comparing
+magnitudes against a literature that measured something else.
 
 ## Structure
 
-Signal correlation comes first because it carries the clearer result.
-
 1. Method schematic — one set of trials, two orders of operation
-2. **Signal**: null-corrected correlation across lags
-3. **Signal**: peak height by region and fixation type, with significance
-4. **Noise**: observed against null, every region and condition
-5. **Noise**: null-subtracted — the fixation types do not differ
-6. Spearman correlation between the two measures, per region and condition
-
-## How the signal-correlation bars are computed
-
-Summarising at a peak is the right instinct and has two wrong implementations.
-
-*A per-pair maximum* inflates the level: every pair peaks at a different lag, so
-the mean of the maxima far exceeds the maximum of the mean. Bars built that way
-read ≈0.30 beside traces peaking at ≈0.10 — same data, two incompatible numbers.
-
-*A fixed window* (the mean over ±100 ms) is unbiased and matches the trace
-exactly, but it is not the peak: it averages the peak with its shoulders and
-sits below the maximum a reader can see.
-
-What is used instead: the peak lag is found **once per group from the group-mean
-trace**, searched over the full ±250 ms, and every pair is read at that single
-lag. No maximum is taken per pair, so the bar equals the visible peak of the
-trace, and because each pair contributes a value at a fixed lag the per-pair
-spread and the paired tests stay valid.
+2. Recording inventory — units, sessions, pairs, individually significant pairs
+3. **Signal**: null-corrected correlation across lags (within region)
+4. **Per-trial**: observed against null, every region and condition
+5. **Per-trial**: null-subtracted mean by fixation type, with the paired contrasts
+6. **Signal**: same reduction, plus the Spearman relating the two measures
+7–10. The same four figures across regions
 
 ## Why the two y-axes are not comparable
 
-Signal correlation is a Pearson coefficient, bounded in [−1, 1]. Noise
-correlation is **coincidences per fixation**: at each 1 ms lag, the number of
-spike pairs separated by that lag. Chance is roughly `rate₁ × rate₂ × bin
-width` — about 0.05 for two 7 Hz units — which is why those values sit where
-they do. They are different units and only their *ranks* are compared, in the
-final scatter.
+Signal correlation is a Pearson coefficient, bounded in [−1, 1]. The per-trial
+measure is **spike pairs per fixation**: at each 1 ms lag, the number of spike
+pairs separated by that lag. Chance is roughly `rate₁ × rate₂ × bin width` —
+about 0.05 for two 7 Hz units — which is why the observed traces sit where they
+do, and why the null-subtracted excess is around 10⁻³ and the bars are drawn
+×10⁻³. They are different units and only their *ranks* are compared, in the
+Spearman panel.
+
+## Two lag windows, two questions
+
+- **±250 ms** is the reporting window, matching the signal correlation's, and it
+  answers *how much excess co-firing does this condition carry in total*.
+- **±10 ms** is used only for whether **one pair** is individually coordinated: a
+  monosynaptic or common-input peak lives inside ±10 ms, and averaging z over
+  half a second of empty lags dilutes it to nothing. Run at ±250 ms, zero pairs
+  are individually significant anywhere — a statement about the window, not the
+  pairs.
 
 ## The trial-count caveat
 
 Interactive-face fixations outnumber the others about six to one, so
-interactive-face mean timelines are estimated more precisely and correlate
-better with anything. The noise-correlation comparisons are trial-count matched
-and do not carry this; the signal-correlation comparisons cannot be, so their
-absolute sizes are upper bounds. The region and condition ordering is not
-obviously driven by it. `notebooks/signal_correlation/` has the stratification
-that bounds it directly.
+interactive-face estimates are more precise and correlate better with anything.
+Every **per-trial** condition contrast runs on the trial-count-matched
+recomputation and does not carry this. The signal-correlation contrasts cannot
+be matched, because no matched average exists, so their absolute sizes are upper
+bounds. `notebooks/signal_correlation/` has the stratification that bounds it
+directly.
 
 ## Reading the statistics
 
-With thousands of pairs per region almost any difference reaches significance.
+With thousands of pairs per region almost any difference reaches significance,
+and a session with 20 simultaneous units contributes 190 non-independent pairs.
 **Read the rank-biserial effect sizes, not the asterisks.**
+
+## Rebuilding
+
+```
+python _build_notebook.py          # authors the .ipynb from source
+jupyter nbconvert --to notebook --execute --inplace pair_correlation_overview.ipynb
+```
+
+The figures land outside the repo, under
+`<analysis_outputs>/ephys/psth/fixation_pair_spike_coordination/overview/`, and
+are overwritten on every run.

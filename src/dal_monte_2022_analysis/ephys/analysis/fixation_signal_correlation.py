@@ -4,16 +4,16 @@ This asks a different question from the pairwise spike-coordination analysis,
 and the difference is the whole point.
 
 That analysis cross-correlates two units' **per-fixation spike trains** and asks
-whether they fire together on the same fixation more than chance -- *noise*
-correlation, trial-by-trial covariation, measured against a null that scrambles
-which fixation goes with which.
+whether they fire together within the same fixation more than chance --
+*per-trial spike correlation*, measured against a null that rotates one train
+inside its own fixation.
 
 This one cross-correlates two units' **condition-averaged rate timelines** and
 asks whether their mean responses to a fixation have the same shape, and at what
 lag -- *signal* correlation, shared tuning.  Averaging over fixations removes the
-trial-by-trial covariation entirely, so nothing measured here is noise
-correlation.  Two units can have identical mean profiles and be independent
-trial to trial, or the reverse.
+trial-by-trial co-firing entirely, so nothing measured here is a per-trial
+quantity.  Two units can have identical mean profiles and be independent trial to
+trial, or the reverse.
 
 Why the null has to be a different unit
 ---------------------------------------
@@ -70,7 +70,7 @@ REGION_ORDER: tuple[str, ...] = ("bla", "accg", "dmpfc", "ofc")
 
 DEFAULT_OUTPUT_SUBDIR = "ephys/psth/fixation_signal_correlation"
 
-#: What the bar charts and the signal-versus-noise comparison summarise: the
+#: What the bar charts and the signal-versus-spike comparison summarise: the
 #: mean of the null-corrected correlation over the full stored lag range.  A
 #: windowed mean rather than a per-pair peak, because every pair peaks at a
 #: different lag and the mean of the maxima far exceeds the maximum of the mean.
@@ -670,9 +670,10 @@ def join_with_spike_correlation(
     -- a whole-window average on each -- rather than a peak on one and a window
     on the other.
 
-    Signal and noise correlation are different quantities and need not track
-    each other: two units can share a response profile and be independent trial
-    to trial, or covary trial to trial without resembling each other on average.
+    Signal and per-trial spike correlation are different quantities and need not
+    track each other: two units can share a response profile and be independent
+    trial to trial, or co-fire within a trial without resembling each other on
+    average.
     Whether they do track each other in this data is a question the two analyses
     can only answer together.
     """
@@ -681,25 +682,25 @@ def join_with_spike_correlation(
         load_pair_coordination,
     )
 
-    noise, _ = load_pair_coordination(settings.cfg_path)
-    noise, _ = drop_zero_lag_artifact_dates(noise)
-    noise = noise.copy()
+    spike, _ = load_pair_coordination(settings.cfg_path)
+    spike, _ = drop_zero_lag_artifact_dates(spike)
+    spike = spike.copy()
     for column in ("date", "unit_uuid_1", "unit_uuid_2", "condition"):
-        noise[column] = noise[column].astype(str)
+        spike[column] = spike[column].astype(str)
     # Order-insensitive key.  The two analyses build their pairs independently
-    # -- the noise side sorts units by region then uuid, this side takes them in
+    # -- the spike-coordination side sorts units by region then uuid, this side
     # the order the combined export lists them -- so a pair can appear as (A, B)
     # in one and (B, A) in the other.  Keying on the sorted uuids matches them
     # regardless.  Keying on the raw order silently dropped most cross-region
     # pairs, which showed up as region pairs missing from the summary rather
     # than as an error.
-    noise["match_key"] = [
+    spike["match_key"] = [
         date + "|" + "|".join(sorted((first, second)))
         for date, first, second in zip(
-            noise["date"], noise["unit_uuid_1"], noise["unit_uuid_2"]
+            spike["date"], spike["unit_uuid_1"], spike["unit_uuid_2"]
         )
     ]
-    lookup = noise.set_index(["match_key", "condition"])[spike_metric].sort_index()
+    lookup = spike.set_index(["match_key", "condition"])[spike_metric].sort_index()
 
     rows: list[dict] = []
     for _, row in pairs.iterrows():
@@ -727,7 +728,7 @@ def join_with_spike_correlation(
 
 
 def correlate_signal_with_spike_correlation(joined: pd.DataFrame) -> pd.DataFrame:
-    """Spearman correlation between signal and noise correlation, per group."""
+    """Spearman correlation between signal and per-trial spike correlation."""
     from scipy.stats import spearmanr
 
     rows: list[dict] = []

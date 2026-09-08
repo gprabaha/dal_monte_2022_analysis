@@ -105,7 +105,7 @@ fig, paths = viz.plot_trial_count_confound(strata, figs)
 display(Image(filename=str(paths["png"])))
 '''
 
-SIGNAL_NOISE = '''
+SIGNAL_SPIKE = '''
 joined = sc.join_with_spike_correlation(pairs, settings)
 print(f"pairs matched to a spike-coordination measurement: {len(joined):,}")
 
@@ -139,13 +139,13 @@ that depend on what the animal was looking at?
 ## How this differs from the spike-coordination analysis
 
 That analysis cross-correlates **per-fixation spike trains** and asks whether
-two units fire together on the *same* fixation — **noise correlation**,
-trial-by-trial covariation.
+two units fire together within the *same* fixation — **per-trial spike
+correlation**.
 
 This one cross-correlates **condition-averaged rate timelines** and asks whether
 their mean responses resemble each other, and at what lag — **signal
 correlation**, shared tuning. Averaging over fixations removes trial-by-trial
-covariation entirely, so nothing here is noise correlation. The two are
+co-firing entirely, so nothing here is a per-trial quantity. The two are
 independent: a pair can share a response profile and be independent trial to
 trial, or the reverse.
 
@@ -227,13 +227,13 @@ This is the figure the conclusion rests on.
 """),
     code(STRATA),
     markdown("""
-## 5. Does signal correlation track noise correlation?
+## 5. Does signal correlation track per-trial spike correlation?
 
 The two are different quantities and need not be related. Matching each pair to
 its spike-coordination measurement lets the question be asked directly — and
 only the two analyses together can answer it.
 """),
-    code(SIGNAL_NOISE),
+    code(SIGNAL_SPIKE),
     markdown("""
 ## What to take from this
 
@@ -245,7 +245,7 @@ Fill in against the numbers above, but the shape of the answer is:
 2. **The apparent interactive-face advantage does not survive the trial-count
    control.** Check the lowest-ratio stratum in section 4: if the difference is
    near zero there and grows with the ratio, the effect is estimation noise.
-3. **Signal and noise correlation are positively related within region**, which
+3. **Signal and per-trial spike correlation are positively related within region**, which
    is a real link between this notebook and the spike-coordination one.
 
 ### Caveats
