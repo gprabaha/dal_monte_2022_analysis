@@ -839,25 +839,10 @@ def plot_bottleneck_cost_by_condition(
     return fig
 
 
-def plot_ensemble_cost(
-    fit_long: pd.DataFrame,
-    cost_per_seed: pd.DataFrame,
-    arm_tests: pd.DataFrame,
-    gap_tests: pd.DataFrame,
-    *,
-    constrained: str,
-    figsize: tuple[float, float] = (7.4, 2.7),
-):
-    """The selected model against the dense network, ten fits each.
-
-    (a) shortfall from the ceiling, 1 − R²/ceiling, per fixation type, dense (white) and
-    constrained (filled), Welch's t between arms -- the shortfall rather than R² itself so
-    that a bar from zero shows the difference; (b) the cost of the constraint per fixation
-    type, with the fixation-type gaps the constraint widens (Welch's t on per-seed gaps);
-    (c) the scale-free reading, unexplained variance constrained over dense, per seed.
-    """
+def _draw_ensemble_row(axes, fit_long: pd.DataFrame, cost_per_seed: pd.DataFrame, arm_tests: pd.DataFrame | None,
+                       gap_tests: pd.DataFrame | None, *, constrained: str, letters: str = "abc") -> None:
+    """The three ensemble panels: shortfall from the ceiling by arm, cost per fixation type, unexplained-variance ratio."""
     conditions = [c for c in CONDITION_ORDER if c in set(fit_long["condition"])]
-    fig, axes = plt.subplots(1, 3, figsize=figsize, gridspec_kw={"width_ratios": [1.25, 1.0, 1.0]})
     ax = axes[0]
     entries = []
     for j, condition in enumerate(conditions):
@@ -877,7 +862,7 @@ def plot_ensemble_cost(
     if arm_tests is not None and not arm_tests.empty:
         marks = contrasts_to_marks(arm_tests, lambda row, side: index[row["condition"]] + (-0.2 if row[side] == "dense" else 0.2))
         mark_contrasts(ax, marks, top=float(shortfall.max()))
-    _panel(ax, "a")
+    _panel(ax, letters[0])
 
     ax = axes[1]
     block = cost_per_seed[cost_per_seed["arm"] == constrained]
@@ -891,7 +876,7 @@ def plot_ensemble_cost(
     if gap_tests is not None and not gap_tests.empty:
         rows = gap_tests[gap_tests["arm"] == constrained]
         mark_contrasts(ax, contrasts_to_marks(rows, lambda row, side: index[row[side]]), top=float(block["cost"].max()))
-    _panel(ax, "b")
+    _panel(ax, letters[1])
 
     ax = axes[2]
     draw_bars(ax, [{"x": j, "values": block.loc[block["condition"] == c, "unexplained_ratio"].to_numpy(float), "color": CONDITION_COLORS[c]}
@@ -902,8 +887,51 @@ def plot_ensemble_cost(
     ax.set_xticklabels([CONDITION_SHORT_LABELS[c] for c in conditions])
     ax.set_ylabel("unexplained variance,\nconstrained / dense")
     nice_axis(ax)
-    _panel(ax, "c")
+    _panel(ax, letters[2])
+
+
+def plot_ensemble_cost(
+    fit_long: pd.DataFrame,
+    cost_per_seed: pd.DataFrame,
+    arm_tests: pd.DataFrame,
+    gap_tests: pd.DataFrame,
+    *,
+    constrained: str,
+    figsize: tuple[float, float] = (7.4, 2.7),
+):
+    """The selected model against the dense network, ten fits each: shortfall by arm, cost per fixation type, unexplained ratio."""
+    fig, axes = plt.subplots(1, 3, figsize=figsize, gridspec_kw={"width_ratios": [1.25, 1.0, 1.0]})
+    _draw_ensemble_row(axes, fit_long, cost_per_seed, arm_tests, gap_tests, constrained=constrained)
     fig.tight_layout()
+    return fig
+
+
+def plot_ensemble_and_constraints(
+    fit_long: pd.DataFrame,
+    cost_per_seed: pd.DataFrame,
+    arm_tests: pd.DataFrame,
+    gap_tests_selected: pd.DataFrame,
+    gap_tests_all: pd.DataFrame,
+    *,
+    constrained: str,
+    constraints: Sequence[str],
+    figsize: tuple[float, float] = (7.4, 5.3),
+):
+    """The ensemble panels (a-c) over the every-constraint summary (d), in one figure.
+
+    (a) shortfall from the ceiling per fixation type, dense against constrained; (b) the
+    cost of the selected constraint per fixation type; (c) the unexplained-variance ratio;
+    (d) the cost of every constraint in the chapter per fixation type, on one axis.
+    """
+    fig = plt.figure(figsize=figsize)
+    grid = fig.add_gridspec(2, 3, height_ratios=[1.0, 1.05], width_ratios=[1.25, 1.0, 1.0], hspace=0.55, wspace=0.55)
+    top = [fig.add_subplot(grid[0, k]) for k in range(3)]
+    _draw_ensemble_row(top, fit_long, cost_per_seed, arm_tests, gap_tests_selected, constrained=constrained)
+    ax = fig.add_subplot(grid[1, :])
+    groups = [c for c in constraints if c in set(cost_per_seed["arm"])]
+    _grouped_condition_boxes(ax, cost_per_seed, value="cost", group_col="arm", groups=groups, gap_tests=gap_tests_all,
+                             labels=SHORT_CONSTRAINT_LABELS, ylabel="cost vs dense network\n($\\Delta R^2$ / ceiling)", label_fontsize=6.4)
+    _panel(ax, "d")
     return fig
 
 
@@ -931,34 +959,41 @@ def plot_constraint_cost_summary(
 def plot_pair_lesion_summary(
     pair_share: pd.DataFrame,
     share_tests: pd.DataFrame,
+    damage_per_fit: pd.DataFrame,
+    damage_tests: pd.DataFrame,
     ranking: pd.DataFrame,
     *,
-    figsize: tuple[float, float] = (7.4, 2.5),
+    figsize: tuple[float, float] = (7.4, 2.6),
 ):
-    """(a) each pair's share of pair-lesion damage, (b) whether the fits agree on the lesion ranking.
+    """(a) each pair's share of pair-lesion damage, (b) damage per lesion family beside its random control, (c) ranking agreement.
 
     (a) one bar per pair and arm, fixation types pooled (mean, SEM, every fit a dot); the
     dashed line is one sixth, and a star above a bar marks a pair whose share differs from
-    one sixth (one-sample t, Holm). (b) Kendall's tau between fits' lesion rankings per
+    one sixth (one-sample t, Holm). (b) per-fit mean damage per family, in units of the
+    target's total variance, beside the matched control that silences the same number of
+    randomly chosen weights (black line); a star marks a family whose damage differs from
+    its control (paired t by fit, Holm). (c) Kendall's tau between fits' lesion rankings per
     family and arm, against the 95th percentile of the permutation null (black line).
     """
     arms = [a for a in ("dense", "constrained") if a in set(pair_share["arm"])]
     pairs = [p for p in ("ofc↔bla", "ofc↔dmpfc", "ofc↔accg", "bla↔dmpfc", "bla↔accg", "dmpfc↔accg") if p in set(pair_share["pair"])]
-    fig, axes = plt.subplots(1, 2, figsize=figsize, gridspec_kw={"width_ratios": [1.6, 1.0]})
+    offsets = dict(zip(arms, (-0.2, 0.2) if len(arms) == 2 else (0.0,)))
+    families = [f for f in ("directed", "bidirectional", "within-region", "isolation") if f in set(damage_per_fit["family"])]
+    family_labels = {"directed": "pathway", "bidirectional": "pair", "within-region": "own block", "isolation": "isolation"}
+    fig, axes = plt.subplots(1, 3, figsize=figsize, gridspec_kw={"width_ratios": [1.45, 1.0, 1.0]})
 
     ax = axes[0]
     entries = []
     for j, pair in enumerate(pairs):
-        for arm, dx in zip(arms, (-0.2, 0.2) if len(arms) == 2 else (0.0,)):
+        for arm in arms:
             block = pair_share[(pair_share["arm"] == arm) & (pair_share["pair"] == pair)]
-            entries.append({"x": j + dx, "values": block["share"].to_numpy(float), "color": ARM_COLORS[arm], "filled": arm != "dense"})
+            entries.append({"x": j + offsets[arm], "values": block["share"].to_numpy(float), "color": ARM_COLORS[arm], "filled": arm != "dense"})
     draw_bars(ax, entries, width=0.36)
     ax.axhline(1 / 6, color=INK, lw=1.0, ls="--", zorder=1)
     if share_tests is not None and not share_tests.empty:
         for _, row in share_tests[share_tests["significant"]].iterrows():
-            x = pairs.index(row["pair"]) + (-0.2 if row["arm"] == "dense" else 0.2)
             own = pair_share[(pair_share["arm"] == row["arm"]) & (pair_share["pair"] == row["pair"])]["share"].max()
-            ax.text(x, own + 0.004, row["stars"], ha="center", va="bottom", fontsize=6)
+            ax.text(pairs.index(row["pair"]) + offsets[row["arm"]], own + 0.004, row["stars"], ha="center", va="bottom", fontsize=6)
     ax.set_xticks(range(len(pairs)))
     ax.set_xticklabels(pairs, rotation=30, ha="right", fontsize=6.2)
     ax.set_ylim(bottom=0.0)
@@ -970,11 +1005,32 @@ def plot_pair_lesion_summary(
     _panel(ax, "a")
 
     ax = axes[1]
-    kinds = [k for k in ("directed", "bidirectional", "within-region", "isolation") if k in set(ranking["lesion_kind"])]
-    labels = {"directed": "one pathway", "bidirectional": "one pair", "within-region": "own block", "isolation": "region isolated"}
-    for k, arm in enumerate(arms):
+    entries = []
+    for j, family in enumerate(families):
+        for arm in arms:
+            block = damage_per_fit[(damage_per_fit["arm"] == arm) & (damage_per_fit["family"] == family)]
+            entries.append({"x": j + offsets[arm], "values": block["damage"].to_numpy(float), "color": ARM_COLORS[arm], "filled": arm != "dense"})
+            ax.plot([j + offsets[arm] - 0.18, j + offsets[arm] + 0.18], [block["control"].mean()] * 2, color=INK, lw=1.4, zorder=6)
+    draw_bars(ax, entries, width=0.36)
+    if damage_tests is not None and not damage_tests.empty:
+        for _, row in damage_tests[damage_tests["significant"]].iterrows():
+            own = damage_per_fit[(damage_per_fit["arm"] == row["arm"]) & (damage_per_fit["family"] == row["family"])]
+            ax.text(families.index(row["family"]) + offsets[row["arm"]], float(max(own["damage"].max(), own["control"].max())) + 0.15,
+                    row["stars"], ha="center", va="bottom", fontsize=5.6)
+    ax.set_xticks(range(len(families)))
+    ax.set_xticklabels([family_labels[f] for f in families], fontsize=6.4)
+    ax.set_ylim(0, float(max(damage_per_fit["damage"].max(), damage_per_fit["control"].max())) * 1.18)
+    ax.set_ylabel("damage (÷ target variance)")
+    ax.plot([], [], color=INK, lw=1.4, label="random-weight control")
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), fontsize=5.8)
+    nice_axis(ax)
+    _panel(ax, "b")
+
+    ax = axes[2]
+    kinds = [k for k in families if k in set(ranking["lesion_kind"])]
+    for arm in arms:
         block = ranking[ranking["arm"] == arm].set_index("lesion_kind").loc[kinds]
-        x = np.arange(len(kinds)) + (k - 0.5) * 0.4
+        x = np.arange(len(kinds)) + offsets[arm]
         ax.bar(x, block["tau_mean"], width=0.36, facecolor=ARM_COLORS[arm] if arm != "dense" else "white",
                edgecolor=ARM_COLORS[arm], lw=0.9, zorder=2)
         for xi, null in zip(x, block["null_p95"]):
@@ -982,12 +1038,12 @@ def plot_pair_lesion_summary(
     ax.plot([], [], color=INK, lw=1.4, label="permutation null, 95th pct.")
     ax.axhline(0, color=INK, lw=0.6, zorder=1)
     ax.set_xticks(range(len(kinds)))
-    ax.set_xticklabels([labels[f] for f in kinds], fontsize=6.0, rotation=25, ha="right")
-    ax.set_ylabel("ranking agreement between fits\n(Kendall's τ)")
+    ax.set_xticklabels([family_labels[f] for f in kinds], fontsize=6.4)
+    ax.set_ylabel("ranking agreement (Kendall's τ)")
     ax.set_ylim(-0.15, 1.0)
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), fontsize=5.8)
     nice_axis(ax)
-    _panel(ax, "b")
+    _panel(ax, "c")
     fig.tight_layout()
     return fig
 
@@ -1040,6 +1096,53 @@ def plot_lesion_spectra_clouds(
     scope = ("whole network · eigenvalues of the full Jacobian" if region == "network"
              else f"{REGION_LABELS.get(region, region)} · eigenvalues of its own block's linearisation")
     fig.suptitle(f"{scope} · {arm} network · lesion: {lesion}", fontsize=8, y=1.0)
+    fig.tight_layout()
+    return fig
+
+
+def plot_lesion_spectra_clouds_compact(
+    spectra: pd.DataFrame,
+    *,
+    lesion: str,
+    condition: str = "face_interactive",
+    panels: Sequence[tuple[str, str]] = (("dense", "bla"), ("constrained", "network")),
+    figsize: tuple[float, float] = (7.4, 2.15),
+):
+    """Eigenvalues of the local linearisation for one fixation type, intact (grey) and after one lesion (colour), in one row.
+
+    For each ``(arm, scope)`` in ``panels`` two panels: at the fixed point nearest the end of
+    the trajectory, and along the trajectory (every fifth state pooled). The unit circle marks
+    the boundary between contracting and expanding modes.
+    """
+    wheres = (("fixed_point", "at the fixed point"), ("trajectory", "along the trajectory"))
+    fig, axes = plt.subplots(1, 2 * len(panels), figsize=figsize, sharex=True, sharey=True, squeeze=False)
+    theta = np.linspace(0, 2 * np.pi, 200)
+    color = CONDITION_COLORS[condition]
+    k = 0
+    for arm, scope in panels:
+        scope_label = "whole network" if scope == "network" else f"{REGION_LABELS.get(scope, scope)} block"
+        for where, where_label in wheres:
+            ax = axes[0][k]
+            ax.plot(np.cos(theta), np.sin(theta), color=MUTED_INK, lw=0.6, ls="--", zorder=1)
+            ax.axhline(0, color="#dddddd", lw=0.5, zorder=0)
+            ax.axvline(0, color="#dddddd", lw=0.5, zorder=0)
+            base = spectra[(spectra["arm"] == arm) & (spectra["region"] == scope) & (spectra["condition"] == condition) & (spectra["where"] == where)]
+            intact = base[base["lesion"] == "intact"]
+            lesioned = base[base["lesion"] == lesion]
+            size = 8 if where == "fixed_point" else 3.5
+            ax.scatter(intact["re"], intact["im"], s=size, color="#9a9a9a", alpha=0.7 if where == "fixed_point" else 0.35, lw=0, zorder=2, label="intact")
+            ax.scatter(lesioned["re"], lesioned["im"], s=size, color=color, alpha=0.85 if where == "fixed_point" else 0.4, lw=0, zorder=3, label=f"{lesion} silenced")
+            ax.set_aspect("equal")
+            ax.set_title(f"{arm} · {scope_label}\n{where_label}", fontsize=7)
+            ax.set_xlabel("real part", fontsize=6.8)
+            if k == 0:
+                ax.set_ylabel("imaginary part", fontsize=6.8)
+                ax.legend(loc="upper left", fontsize=5.6, markerscale=1.6, handletextpad=0.3)
+            ax.tick_params(labelsize=6.2)
+            nice_axis(ax)
+            _panel(ax, "abcdefgh"[k])
+            k += 1
+    fig.suptitle(f"{CONDITION_SHORT_LABELS.get(condition, condition)} · eigenvalues of the linearisation, intact and lesioned", fontsize=8, y=1.02)
     fig.tight_layout()
     return fig
 
@@ -1258,7 +1361,7 @@ __all__ = [
     "ARCHITECTURE_LABELS", "CONDITION_OFFSETS", "DYNAMICS_LABELS", "DYNAMICS_MAIN", "RUNG_LABELS", "SHORT_CONSTRAINT_LABELS",
     "condition_shades", "contrasts_to_marks", "draw_bars", "draw_boxes", "draw_violins", "mark_contrasts",
     "plot_architecture_cost", "plot_bottleneck_cost_by_condition", "plot_chapter_schematic", "plot_constraint_cost_summary",
-    "plot_dynamics_summary", "plot_ensemble_cost", "plot_flow_fields_two_arms", "plot_ladder_summary", "plot_ladder_traces", "plot_lesion_extent_violins",
-    "plot_lesion_spectra_clouds", "plot_lesion_spectra_distance", "plot_manipulation_schematic", "plot_pair_lesion_summary",
+    "plot_dynamics_summary", "plot_ensemble_and_constraints", "plot_ensemble_cost", "plot_flow_fields_two_arms", "plot_ladder_summary", "plot_ladder_traces", "plot_lesion_extent_violins",
+    "plot_lesion_spectra_clouds", "plot_lesion_spectra_clouds_compact", "plot_lesion_spectra_distance", "plot_manipulation_schematic", "plot_pair_lesion_summary",
     "plot_rank_grid_composite",
 ]

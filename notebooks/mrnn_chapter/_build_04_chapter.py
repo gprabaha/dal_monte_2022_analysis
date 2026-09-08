@@ -41,15 +41,17 @@ trajectories require.
 | Figure | Question it answers |
 |---|---|
 | 1 | What is fitted, with what model, and what is the ceiling every fit is read against? |
-| 2, 3 | Does a region need the network to reproduce its own trajectories? |
-| 4 | Which connections carry that — inter-regional pathways, or a region's own recurrence? |
-| 5 | How narrow can each kind of connection be? |
-| 6 | Does narrowing a route cost one fixation type more than the others? |
-| 7 | The selected network, refitted ten times: what did every constraint cost each fixation type? |
-| 8 | Does any particular pair of regions carry the fit, and what does a lesion do to the local dynamics? |
-| 9 | What does each fixation type's flow look like, and where does the trajectory run through it? |
-| 10 | Which dynamical properties separate interactive face, in every fit? |
-| 11 | What does a lesion do to each fixation type's trajectory? |
+| 2 | How is the network constrained, and how is it damaged? |
+| 3, 4 | Does a region need the network to reproduce its own trajectories? |
+| 5 | Which connections carry that — inter-regional pathways, or a region's own recurrence? |
+| 6 | How narrow can each kind of connection be? |
+| 7 | Does narrowing a route cost one fixation type more than the others? |
+| 8 | The selected network, refitted ten times: what did every constraint cost each fixation type? |
+| 9 | Does any particular pair of regions carry the fit? |
+| 10, 11 | What does a lesion do to the local dynamics, and for which fixation type most? |
+| 12 | What does each fixation type's flow look like, and where does the trajectory run through it? |
+| 13 | Which dynamical properties separate interactive face, in every fit? |
+| 14 | What does a lesion do to each fixation type's trajectory? |
 
 Regenerate with `conda run -n gaze_processing python notebooks/mrnn_chapter/_build_04_chapter.py`,
 then execute with nbconvert (see the folder README). The task notebooks `01_ladder`,
@@ -230,27 +232,27 @@ contrast; which pathway carries it is not.
 - **Every area needs the network to reproduce its own trajectories.** Fitted alone, each
   area falls short of its own ceiling; each climbs toward it as other areas are attached.
   What the network supplies is the fast structure of the trajectory — the 10–20 Hz band —
-  which a region alone leaves two-thirds unreproduced (Figures 2, 3).
+  which a region alone leaves two-thirds unreproduced (Figures 3, 4).
 - **The inter-regional pathways carry the fit; a region's own recurrence barely does.**
   Removing every inter-regional connection costs about eight times more than reducing
-  every region's own recurrent block to rank one (Figure 4).
+  every region's own recurrent block to rank one (Figure 5).
 - **A region's own recurrence can be one-dimensional; the pathways between regions
   cannot.** Rank 1 on every within-region block costs almost nothing; rank 1 on every
   inter-regional block costs most of what removing them costs, and about ten dimensions
-  per pathway are needed before the cost becomes small (Figure 5).
+  per pathway are needed before the cost becomes small (Figure 6).
 - **Every constraint costs interactive face the most,** and the inter-regional bottleneck
-  widens the gap (Figures 6, 7). In the selected network, refitted ten times, interactive
+  widens the gap (Figures 7, 8). In the selected network, refitted ten times, interactive
   face pays a third more than either other fixation type, and the widening of the gap is
   significant for every constraint in the chapter.
 - **No particular pair of regions carries the fit.** Silencing any pair is catastrophic
   for a network this finely tuned, but no pair's share of the damage differs from one
   sixth, and the ten fits do not agree on which pair matters most. What a pair lesion does
   to the network's local dynamics is the same in every region, and largest for
-  interactive face (Figure 8).
+  interactive face (Figures 9–11).
 - **Interactive face has a dynamical signature every fit reproduces:** the smallest,
   slowest, lowest-dimensional trajectory, threading the most locally expansive part of the
   flow, and the one fixation type whose trajectory a pair lesion does not shrink
-  (Figures 9–11). The wiring is not reproducible; the dynamics of this state are.
+  (Figures 12–14). The wiring is not reproducible; the dynamics of this state are.
 """
 
 
@@ -414,7 +416,7 @@ The selected model is fitted ten more times with fresh seeds and read against th
 fits. **Cost** of a constraint to a fixation type is the dense mean minus the constrained
 fit's regions-pooled ceiling-relative $R^2$, one value per constrained seed. The same
 computation is applied to the ladder's single rung and to the grid's marginals, so every
-constraint in the chapter is costed on one footing (Figure 7). The scale-free reading,
+constraint in the chapter is costed on one footing (Figure 8). The scale-free reading,
 reported alongside, is the ratio of unexplained variance, constrained over dense.
 
 ### 2.10 Lesions
@@ -530,7 +532,7 @@ trial-averaged firing rate for the three fixation types. Panel (b) is what the m
 asked to reproduce: each area's trajectory through its own PC space, 42 components deep,
 for each fixation type. Panel (c) is the network — four all-to-all recurrent blocks, one
 per area, driven by a constant fixation-type input and read out block by block. Panel (d) is
-the noise ceiling every fit is read against, and how it is measured. Figure 1b shows the
+the noise ceiling every fit is read against, and how it is measured. Figure 2 shows the
 three ways the network is then constrained or damaged, which the rest of the chapter walks
 through in order.
 """
@@ -547,8 +549,8 @@ figure(cviz.plot_chapter_schematic(n_units_by_region=UNITS, n_components=N_COMPO
        "are halved at random (25 halvings, averaged), each half is averaged, both halves are projected onto the model's own PCA basis "
        "and centred as $R^2$ is, the two are correlated over every component and bin of one region × fixation type, and the "
        "Spearman–Brown correction gives the reliability of the full average. Every fit is scored as $R^2$ / ceiling.")
-figure(cviz.plot_manipulation_schematic(hidden_units=HIDDEN_UNITS), "fig01b_manipulations",
-       "**Figure 1b. Three manipulations.** (a) The ladder: an area is fitted alone, in every pair, every triple and the full "
+figure(cviz.plot_manipulation_schematic(hidden_units=HIDDEN_UNITS), "fig02_manipulations",
+       "**Figure 2. Three manipulations.** (a) The ladder: an area is fitted alone, in every pair, every triple and the full "
        "network, at the same width, readout and target, and scored on its own trajectories at every rung. (b) Rank bottlenecks: "
        "every within-region block is a product of rank $r_w$ and every inter-regional block a product of rank $r_c$, refitted from "
        "scratch over the grid and its two marginals. (c) Lesions: one block (or set of blocks) of the trained network is silenced and "
@@ -572,7 +574,7 @@ combination's ceiling rather than a single number per area.
 R2_TEXT = r"""
 ### 3.2 A region needs the network to reproduce its own trajectories
 
-Figure 2 shows the result the ladder was built for, in one area. BLA's reconstructed PC
+Figure 3 shows the result the ladder was built for, in one area. BLA's reconstructed PC
 trajectories are drawn for the three fixation types at each rung: fitted alone, averaged
 over the three pairs that contain BLA, averaged over the three triples, and in the full
 network. Three components are overlaid in every panel, each on its own scale: the leading
@@ -590,8 +592,8 @@ gain = cached(f"ladder_component_gain_{TRACE_REGION}", lambda: ch.ladder_compone
 components = ch.select_trace_components(gain)
 traces = cached(f"ladder_traces_{TRACE_REGION}", lambda: ch.ladder_region_traces(T["ladder_fit"], region=TRACE_REGION, indices=components))
 n_fits = traces.groupby("n_partners")["n_fits"].first().to_dict()
-figure(cviz.plot_ladder_traces(traces, region=TRACE_REGION, n_fits_by_rung=n_fits), f"fig02_ladder_traces_{TRACE_REGION}",
-       f"**Figure 2. {REGION_LABELS[TRACE_REGION]} reproduces its own trajectories only with the network attached.** Rows: "
+figure(cviz.plot_ladder_traces(traces, region=TRACE_REGION, n_fits_by_rung=n_fits), f"fig03_ladder_traces_{TRACE_REGION}",
+       f"**Figure 3. {REGION_LABELS[TRACE_REGION]} reproduces its own trajectories only with the network attached.** Rows: "
        f"{REGION_LABELS[TRACE_REGION]} fitted alone ({n_fits.get(0)} fits), in the three pairs that contain it ({n_fits.get(1)} fits, "
        f"averaged), in the three triples ({n_fits.get(2)} fits, averaged), and in the full network ({n_fits.get(3)} fits). Columns: "
        "fixation type. Three components are overlaid in each panel, " + ", ".join(f"PC{k + 1}" for k in components)
@@ -618,12 +620,12 @@ one other area attached these rise to 0.88 and 0.97, with two to 0.91 and 0.98, 
 full network to 0.94 and 0.99. In the interactive-face column the grey line moves onto the
 target row by row; in the other two columns it was already there.
 
-Figure 3 puts numbers on the whole ladder.
+Figure 4 puts numbers on the whole ladder.
 """
 
 R3_CODE = r'''
-figure(cviz.plot_ladder_summary(T["ladder_fit"], T["band_recovery"], region=TRACE_REGION), "fig03_ladder_summary",
-       f"**Figure 3. The ladder in numbers.** (a) {REGION_LABELS[TRACE_REGION]}'s ceiling-relative $R^2$ per fixation type against the "
+figure(cviz.plot_ladder_summary(T["ladder_fit"], T["band_recovery"], region=TRACE_REGION), "fig04_ladder_summary",
+       f"**Figure 4. The ladder in numbers.** (a) {REGION_LABELS[TRACE_REGION]}'s ceiling-relative $R^2$ per fixation type against the "
        "number of other areas present; small marks are individual fits (5 alone, 15 per pair rung, 15 per triple rung, 10 in the full "
        "network), large marks the rung mean. (b) The same for every area, fixation types pooled. (c) The fraction of the target's "
        "power the fit leaves unreproduced, per frequency band, areas and fixation types pooled: the slow band is reproduced alone, the "
@@ -677,7 +679,7 @@ R4_TEXT = r"""
 ### 3.3 The inter-regional pathways carry the fit; a region's own recurrence barely does
 
 Two kinds of connection could be what the ladder is measuring: the pathways between areas,
-or the recurrence within each area that the network's input makes useful. Figure 4 removes
+or the recurrence within each area that the network's input makes useful. Figure 5 removes
 or squeezes each kind and costs it against the dense network: every inter-regional
 connection removed (the single-region rung), every within-region block reduced to rank 1
 with the pathways dense, and every pathway reduced to rank 1 with within-region recurrence
@@ -690,8 +692,8 @@ gap4 = ch.gap_contrasts(FIT_LONG[FIT_LONG["arm"].isin(["dense"] + ARCH)], value=
 pooled = COST.groupby(["arm", "seed"])["cost"].mean().reset_index()
 pooled4 = ch.welch_contrasts(pooled[pooled["arm"].isin(ARCH)], value="cost", group="arm",
                              pairs=[(ARCH[0], ARCH[1]), (ARCH[0], ARCH[2]), (ARCH[2], ARCH[1])])
-figure(cviz.plot_architecture_cost(COST, gap4, pooled4, constraints=ARCH), "fig04_architecture_cost",
-       "**Figure 4. Removing inter-regional connections costs far more than removing within-region recurrence.** (a) Cost against "
+figure(cviz.plot_architecture_cost(COST, gap4, pooled4, constraints=ARCH), "fig05_architecture_cost",
+       "**Figure 5. Removing inter-regional connections costs far more than removing within-region recurrence.** (a) Cost against "
        "the ten dense fits, per fixation type, of three constraints (five fits each): every inter-regional connection removed, every "
        "within-region block reduced to rank 1 with the pathways dense, and every inter-regional pathway reduced to rank 1 with "
        "within-region recurrence dense. Bars: mean and SEM; dots: fits. Marks: the constraint widens the gap between the two "
@@ -715,7 +717,7 @@ Reducing the pathways to rank one instead, with within-region recurrence dense, 
 within-region constraint. What the trajectories require is the traffic *between* areas; an
 area's own recurrence can be reduced to almost nothing as long as that traffic remains.
 Each of the three constraints also widens the gap between interactive face and the other
-two fixation types (every mark in panel a); Figure 6 and §3.6 take that up.
+two fixation types (every mark in panel a); Figure 7 and §3.6 take that up.
 """
 
 
@@ -738,16 +740,16 @@ and "the inter-regional rank matters more" would be true by counting alone. The 
 isolate each: along $(\text{dense}, r_c)$ only the pathways are squeezed and an area's own
 recurrence is free to compensate; along $(r_w, \text{dense})$ only the recurrence is squeezed
 and the pathways are free. If the two constraints were equivalent per drive dimension, every
-configuration would fall on one curve against $r_w + 3 r_c$ (Figure 5c); if one kind of
+configuration would fall on one curve against $r_w + 3 r_c$ (Figure 6c); if one kind of
 connection is the low-dimensional one in a sense the other is not, the marginals separate at
-matched drive rank. Figure 5a is the grid itself; the selected configuration is outlined,
+matched drive rank. Figure 6a is the grid itself; the selected configuration is outlined,
 and here the 0.98 bar is drawn because it is the rule that selects it.
 """
 
 R5_CODE = r'''
 figure(cviz.plot_rank_grid_composite(T["grid_fit"], T["dense_fit"], ranks=RANKS, hidden_units=HIDDEN_UNITS, bar=ADEQUATE_BAR, selected=SELECTED["label"]),
-       "fig05_rank_grid",
-       "**Figure 5. How narrow each kind of connection can be.** (a) Worst fixation type (regions pooled per fit, minimum over "
+       "fig06_rank_grid",
+       "**Figure 6. How narrow each kind of connection can be.** (a) Worst fixation type (regions pooled per fit, minimum over "
        "fixation types, mean over five fits) of every $(r_w, r_c)$ configuration; bold is at or above 0.98; the red outline is the "
        "selected model. (b) The two marginals on one axis against the rank of the bottleneck: inter-regional rank with within-region "
        "recurrence dense (blue), and within-region rank with the pathways dense (orange); error bars are the sd over five fits, the "
@@ -788,7 +790,7 @@ fixation type of 0.983.
 R6_TEXT = r"""
 ### 3.5 Every bottleneck costs interactive face most
 
-Figure 3 showed that interactive face gains most from the network. Figure 6 asks the
+Figure 4 showed that interactive face gains most from the network. Figure 7 asks the
 converse along each marginal: when a route is narrowed, does one fixation type pay more?
 The cost is against the dense network for the same fixation type, regions pooled per fit,
 and the brackets test whether the constraint widened the gap between interactive face and
@@ -798,8 +800,8 @@ each other fixation type (§2.13).
 R6_CODE = r'''
 gap6 = pd.concat([ch.gap_contrasts(MARGINAL_LONG[MARGINAL_LONG["side"].isin(["dense", side])], value="r2_vs_ceiling")
                   for side in ("inter-regional", "within-region")], ignore_index=True)
-figure(cviz.plot_bottleneck_cost_by_condition(MARGINAL_COST, gap6, ranks=RANKS), "fig06_bottleneck_cost_by_condition",
-       "**Figure 6. Every bottleneck costs interactive face most, and the inter-regional bottleneck widens the gap.** Cost against "
+figure(cviz.plot_bottleneck_cost_by_condition(MARGINAL_COST, gap6, ranks=RANKS), "fig07_bottleneck_cost_by_condition",
+       "**Figure 7. Every bottleneck costs interactive face most, and the inter-regional bottleneck widens the gap.** Cost against "
        "the ten dense fits per fixation type, regions pooled per fit (five fits per configuration; bars: mean and SEM; dots: fits), "
        "along (a) the inter-regional marginal and (b) the within-region marginal, on one scale. Marks: the constraint widens the gap "
        "between interactive face and the marked fixation type (Welch's t on per-fit gaps against the dense fits, Holm-corrected "
@@ -834,8 +836,8 @@ R7_TEXT = r"""
 ### 3.6 The selected network, refitted ten times: the cost of every constraint to every fixation type
 
 The selected model (within-region rank 1, inter-regional rank 10) was refitted ten times and
-read against the ten dense fits. Figure 7a gives the direct test of whether the constraint
-costs one fixation type more; Figure 7b places every constraint of the chapter on the same
+read against the ten dense fits. Figure 8a–c gives the direct test of whether the constraint
+costs one fixation type more; Figure 8d places every constraint of the chapter on the same
 axis.
 """
 
@@ -849,31 +851,30 @@ md(f"Constrained fits: worst fixation type {worst_cond.loc['constrained'].mean()
 pair_arms = FIT_LONG[FIT_LONG["arm"].isin(["dense", SELECTED_ARM])]
 arm_tests = ch.welch_contrasts(pair_arms, value="r2_vs_ceiling", group="arm", by="condition")
 gap7a = ch.gap_contrasts(pair_arms, value="r2_vs_ceiling")
-figure(cviz.plot_ensemble_cost(FIT_LONG, COST, arm_tests, gap7a, constrained=SELECTED_ARM), "fig07a_ensemble_cost",
-       "**Figure 7a. The selected constraint costs interactive face a third more than either other fixation type.** (a) Shortfall "
-       "from the ceiling, 1 − $R^2$/ceiling, per fixation type, regions pooled per fit, for the ten dense (white) and ten constrained "
-       "(filled) fits (bars: mean and SEM; dots: fits); marks: Welch's t between arms, Holm-corrected. (b) The cost of the constraint "
-       "per fixation type, one value per constrained fit; marks: the constraint widens the gap between interactive face and the "
-       "marked fixation type (Welch's t on per-fit gaps against the dense fits, Holm-corrected). (c) The scale-free reading: "
-       "unexplained variance of each constrained fit over the dense mean; the dashed line is no change.")
+gap7b = ch.gap_contrasts(FIT_LONG, value="r2_vs_ceiling")
+figure(cviz.plot_ensemble_and_constraints(FIT_LONG, COST, arm_tests, gap7a, gap7b, constrained=SELECTED_ARM, constraints=ch.CONSTRAINT_ORDER),
+       "fig08_ensemble_and_constraints",
+       "**Figure 8. The selected constraint costs interactive face a third more than either other fixation type, and so does every "
+       "other constraint.** (a) Shortfall from the ceiling, 1 − $R^2$/ceiling, per fixation type, regions pooled per fit, for the ten "
+       "dense (white) and ten constrained (filled) fits (bars: mean and SEM; dots: fits); marks: Welch's t between arms, "
+       "Holm-corrected. (b) The cost of the selected constraint per fixation type, one value per constrained fit; marks: the "
+       "constraint widens the gap between interactive face and the marked fixation type (Welch's t on per-fit gaps against the dense "
+       "fits, Holm-corrected). (c) The scale-free reading: unexplained variance of each constrained fit over the dense mean; the dashed "
+       "line is no change. (d) Cost against the ten dense fits per fixation type for every constraint in the chapter: every "
+       "inter-regional connection removed (5 fits); within-region recurrence rank 1 (5); inter-regional pathways rank 10 (5); "
+       "inter-regional pathways rank 1 (5); and the selected model, within 1 and inter-regional 10 (10 fits). Marks as in (b), "
+       "Holm-corrected within the panel.")
 md("**Cost per fixation type** (ten constrained fits against the dense mean) and the bootstrap intervals task 03 computed:")
 display(T["fit_cost_by_condition"].assign(condition=T["fit_cost_by_condition"]["condition"].map(COND)).set_index("condition")
         [["dense_mean", "constrained_mean", "cost", "cost_ci_low", "cost_ci_high", "unexplained_ratio", "fi_extra_cost", "fi_extra_cost_ci_low", "fi_extra_cost_ci_high"]].round(4))
-md("**Tests behind Figure 7a:**")
+md("**Tests behind Figure 8a–c:**")
 show_tests(arm_tests, ["condition", "a", "b", "n_a", "n_b", "difference", "statistic", "p", "p_holm", "stars"])
 show_tests(gap7a, ["arm", "a", "b", "n_arm", "n_reference", "difference", "statistic", "p", "p_holm", "stars"])
-gap7b = ch.gap_contrasts(FIT_LONG, value="r2_vs_ceiling")
-figure(cviz.plot_constraint_cost_summary(COST, gap7b, constraints=ch.CONSTRAINT_ORDER), "fig07b_constraint_summary",
-       "**Figure 7b. Every constraint in the chapter, costed on one footing.** Cost against the ten dense fits per fixation type "
-       "for: every inter-regional connection removed (5 fits); within-region recurrence rank 1 (5); inter-regional pathways rank 10 "
-       "(5); inter-regional pathways rank 1 (5); and the selected model, within 1 and inter-regional 10 (10 fits). Bars: mean and "
-       "SEM; dots: fits. Marks: the constraint widens the gap between interactive face and the marked fixation type (Welch's t on "
-       "per-fit gaps against the dense fits, Holm-corrected within the panel).")
 summary = COST.groupby(["arm", "condition"])["cost"].mean().unstack("condition").rename(columns=COND).loc[list(ch.CONSTRAINT_ORDER)]
 summary["Int face / mean of others"] = summary["Int face"] / summary[["Non-int face", "Object"]].mean(axis=1)
 md("**Cost per constraint and fixation type** (mean over fits), and the ratio of interactive face's cost to the others':")
 display(summary.round(4))
-md("**Tests behind Figure 7b:**")
+md("**Tests behind Figure 8d:**")
 show_tests(gap7b, ["arm", "a", "b", "n_arm", "difference", "statistic", "p", "p_holm", "stars"])
 '''
 
@@ -887,7 +888,7 @@ interval 0.0027–0.0040), is significant against both other fixation types (Wel
 the per-fit gaps, $p < 0.001$), and the scale-free reading agrees: the constraint multiplies
 interactive face's unexplained variance by 2.19, the others' by 1.93 and 1.87.
 
-Figure 7b is the chapter's summary of what the constraints cost. Two things are on it. The
+Figure 8d is the chapter's summary of what the constraints cost. Two things are on it. The
 *size* of the costs orders the constraints: removing the pathways (0.020–0.026) and
 squeezing them to rank 1 (0.014–0.019) are the expensive ones; the selected model
 (0.010–0.013) pays for its rank-10 pathways plus its rank-1 recurrence; rank 10 alone
@@ -903,7 +904,7 @@ narrowed and made to carry an area's recurrence as well.
 R8_TEXT = r"""
 ### 3.7 No particular pair of regions carries the fit
 
-If the pathways carry the fit, is it a particular pathway? Figure 8 silences every pair of
+If the pathways carry the fit, is it a particular pathway? Figure 9 silences every pair of
 areas in both directions in each of the twenty fits, along with every single pathway,
 every within-region block, and every set of pathways into and out of one area.
 """
@@ -914,12 +915,14 @@ share_tests = ch.one_sample_contrasts(pair_share, value="share", by=["arm", "pai
 damage = ch.lesion_damage_per_fit(T["lesion_battery"])
 damage_long = pd.concat([damage.assign(kind="lesion", value=damage["damage"]), damage.assign(kind="control", value=damage["control"])])
 damage_tests = ch.paired_contrasts(damage_long, value="value", group="kind", unit="seed", by=["arm", "family"], pairs=[("lesion", "control")])
-figure(cviz.plot_pair_lesion_summary(pair_share, share_tests, T["lesion_ranking_agreement"]), "fig08_pair_lesions",
-       "**Figure 8. No pair is privileged, and the fits do not agree on a ranking.** (a) Each pair's share of the summed pair-lesion "
-       "damage, fixation types pooled, ten fits per arm (dense white, constrained filled; bars: mean and SEM; dots: fits); the dashed "
-       "line is one sixth. No pair's share differs from one sixth (one-sample t, Holm-corrected; nothing marked). (b) Kendall's τ "
-       "between fits' lesion rankings, per lesion family and arm, against the 95th percentile of the permutation null (black line). "
-       "The size of every lesion's damage, beside its matched random-weight control, is in the table below.")
+figure(cviz.plot_pair_lesion_summary(pair_share, share_tests, damage, damage_tests, T["lesion_ranking_agreement"]), "fig09_pair_lesions",
+       "**Figure 9. Lesions are catastrophic and no pair is privileged.** (a) Each pair's share of the summed pair-lesion damage, "
+       "fixation types pooled, ten fits per arm (dense white, constrained filled; bars: mean and SEM; dots: fits); the dashed line "
+       "is one sixth. No pair's share differs from one sixth (one-sample t, Holm-corrected; nothing marked). (b) Damage per lesion "
+       "family, mean over that family's lesions per fit, in units of the target's total variance, beside the matched control that "
+       "silences the same number of randomly chosen weights (black line); stars: the family's damage differs from its control "
+       "(paired t by fit, Holm-corrected). (c) Kendall's τ between fits' lesion rankings, per family and arm, against the 95th "
+       "percentile of the permutation null (black line).")
 md("**Share of pair-lesion damage per pair** (mean ± sd over ten fits; chance is 0.167) and the one-sample tests:")
 display(pair_share.groupby(["arm", "pair"])["share"].agg(["mean", "std"]).unstack("arm").round(3))
 show_tests(share_tests, ["arm", "pair", "n", "mean", "statistic", "p", "p_holm", "stars"])
@@ -943,7 +946,7 @@ as much. This is the signature of a finely tuned system, not of a load-bearing c
 the matched random control, which silences the same number of weights chosen anywhere in
 the network, does as much or more damage than every lesion family (every family differs
 from its control, and in the direction of the control being worse). **And no pair is
-special** (Figure 8):
+special** (Figure 9):
 each of the six pairs accounts for 0.15–0.18 of the summed pair-lesion damage in both arms,
 no pair's share differs from one sixth after correction, and the fit-to-fit spread is wider
 than any difference between pairs. The ten fits do not agree on which pair matters most
@@ -962,7 +965,7 @@ R8B_TEXT = r"""
 ### 3.8 What a lesion does to the local dynamics
 
 Damage to the fit says how much a lesion matters; it does not say what the lesion does to
-the system. Figure 8b reads each pair lesion and each isolation as a change in the
+the system. Figure 10a–b reads each pair lesion and each isolation as a change in the
 network's local linearisation (§2.12): the eigenvalues of the Jacobian, for each region's
 own block and for the whole network, at the fixed point nearest the end of the lesioned
 trajectory and along the lesioned trajectory, with the change scored as the Wasserstein
@@ -997,24 +1000,22 @@ for arm, seed in representative.items():
     frames.append(block)
 rep_spectra = pd.concat(frames, ignore_index=True)
 CLOUD_LESION = "ofc↔bla"
-figure(cviz.plot_lesion_spectra_clouds(rep_spectra[rep_spectra["arm"] == "dense"], region=TRACE_REGION, lesion=CLOUD_LESION, arm="dense"),
-       "fig08b_spectra_clouds_dense_bla",
-       f"**Figure 8b. What a pair lesion does to a region's local dynamics: one dense fit (seed {representative['dense']}), "
-       f"{REGION_LABELS[TRACE_REGION]}'s own block.** Eigenvalues of $\\mathrm{{diag}}(1 - h_r^2)\\,W_{{rr}}$ in the complex plane, intact (grey) "
-       f"and after silencing {CLOUD_LESION} in both directions (colour), per fixation type. Top: at the fixed point nearest the end of the "
-       "trajectory. Bottom: along the trajectory, every fifth state pooled. The dashed circle is the unit circle.")
-figure(cviz.plot_lesion_spectra_clouds(rep_spectra[rep_spectra["arm"] == "constrained"], region="network", lesion=CLOUD_LESION, arm="constrained"),
-       "fig08c_spectra_clouds_constrained_network",
-       f"**Figure 8c. The same lesion in one constrained fit (seed {representative['constrained']}), whole-network linearisation.** "
-       f"Eigenvalues of $\\mathrm{{diag}}(1 - h^2)\\,W$ for all 160 units, intact (grey) and after silencing {CLOUD_LESION} (colour), per "
-       "fixation type, at the fixed point (top) and along the trajectory (bottom). Under the selected constraint each region's own "
-       "block is rank 1, so the whole-network spectrum is the informative one for this arm.")
+figure(cviz.plot_lesion_spectra_clouds_compact(rep_spectra, lesion=CLOUD_LESION, condition="face_interactive",
+                                               panels=(("dense", TRACE_REGION), ("constrained", "network"))),
+       "fig10_spectra_clouds_int_face",
+       f"**Figure 10. What a pair lesion does to the local dynamics of the interactive-face map, one fit per arm.** Eigenvalues of "
+       f"the linearisation, intact (grey) and after silencing {CLOUD_LESION} in both directions (colour), for interactive face. (a, b) "
+       f"{REGION_LABELS[TRACE_REGION]}'s own block, $\\mathrm{{diag}}(1 - h_r^2)\\,W_{{rr}}$, in the dense fit (seed "
+       f"{representative['dense']}), at the fixed point nearest the end of the trajectory and along the trajectory (every fifth state "
+       f"pooled). (c, d) The whole-network Jacobian, $\\mathrm{{diag}}(1 - h^2)\\,W$, in the constrained fit (seed "
+       f"{representative['constrained']}); under the selected constraint each region's own block is rank 1, so the whole-network "
+       "spectrum is the informative one for that arm. The dashed circle is the unit circle.")
 w2_tests = pd.concat([
     ch.paired_contrasts(lesioned[(lesioned["arm"] == arm) & (lesioned["where"] == where) & (lesioned["lesion_kind"] == "bidirectional")],
                         value="w2_to_intact", unit="unit", by="region").assign(arm=arm, where=where)
     for arm in ARMS for where in ("fixed_point", "trajectory")], ignore_index=True)
-figure(cviz.plot_lesion_spectra_distance(lesioned, w2_tests, lesion_kind="bidirectional", where="trajectory"), "fig08d_spectra_distance",
-       "**Figure 8d. How far a pair lesion moves the local spectrum, per region and for the whole network, per fixation type.** "
+figure(cviz.plot_lesion_spectra_distance(lesioned, w2_tests, lesion_kind="bidirectional", where="trajectory"), "fig11_spectra_distance",
+       "**Figure 11. How far a pair lesion moves the local spectrum, per region and for the whole network, per fixation type.** "
        "2-Wasserstein distance between the lesioned and intact eigenvalues of the linearisation along the trajectory — each region's "
        "own block, and the full 160-unit Jacobian — every fit × pair lesion a value (60 per bar; bars: mean and SEM; dots: values), "
        "in the dense (a) and constrained (b) networks on one scale. Marks: paired t between fixation types by fit × lesion, "
@@ -1030,14 +1031,14 @@ md("**Largest eigenvalue modulus and expanding modes of the intact linearisation
 display(spectra_summary[spectra_summary["lesion_kind"] == "intact"].groupby(["where", "arm", "region"])[["top_modulus", "n_expanding"]].mean().round(3))
 md(f"Fixed-point searches on the lesioned maps converged in **{100 * spectra_summary['fixed_point_converged'].mean():.0f}%** of cases; "
    "the remainder use the slowest point found.")
-md("**Tests behind Figure 8d, and the same tests at the fixed point:**")
+md("**Tests behind Figure 11, and the same tests at the fixed point:**")
 show_tests(w2_tests[w2_tests["significant"]], ["arm", "where", "region", "a", "b", "n", "difference", "statistic", "p", "p_holm", "stars"])
 md(f"({int(w2_tests['significant'].sum())} of {len(w2_tests)} contrasts significant after Holm correction.)")
 '''
 
 R8B_AFTER = r"""
 **Reading.** The two scopes tell two stories. At the scope of a region's own block
-(Figure 8b; the four region groups of Figure 8d) a pair lesion moves the local spectrum
+(Figure 10a–b; the four region groups of Figure 11) a pair lesion moves the local spectrum
 little. In the dense network the lesioned eigenvalues sit on top of the intact ones — a
 distance of 0.07–0.08 at the fixed point and 0.04–0.05 along the trajectory, against
 eigenvalue moduli of 0.6–0.75 — and the constrained network's blocks, being rank one,
@@ -1048,7 +1049,7 @@ non-interactive face in BLA); at the fixed point (table) no fixation-type contra
 significant in either arm, and the change is the same size in all four regions. No region
 is singled out anywhere.
 
-At the scope of the whole network (Figure 8c; the right-hand group of Figure 8d) the
+At the scope of the whole network (Figure 10c–d; the right-hand group of Figure 11) the
 lesion's effect is larger — 0.10–0.13
 at the fixed point and 0.06–0.12 along the trajectory, on a spectrum whose leading modes sit
 just outside the unit circle (largest modulus 1.06 at the fixed point, 1.2–1.3 along the
@@ -1059,7 +1060,7 @@ constrained network and 0.088 against 0.057 and 0.055 in the dense one, every on
 eight contrasts (two fixation-type pairs × two arms × two linearisation points) significant
 after correction; along the constrained trajectory non-interactive face also moves more than
 object. So the same lesion that leaves interactive face's
-trajectory *extent* unchanged (Figure 11) changes its *local dynamics* most. Both are what a
+trajectory *extent* unchanged (Figure 14) changes its *local dynamics* most. Both are what a
 state held in place by inter-regional traffic would show: remove the traffic and the local
 flow around that state reorganises, while the trajectory, no longer being pushed out, does
 not expand the way the other two do.
@@ -1072,12 +1073,12 @@ R9_TEXT = r"""
 The last question is what the fitted network does, as a dynamical system, for each fixation
 type. Because the input is constant, each fixation type turns the network into an
 autonomous map; the three maps differ in a fixed input vector and a trained initial state.
-Figure 9 shows the flow of each map in the plane of the two leading state axes for one
+Figure 12 shows the flow of each map in the plane of the two leading state axes for one
 representative fit per arm (the fit whose worst combination is the median of its arm), with
-the trajectory the network runs from the first bin of the window to the last. Figure 10
+the trajectory the network runs from the first bin of the window to the last. Figure 13
 compares the three fixation types on the three quantities that summarise that picture —
 how large, how fast, and how locally expansive the trajectory is — across all twenty fits,
-and Figure 11 what a lesion does to the trajectories.
+and Figure 14 what a lesion does to the trajectories.
 """
 
 R9_CODE = r'''
@@ -1085,8 +1086,8 @@ fields_by_arm = {}
 for arm, path in ARMS.items():
     run_dir = next(d for d in audit.seed_run_dirs(path) if ens.seed_of(d) == representative[arm])
     fields_by_arm[arm] = ens.flow_fields(run_dir, scope="network")
-figure(cviz.plot_flow_fields_two_arms(fields_by_arm), "fig09_flow_fields",
-       "**Figure 9. The flow of each fixation type's map, one fit per arm.** (a) The dense network, (b) the constrained network, each "
+figure(cviz.plot_flow_fields_two_arms(fields_by_arm), "fig12_flow_fields",
+       "**Figure 12. The flow of each fixation type's map, one fit per arm.** (a) The dense network, (b) the constrained network, each "
        "the fit whose worst combination is the median of its arm. Each panel is the autonomous map for one fixation type in the plane "
        "of the two leading principal axes of that fit's pooled hidden-state trajectories (the same plane across a row; the "
        "percentages are the share of hidden-state variance on each axis). Background: the speed of the flow, $\\|F_c(h) - h\\|$, log "
@@ -1101,8 +1102,8 @@ dyn = ch.dynamics_condition_table(T)
 dyn_props = list(cviz.DYNAMICS_LABELS)
 dyn_tests = pd.concat([ch.paired_contrasts(dyn[dyn["property"] == p], value="value", by="arm").assign(property=p) for p in dyn_props],
                       ignore_index=True)
-figure(cviz.plot_dynamics_summary(dyn, dyn_tests), "fig10_dynamics_summary",
-       "**Figure 10. The interactive-face state, in every fit.** The three fixation types side by side within the dense network "
+figure(cviz.plot_dynamics_summary(dyn, dyn_tests), "fig13_dynamics_summary",
+       "**Figure 13. The interactive-face state, in every fit.** The three fixation types side by side within the dense network "
        "(left group) and the constrained network (right group), ten fits per bar (bars: mean and SEM; dots: fits): (a) extent of "
        "the state trajectory; (b) its speed; (c) number of locally expanding modes of the linearisation along the trajectory. Marks: paired t "
        "between fixation types within an arm, Holm-corrected within each panel; only significant contrasts are marked. The remaining "
@@ -1119,7 +1120,7 @@ display(dyn.groupby(["property", "arm", "condition"])["value"].mean().unstack("c
 fp = T["fixed_points_points"]
 md(f"Fixed points found across both arms: **{len(fp)}**, of which **{int(fp['stable'].sum())}** are stable; the rest are saddles "
    f"with largest |eigenvalue| {fp['top_modulus'].quantile(0.25):.3f}–{fp['top_modulus'].quantile(0.75):.3f} (interquartile range).")
-md("**Tests behind Figure 10 and the other per-fixation-type quantities** (significant contrasts):")
+md("**Tests behind Figure 13 and the other per-fixation-type quantities** (significant contrasts):")
 show_tests(dyn_tests[dyn_tests["significant"]], ["property", "arm", "a", "b", "n", "difference", "statistic", "p", "p_holm", "stars"])
 '''
 
@@ -1128,8 +1129,8 @@ lesion_extent = ch.lesion_extent_change(T["lesion_dynamics"])
 lesion_extent["unit"] = lesion_extent["seed"].astype(str) + "|" + lesion_extent["lesion"]
 extent_tests = pd.concat([ch.paired_contrasts(lesion_extent[lesion_extent["arm"] == arm], value="rel_state_extent", unit="unit", by=["arm", "lesion_kind"])
                           for arm in ARMS], ignore_index=True)
-figure(cviz.plot_lesion_extent_violins(lesion_extent, extent_tests), "fig11_lesion_extent",
-       "**Figure 11. A pair lesion shrinks the other two trajectories and leaves interactive face's where it is.** Change in the "
+figure(cviz.plot_lesion_extent_violins(lesion_extent, extent_tests), "fig14_lesion_extent",
+       "**Figure 14. A pair lesion shrinks the other two trajectories and leaves interactive face's where it is.** Change in the "
        "extent of the lesioned network's trajectory relative to the intact one, per fixation type, for every pair lesion (60 values "
        "per violin: ten fits × six pairs) and every isolation (40: ten fits × four areas), in the dense (a) and constrained (b) arms; "
        "the lines inside each violin are the quartiles (median dashed), and the violins end at the data range. Marks: paired t between "
@@ -1140,7 +1141,7 @@ display(ext.round(3))
 least = (lesion_extent[lesion_extent["lesion_kind"] == "bidirectional"].groupby(["arm", "seed", "condition"])["rel_state_extent"].mean()
          .unstack("condition").abs().idxmin(axis=1) == "face_interactive").groupby(level="arm").mean()
 md("Fraction of fits in which interactive face's trajectory is the *least* changed by pair lesions: " + ", ".join(f"**{a}** {v:.1f}" for a, v in least.items()) + ".")
-md("**Tests behind Figure 11:**")
+md("**Tests behind Figure 14:**")
 show_tests(extent_tests, ["arm", "lesion_kind", "a", "b", "n", "difference", "statistic", "p", "p_holm", "stars"])
 '''
 
@@ -1149,13 +1150,13 @@ R9_AFTER = r"""
 fits, eight are stable; the rest are saddles with largest eigenvalue modulus a few percent
 above one. No trajectory reaches a fixed point within the window: at the last bin every
 state is still moving and sits 0.4–0.9 state extents from the nearest fixed point. The
-fixed points organise the flow the trajectory passes through — in Figure 9 the trajectories
+fixed points organise the flow the trajectory passes through — in Figure 12 the trajectories
 bend around the hollow stars — but they do not terminate it. A one-second window around a
 fixation is not long enough for these networks to settle, and the data they were fitted to
 do not settle either.
 
 **Interactive face is the fixation type nearest that organisation, in every fit
-(Figure 10).** Its trajectory is the smallest (extent 1.3–1.6 against 2.7–3.1 for the other
+(Figure 13).** Its trajectory is the smallest (extent 1.3–1.6 against 2.7–3.1 for the other
 two) and the slowest (speed 0.13 against 0.38–0.46 state units per bin) in ten of ten fits
 of both arms, and it runs through the most locally expansive part of the flow: the
 linearisation along its trajectory has the most expanding modes in ten of ten constrained
@@ -1168,7 +1169,7 @@ fits (not significant; one dense fit found no fixed point for it). In the flow f
 the small loop beside the fixed points, against the wide excursions of the other two
 fixation types.
 
-**A lesion separates it further (Figure 11).** Cutting a pair of areas shrinks the trajectories of
+**A lesion separates it further (Figure 14).** Cutting a pair of areas shrinks the trajectories of
 non-interactive face and object — by 40–55% of their intact extent on average, and in every
 fit × pair case of both arms without exception — and leaves interactive face's on average
 unchanged: expanded in about half of the fit × pair cases, shrunk in the rest, and the least
@@ -1185,7 +1186,7 @@ dimensionality — are properties of the data that any adequate fit must reprodu
 target-side control in the rebuild's audit shows the same ordering in the PC trajectories
 themselves). The scale-free ones are the model's own: the count of expanding modes, the
 end-of-window speed relative to the nearest fixed point, and the sign of a lesion's effect
-on extent. Those are the claims Figures 9–11 add to the population chapter's description of
+on extent. Those are the claims Figures 12–14 add to the population chapter's description of
 the interactive-face state as compact and low-dimensional: it is also slow, poised near a
 saddle, and held there by the other areas.
 """
@@ -1396,15 +1397,15 @@ APPENDIX = r"""
 
 | Chapter figure | Task notebook | What the task notebook adds |
 |---|---|---|
-| 1, 1b | — | schematics; the bottleneck schematic in `02b` §1 defines every drive quantity |
-| 2, 3 | `01_ladder` | every region's fit gallery, the partner matrix, band recovery per region, the per-combination heatmap |
-| 4 | `01_ladder`, `02_rank_grid`; `../mrnn_thesis/03_connectivity` | the rebuild's strict removals, directed and pair cuts under its own objective |
-| 5 | `02_rank_grid` | convergence of every configuration, the adequacy table, the selection rule |
-| 6 | `02b_bottleneck_properties` | the condition gap along each marginal, region heatmaps, where a region's drive comes from, alignment and dimensionality |
-| 7 | `03_ensemble` §3 | loss curves, every combination of both arms, reconstruction galleries of all ten fits, bootstrap intervals |
-| 8 | `03_ensemble` §7 | every lesion family per arm, per-target damage, per-fixation-type rankings, lesion-profile similarity |
-| 8b–8d | this notebook (`final/04_chapter/tables/lesion_region_spectra*.csv`) | eigenvalue spectra of the lesioned linearisations and their Wasserstein distances, region and network scope, at the fixed point and along the trajectory |
-| 9–11 | `03_ensemble` §5–7 | drive and flow, per-region flow fields, fixed-point summaries, Jacobians along the trajectory, region timescales, lesioned dynamics on speed, modulus and dimensionality |
+| 1, 2 | — | schematics; the bottleneck schematic in `02b` §1 defines every drive quantity |
+| 3, 4 | `01_ladder` | every region's fit gallery, the partner matrix, band recovery per region, the per-combination heatmap |
+| 5 | `01_ladder`, `02_rank_grid`; `../mrnn_thesis/03_connectivity` | the rebuild's strict removals, directed and pair cuts under its own objective |
+| 6 | `02_rank_grid` | convergence of every configuration, the adequacy table, the selection rule |
+| 7 | `02b_bottleneck_properties` | the condition gap along each marginal, region heatmaps, where a region's drive comes from, alignment and dimensionality |
+| 8 | `03_ensemble` §3 | loss curves, every combination of both arms, reconstruction galleries of all ten fits, bootstrap intervals |
+| 9 | `03_ensemble` §7 | every lesion family per arm, per-target damage, per-fixation-type rankings, lesion-profile similarity |
+| 10, 11 | this notebook (`final/04_chapter/tables/lesion_region_spectra*.csv`) | eigenvalue spectra of the lesioned linearisations for every fixation type and both scopes, and their Wasserstein distances at the fixed point and along the trajectory |
+| 12–14 | `03_ensemble` §5–7 | drive and flow, per-region flow fields, fixed-point summaries, Jacobians along the trajectory, region timescales, lesioned dynamics on speed, modulus and dimensionality |
 | §3.10 | `03_ensemble` §4, §8–9 | the similarity boards per property and region; the identifiability battery against the untrained floor |
 
 The rebuild series (`../mrnn_thesis/`) holds the protocol sweep, the capacity analysis, the
