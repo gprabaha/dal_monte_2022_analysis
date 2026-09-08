@@ -47,7 +47,9 @@ trajectories require.
 | 6 | Does narrowing a route cost one fixation type more than the others? |
 | 7 | The selected network, refitted ten times: what did every constraint cost each fixation type? |
 | 8 | Does any particular pair of regions carry the fit, and what does a lesion do to the local dynamics? |
-| 9 | What does the fitted network do, as a dynamical system, for each fixation type? |
+| 9 | What does each fixation type's flow look like, and where does the trajectory run through it? |
+| 10 | Which dynamical properties separate interactive face, in every fit? |
+| 11 | What does a lesion do to each fixation type's trajectory? |
 
 Regenerate with `conda run -n gaze_processing python notebooks/mrnn_chapter/_build_04_chapter.py`,
 then execute with nbconvert (see the folder README). The task notebooks `01_ladder`,
@@ -248,7 +250,7 @@ contrast; which pathway carries it is not.
 - **Interactive face has a dynamical signature every fit reproduces:** the smallest,
   slowest, lowest-dimensional trajectory, threading the most locally expansive part of the
   flow, and the one fixation type whose trajectory a pair lesion does not shrink
-  (Figure 9). The wiring is not reproducible; the dynamics of this state are.
+  (Figures 9–11). The wiring is not reproducible; the dynamics of this state are.
 """
 
 
@@ -499,13 +501,16 @@ with a one-sample t-test, and a lesion family's damage against its matched rando
 with a paired t-test by fit.
 
 Within each figure panel the p-values are **Holm-corrected**, and a comparison is marked at
-$\alpha = 0.05$ (\* below 0.05, \*\* below 0.01, \*\*\* below 0.001). **Only significant
-comparisons are marked**; an unmarked pair was tested and did not reach significance. The
-number of fits per group is stated in every caption; with five fits per group the tests are
-underpowered for small effects, so the absence of a mark is never read as evidence of
-equality. Groups of five to ten fits are drawn as box plots (median, quartiles, whiskers to
-the full range) with every fit as a dot; larger groups as violins with the quartiles and
-median inside. Costs are always against the dense network. Per-fixation-type damage is never
+$\alpha = 0.05$ (\* below 0.05, \*\* below 0.01, \*\*\* below 0.001) by a bar over the two
+groups with the stars above it. **Only significant comparisons are marked**; an unmarked
+pair was tested and did not reach significance. The number of fits per group is stated in
+every caption; with five fits per group the tests are underpowered for small effects, so
+the absence of a mark is never read as evidence of equality. Grouped comparisons between
+fixation types are drawn as bars (mean, with the standard error of the mean as a capless
+error bar) with every fit overlaid as a dot, and the y-axis starts at zero; where a single
+group of fits is compared between arms, box plots (median, quartiles, whiskers to the full
+range) with every fit as a dot; groups of forty or more values as violins with the quartiles
+inside. Costs are always against the dense network. Per-fixation-type damage is never
 expressed as a per-condition $R^2$, which would divide by each fixation type's own variance
 and manufacture a difference between a half-variance condition and the other two (the
 confound the rebuild's audit found). Where a claim rests on the ten fits agreeing, the
@@ -573,9 +578,11 @@ over the three pairs that contain BLA, averaged over the three triples, and in t
 network. Three components are overlaid in every panel, each on its own scale: the leading
 one, which carries the most variance, and the two among the first ten with the largest gain
 from the single rung to the full network (chosen on the mean gain over the three fixation
-types, so no fixation type picks its own). The target is the thin dark line and the
-reconstruction the thick coloured one, in three shades for the three components; the number
-beside each panel is the component's $R^2$, averaged over the fits at the rung.
+types, so no fixation type picks its own). The target is the prominent trace — thick, in
+three shades of the fixation type's colour — and the reconstruction the thin grey line in
+the same order, so the eye follows the expected trajectory and reads the fit as how closely
+the grey line tracks it; the number beside each panel is the component's $R^2$, averaged
+over the fits at the rung.
 """
 
 R2_CODE = r'''
@@ -588,9 +595,9 @@ figure(cviz.plot_ladder_traces(traces, region=TRACE_REGION, n_fits_by_rung=n_fit
        f"{REGION_LABELS[TRACE_REGION]} fitted alone ({n_fits.get(0)} fits), in the three pairs that contain it ({n_fits.get(1)} fits, "
        f"averaged), in the three triples ({n_fits.get(2)} fits, averaged), and in the full network ({n_fits.get(3)} fits). Columns: "
        "fixation type. Three components are overlaid in each panel, " + ", ".join(f"PC{k + 1}" for k in components)
-       + " (dark to light), each rescaled to its own target range so all three fill the panel. Thin dark lines: the target, identical "
-       "at every rung. Thick coloured lines: the reconstruction averaged over the fits at that rung. Numbers: each component's $R^2$, "
-       "mean over the fits, in the same shades. Fixation onset is the dotted line.")
+       + " (dark to light), each rescaled to its own target range so all three fill the panel. Thick coloured lines: the target, "
+       "identical at every rung. Thin grey lines, same order: the reconstruction averaged over the fits at that rung. Numbers: each "
+       "component's $R^2$, mean over the fits, in the target's shades. Fixation onset is the dotted line.")
 lane_r2 = traces.groupby(["condition", "index", "n_partners"])["r2_mean"].first().unstack("n_partners")
 lane_r2.index = [(COND[c], f"PC{k + 1}") for c, k in lane_r2.index]
 lane_r2.columns = [ch.RUNG_LABELS.get(c, c) for c in lane_r2.columns]
@@ -604,11 +611,11 @@ display(gain[gain["index"] < 10].groupby("index")[["variance_share", "r2_rung0",
 R2_AFTER = r"""
 The leading component is reproduced by BLA alone — its $R^2$ is 1.00 in every panel — and so,
 nearly, is everything for non-interactive face and object: their components are at or above
-0.97 at the bottom of the ladder and the model lines sit on the target. The gain is
-concentrated in interactive face and in the mid-rank components. Alone, BLA reproduces
-interactive face's seventh component at $R^2 = 0.80$ and its tenth at 0.93; with one other
-area attached these rise to 0.88 and 0.97, with two to 0.91 and 0.98, and in the full
-network to 0.94 and 0.99. In the interactive-face column the model line moves onto the
+0.97 at the bottom of the ladder and the grey model lines sit on the coloured targets. The
+gain is concentrated in interactive face and in the mid-rank components. Alone, BLA
+reproduces interactive face's seventh component at $R^2 = 0.80$ and its tenth at 0.93; with
+one other area attached these rise to 0.88 and 0.97, with two to 0.91 and 0.98, and in the
+full network to 0.94 and 0.99. In the interactive-face column the grey line moves onto the
 target row by row; in the other two columns it was already there.
 
 Figure 3 puts numbers on the whole ladder.
@@ -687,9 +694,9 @@ figure(cviz.plot_architecture_cost(COST, gap4, pooled4, constraints=ARCH), "fig0
        "**Figure 4. Removing inter-regional connections costs far more than removing within-region recurrence.** (a) Cost against "
        "the ten dense fits, per fixation type, of three constraints (five fits each): every inter-regional connection removed, every "
        "within-region block reduced to rank 1 with the pathways dense, and every inter-regional pathway reduced to rank 1 with "
-       "within-region recurrence dense. Boxes: median, quartiles, full range; dots: fits. Brackets: the constraint widens the gap "
-       "between the two fixation types (Welch's t on per-fit gaps against the ten dense fits, Holm-corrected within the panel). "
-       "(b) The same cost pooled over fixation types, one value per fit; brackets: Welch's t between constraints, Holm-corrected.")
+       "within-region recurrence dense. Bars: mean and SEM; dots: fits. Marks: the constraint widens the gap between the two "
+       "fixation types (Welch's t on per-fit gaps against the ten dense fits, Holm-corrected within the panel). (b) The same cost "
+       "pooled over fixation types, one value per fit; marks: Welch's t between constraints, Holm-corrected.")
 md("**Cost against the dense network** (Δ ceiling-relative $R^2$, regions pooled per fit; mean and sd over fits):")
 display(COST[COST["arm"].isin(ARCH)].assign(condition=COST["condition"].map(COND)).groupby(["arm", "condition"])["cost"].agg(["mean", "std", "count"]).round(4))
 md("**Tests behind panel (a)** — does the constraint widen the gap between interactive face and each other fixation type?")
@@ -708,7 +715,7 @@ Reducing the pathways to rank one instead, with within-region recurrence dense, 
 within-region constraint. What the trajectories require is the traffic *between* areas; an
 area's own recurrence can be reduced to almost nothing as long as that traffic remains.
 Each of the three constraints also widens the gap between interactive face and the other
-two fixation types (every bracket in panel a); Figure 6 and §3.6 take that up.
+two fixation types (every mark in panel a); Figure 6 and §3.6 take that up.
 """
 
 
@@ -742,10 +749,10 @@ figure(cviz.plot_rank_grid_composite(T["grid_fit"], T["dense_fit"], ranks=RANKS,
        "fig05_rank_grid",
        "**Figure 5. How narrow each kind of connection can be.** (a) Worst fixation type (regions pooled per fit, minimum over "
        "fixation types, mean over five fits) of every $(r_w, r_c)$ configuration; bold is at or above 0.98; the red outline is the "
-       "selected model. (b) The two marginals on one axis: inter-regional rank with within-region recurrence dense (blue), and "
-       "within-region rank with the pathways dense (orange); bars are the sd over five fits, the dotted line the dense network, the "
-       "dashed line the selection bar. (c) Every configuration against the total drive rank $r_w + 3\\,r_c$; the marginals do not "
-       "collapse onto the grid, so the two constraints are not interchangeable by counting.")
+       "selected model. (b) The two marginals on one axis against the rank of the bottleneck: inter-regional rank with within-region "
+       "recurrence dense (blue), and within-region rank with the pathways dense (orange); error bars are the sd over five fits, the "
+       "dashed line the dense network. (c) Every configuration against the total drive rank $r_w + 3\\,r_c$, with the selection bar "
+       "dashed; the marginals do not collapse onto the grid, so the two constraints are not interchangeable by counting.")
 per = T["grid_fit"].groupby(["label", "rank_within", "rank_cross", "seed", "condition"])["r2_vs_ceiling"].mean().reset_index()
 worst_config = per.groupby(["label", "rank_within", "rank_cross", "seed"])["r2_vs_ceiling"].min().groupby(["rank_within", "rank_cross"]).mean()
 dense_worst = T["dense_fit"].groupby(["seed", "condition"])["r2_vs_ceiling"].mean().groupby("seed").min().mean()
@@ -793,9 +800,10 @@ gap6 = pd.concat([ch.gap_contrasts(MARGINAL_LONG[MARGINAL_LONG["side"].isin(["de
                   for side in ("inter-regional", "within-region")], ignore_index=True)
 figure(cviz.plot_bottleneck_cost_by_condition(MARGINAL_COST, gap6, ranks=RANKS), "fig06_bottleneck_cost_by_condition",
        "**Figure 6. Every bottleneck costs interactive face most, and the inter-regional bottleneck widens the gap.** Cost against "
-       "the ten dense fits per fixation type, regions pooled per fit (five fits per configuration), along (a) the inter-regional "
-       "marginal and (b) the within-region marginal, on one scale. Brackets: the constraint widens the gap between interactive face "
-       "and the bracketed fixation type (Welch's t on per-fit gaps against the dense fits, Holm-corrected within each panel).")
+       "the ten dense fits per fixation type, regions pooled per fit (five fits per configuration; bars: mean and SEM; dots: fits), "
+       "along (a) the inter-regional marginal and (b) the within-region marginal, on one scale. Marks: the constraint widens the gap "
+       "between interactive face and the marked fixation type (Welch's t on per-fit gaps against the dense fits, Holm-corrected "
+       "within each panel).")
 cross_cost = MARGINAL_COST[MARGINAL_COST["side"] == "inter-regional"].groupby(["rank", "condition"])["cost"].mean().unstack("condition").rename(columns=COND)
 within_cost = MARGINAL_COST[MARGINAL_COST["side"] == "within-region"].groupby(["rank", "condition"])["cost"].mean().unstack("condition").rename(columns=COND)
 for frame in (cross_cost, within_cost):
@@ -843,10 +851,11 @@ arm_tests = ch.welch_contrasts(pair_arms, value="r2_vs_ceiling", group="arm", by
 gap7a = ch.gap_contrasts(pair_arms, value="r2_vs_ceiling")
 figure(cviz.plot_ensemble_cost(FIT_LONG, COST, arm_tests, gap7a, constrained=SELECTED_ARM), "fig07a_ensemble_cost",
        "**Figure 7a. The selected constraint costs interactive face a third more than either other fixation type.** (a) Ceiling-relative "
-       "$R^2$ per fixation type, regions pooled per fit, for the ten dense (white) and ten constrained (filled) fits; brackets: Welch's "
-       "t between arms, Holm-corrected. (b) The cost of the constraint per fixation type, one value per constrained fit; brackets: the "
-       "constraint widens the gap between interactive face and the bracketed fixation type (Welch's t on per-fit gaps against the dense "
-       "fits, Holm-corrected). (c) The scale-free reading: unexplained variance of each constrained fit over the dense mean.")
+       "$R^2$ per fixation type, regions pooled per fit, for the ten dense (white) and ten constrained (filled) fits, boxes with every "
+       "fit a dot; marks: Welch's t between arms, Holm-corrected. (b) The cost of the constraint per fixation type, one value per "
+       "constrained fit (bars: mean and SEM; dots: fits); marks: the constraint widens the gap between interactive face and the "
+       "marked fixation type (Welch's t on per-fit gaps against the dense fits, Holm-corrected). (c) The scale-free reading: "
+       "unexplained variance of each constrained fit over the dense mean.")
 md("**Cost per fixation type** (ten constrained fits against the dense mean) and the bootstrap intervals task 03 computed:")
 display(T["fit_cost_by_condition"].assign(condition=T["fit_cost_by_condition"]["condition"].map(COND)).set_index("condition")
         [["dense_mean", "constrained_mean", "cost", "cost_ci_low", "cost_ci_high", "unexplained_ratio", "fi_extra_cost", "fi_extra_cost_ci_low", "fi_extra_cost_ci_high"]].round(4))
@@ -857,9 +866,9 @@ gap7b = ch.gap_contrasts(FIT_LONG, value="r2_vs_ceiling")
 figure(cviz.plot_constraint_cost_summary(COST, gap7b, constraints=ch.CONSTRAINT_ORDER), "fig07b_constraint_summary",
        "**Figure 7b. Every constraint in the chapter, costed on one footing.** Cost against the ten dense fits per fixation type "
        "for: every inter-regional connection removed (5 fits); within-region recurrence rank 1 (5); inter-regional pathways rank 10 "
-       "(5); inter-regional pathways rank 1 (5); and the selected model, within 1 and inter-regional 10 (10 fits). Brackets: the "
-       "constraint widens the gap between interactive face and the bracketed fixation type (Welch's t on per-fit gaps against the "
-       "dense fits, Holm-corrected within the panel).")
+       "(5); inter-regional pathways rank 1 (5); and the selected model, within 1 and inter-regional 10 (10 fits). Bars: mean and "
+       "SEM; dots: fits. Marks: the constraint widens the gap between interactive face and the marked fixation type (Welch's t on "
+       "per-fit gaps against the dense fits, Holm-corrected within the panel).")
 summary = COST.groupby(["arm", "condition"])["cost"].mean().unstack("condition").rename(columns=COND).loc[list(ch.CONSTRAINT_ORDER)]
 summary["Int face / mean of others"] = summary["Int face"] / summary[["Non-int face", "Object"]].mean(axis=1)
 md("**Cost per constraint and fixation type** (mean over fits), and the ratio of interactive face's cost to the others':")
@@ -907,11 +916,12 @@ damage_long = pd.concat([damage.assign(kind="lesion", value=damage["damage"]), d
 damage_tests = ch.paired_contrasts(damage_long, value="value", group="kind", unit="seed", by=["arm", "family"], pairs=[("lesion", "control")])
 figure(cviz.plot_pair_lesion_summary(pair_share, share_tests, damage, damage_tests, T["lesion_ranking_agreement"]), "fig08_pair_lesions",
        "**Figure 8. Lesions are catastrophic and no pair is privileged.** (a) Each pair's share of the summed pair-lesion damage, "
-       "fixation types pooled, ten fits per arm (dense white, constrained filled); the dashed line is one sixth. No pair's share differs "
-       "from one sixth (one-sample t, Holm-corrected; nothing marked). (b) Damage per lesion family, mean over that family's lesions per "
-       "fit, in units of the target's total variance, beside the matched control that silences the same number of randomly chosen "
-       "weights (ticks); stars: the family's damage differs from its control (paired t by fit, Holm-corrected). (c) Kendall's τ between "
-       "fits' lesion rankings, per family and arm, against the 95th percentile of the permutation null (ticks).")
+       "fixation types pooled, ten fits per arm (dense white, constrained filled; bars: mean and SEM; dots: fits); the dashed line "
+       "is one sixth. No pair's share differs from one sixth (one-sample t, Holm-corrected; nothing marked). (b) Damage per lesion "
+       "family, mean over that family's lesions per fit, in units of the target's total variance, beside the matched control that "
+       "silences the same number of randomly chosen weights (black line); stars: the family's damage differs from its control "
+       "(paired t by fit, Holm-corrected). (c) Kendall's τ between fits' lesion rankings, per family and arm, against the 95th "
+       "percentile of the permutation null (black line).")
 md("**Share of pair-lesion damage per pair** (mean ± sd over ten fits; chance is 0.167) and the one-sample tests:")
 display(pair_share.groupby(["arm", "pair"])["share"].agg(["mean", "std"]).unstack("arm").round(3))
 show_tests(share_tests, ["arm", "pair", "n", "mean", "statistic", "p", "p_holm", "stars"])
@@ -1006,14 +1016,14 @@ w2_tests = pd.concat([
     for arm in ARMS for where in ("fixed_point", "trajectory")], ignore_index=True)
 figure(cviz.plot_lesion_spectra_distance(lesioned, w2_tests, lesion_kind="bidirectional"), "fig08d_spectra_distance_regions",
        "**Figure 8d. How far a pair lesion moves each region's local spectrum, per fixation type.** 2-Wasserstein distance between the "
-       "lesioned and intact eigenvalues of a region's own block, every fit × pair lesion a value (60 per box), at the fixed point (top "
-       "row) and along the trajectory (bottom row), dense (left) and constrained (right). Brackets: paired t between fixation types by "
-       "fit × lesion, Holm-corrected within each panel; only significant contrasts are marked.")
+       "lesioned and intact eigenvalues of a region's own block, every fit × pair lesion a value (60 per bar; bars: mean and SEM), at "
+       "the fixed point (top row) and along the trajectory (bottom row), dense (left) and constrained (right). Marks: paired t "
+       "between fixation types by fit × lesion, Holm-corrected within each panel; only significant contrasts are marked.")
 figure(cviz.plot_lesion_spectra_distance(lesioned, w2_tests, lesion_kind="bidirectional", regions=("network",), figsize=(5.0, 4.4)),
        "fig08e_spectra_distance_network",
        "**Figure 8e. The same for the whole-network linearisation.** 2-Wasserstein distance between the lesioned and intact spectra of "
        "the full 160-unit Jacobian, every fit × pair lesion a value, at the fixed point (top) and along the trajectory (bottom); "
-       "brackets as in Figure 8d.")
+       "marks as in Figure 8d.")
 md("**Wasserstein distance to the intact spectrum** (mean over fits × pair lesions), per region, fixation type, arm and linearisation point:")
 display(lesioned[lesioned["lesion_kind"] == "bidirectional"].groupby(["where", "arm", "region", "condition"])["w2_to_intact"].mean()
         .unstack("condition").rename(columns=COND).round(4))
@@ -1051,7 +1061,7 @@ constrained network and 0.088 against 0.057 and 0.055 in the dense one, every on
 eight contrasts (two fixation-type pairs × two arms × two linearisation points) significant
 after correction; along the constrained trajectory non-interactive face also moves more than
 object. So the same lesion that leaves interactive face's
-trajectory *extent* unchanged (Figure 9c) changes its *local dynamics* most. Both are what a
+trajectory *extent* unchanged (Figure 11) changes its *local dynamics* most. Both are what a
 state held in place by inter-regional traffic would show: remove the traffic and the local
 flow around that state reorganises, while the trajectory, no longer being pushed out, does
 not expand the way the other two do.
@@ -1064,19 +1074,20 @@ R9_TEXT = r"""
 The last question is what the fitted network does, as a dynamical system, for each fixation
 type. Because the input is constant, each fixation type turns the network into an
 autonomous map; the three maps differ in a fixed input vector and a trained initial state.
-Figure 9a shows the flow of each map in the plane of the two leading state axes for one
+Figure 9 shows the flow of each map in the plane of the two leading state axes for one
 representative fit per arm (the fit whose worst combination is the median of its arm), with
-the trajectory the network runs from the first bin of the window to the last. Figure 9b
-collects the per-fixation-type quantities across all twenty fits, and Figure 9c what a
-lesion does to the trajectories.
+the trajectory the network runs from the first bin of the window to the last. Figure 10
+compares the three fixation types on the three quantities that summarise that picture —
+how large, how fast, and how locally expansive the trajectory is — across all twenty fits,
+and Figure 11 what a lesion does to the trajectories.
 """
 
 R9_CODE = r'''
 for arm, path in ARMS.items():
     run_dir = next(d for d in audit.seed_run_dirs(path) if ens.seed_of(d) == representative[arm])
     fields = ens.flow_fields(run_dir, scope="network")
-    figure(eviz.plot_flow_fields(fields, title=f"{arm} network · seed {representative[arm]}"), f"fig09a_flow_fields_{arm}",
-           f"**Figure 9a ({arm}). The flow of each fixation type's map, one fit.** Each panel is the autonomous map for one fixation "
+    figure(eviz.plot_flow_fields(fields, title=f"{arm} network · seed {representative[arm]}"), f"fig09_flow_fields_{arm}",
+           f"**Figure 9 ({arm}). The flow of each fixation type's map, one fit.** Each panel is the autonomous map for one fixation "
            "type in the plane of the two leading principal axes of the pooled hidden-state trajectories (the same plane in all three; "
            "the percentages are the share of hidden-state variance on each axis). Background: the speed of the flow, $\\|F_c(h) - h\\|$, "
            "log scale, light is slow. Arrows: the direction of the flow projected into the plane. Line: the trajectory the network runs, "
@@ -1090,12 +1101,13 @@ dyn = ch.dynamics_condition_table(T)
 dyn_props = list(cviz.DYNAMICS_LABELS)
 dyn_tests = pd.concat([ch.paired_contrasts(dyn[dyn["property"] == p], value="value", by="arm").assign(property=p) for p in dyn_props],
                       ignore_index=True)
-figure(cviz.plot_dynamics_summary(dyn, dyn_tests), "fig09b_dynamics_summary",
-       "**Figure 9b. The interactive-face state, in every fit.** Per fixation type, dense (white) and constrained (filled), ten fits "
-       "per box: (a) extent of the state trajectory; (b) its speed; (c) its dimensionality (participation ratio); (d) speed at the end "
-       "of the window; (e) distance from the end of the window to the nearest fixed point, in units of the pooled state extent; "
-       "(f) number of locally expanding modes of the linearisation along the trajectory. Brackets: paired t between fixation types "
-       "within an arm, Holm-corrected within each panel; only significant contrasts are marked.")
+figure(cviz.plot_dynamics_summary(dyn, dyn_tests), "fig10_dynamics_summary",
+       "**Figure 10. The interactive-face state, in every fit.** The three fixation types side by side within the dense network "
+       "(left group) and the constrained network (right group), ten fits per box, every fit a dot: (a) extent of the state "
+       "trajectory; (b) its speed; (c) number of locally expanding modes of the linearisation along the trajectory. Marks: paired t "
+       "between fixation types within an arm, Holm-corrected within each panel; only significant contrasts are marked. The remaining "
+       "per-fixation-type quantities (dimensionality, speed at the end of the window, distance to the nearest fixed point) are in the "
+       "table below and the §3.10 scoreboard.")
 checks = [("state_extent", "lowest"), ("state_speed", "lowest"), ("state_pr", "lowest"), ("trajectory_end_speed", "lowest"),
           ("nearest_distance_to_trajectory_end", "lowest"), ("network_n_expanding", "highest")]
 board = pd.concat([ch.ordering_fraction(dyn, prop=p, extreme=e) for p, e in checks], ignore_index=True)
@@ -1107,7 +1119,7 @@ display(dyn.groupby(["property", "arm", "condition"])["value"].mean().unstack("c
 fp = T["fixed_points_points"]
 md(f"Fixed points found across both arms: **{len(fp)}**, of which **{int(fp['stable'].sum())}** are stable; the rest are saddles "
    f"with largest |eigenvalue| {fp['top_modulus'].quantile(0.25):.3f}–{fp['top_modulus'].quantile(0.75):.3f} (interquartile range).")
-md("**Tests behind Figure 9b** (significant contrasts):")
+md("**Tests behind Figure 10 and the other per-fixation-type quantities** (significant contrasts):")
 show_tests(dyn_tests[dyn_tests["significant"]], ["property", "arm", "a", "b", "n", "difference", "statistic", "p", "p_holm", "stars"])
 '''
 
@@ -1116,19 +1128,19 @@ lesion_extent = ch.lesion_extent_change(T["lesion_dynamics"])
 lesion_extent["unit"] = lesion_extent["seed"].astype(str) + "|" + lesion_extent["lesion"]
 extent_tests = pd.concat([ch.paired_contrasts(lesion_extent[lesion_extent["arm"] == arm], value="rel_state_extent", unit="unit", by=["arm", "lesion_kind"])
                           for arm in ARMS], ignore_index=True)
-figure(cviz.plot_lesion_extent_violins(lesion_extent, extent_tests), "fig09c_lesion_extent",
-       "**Figure 9c. A pair lesion shrinks the other two trajectories and leaves interactive face's where it is.** Change in the "
+figure(cviz.plot_lesion_extent_violins(lesion_extent, extent_tests), "fig11_lesion_extent",
+       "**Figure 11. A pair lesion shrinks the other two trajectories and leaves interactive face's where it is.** Change in the "
        "extent of the lesioned network's trajectory relative to the intact one, per fixation type, for every pair lesion (60 values "
        "per violin: ten fits × six pairs) and every isolation (40: ten fits × four areas), in the dense (a) and constrained (b) arms; "
-       "the bar inside each violin spans the quartiles, the dot is the median. Brackets: paired t between fixation types by fit × "
-       "lesion, Holm-corrected within each panel; only significant contrasts are marked.")
+       "the lines inside each violin are the quartiles (median dashed), and the violins end at the data range. Marks: paired t between "
+       "fixation types by fit × lesion, Holm-corrected within each panel; only significant contrasts are marked.")
 ext = lesion_extent.groupby(["arm", "lesion_kind", "condition"])["rel_state_extent"].agg(["mean", "min", "max"]).rename(index=COND, level="condition")
 md("**Relative change in state extent after a lesion** (mean, min and max over fits and lesions of that kind):")
 display(ext.round(3))
 least = (lesion_extent[lesion_extent["lesion_kind"] == "bidirectional"].groupby(["arm", "seed", "condition"])["rel_state_extent"].mean()
          .unstack("condition").abs().idxmin(axis=1) == "face_interactive").groupby(level="arm").mean()
 md("Fraction of fits in which interactive face's trajectory is the *least* changed by pair lesions: " + ", ".join(f"**{a}** {v:.1f}" for a, v in least.items()) + ".")
-md("**Tests behind Figure 9c:**")
+md("**Tests behind Figure 11:**")
 show_tests(extent_tests, ["arm", "lesion_kind", "a", "b", "n", "difference", "statistic", "p", "p_holm", "stars"])
 '''
 
@@ -1137,25 +1149,26 @@ R9_AFTER = r"""
 fits, eight are stable; the rest are saddles with largest eigenvalue modulus a few percent
 above one. No trajectory reaches a fixed point within the window: at the last bin every
 state is still moving and sits 0.4–0.9 state extents from the nearest fixed point. The
-fixed points organise the flow the trajectory passes through — in Figure 9a the trajectories
+fixed points organise the flow the trajectory passes through — in Figure 9 the trajectories
 bend around the hollow stars — but they do not terminate it. A one-second window around a
 fixation is not long enough for these networks to settle, and the data they were fitted to
 do not settle either.
 
-**Interactive face is the fixation type nearest that organisation, in every fit.** Its
-trajectory is the smallest (extent 1.3–1.6 against 2.7–3.1 for the other two), the slowest
-(speed 0.13 against 0.38–0.46 state units per bin), and the lowest-dimensional
-(participation ratio 1.8–2.1 against 3.4–4.5) in ten of ten fits of both arms, and each of
-those contrasts is significant against both other fixation types in both arms; it ends the
-window moving slowest in ten of ten (significant in both arms), and nearest a fixed point
-in seven of ten constrained and seven of nine dense fits (not significant; one dense fit
-found no fixed point for it). And it runs through the most locally expansive part of the
-flow: the linearisation along its trajectory has the most expanding modes in ten of ten
-constrained and nine of ten dense fits, significantly more than either other fixation type
-in both arms. In the flow fields it is the small loop beside the fixed points, against the
-wide excursions of the other two fixation types.
+**Interactive face is the fixation type nearest that organisation, in every fit
+(Figure 10).** Its trajectory is the smallest (extent 1.3–1.6 against 2.7–3.1 for the other
+two) and the slowest (speed 0.13 against 0.38–0.46 state units per bin) in ten of ten fits
+of both arms, and it runs through the most locally expansive part of the flow: the
+linearisation along its trajectory has the most expanding modes in ten of ten constrained
+and nine of ten dense fits. Each of those contrasts is significant against both other
+fixation types in both arms. The quantities not drawn say the same (table above and
+§3.10): it is the lowest-dimensional trajectory (participation ratio 1.8–2.1 against
+3.4–4.5) and ends the window moving slowest in ten of ten fits, both significant in both
+arms, and it ends nearest a fixed point in seven of ten constrained and seven of nine dense
+fits (not significant; one dense fit found no fixed point for it). In the flow fields it is
+the small loop beside the fixed points, against the wide excursions of the other two
+fixation types.
 
-**A lesion separates it further.** Cutting a pair of areas shrinks the trajectories of
+**A lesion separates it further (Figure 11).** Cutting a pair of areas shrinks the trajectories of
 non-interactive face and object — by 40–55% of their intact extent on average, and in every
 fit × pair case of both arms without exception — and leaves interactive face's on average
 unchanged: expanded in about half of the fit × pair cases, shrunk in the rest, and the least
@@ -1172,8 +1185,8 @@ dimensionality — are properties of the data that any adequate fit must reprodu
 target-side control in the rebuild's audit shows the same ordering in the PC trajectories
 themselves). The scale-free ones are the model's own: the count of expanding modes, the
 end-of-window speed relative to the nearest fixed point, and the sign of a lesion's effect
-on extent. Those are the claims Figure 9 adds to the population chapter's description of the
-interactive-face state as compact and low-dimensional: it is also slow, poised near a
+on extent. Those are the claims Figures 9–11 add to the population chapter's description of
+the interactive-face state as compact and low-dimensional: it is also slow, poised near a
 saddle, and held there by the other areas.
 """
 
@@ -1391,7 +1404,7 @@ APPENDIX = r"""
 | 7 | `03_ensemble` §3 | loss curves, every combination of both arms, reconstruction galleries of all ten fits, bootstrap intervals |
 | 8 | `03_ensemble` §7 | every lesion family per arm, per-target damage, per-fixation-type rankings, lesion-profile similarity |
 | 8b–8e | this notebook (`final/04_chapter/tables/lesion_region_spectra*.csv`) | eigenvalue spectra of the lesioned linearisations and their Wasserstein distances, region and network scope |
-| 9 | `03_ensemble` §5–6 | drive and flow, per-region flow fields, Jacobians along the trajectory, region timescales, lesioned dynamics on speed, modulus and dimensionality |
+| 9–11 | `03_ensemble` §5–7 | drive and flow, per-region flow fields, fixed-point summaries, Jacobians along the trajectory, region timescales, lesioned dynamics on speed, modulus and dimensionality |
 | §3.10 | `03_ensemble` §4, §8–9 | the similarity boards per property and region; the identifiability battery against the untrained floor |
 
 The rebuild series (`../mrnn_thesis/`) holds the protocol sweep, the capacity analysis, the

@@ -18,6 +18,8 @@ import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import seaborn as sns
+from matplotlib.collections import PolyCollection
 from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch, Rectangle
 
 from dal_monte_2022_analysis.ephys.plotting.fixation_mrnn_audit import CORRECTED_COLOR, REPORTED_COLOR, _panel
@@ -105,35 +107,59 @@ def draw_boxes(ax, entries: Sequence[Mapping[str, object]], *, width: float = 0.
                        lw=0, zorder=3)
 
 
-def draw_violins(ax, entries: Sequence[Mapping[str, object]], *, width: float = 0.7) -> None:
-    """Violins for large groups, with the median as a white bar and the quartiles as a dark box."""
+def draw_bars(ax, entries: Sequence[Mapping[str, object]], *, width: float = 0.26, points: bool = True, seed: int = 0,
+              point_size: float = 6.0) -> None:
+    """Bars for small groups: the mean, a capless SEM error bar, and every value as a dot.
+
+    Same entry schema as :func:`draw_boxes`. A filled bar is the group's colour; an unfilled
+    one is white with a coloured edge (the dense network beside a constrained one).
+    """
+    rng = np.random.default_rng(seed)
     for entry in entries:
         values = np.asarray(entry["values"], dtype=float)
         values = values[np.isfinite(values)]
-        if values.size < 3:
+        if values.size == 0:
             continue
         color = entry["color"]
         filled = bool(entry.get("filled", True))
-        parts = ax.violinplot([values], positions=[float(entry["x"])], widths=width, showextrema=False, showmedians=False)
-        for body in parts["bodies"]:
-            body.set_facecolor(color if filled else "white")
-            body.set_edgecolor(color)
-            body.set_alpha(0.9 if filled else 1.0)
-            body.set_linewidth(0.9)
-        q1, med, q3 = np.percentile(values, [25, 50, 75])
-        ax.plot([entry["x"]] * 2, [q1, q3], color=INK if filled else color, lw=2.0, solid_capstyle="butt", zorder=4)
-        ax.scatter([entry["x"]], [med], s=9, color="white" if filled else color, edgecolor=INK if filled else color,
-                   lw=0.6, zorder=5)
+        x = float(entry["x"])
+        mean = float(values.mean())
+        sem = float(values.std(ddof=1) / np.sqrt(values.size)) if values.size > 1 else 0.0
+        ax.bar(x, mean, width=width, facecolor=color if filled else "white", edgecolor=color, linewidth=0.9, zorder=2)
+        ax.errorbar(x, mean, yerr=sem, fmt="none", ecolor=INK if filled else color, elinewidth=1.1, capsize=0, zorder=5)
+        if points:
+            jitter = rng.uniform(-width * 0.3, width * 0.3, values.size)
+            size = point_size if values.size <= 20 else point_size * 0.5
+            ax.scatter(x + jitter, values, s=size, color=INK if filled else color, alpha=0.65 if values.size <= 20 else 0.4,
+                       lw=0, zorder=4)
+
+
+def draw_violins(ax, frame: pd.DataFrame, *, x: str, y: str, hue: str, order: Sequence[str], hue_order: Sequence[str],
+                 palette: Mapping[str, str], width: float = 0.8) -> None:
+    """Grouped violins in the project's thesis style: quartile lines inside, cut at the data range, dark edges, full colour.
+
+    Wraps ``seaborn.violinplot`` with the settings the single-unit and population chapters
+    use (``inner="quart"``, ``cut=0``, saturation 1) and darkens the body edges the same way.
+    """
+    sns.violinplot(ax=ax, data=frame, x=x, y=y, hue=hue, order=list(order), hue_order=list(hue_order), palette=dict(palette),
+                   dodge=True, inner="quart", cut=0.0, linewidth=0.8, width=width, saturation=1.0, legend=False)
+    for body in [artist for artist in ax.collections if isinstance(artist, PolyCollection)]:
+        body.set_edgecolor("#222222")
+        body.set_linewidth(0.65)
+        body.set_alpha(1.0)
+    for line in ax.lines:
+        line.set_color("#222222")
 
 
 def mark_contrasts(ax, comparisons: Sequence[tuple[float, float, str]], *, top: float | None = None,
-                   fontsize: float = 6.5, pad_frac: float = 0.04, step_frac: float = 0.085) -> None:
-    """Brackets with stars for the comparisons handed in -- callers pass only the significant ones.
+                   fontsize: float = 6.5, pad_frac: float = 0.04, step_frac: float = 0.085, linewidth: float = 1.2) -> None:
+    """Bars with stars for the comparisons handed in -- callers pass only the significant ones.
 
-    Brackets are stacked so overlapping spans sit on different levels. They are drawn in
-    axes-fraction y above ``top`` (the highest data value in the panel; the axes' data
-    limit when not given), and the y-limits are extended to make room, so the brackets
-    never enter the data limits themselves and shared axes stay intact.
+    A comparison is a plain horizontal bar (no end ticks) with its stars above. Bars are
+    stacked so overlapping spans sit on different levels. They are drawn in axes-fraction y
+    above ``top`` (the highest data value in the panel; the axes' data limit when not
+    given), and the y-limits are extended to make room, so the bars never enter the data
+    limits themselves and shared axes stay intact.
     """
     import matplotlib.transforms as mtransforms
 
@@ -161,9 +187,8 @@ def mark_contrasts(ax, comparisons: Sequence[tuple[float, float, str]], *, top: 
     trans = mtransforms.blended_transform_factory(ax.transData, ax.transAxes)
     for lo, hi, level, label in levels:
         y = top_frac + pad_frac + level * step_frac
-        tick = 0.012
-        ax.plot([lo, lo, hi, hi], [y - tick, y, y, y - tick], color=INK, lw=0.7, transform=trans, clip_on=False, zorder=6)
-        ax.text((lo + hi) / 2, y + tick * 0.3, label, ha="center", va="bottom", fontsize=fontsize, color=INK, transform=trans, clip_on=False)
+        ax.plot([lo, hi], [y, y], color=INK, lw=linewidth, solid_capstyle="butt", transform=trans, clip_on=False, zorder=6)
+        ax.text((lo + hi) / 2, y + 0.004, label, ha="center", va="bottom", fontsize=fontsize, color=INK, transform=trans, clip_on=False)
 
 
 def contrasts_to_marks(table: pd.DataFrame, position: Callable[[pd.Series, str], float]) -> list[tuple[float, float, str]]:
@@ -478,14 +503,15 @@ def plot_ladder_traces(
 
     One row per rung, one column per fixation type. Each component is rescaled to its own
     target range (min to max over the window, the same range at every rung), so all three
-    fill the panel and a misfit is read as a gap between the thin dark target line and the
-    thick coloured model line. The three components are three shades of the fixation type's
-    colour (dark to light) for the model and three greys for the target. The number at the
-    right of each panel is the component's $R^2$, averaged over the fits at the rung.
+    fill the panel. The target is the prominent trace -- thick, in three shades of the
+    fixation type's colour (dark to light) -- and the reconstruction the thin grey one in
+    the same order, so the eye follows the expected trace and reads the fit as how closely
+    the grey line tracks it. The number at the right of each panel is the component's
+    $R^2$, averaged over the fits at the rung.
     """
     conditions = [c for c in CONDITION_ORDER if c in set(traces["condition"])]
     indices = sorted(traces["index"].unique())
-    target_shades = [INK, "#6a6a6a", "#a8a8a8"][: len(indices)]
+    model_shades = ["#2b2b2b", "#6a6a6a", "#a3a3a3"][: len(indices)]
     lo = traces.groupby(["condition", "index"])["observed"].min()
     hi = traces.groupby(["condition", "index"])["observed"].max()
     fig, axes = plt.subplots(len(rungs), len(conditions), figsize=figsize, sharex=True, sharey=True, squeeze=False)
@@ -501,8 +527,8 @@ def plot_ladder_traces(
                 scale = float(hi[(condition, index)] - lo[(condition, index)]) or 1.0
                 observed = (part["observed"] - lo[(condition, index)]) / scale
                 predicted = (part["predicted"] - lo[(condition, index)]) / scale
-                ax.plot(part["time_s"], predicted, color=shades[k], lw=1.7, alpha=0.95, zorder=3 + k)
-                ax.plot(part["time_s"], observed, color=target_shades[k], lw=0.75, zorder=6 + k)
+                ax.plot(part["time_s"], observed, color=shades[k], lw=1.8, alpha=0.95, zorder=3 + k)
+                ax.plot(part["time_s"], predicted, color=model_shades[k], lw=0.8, zorder=6 + k)
                 if "r2_mean" in part.columns:
                     ax.text(0.55, 0.98 - 0.15 * k, f"{part['r2_mean'].iloc[0]:.2f}", ha="left", va="top", fontsize=5.6, color=shades[k])
             ax.axvline(0.0, color=MUTED_INK, lw=0.5, ls=":", zorder=1)
@@ -520,8 +546,8 @@ def plot_ladder_traces(
             if i == len(rungs) - 1:
                 ax.set_xlabel("time from fixation (s)")
             ax.tick_params(labelsize=6.5)
-    handles = [plt.Line2D([], [], color=INK, lw=0.75)] + [plt.Line2D([], [], color=c, lw=1.7) for c in condition_shades("face_interactive", len(indices))]
-    labels = ["target (greys, same order)"] + [f"model, PC{int(k) + 1}" for k in indices]
+    handles = [plt.Line2D([], [], color=c, lw=1.8) for c in condition_shades("face_interactive", len(indices))] + [plt.Line2D([], [], color=model_shades[1], lw=0.8)]
+    labels = [f"target, PC{int(k) + 1}" for k in indices] + ["model (greys, same order)"]
     fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=len(labels), fontsize=6, frameon=False,
                title="each component on its own min–max scale; number: component $R^2$ at that rung", title_fontsize=6)
     fig.tight_layout(h_pad=0.5, w_pad=0.5, rect=(0, 0, 1, 0.95))
@@ -613,24 +639,36 @@ def condition_legend(ax, conditions: Sequence[str] = CONDITION_ORDER, *, loc: st
 
 def _grouped_condition_boxes(ax, frame: pd.DataFrame, *, value: str, group_col: str, groups: Sequence[str],
                              gap_tests: pd.DataFrame | None = None, gap_group_col: str | None = None,
-                             width: float = 0.22, labels: Mapping[str, str] | None = None, ylabel: str = "",
+                             width: float = 0.26, labels: Mapping[str, str] | None = None, ylabel: str = "",
                              legend: bool = True, label_fontsize: float = 6.4, rotation: float = 0.0,
-                             ylim: tuple[float, float] | None = None, top: float | None = None):
-    """Three fixation-type boxes per group, with the significant fixation-type contrasts bracketed."""
+                             ylim: tuple[float, float] | None = None, top: float | None = None, style: str = "bar",
+                             filled_by: Mapping[str, bool] | None = None):
+    """Three fixation-type marks per group -- bars (mean, SEM, every fit a dot) or boxes -- with the significant contrasts marked.
+
+    ``filled_by`` maps a group to whether its marks are filled (the dense network is drawn
+    hollow wherever it sits beside a constrained one). Bars start the y-axis at zero.
+    """
     labels = dict(labels or {})
+    filled_by = dict(filled_by or {})
     conditions = [c for c in CONDITION_ORDER if c in set(frame["condition"])]
     entries = []
     for g, group in enumerate(groups):
         for condition in conditions:
             block = frame[(frame[group_col] == group) & (frame["condition"] == condition)]
-            entries.append({"x": g + CONDITION_OFFSETS[condition], "values": block[value].to_numpy(float), "color": CONDITION_COLORS[condition]})
-    draw_boxes(ax, entries, width=width)
+            entries.append({"x": g + CONDITION_OFFSETS[condition], "values": block[value].to_numpy(float),
+                            "color": CONDITION_COLORS[condition], "filled": filled_by.get(group, True)})
+    if style == "bar":
+        draw_bars(ax, entries, width=width)
+    else:
+        draw_boxes(ax, entries, width=width)
     ax.set_xticks(range(len(groups)))
     ax.set_xticklabels([labels.get(g, g) for g in groups], fontsize=label_fontsize, rotation=rotation,
                        ha="right" if rotation else "center")
     ax.set_xlim(-0.6, len(groups) - 0.4)
     if ylim is not None:
         ax.set_ylim(*ylim)
+    elif style == "bar":
+        ax.set_ylim(bottom=0.0)
     ax.set_ylabel(ylabel)
     nice_axis(ax)
     if legend:
@@ -654,27 +692,26 @@ def plot_architecture_cost(
 ):
     """Removing or squeezing one kind of connection, against the dense network.
 
-    (a) cost per fixation type for each constraint; brackets mark fixation-type gaps the
-    constraint widens significantly (Welch's t on per-seed gaps against the dense fits,
-    Holm within the panel). (b) the same cost pooled over fixation types, one value per
-    seed, with Welch's t between constraints.
+    (a) cost per fixation type for each constraint (bars: mean and SEM; dots: fits); the
+    marks are fixation-type gaps the constraint widens significantly (Welch's t on
+    per-seed gaps against the dense fits, Holm within the panel). (b) the same cost pooled
+    over fixation types, one value per seed, with Welch's t between constraints.
     """
     fig, axes = plt.subplots(1, 2, figsize=figsize, gridspec_kw={"width_ratios": [1.5, 1.0]})
     ax = axes[0]
     _grouped_condition_boxes(ax, cost_per_seed, value="cost", group_col="arm", groups=list(constraints), gap_tests=gap_tests,
                              labels=ARCHITECTURE_LABELS, ylabel="cost vs dense network  ($\\Delta R^2$ / ceiling)")
-    ax.axhline(0, color=INK, lw=0.6, zorder=1)
     _panel(ax, "a")
 
     ax = axes[1]
     pooled = cost_per_seed.groupby(["arm", "seed"])["cost"].mean().reset_index()
     entries = [{"x": k, "values": pooled.loc[pooled["arm"] == c, "cost"].to_numpy(float), "color": NEUTRAL_EDGE_COLOR}
                for k, c in enumerate(constraints)]
-    draw_boxes(ax, entries, width=0.5)
-    ax.axhline(0, color=INK, lw=0.6, zorder=1)
+    draw_bars(ax, entries, width=0.55)
     ax.set_xticks(range(len(constraints)))
     ax.set_xticklabels([SHORT_CONSTRAINT_LABELS.get(c, c) for c in constraints], fontsize=6.4)
     ax.set_xlim(-0.6, len(constraints) - 0.4)
+    ax.set_ylim(bottom=0.0)
     ax.set_ylabel("cost, fixation types pooled")
     nice_axis(ax)
     index = {c: k for k, c in enumerate(constraints)}
@@ -738,11 +775,10 @@ def plot_rank_grid_composite(
     if not within_m.empty:
         ax.errorbar(x[: len(within_m)], within_m["mean"], yerr=within_m["std"], color=WITHIN_COLOR, marker="o", ms=4, lw=1.4,
                     capsize=2, label="within-region rank $r_w$\n(inter-regional dense)")
-    ax.axhline(dense_value, color=MUTED_INK, lw=0.8, ls=":", label="dense")
-    ax.axhline(bar, color=INK, lw=0.7, ls="--", label=f"adequacy bar {bar}")
+    ax.axhline(dense_value, color=INK, lw=1.3, ls="--", label="dense network", zorder=1)
     ax.set_xticks(x)
     ax.set_xticklabels([str(r) for r in ranks])
-    ax.set_xlabel("rank of the squeezed side")
+    ax.set_xlabel("rank of the bottleneck")
     ax.set_ylabel("worst fixation type, $R^2$ / ceiling")
     ax.legend(loc="center left", fontsize=5.6)
     nice_axis(ax)
@@ -782,8 +818,7 @@ def plot_bottleneck_cost_by_condition(
     """
     fig, axes = plt.subplots(1, 2, figsize=figsize)
     top = float(cost_per_seed["cost"].max())
-    low = min(0.0, float(cost_per_seed["cost"].min()))
-    ylim = (low - 0.03 * (top - low), top * 1.02)
+    ylim = (0.0, top * 1.02)
     for ax, side, letter, xlabel in ((axes[0], "inter-regional", "a", "inter-regional rank $r_c$  (within-region dense)"),
                                      (axes[1], "within-region", "b", "within-region rank $r_w$  (inter-regional dense)")):
         block = cost_per_seed[cost_per_seed["side"] == side].copy()
@@ -795,7 +830,6 @@ def plot_bottleneck_cost_by_condition(
         _grouped_condition_boxes(ax, block, value="cost", group_col="group", groups=groups, gap_tests=tests, gap_group_col="group",
                                  labels={g: str(g) for g in groups}, ylabel="cost vs dense network  ($\\Delta R^2$ / ceiling)" if letter == "a" else "",
                                  legend=letter == "a", label_fontsize=7, ylim=ylim, top=top)
-        ax.axhline(0, color=INK, lw=0.6, zorder=1)
         ax.set_xlabel(xlabel)
         if letter == "b":
             ax.tick_params(labelleft=False)
@@ -843,9 +877,9 @@ def plot_ensemble_cost(
 
     ax = axes[1]
     block = cost_per_seed[cost_per_seed["arm"] == constrained]
-    draw_boxes(ax, [{"x": j, "values": block.loc[block["condition"] == c, "cost"].to_numpy(float), "color": CONDITION_COLORS[c]}
-                    for j, c in enumerate(conditions)], width=0.5)
-    ax.axhline(0, color=INK, lw=0.6, zorder=1)
+    draw_bars(ax, [{"x": j, "values": block.loc[block["condition"] == c, "cost"].to_numpy(float), "color": CONDITION_COLORS[c]}
+                   for j, c in enumerate(conditions)], width=0.6)
+    ax.set_ylim(bottom=0.0)
     ax.set_xticks(range(len(conditions)))
     ax.set_xticklabels([CONDITION_SHORT_LABELS[c] for c in conditions])
     ax.set_ylabel("cost of the constraint\n($\\Delta R^2$ / ceiling vs dense)")
@@ -880,7 +914,6 @@ def plot_constraint_cost_summary(
     groups = [c for c in constraints if c in set(cost_per_seed["arm"])]
     _grouped_condition_boxes(ax, cost_per_seed, value="cost", group_col="arm", groups=groups, gap_tests=gap_tests,
                              labels=SHORT_CONSTRAINT_LABELS, ylabel="cost vs dense network  ($\\Delta R^2$ / ceiling)", label_fontsize=6.4)
-    ax.axhline(0, color=INK, lw=0.6, zorder=1)
     fig.tight_layout()
     return fig
 
@@ -915,18 +948,19 @@ def plot_pair_lesion_summary(
     ax = axes[0]
     entries = []
     for j, pair in enumerate(pairs):
-        for arm, dx in zip(arms, (-0.19, 0.19) if len(arms) == 2 else (0.0,)):
+        for arm, dx in zip(arms, (-0.2, 0.2) if len(arms) == 2 else (0.0,)):
             block = pair_share[(pair_share["arm"] == arm) & (pair_share["pair"] == pair)]
             entries.append({"x": j + dx, "values": block["share"].to_numpy(float), "color": ARM_COLORS[arm], "filled": arm != "dense"})
-    draw_boxes(ax, entries, width=0.3)
-    ax.axhline(1 / 6, color=INK, lw=0.7, ls="--", zorder=1)
+    draw_bars(ax, entries, width=0.36)
+    ax.axhline(1 / 6, color=INK, lw=1.0, ls="--", zorder=1)
     if share_tests is not None and not share_tests.empty:
         for _, row in share_tests[share_tests["significant"]].iterrows():
-            x = pairs.index(row["pair"]) + (-0.19 if row["arm"] == "dense" else 0.19)
+            x = pairs.index(row["pair"]) + (-0.2 if row["arm"] == "dense" else 0.2)
             own = pair_share[(pair_share["arm"] == row["arm"]) & (pair_share["pair"] == row["pair"])]["share"].max()
             ax.text(x, own + 0.004, row["stars"], ha="center", va="bottom", fontsize=6)
     ax.set_xticks(range(len(pairs)))
     ax.set_xticklabels(pairs, rotation=30, ha="right", fontsize=6.2)
+    ax.set_ylim(bottom=0.0)
     ax.set_ylabel("share of pair-lesion damage\n(fixation types pooled)")
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=ARM_COLORS["dense"], lw=0.8),
                plt.Rectangle((0, 0), 1, 1, facecolor=ARM_COLORS["constrained"], edgecolor="none")]
@@ -939,21 +973,21 @@ def plot_pair_lesion_summary(
     labels = {"directed": "one pathway", "bidirectional": "one pair", "within-region": "one own block", "isolation": "one region isolated"}
     entries = []
     for j, family in enumerate(families):
-        for arm, dx in zip(arms, (-0.19, 0.19) if len(arms) == 2 else (0.0,)):
+        for arm, dx in zip(arms, (-0.2, 0.2) if len(arms) == 2 else (0.0,)):
             block = damage_per_fit[(damage_per_fit["arm"] == arm) & (damage_per_fit["family"] == family)]
             entries.append({"x": j + dx, "values": block["damage"].to_numpy(float), "color": ARM_COLORS[arm], "filled": arm != "dense"})
-            ax.scatter([j + dx], [block["control"].mean()], s=40, marker="_", color=INK, lw=1.3, zorder=5)
-    draw_boxes(ax, entries, width=0.3)
+            ax.plot([j + dx - 0.18, j + dx + 0.18], [block["control"].mean()] * 2, color=INK, lw=1.4, zorder=6)
+    draw_bars(ax, entries, width=0.36)
     if damage_tests is not None and not damage_tests.empty:
         for _, row in damage_tests[damage_tests["significant"]].iterrows():
-            x = families.index(row["family"]) + (-0.19 if row["arm"] == "dense" else 0.19)
+            x = families.index(row["family"]) + (-0.2 if row["arm"] == "dense" else 0.2)
             own = damage_per_fit[(damage_per_fit["arm"] == row["arm"]) & (damage_per_fit["family"] == row["family"])]
             ax.text(x, float(max(own["damage"].max(), own["control"].max())) + 0.15, row["stars"], ha="center", va="bottom", fontsize=5.6)
     ax.set_xticks(range(len(families)))
     ax.set_xticklabels([labels[f] for f in families], fontsize=6.0, rotation=25, ha="right")
     ax.set_ylim(0, float(max(damage_per_fit["damage"].max(), damage_per_fit["control"].max())) * 1.18)
     ax.set_ylabel("damage: added squared error /\ntarget's total variance")
-    ax.scatter([], [], s=40, marker="_", color=INK, lw=1.3, label="matched random-weight control")
+    ax.plot([], [], color=INK, lw=1.4, label="matched random-weight control")
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), fontsize=5.6, frameon=False)
     nice_axis(ax)
     _panel(ax, "b")
@@ -962,10 +996,12 @@ def plot_pair_lesion_summary(
     kinds = [k for k in ("directed", "bidirectional", "within-region", "isolation") if k in set(ranking["lesion_kind"])]
     for k, arm in enumerate(arms):
         block = ranking[ranking["arm"] == arm].set_index("lesion_kind").loc[kinds]
-        x = np.arange(len(kinds)) + (k - 0.5) * 0.32
-        ax.bar(x, block["tau_mean"], width=0.3, facecolor=ARM_COLORS[arm] if arm != "dense" else "white",
-               edgecolor=ARM_COLORS[arm], lw=0.8, zorder=2, label=arm)
-        ax.scatter(x, block["null_p95"], s=40, marker="_", color=INK, lw=1.3, zorder=4, label="permutation null, 95th pct." if k == 0 else None)
+        x = np.arange(len(kinds)) + (k - 0.5) * 0.4
+        ax.bar(x, block["tau_mean"], width=0.36, facecolor=ARM_COLORS[arm] if arm != "dense" else "white",
+               edgecolor=ARM_COLORS[arm], lw=0.9, zorder=2, label=arm)
+        for xi, null in zip(x, block["null_p95"]):
+            ax.plot([xi - 0.18, xi + 0.18], [null] * 2, color=INK, lw=1.4, zorder=4)
+    ax.plot([], [], color=INK, lw=1.4, label="permutation null, 95th pct.")
     ax.axhline(0, color=INK, lw=0.6, zorder=1)
     ax.set_xticks(range(len(kinds)))
     ax.set_xticklabels([labels[f] for f in kinds], fontsize=6.0, rotation=25, ha="right")
@@ -1089,50 +1125,37 @@ DYNAMICS_LABELS = {
     "nearest_distance_to_trajectory_end": "end of window → nearest\nfixed point (state extents)",
     "network_n_expanding": "expanding modes of the local\nlinearisation along the trajectory",
 }
+DYNAMICS_MAIN: tuple[str, ...] = ("state_extent", "state_speed", "network_n_expanding")
 
 
 def plot_dynamics_summary(
     long: pd.DataFrame,
     tests: pd.DataFrame | None = None,
     *,
-    properties: Sequence[str] = tuple(DYNAMICS_LABELS),
-    figsize: tuple[float, float] = (7.4, 4.6),
+    properties: Sequence[str] = DYNAMICS_MAIN,
+    figsize: tuple[float, float] = (7.4, 2.6),
 ):
-    """Six per-fixation-type dynamical quantities, dense (white) and constrained (filled) boxes, every fit a dot.
+    """Per-fixation-type dynamical quantities, grouped by arm so the fixation types sit side by side.
 
-    ``tests`` holds paired contrasts between fixation types within each arm, keyed by
-    ``property`` and ``arm``; significant ones are bracketed.
+    One panel per property; within each, the dense network's three fixation types on the
+    left and the constrained network's on the right, boxes with every fit a dot. ``tests``
+    holds paired contrasts between fixation types within each arm, keyed by ``property``
+    and ``arm``; significant ones are marked.
     """
     arms = [a for a in ("dense", "constrained") if a in set(long["arm"])]
-    offsets = dict(zip(arms, (-0.2, 0.2) if len(arms) == 2 else (0.0,)))
-    n_cols = 3
-    n_rows = int(np.ceil(len(properties) / n_cols))
-    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize, squeeze=False)
+    fig, axes = plt.subplots(1, len(properties), figsize=figsize, squeeze=False)
     for k, prop in enumerate(properties):
-        ax = axes[k // n_cols][k % n_cols]
+        ax = axes[0][k]
         block = long[long["property"] == prop]
-        entries = []
-        for j, condition in enumerate(CONDITION_ORDER):
-            for arm in arms:
-                part = block[(block["condition"] == condition) & (block["arm"] == arm)]
-                entries.append({"x": j + offsets[arm], "values": part["value"].to_numpy(float), "color": CONDITION_COLORS[condition],
-                                "filled": arm != "dense"})
-        draw_boxes(ax, entries, width=0.32)
-        ax.set_xticks(range(len(CONDITION_ORDER)))
-        ax.set_xticklabels([CONDITION_SHORT_LABELS[c] for c in CONDITION_ORDER], fontsize=6.4)
-        ax.set_ylabel(DYNAMICS_LABELS.get(prop, prop), fontsize=6.6)
-        nice_axis(ax)
-        if tests is not None and not tests.empty:
-            rows = tests[tests["property"] == prop]
-            index = {c: i for i, c in enumerate(CONDITION_ORDER)}
-            mark_contrasts(ax, contrasts_to_marks(rows, lambda row, side: index[row[side]] + offsets[row["arm"]]),
-                           top=float(block["value"].max()))
+        panel_tests = tests[tests["property"] == prop] if tests is not None and not tests.empty else None
+        _grouped_condition_boxes(ax, block, value="value", group_col="arm", groups=arms, gap_tests=panel_tests, gap_group_col="arm",
+                                 labels={"dense": "dense", "constrained": "constrained"}, ylabel=DYNAMICS_LABELS.get(prop, prop),
+                                 legend=False, label_fontsize=7, style="box", width=0.24, top=float(block["value"].max()))
         _panel(ax, "abcdefghi"[k])
-    for k in range(len(properties), n_rows * n_cols):
-        axes[k // n_cols][k % n_cols].axis("off")
-    handles = [plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=INK, lw=0.8), plt.Rectangle((0, 0), 1, 1, facecolor=INK, edgecolor="none")]
-    fig.legend(handles, ["dense", "constrained"], loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=6.5, handlelength=1.0, frameon=False)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    handles = [plt.Rectangle((0, 0), 1, 1, facecolor=CONDITION_COLORS[c], edgecolor="none") for c in CONDITION_ORDER]
+    fig.legend(handles, [CONDITION_SHORT_LABELS[c] for c in CONDITION_ORDER], loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=3,
+               fontsize=6.5, handlelength=1.0, frameon=False)
+    fig.tight_layout(rect=(0, 0, 1, 0.93))
     return fig
 
 
@@ -1144,34 +1167,32 @@ def plot_lesion_extent_violins(
 ):
     """Change in state extent after a lesion, relative to intact: violins per fixation type, pair lesions and isolations, both arms.
 
-    Each violin pools every (fit, lesion) of that kind. Brackets mark significant contrasts
-    between fixation types (paired t by fit × lesion, Holm within the panel).
+    Each violin pools every (fit, lesion) of that kind, in the project's violin style
+    (quartile lines inside, cut at the data range). Marks are significant contrasts between
+    fixation types (paired t by fit × lesion, Holm within the panel).
     """
     arms = [a for a in ("dense", "constrained") if a in set(lesion_extent["arm"])]
     kinds = [("bidirectional", "pair lesions"), ("isolation", "region isolated")]
+    kind_order = [k for k, _ in kinds]
     fig, axes = plt.subplots(1, len(arms), figsize=figsize, sharey=True, squeeze=False)
     for j, arm in enumerate(arms):
         ax = axes[0][j]
-        entries = []
-        for g, (kind, _) in enumerate(kinds):
-            for condition in CONDITION_ORDER:
-                block = lesion_extent[(lesion_extent["arm"] == arm) & (lesion_extent["lesion_kind"] == kind) & (lesion_extent["condition"] == condition)]
-                entries.append({"x": g + CONDITION_OFFSETS[condition], "values": block["rel_state_extent"].to_numpy(float),
-                                "color": CONDITION_COLORS[condition], "filled": arm != "dense"})
-        draw_violins(ax, entries, width=0.25)
+        block = lesion_extent[(lesion_extent["arm"] == arm) & (lesion_extent["lesion_kind"].isin(kind_order))]
+        draw_violins(ax, block, x="lesion_kind", y="rel_state_extent", hue="condition", order=kind_order, hue_order=CONDITION_ORDER,
+                     palette=CONDITION_COLORS, width=0.8)
         ax.axhline(0, color=INK, lw=0.6, zorder=1)
         ax.set_xticks(range(len(kinds)))
         ax.set_xticklabels([label for _, label in kinds])
         ax.set_xlim(-0.6, len(kinds) - 0.4)
+        ax.set_xlabel("")
         ax.set_title(f"{arm} network", fontsize=8)
-        if j == 0:
-            ax.set_ylabel("state extent after the lesion,\nrelative to intact (Δ / intact)")
+        ax.set_ylabel("state extent after the lesion,\nrelative to intact (Δ / intact)" if j == 0 else "")
         nice_axis(ax)
         if tests is not None and not tests.empty:
             rows = tests[tests["arm"] == arm]
             kind_index = {kind: g for g, (kind, _) in enumerate(kinds)}
             mark_contrasts(ax, contrasts_to_marks(rows, lambda row, side: kind_index[row["lesion_kind"]] + CONDITION_OFFSETS[row[side]]),
-                           top=float(lesion_extent[lesion_extent["arm"] == arm]["rel_state_extent"].max()))
+                           top=float(block["rel_state_extent"].max()))
         _panel(ax, "ab"[j])
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor=CONDITION_COLORS[c], edgecolor="none") for c in CONDITION_ORDER]
     fig.legend(handles, [CONDITION_SHORT_LABELS[c] for c in CONDITION_ORDER], loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=3,
@@ -1181,8 +1202,8 @@ def plot_lesion_extent_violins(
 
 
 __all__ = [
-    "ARCHITECTURE_LABELS", "CONDITION_OFFSETS", "DYNAMICS_LABELS", "RUNG_LABELS", "SHORT_CONSTRAINT_LABELS",
-    "condition_shades", "contrasts_to_marks", "draw_boxes", "draw_violins", "mark_contrasts",
+    "ARCHITECTURE_LABELS", "CONDITION_OFFSETS", "DYNAMICS_LABELS", "DYNAMICS_MAIN", "RUNG_LABELS", "SHORT_CONSTRAINT_LABELS",
+    "condition_shades", "contrasts_to_marks", "draw_bars", "draw_boxes", "draw_violins", "mark_contrasts",
     "plot_architecture_cost", "plot_bottleneck_cost_by_condition", "plot_chapter_schematic", "plot_constraint_cost_summary",
     "plot_dynamics_summary", "plot_ensemble_cost", "plot_ladder_summary", "plot_ladder_traces", "plot_lesion_extent_violins",
     "plot_lesion_spectra_clouds", "plot_lesion_spectra_distance", "plot_manipulation_schematic", "plot_pair_lesion_summary",

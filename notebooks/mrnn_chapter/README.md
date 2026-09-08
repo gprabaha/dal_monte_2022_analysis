@@ -21,14 +21,19 @@ hour to recompute, and the raw eigenvalues of the two representative fits) and w
 figures to `plots/final_04_chapter/`; its code is
 `src/.../ephys/{analysis,plotting}/fixation_mrnn_chapter.py`.
 
-Chapter figure conventions (set by the author's review of the first draft): groups of five to
-ten fits are box plots with every fit a dot, larger groups are violins; no horizontal grid
-lines, only reference values (zero, chance, the dense network, the selection bar where a
-selection is made); comparisons are paired t within an arm, Welch's t between arms, the
+Chapter figure conventions (set by the author's review of the first two drafts): grouped
+fixation-type comparisons are bars (mean, capless SEM error bar) with every fit a dot and
+the y-axis from zero; a single group compared between arms is a box plot with dots; groups
+of forty or more values are violins in the project's seaborn style (`inner="quart"`,
+`cut=0`, dark edges); no horizontal grid lines, only reference values (chance, the dense
+network, the selection bar where a selection is made — never a line at zero, the axis
+starts there instead); comparisons are paired t within an arm, Welch's t between arms, the
 "widens the gap" interaction as Welch's t on per-fit gaps against the dense fits, Holm
-within each panel, and **only significant comparisons are marked**. "Cell" is avoided
-because the units are neurons: a region × fixation-type block is a *combination*, a point
-of the rank grid a *configuration*.
+within each panel, and **only significant comparisons are marked**, as a plain thick bar
+without end ticks and stars above. In trace figures the target is the prominent coloured
+trace and the model the thin grey one. "Cell" is avoided because the units are neurons: a
+region × fixation-type block is a *combination*, a point of the rank grid a
+*configuration*.
 
 ## What changed from the rebuild, and why
 
