@@ -656,11 +656,11 @@ def compare_conditions(
     return result.reset_index(drop=True)
 
 
-def join_with_noise_correlation(
+def join_with_spike_correlation(
     pairs: pd.DataFrame,
     settings: SignalCorrelationSettings,
     *,
-    noise_metric: str = "circular_shift_mean_excess_pm250ms",
+    spike_metric: str = "circular_shift_mean_excess_pm250ms",
     signal_metric: str = WINDOW_METRIC,
 ) -> pd.DataFrame:
     """Match each pair to its spike-coordination measurement, where one exists.
@@ -699,7 +699,7 @@ def join_with_noise_correlation(
             noise["date"], noise["unit_uuid_1"], noise["unit_uuid_2"]
         )
     ]
-    lookup = noise.set_index(["match_key", "condition"])[noise_metric].sort_index()
+    lookup = noise.set_index(["match_key", "condition"])[spike_metric].sort_index()
 
     rows: list[dict] = []
     for _, row in pairs.iterrows():
@@ -720,22 +720,22 @@ def join_with_noise_correlation(
                     "region_pair": row["region_pair"],
                     "condition": condition,
                     "signal": float(row[f"{condition}_{signal_metric}"]),
-                    "noise": float(value if np.isscalar(value) else np.asarray(value).ravel()[0]),
+                    "spike_correlation": float(value if np.isscalar(value) else np.asarray(value).ravel()[0]),
                 }
             )
     return pd.DataFrame(rows)
 
 
-def correlate_signal_with_noise(joined: pd.DataFrame) -> pd.DataFrame:
+def correlate_signal_with_spike_correlation(joined: pd.DataFrame) -> pd.DataFrame:
     """Spearman correlation between signal and noise correlation, per group."""
     from scipy.stats import spearmanr
 
     rows: list[dict] = []
     for keys, group in joined.groupby(["scope", "region_pair", "condition"], observed=True):
-        finite = group.dropna(subset=["signal", "noise"])
+        finite = group.dropna(subset=["signal", "spike_correlation"])
         if len(finite) < 50:
             continue
-        rho, p_value = spearmanr(finite["signal"], finite["noise"])
+        rho, p_value = spearmanr(finite["signal"], finite["spike_correlation"])
         rows.append(
             {
                 "scope": str(keys[0]),

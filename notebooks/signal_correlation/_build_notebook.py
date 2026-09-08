@@ -45,7 +45,7 @@ print("figures ->", FIGURE_DIR)
 '''
 
 SCHEMATIC = '''
-fig, paths = viz.plot_signal_vs_noise_schematic(figs)
+fig, paths = viz.plot_signal_vs_spike_schematic(figs)
 display(Image(filename=str(paths["png"])))
 '''
 
@@ -106,13 +106,13 @@ display(Image(filename=str(paths["png"])))
 '''
 
 SIGNAL_NOISE = '''
-joined = sc.join_with_noise_correlation(pairs, settings)
+joined = sc.join_with_spike_correlation(pairs, settings)
 print(f"pairs matched to a spike-coordination measurement: {len(joined):,}")
 
-correlations = sc.correlate_signal_with_noise(joined)
+correlations = sc.correlate_signal_with_spike_correlation(joined)
 display(correlations.round(4))
 
-fig, paths = viz.plot_signal_vs_noise(joined, correlations, figs)
+fig, paths = viz.plot_signal_vs_spike_correlation(joined, correlations, figs)
 display(Image(filename=str(paths["png"])))
 '''
 

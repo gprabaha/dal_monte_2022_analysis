@@ -25,11 +25,15 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination imp
     build_zero_lag_diagnostics,
     compare_conditions,
     CONDITION_METRIC,
+    build_recording_counts,
     build_region_pair_inventory,
     compute_condition_coordination,
+    count_significant_pairs,
     drop_zero_lag_artifact_dates,
+    MATCHED_WINDOW_METRIC,
     overlap_bins,
     sufficient_region_pairs,
+    WINDOW_METRIC,
     summarize_coordination,
     test_against_null as run_test_against_null,
     verify_null_identities,
@@ -290,6 +294,8 @@ def _synthetic_pairs(
             rows.append(
                 {
                     "pair_key": f"pair{index}",
+                    "unit_uuid_1": f"unit{index}",
+                    "unit_uuid_2": f"unit{index + n_pairs}",
                     "date": f"0{index % n_dates:03d}2018",
                     "session": str(index % 4),
                     "condition": condition,
@@ -381,6 +387,58 @@ class TestSummariesAndTests(unittest.TestCase):
         self.assertIn("suspected_zero_lag_artifact", diagnostics.columns)
         worst = diagnostics.sort_values("frac_pairs_zero_lag_above", ascending=False)
         self.assertEqual(str(worst.iloc[0]["date"]), target)
+
+
+class TestRecordingCounts(unittest.TestCase):
+    """The counts reported in the chapter's methods have to be countable."""
+
+    def setUp(self):
+        self.pairs = _synthetic_pairs(n_pairs=60)
+
+    def test_counts_pairs_once_not_once_per_condition(self):
+        """A pair recorded in all three conditions is one pair, not three."""
+        counts = build_recording_counts(self.pairs, selective_only=False)
+        self.assertEqual(
+            int(counts["n_pairs"].sum()),
+            self.pairs["pair_key"].nunique(),
+        )
+
+    def test_unit_count_covers_both_members(self):
+        counts = build_recording_counts(self.pairs, selective_only=False)
+        expected = len(
+            set(self.pairs["unit_uuid_1"]) | set(self.pairs["unit_uuid_2"])
+        )
+        # Each synthetic pair has its own two units, and no unit appears in two
+        # region pairs, so the per-group counts add up to the total.
+        self.assertEqual(int(counts["n_units"].sum()), expected)
+
+    def test_selective_filter_shrinks_the_inventory(self):
+        everything = build_recording_counts(self.pairs, selective_only=False)
+        selective = build_recording_counts(self.pairs, selective_only=True)
+        self.assertLess(int(selective["n_pairs"].sum()), int(everything["n_pairs"].sum()))
+
+    def test_significant_pairs_are_fdr_corrected_not_thresholded(self):
+        """Correction has to cost something, or it is not being applied."""
+        pairs = _synthetic_pairs(n_pairs=200, seed=11)
+        result = count_significant_pairs(pairs, z_column="circular_shift_mean_z_pm10ms")
+        self.assertIn("n_significant", result.columns)
+        for row in result.itertuples():
+            group = pairs.loc[
+                (pairs["region_pair"] == row.region_pair)
+                & (pairs["condition"] == row.condition)
+            ]
+            uncorrected = int((group["circular_shift_mean_z_pm10ms"] > 1.96).sum())
+            self.assertLessEqual(row.n_significant, uncorrected)
+
+    def test_chapter_window_metrics_are_excess_not_z(self):
+        """Conditions are compared on a null-corrected excess, never a z."""
+        for metric in (WINDOW_METRIC, MATCHED_WINDOW_METRIC):
+            self.assertIn("excess", metric)
+            self.assertNotIn("_z_", metric)
+        # The condition comparisons use the trial-count-matched column, because
+        # interactive-face fixations outnumber the others roughly six to one.
+        self.assertTrue(MATCHED_WINDOW_METRIC.endswith("_matched"))
+        self.assertEqual(MATCHED_WINDOW_METRIC, WINDOW_METRIC + "_matched")
 
 
 if __name__ == "__main__":

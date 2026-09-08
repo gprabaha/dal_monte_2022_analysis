@@ -68,10 +68,10 @@ signal_traces = {
 }
 print(f"signal: {len(signal):,} pairs from {len(units)} FDR-selective units")
 
-joined = sc.join_with_noise_correlation(
+joined = sc.join_with_spike_correlation(
     signal, signal_settings, signal_metric=sc.WINDOW_METRIC
 )
-correlations = sc.correlate_signal_with_noise(joined)
+correlations = sc.correlate_signal_with_spike_correlation(joined)
 
 display(
     signal.groupby(["scope", "region_pair"], observed=True)
@@ -94,7 +94,7 @@ display(Image(filename=str(paths["png"])))
 
 def noise_cell(scope: str) -> str:
     return f'''
-fig, paths = viz.plot_noise_above_null(noise_traces, figs, scope="{scope}")
+fig, paths = viz.plot_spike_correlation_above_null(noise_traces, figs, scope="{scope}")
 display(Image(filename=str(paths["png"])))
 '''
 

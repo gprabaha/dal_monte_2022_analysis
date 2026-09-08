@@ -63,7 +63,7 @@ def _bare(ax) -> None:
         spine.set_visible(False)
 
 
-def plot_signal_vs_noise_schematic(
+def plot_signal_vs_spike_schematic(
     settings: SignalCorrelationPlotSettings,
     *,
     stem: str = "fig01_signal_vs_noise_schematic",
@@ -287,7 +287,7 @@ def plot_condition_summary(
     return fig, save_thesis_figure(fig, settings, stem)
 
 
-def plot_signal_vs_noise(
+def plot_signal_vs_spike_correlation(
     joined: pd.DataFrame,
     correlations: pd.DataFrame,
     settings: SignalCorrelationPlotSettings,
@@ -301,12 +301,12 @@ def plot_signal_vs_noise(
     )
 
     ax = axes[0]
-    subset = joined.loc[joined["scope"] == "within_region"].dropna(subset=["signal", "noise"])
+    subset = joined.loc[joined["scope"] == "within_region"].dropna(subset=["signal", "spike_correlation"])
     if len(subset):
         sample = subset.sample(min(len(subset), 6000), random_state=0)
         for condition in CONDITION_ORDER:
             part = sample.loc[sample["condition"] == condition]
-            ax.scatter(part["signal"], part["noise"], s=1.6, alpha=0.25,
+            ax.scatter(part["signal"], part["spike_correlation"], s=1.6, alpha=0.25,
                        color=CONDITION_COLORS.get(condition, MUTED_INK),
                        label=condition_label(condition), linewidths=0)
     ax.axhline(0.0, color=MUTED_INK, lw=0.6); ax.axvline(0.0, color=MUTED_INK, lw=0.6)

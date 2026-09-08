@@ -726,6 +726,28 @@ ABOVE_NULL_METRIC = "circular_shift_mean_z_pm10ms"
 #: What the observed (uncorrected) curve is summarised by, in the same units.
 OBSERVED_METRIC = "observed_mean_pm10ms"
 
+#: The window the pair-correlation chapter reports on.
+#:
+#: +-10 ms is the window for "is this pair coordinated at all", because a
+#: monosynaptic or common-input peak lives there and a wider window dilutes it.
+#: The chapter instead compares fixation conditions, and there the question is
+#: how much excess co-firing a condition carries in total, over the same +-250 ms
+#: the signal-correlation analysis uses.  Sharing the window is what lets the two
+#: measures be read against each other rather than merely printed side by side.
+WINDOW_HALF_WIDTH_MS = 250.0
+WINDOW_METRIC = "circular_shift_mean_excess_pm250ms"
+WINDOW_Z_METRIC = "circular_shift_mean_z_pm250ms"
+
+#: The trial-count-matched twin of :data:`WINDOW_METRIC`.
+#:
+#: Interactive-face fixations outnumber the others roughly six to one, and an
+#: excess estimated from more fixations is estimated more precisely, so any
+#: condition contrast run on the unmatched metric is partly a contrast of
+#: sample sizes.  Every condition comparison in the chapter uses the matched
+#: column; the unmatched one is kept for "is there coordination at all", where
+#: no condition is being compared against another.
+MATCHED_WINDOW_METRIC = "circular_shift_mean_excess_pm250ms_matched"
+
 #: Lags treated as "far enough to contain no interaction", used as each pair's
 #: own baseline.  At 200-250 ms nothing plausible is still coupled, so whatever
 #: sits there is that pair's offset rather than its coordination.
@@ -1864,6 +1886,120 @@ def build_pair_inventory(pairs: pd.DataFrame) -> pd.DataFrame:
             }
         )
     return pd.DataFrame(rows).sort_values(["scope", "condition"]).reset_index(drop=True)
+
+
+def build_recording_counts(
+    pairs: pd.DataFrame,
+    *,
+    selective_only: bool = True,
+) -> pd.DataFrame:
+    """How many units, sessions and pairs stand behind each reported group.
+
+    One row per scope and region (or region pair).  ``n_units`` counts distinct
+    units that appear on at least one analysed pair, so it is the number of
+    units this chapter actually uses rather than the number recorded: a
+    selective unit recorded on a day when no second selective unit was recorded
+    contributes no pair and is correctly absent.
+
+    ``pairs_per_session`` is reported as a median with a range because the
+    distribution is very skewed -- pair count grows with the square of the
+    simultaneously recorded units, so a handful of dense sessions supply a large
+    share of the pairs, and a mean would hide that.
+    """
+    frame = pairs.copy()
+    if "scope" not in frame.columns:
+        frame["scope"] = np.where(frame["same_region"], "within_region", "cross_region")
+    if selective_only and "both_selective" in frame.columns:
+        frame = frame.loc[frame["both_selective"]]
+    # One row per pair, not per pair-condition: a pair recorded in all three
+    # conditions is one pair.
+    unique = frame.drop_duplicates(subset=["pair_key"])
+
+    rows: list[dict] = []
+    for (scope, region_pair), group in unique.groupby(["scope", "region_pair"], observed=True):
+        units = set(group["unit_uuid_1"].astype(str)) | set(group["unit_uuid_2"].astype(str))
+        per_session = group.groupby(["date", "session"], observed=True).size()
+        rows.append(
+            {
+                "scope": str(scope),
+                "region_pair": str(region_pair),
+                "n_units": int(len(units)),
+                "n_dates": int(group["date"].nunique()),
+                "n_sessions": int(len(per_session)),
+                "n_pairs": int(len(group)),
+                "median_pairs_per_session": float(np.median(per_session)),
+                "min_pairs_per_session": int(per_session.min()),
+                "max_pairs_per_session": int(per_session.max()),
+                "median_n_fixations": float(np.median(frame.loc[group.index, "n_fixations"]))
+                if "n_fixations" in frame.columns
+                else np.nan,
+            }
+        )
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    return result.sort_values(["scope", "n_pairs"], ascending=[True, False]).reset_index(
+        drop=True
+    )
+
+
+def count_significant_pairs(
+    pairs: pd.DataFrame,
+    *,
+    z_column: str = ABOVE_NULL_METRIC,
+    group_columns: Sequence[str] = ("scope", "region_pair", "condition"),
+    alpha: float = 0.05,
+) -> pd.DataFrame:
+    """How many individual pairs sit above the circular-shift null.
+
+    Each pair carries a z-score of its observed excess against the spread of its
+    own null draws.  That z is converted to a one-sided normal p-value and
+    Benjamini-Hochberg corrected **across the pairs within each group**, so
+    ``n_significant`` is the number of pairs that survive correction rather than
+    the number that happened to clear 1.96.
+
+    The default z is the **+-10 ms** one, not the chapter's +-250 ms window.
+    Whether one pair is coordinated is a question about a sharp peak, and
+    averaging z over half a second of lags where nothing is happening dilutes it
+    to nothing -- run over +-250 ms the answer is zero pairs everywhere, which is
+    a statement about the window rather than about the pairs.
+
+    The normal approximation is the weak step: the null spread is estimated from
+    fifty circular-shift draws, so the statistic is t-like and the tail is
+    slightly heavier than assumed.  The count is therefore mildly optimistic and
+    is reported as a proportion of pairs, which is what it is fit for -- it is
+    not the basis of any claim in the chapter, which rests on the paired
+    condition contrasts instead.
+    """
+    from scipy.stats import norm
+
+    frame = pairs.copy()
+    if "scope" not in frame.columns:
+        frame["scope"] = np.where(frame["same_region"], "within_region", "cross_region")
+
+    rows: list[dict] = []
+    for keys, group in frame.groupby(list(group_columns), observed=True, dropna=False):
+        keys = keys if isinstance(keys, tuple) else (keys,)
+        z_values = group[z_column].to_numpy(dtype=float)
+        finite = z_values[np.isfinite(z_values)]
+        row = dict(zip(group_columns, [str(k) for k in keys]))
+        row["n_pairs"] = int(len(group))
+        row["n_pairs_testable"] = int(finite.size)
+        if finite.size:
+            p_values = norm.sf(finite)
+            reject = _fdr_reject(p_values, alpha=alpha)
+            row["n_significant"] = int(np.sum(reject))
+            row["frac_significant"] = float(np.mean(reject))
+            row["median_z"] = float(np.median(finite))
+        else:
+            row["n_significant"] = 0
+            row["frac_significant"] = np.nan
+            row["median_z"] = np.nan
+        rows.append(row)
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    return result.sort_values(list(group_columns)).reset_index(drop=True)
 
 
 def verify_null_sensitivity(

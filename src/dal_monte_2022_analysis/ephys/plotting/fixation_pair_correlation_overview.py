@@ -1,10 +1,19 @@
-"""Combined figures for noise and signal correlation in simultaneous pairs.
+"""Combined figures for signal and per-trial spike correlation in simultaneous pairs.
 
 The two analyses answer different questions on the same pairs, and the point of
-putting them together is that neither is interpretable alone: noise correlation
-without signal correlation cannot say whether co-firing reflects shared tuning,
-and signal correlation without noise correlation cannot say whether shared
+putting them together is that neither is interpretable alone: per-trial spike
+correlation without signal correlation cannot say whether co-firing reflects
+shared tuning, and signal correlation without it cannot say whether shared
 tuning is accompanied by trial-by-trial coupling.
+
+The second measure is deliberately **not** called noise correlation here.  The
+classical noise correlation is a single number per pair -- the correlation of
+their spike *counts* across trials, after each unit's condition mean is removed.
+What is computed here is a full cross-correlogram of the two spike trains within
+each fixation, averaged across fixations, which resolves the timing that a count
+correlation integrates away and, being unnormalised, is not on the [-1, 1] scale
+that name implies.  Calling it what it is avoids inviting a comparison of
+magnitudes with a literature that measured something else.
 """
 
 from __future__ import annotations
@@ -16,7 +25,7 @@ from typing import Mapping, Optional, Sequence
 import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
-from matplotlib.patches import FancyArrowPatch, Rectangle
+from matplotlib.patches import FancyArrowPatch
 
 from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     CONDITION_COLORS,
@@ -26,7 +35,6 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     MUTED_INK,
     REGION_LABELS,
     ThesisFigureSettings,
-    add_significance_bracket,
     apply_thesis_plot_style,
     nice_axis,
     save_thesis_figure,
@@ -41,7 +49,7 @@ CROSS_REGION_ORDER: tuple[str, ...] = ("accg-bla", "bla-dmpfc", "bla-ofc")
 
 #: One colour per analysis, used consistently across every figure so a reader
 #: can tell at a glance which of the two a panel belongs to.
-NOISE_COLOUR = "#c0392b"
+SPIKE_COLOUR = "#c0392b"   # per-trial spike correlation
 SIGNAL_COLOUR = "#2c7fb8"
 
 
@@ -107,6 +115,22 @@ def _bare(ax) -> None:
         spine.set_visible(False)
 
 
+def _significance_bar(ax, x_left: float, x_right: float, y: float, text: str,
+                      *, linewidth: float = 1.6, fontsize: float = 7.0) -> None:
+    """A plain thick bar between two categories with stars above it.
+
+    No end ticks.  The serifs on a conventional bracket are there to say which
+    two categories are being compared, but with bars this narrow the span is
+    already unambiguous and the ticks only add clutter -- and drawn downward they
+    read as error bars belonging to the bars underneath.
+    """
+    ax.plot([x_left, x_right], [y, y], color=INK, linewidth=linewidth,
+            solid_capstyle="butt", clip_on=False, zorder=6)
+    span = float(ax.get_ylim()[1] - ax.get_ylim()[0])
+    ax.text(0.5 * (x_left + x_right), y + 0.012 * span, text, ha="center",
+            va="bottom", fontsize=fontsize, color=INK, clip_on=False, zorder=6)
+
+
 def _group_order(values: Sequence[str], *, scope: str = "within_region") -> list[str]:
     """Groups in reporting order, dropping anything not reportable.
 
@@ -127,10 +151,14 @@ def plot_method_schematic(
 ) -> tuple[plt.Figure, dict[str, Path]]:
     """One set of trials in the centre, the two orders of operation either side.
 
-    Reading outward from the middle: to the right, correlate within each trial
-    and average the correlograms; to the left, average the trials into rate
-    timelines and correlate those.  Averaging first is the only difference, and
-    it is what removes trial-by-trial covariation.
+    A trial here is one fixation, and the diagram says "trial" throughout because
+    that is what the measure is named after.  Reading outward from the middle: to
+    the right, correlate within each trial and average the correlograms; to the
+    left, average the trials into rate timelines and correlate those.  Averaging first is the only difference
+    between the two measures, and it is what removes trial-by-trial covariation.
+    Naming the right-hand path *per-trial spike correlation* rather than noise
+    correlation keeps the diagram honest: what is drawn is a correlogram per
+    fixation, not a correlation of per-fixation spike counts.
 
     Deliberately unlabelled on the axes.  Nothing here is a measurement -- every
     trace is drawn from a formula -- so tick values would invite reading
@@ -169,7 +197,7 @@ def plot_method_schematic(
     ax.set_xticks([]); ax.set_yticks([])
     for side in ("top", "right", "left", "bottom"):
         ax.spines[side].set_visible(False)
-    ax.set_title("spike trains\nper fixation", fontsize=6.8, color=INK, pad=9)
+    ax.set_title("spike trains\nper trial", fontsize=6.8, color=INK, pad=9)
 
     # ---- left of centre: average first -------------------------------------
     ax = axes[1]
@@ -201,17 +229,17 @@ def plot_method_schematic(
     ax.text(0, -0.30, "⋮", ha="center", va="center", fontsize=9, color=MUTED_INK)
     ax.set_ylim(-0.62, 1.95)
     strip(ax)
-    ax.set_title("one correlogram\nper trial", fontsize=6.8, color=NOISE_COLOUR, pad=9)
+    ax.set_title("one correlogram\nper trial", fontsize=6.8, color=SPIKE_COLOUR, pad=9)
 
     ax = axes[4]
     null_n = 0.052 + 0.004 * np.exp(-np.abs(lags) / 170)
     obs_n = null_n + 0.021 * np.exp(-np.abs(lags) / 9.0)
-    ax.fill_between(lags, null_n, obs_n, color=NOISE_COLOUR, alpha=0.22, lw=0)
+    ax.fill_between(lags, null_n, obs_n, color=SPIKE_COLOUR, alpha=0.22, lw=0)
     ax.plot(lags, obs_n, color=INK, lw=1.5)
     ax.plot(lags, null_n, color=MUTED_INK, lw=1.0, ls=(0, (3, 2)))
     ax.set_ylim(0.0495, 0.080)
     strip(ax)
-    ax.set_title("NOISE\ncorrelation", fontsize=7.6, color=NOISE_COLOUR, pad=9)
+    ax.set_title("PER-TRIAL SPIKE\ncorrelation", fontsize=7.4, color=SPIKE_COLOUR, pad=9)
 
     # Set the margins directly.  These axes carry no tick labels and no y
     # labels, so tight_layout reserves a wide band on each flank for nothing.
@@ -235,12 +263,12 @@ def plot_method_schematic(
 
     arrow(1, 2, "left", SIGNAL_COLOUR, "average\nacross trials")
     arrow(0, 1, "left", SIGNAL_COLOUR, "then\ncross-correlate")
-    arrow(2, 3, "right", NOISE_COLOUR, "correlate\nwithin trials")
-    arrow(3, 4, "right", NOISE_COLOUR, "then\naverage")
+    arrow(2, 3, "right", SPIKE_COLOUR, "correlate\nwithin trials")
+    arrow(3, 4, "right", SPIKE_COLOUR, "then\naverage")
     return fig, save_thesis_figure(fig, settings, stem)
 
 
-def plot_noise_above_null(
+def plot_spike_correlation_above_null(
     traces: Mapping,
     settings: PairOverviewPlotSettings,
     *,
@@ -248,9 +276,9 @@ def plot_noise_above_null(
     conditions: Sequence[str] = CONDITION_ORDER,
     max_lag_ms: float = 150.0,
     regions: Optional[Sequence[str]] = None,
-    stem: str = "fig03_noise_above_null",
+    stem: str = "fig03_spike_correlation_above_null",
 ) -> tuple[plt.Figure, dict[str, Path]]:
-    """Observed noise cross-correlation against its null, per region and condition.
+    """Observed per-trial spike correlation against its null, per region and condition.
 
     Rows are fixation conditions, columns are regions, and only the bottom row
     carries an x-axis: the lag axis is the same in every panel, so repeating it
@@ -324,7 +352,7 @@ def plot_noise_above_null(
                loc="lower center", bbox_to_anchor=(0.5, -0.015))
     fig.supylabel("Cross-correlation", fontsize=6.5, x=0.005)
     fig.suptitle(
-        "Noise correlation: observed against the circular-shift null",
+        "Per-trial spike correlation: observed against the circular-shift null",
         fontsize=8, color=INK,
     )
     fig.tight_layout(rect=(0.012, 0.075, 1, 0.95))
@@ -417,6 +445,7 @@ def _bar_panel(
     """One grouped bar panel: regions on x, one bar per fixation condition."""
     width = 0.8 / max(len(CONDITION_ORDER), 1)
     offsets = {c: (i - 1) * width for i, c in enumerate(CONDITION_ORDER)}
+    tops: dict[str, float] = {}
     for condition in CONDITION_ORDER:
         rows = summary.loc[summary["condition"] == condition].set_index("region_pair")
         positions, values, errors = [], [], []
@@ -426,12 +455,17 @@ def _bar_panel(
             positions.append(position + offsets[condition])
             values.append(float(rows.loc[group, value]))
             errors.append(float(rows.loc[group, error]) if error else 0.0)
+            tops[group] = max(tops.get(group, -np.inf), values[-1] + errors[-1])
         if positions:
+            # No bar outline and no error-bar caps.  An outline at this size
+            # reads as a second, darker bar behind the first, and caps put two
+            # horizontal marks per bar into a panel whose only other horizontal
+            # marks are the significance bars.
             ax.bar(positions, values, width=width,
                    yerr=errors if error else None,
                    color=CONDITION_COLORS.get(condition, MUTED_INK),
-                   edgecolor=INK, linewidth=0.45,
-                   error_kw={"elinewidth": 0.7, "capsize": 1.4},
+                   edgecolor="none", linewidth=0.0,
+                   error_kw={"elinewidth": 0.9, "capsize": 0.0, "ecolor": INK},
                    label=condition_label(condition))
             if star_column is not None:
                 for position, group in enumerate(groups):
@@ -452,24 +486,207 @@ def _bar_panel(
     if contrasts is not None and len(contrasts):
         # Only contrasts that survive FDR get a bracket.  Annotating the rest
         # fills the panel with marks that all say "no difference".
+        # Each group's bars sit just above that group's own tallest bar, not at
+        # a shared height near the top of the panel.  When one region is five
+        # times another, a shared height leaves the short region's marks
+        # floating in empty space with nothing to attach them to.
         local = contrasts.loc[contrasts["significant"].fillna(False)]
         low, high = ax.get_ylim()
-        step = 0.10 * (high - low)
+        step = 0.075 * (high - low)
         headroom = high
         for position, group in enumerate(groups):
             block = local.loc[local["region_pair"] == group]
+            block = block.loc[[
+                index for index in block.index
+                if block.loc[index, "condition_a"] in offsets
+                and block.loc[index, "condition_b"] in offsets
+            ]]
+            if len(block):
+                # Narrow spans underneath wide ones, so no bar crosses another
+                # bar's stars.
+                spans = (block["condition_b"].map(offsets)
+                         - block["condition_a"].map(offsets)).abs()
+                block = block.loc[spans.sort_values().index]
+            base = tops.get(group, high)
             for level, row in enumerate(block.itertuples()):
-                if row.condition_a not in offsets or row.condition_b not in offsets:
-                    continue
-                y = high + step * (0.30 + level)
-                headroom = max(headroom, y + step * 0.85)
-                add_significance_bracket(
+                y = base + step * (0.55 + 1.25 * level)
+                headroom = max(headroom, y + step * 0.95)
+                _significance_bar(
                     ax, position + offsets[row.condition_a],
                     position + offsets[row.condition_b], y,
                     significance_stars(row.p_value_corrected),
-                    fontsize=6.5, color=INK, tick_frac=0.012,
+                    fontsize=6.5,
                 )
         ax.set_ylim(low, headroom)
+
+
+def plot_spike_correlation_bars(
+    summary: pd.DataFrame,
+    contrasts: pd.DataFrame,
+    settings: PairOverviewPlotSettings,
+    *,
+    scope: str = "within_region",
+    scale: float = 1e3,
+    ylabel: str = "Spike correlation − null\n(mean over ±250 ms, ×10⁻³)",
+    title: str = "Per-trial spike correlation by fixation type",
+    stem: str = "fig04_spike_correlation_bars",
+) -> tuple[plt.Figure, dict[str, Path]]:
+    """Null-subtracted per-trial spike correlation, one bar per fixation type.
+
+    The trace figure shows that the observed correlogram sits above its null; it
+    cannot show whether the three fixation types differ, because three pairs of
+    near-identical curves in adjacent panels is not a comparison a reader can
+    make by eye.  This reduces each curve to one number -- its mean over the
+    ±250 ms window, minus the null's -- so the three sit side by side on one
+    axis with the paired contrasts marked.
+
+    Values are multiplied by 1000.  The correlogram is unnormalised, so an
+    excess is a count of extra spike pairs per fixation per bin and lands around
+    10⁻³; left unscaled every tick label carries an exponent and matplotlib
+    floats a shared one above the axis, which is easy to miss and easy to
+    misread.
+
+    Cross-region bars are expected to sit near zero.  They are drawn on their own
+    axis rather than beside the within-region ones: sharing an axis would flatten
+    them to a line at zero and hide whatever differences they do carry.
+    """
+    apply_thesis_plot_style()
+    rows = summary.loc[summary["scope"].astype(str) == scope].copy() \
+        if "scope" in summary.columns else summary.copy()
+    groups = _group_order(list(rows["region_pair"].astype(str).unique()), scope=scope)
+    if not len(rows) or not groups:
+        fig, ax = plt.subplots(figsize=(3.2, 1.4))
+        ax.text(0.5, 0.5, f"No {scope.replace('_', ' ')} groups", ha="center",
+                va="center", fontsize=7, color=MUTED_INK)
+        _bare(ax)
+        return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
+
+    for column in ("mean", "sem"):
+        if column in rows.columns:
+            rows[column] = rows[column].astype(float) * float(scale)
+
+    local = contrasts
+    if local is not None and len(local) and "scope" in local.columns:
+        local = local.loc[local["scope"].astype(str) == scope]
+
+    fig, ax = plt.subplots(
+        figsize=(settings.panel_width_in * 1.0 * len(groups) + 0.9,
+                 settings.panel_height_in + 0.85),
+    )
+    _bar_panel(ax, rows, groups, contrasts=local)
+    _finish(ax, ylabel=ylabel, title=title, title_size=7.5)
+
+    counts = rows.set_index(["region_pair", "condition"])["n_pairs"] \
+        if "n_pairs" in rows.columns else None
+    if counts is not None:
+        labels = []
+        for group in groups:
+            available = [int(counts[group, c]) for c in CONDITION_ORDER
+                         if (group, c) in counts.index]
+            labels.append(f"{region_label(group)}\n" + (f"n={min(available):,}–{max(available):,}"
+                                                        if available else ""))
+        ax.set_xticklabels(labels, fontsize=6.0)
+
+    handles, labels_ = ax.get_legend_handles_labels()
+    fig.legend(handles, labels_, frameon=False, fontsize=6.5, ncol=3,
+               loc="lower center", bbox_to_anchor=(0.5, -0.015))
+    fig.tight_layout(rect=(0, 0.10, 1, 1))
+    return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
+
+
+def plot_recording_inventory(
+    counts: pd.DataFrame,
+    significant: pd.DataFrame,
+    settings: PairOverviewPlotSettings,
+    *,
+    stem: str = "fig02_recording_inventory",
+) -> tuple[plt.Figure, dict[str, Path]]:
+    """What the chapter is built from: units, pairs, and how many pairs carry a signal.
+
+    Three panels, left to right: how many selective units contribute to
+    within-region pairs in each region; how many pairs each group supplies, with
+    the cross-region groups separated because they are drawn from the same units
+    and would otherwise be double counted by eye; and what fraction of pairs are
+    individually above the circular-shift null after correction across pairs.
+
+    The third panel is the one that changes how the rest of the chapter reads.
+    The population of pairs sits well above its null, but only a small percentage
+    of *individual* pairs does -- so the effect is a small shift in a large
+    population rather than a subset of strongly coupled pairs, and any claim
+    phrased as "coordinated pairs" would be describing 1% of the data.
+    """
+    apply_thesis_plot_style()
+    fig, axes = plt.subplots(1, 3, figsize=(7.1, 2.15),
+                             gridspec_kw={"width_ratios": [0.85, 1.15, 1.35]})
+
+    within = counts.loc[counts["scope"].astype(str) == "within_region"]
+    cross = counts.loc[counts["scope"].astype(str) == "cross_region"]
+    within_groups = _group_order(list(within["region_pair"].astype(str)), scope="within_region")
+    cross_groups = _group_order(list(cross["region_pair"].astype(str)), scope="cross_region")
+
+    # -- units --------------------------------------------------------------
+    ax = axes[0]
+    lookup = within.set_index("region_pair")
+    values = [int(lookup.loc[g, "n_units"]) for g in within_groups]
+    ax.bar(np.arange(len(within_groups)), values, width=0.62,
+           color=MUTED_INK, edgecolor="none")
+    for position, group in enumerate(within_groups):
+        ax.text(position, values[position] + 0.02 * max(values),
+                f"{int(lookup.loc[group, 'n_dates'])} d", ha="center", va="bottom",
+                fontsize=5.8, color=MUTED_INK)
+    ax.set_xticks(np.arange(len(within_groups)))
+    ax.set_xticklabels([region_label(g) for g in within_groups], fontsize=6.5)
+    ax.set_xlim(-0.72, len(within_groups) - 0.28)
+    ax.set_ylim(0, max(values) * 1.20 if values else 1)
+    _finish(ax, ylabel="Selective units used", title="Units  (recording days)",
+            title_size=7.5)
+
+    # -- pairs --------------------------------------------------------------
+    ax = axes[1]
+    both = list(within_groups) + list(cross_groups)
+    lookup = counts.set_index("region_pair")
+    values = [int(lookup.loc[g, "n_pairs"]) for g in both]
+    colours = [SPIKE_COLOUR] * len(within_groups) + ["#e0b0a8"] * len(cross_groups)
+    positions = np.arange(len(both), dtype=float)
+    positions[len(within_groups):] += 0.6       # a gap, not a second axis
+    ax.bar(positions, values, width=0.62, color=colours, edgecolor="none")
+    ax.set_xticks(positions)
+    ax.set_xticklabels([region_label(g) for g in both], fontsize=5.8,
+                       rotation=32, ha="right")
+    ax.set_ylim(0, max(values) * 1.16 if values else 1)
+    for span, label in ((positions[:len(within_groups)], "within"),
+                        (positions[len(within_groups):], "across")):
+        if len(span):
+            ax.text(float(np.mean(span)), max(values) * 1.10, label, ha="center",
+                    va="bottom", fontsize=5.8, color=MUTED_INK)
+    _finish(ax, ylabel="Simultaneous pairs", title="Pairs", title_size=7.5)
+
+    # -- individually significant pairs -------------------------------------
+    ax = axes[2]
+    frame = significant.copy()
+    frame["percent"] = 100.0 * frame["frac_significant"].astype(float)
+    width = 0.8 / max(len(CONDITION_ORDER), 1)
+    for index, condition in enumerate(CONDITION_ORDER):
+        block = frame.loc[frame["condition"] == condition].set_index(["scope", "region_pair"])
+        xs, ys = [], []
+        for position, group in enumerate(both):
+            scope = "within_region" if position < len(within_groups) else "cross_region"
+            if (scope, group) not in block.index:
+                continue
+            xs.append(positions[position] + (index - 1) * width)
+            ys.append(float(block.loc[(scope, group), "percent"]))
+        if xs:
+            ax.bar(xs, ys, width=width, color=CONDITION_COLORS.get(condition, MUTED_INK),
+                   edgecolor="none", label=condition_label(condition))
+    ax.set_xticks(positions)
+    ax.set_xticklabels([region_label(g) for g in both], fontsize=5.8,
+                       rotation=32, ha="right")
+    _finish(ax, ylabel="Pairs above null (%)",
+            title="Individually significant pairs", title_size=7.5)
+    ax.legend(frameon=False, fontsize=5.5, loc="upper right")
+
+    fig.tight_layout()
+    return fig, save_thesis_figure(fig, settings, stem)
 
 
 def plot_summary_bars(
@@ -480,14 +697,14 @@ def plot_summary_bars(
     *,
     measure: str = "window_excess_pm250ms",
     scope: str = "within_region",
-    stem: str = "fig04_summary_bars",
+    stem: str = "fig05_summary_bars",
 ) -> tuple[plt.Figure, dict[str, Path]]:
-    """Signal correlation and the signal/noise relationship, side by side.
+    """Signal correlation, and how it tracks per-trial spike correlation.
 
     Left: null-corrected signal correlation per region and fixation condition,
-    with brackets on the contrasts that survive FDR.  Right: the Spearman
-    correlation between each pair's signal and noise correlation, starred where
-    it differs from zero.
+    with a bar over each contrast that survives FDR.  Right: the Spearman
+    correlation, across pairs, between each pair's signal correlation and its
+    per-trial spike correlation, starred where it differs from zero.
 
     The legend sits below both panels rather than inside either: the brackets
     grow upward from the tallest bar, and any in-axes legend ends up underneath
@@ -522,7 +739,7 @@ def plot_summary_bars(
     # condition combinations and not others, so a title asserting that it holds
     # would be contradicted by half its own panel.
     _finish(axes[1], ylabel="Spearman ρ across pairs",
-            title="Signal against noise correlation", title_size=7.5)
+            title="Signal against per-trial spike correlation", title_size=7.5)
 
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, frameon=False, fontsize=6.5, ncol=3,
