@@ -850,12 +850,12 @@ pair_arms = FIT_LONG[FIT_LONG["arm"].isin(["dense", SELECTED_ARM])]
 arm_tests = ch.welch_contrasts(pair_arms, value="r2_vs_ceiling", group="arm", by="condition")
 gap7a = ch.gap_contrasts(pair_arms, value="r2_vs_ceiling")
 figure(cviz.plot_ensemble_cost(FIT_LONG, COST, arm_tests, gap7a, constrained=SELECTED_ARM), "fig07a_ensemble_cost",
-       "**Figure 7a. The selected constraint costs interactive face a third more than either other fixation type.** (a) Ceiling-relative "
-       "$R^2$ per fixation type, regions pooled per fit, for the ten dense (white) and ten constrained (filled) fits, boxes with every "
-       "fit a dot; marks: Welch's t between arms, Holm-corrected. (b) The cost of the constraint per fixation type, one value per "
-       "constrained fit (bars: mean and SEM; dots: fits); marks: the constraint widens the gap between interactive face and the "
+       "**Figure 7a. The selected constraint costs interactive face a third more than either other fixation type.** (a) Shortfall "
+       "from the ceiling, 1 − $R^2$/ceiling, per fixation type, regions pooled per fit, for the ten dense (white) and ten constrained "
+       "(filled) fits (bars: mean and SEM; dots: fits); marks: Welch's t between arms, Holm-corrected. (b) The cost of the constraint "
+       "per fixation type, one value per constrained fit; marks: the constraint widens the gap between interactive face and the "
        "marked fixation type (Welch's t on per-fit gaps against the dense fits, Holm-corrected). (c) The scale-free reading: "
-       "unexplained variance of each constrained fit over the dense mean.")
+       "unexplained variance of each constrained fit over the dense mean; the dashed line is no change.")
 md("**Cost per fixation type** (ten constrained fits against the dense mean) and the bootstrap intervals task 03 computed:")
 display(T["fit_cost_by_condition"].assign(condition=T["fit_cost_by_condition"]["condition"].map(COND)).set_index("condition")
         [["dense_mean", "constrained_mean", "cost", "cost_ci_low", "cost_ci_high", "unexplained_ratio", "fi_extra_cost", "fi_extra_cost_ci_low", "fi_extra_cost_ci_high"]].round(4))
@@ -914,14 +914,12 @@ share_tests = ch.one_sample_contrasts(pair_share, value="share", by=["arm", "pai
 damage = ch.lesion_damage_per_fit(T["lesion_battery"])
 damage_long = pd.concat([damage.assign(kind="lesion", value=damage["damage"]), damage.assign(kind="control", value=damage["control"])])
 damage_tests = ch.paired_contrasts(damage_long, value="value", group="kind", unit="seed", by=["arm", "family"], pairs=[("lesion", "control")])
-figure(cviz.plot_pair_lesion_summary(pair_share, share_tests, damage, damage_tests, T["lesion_ranking_agreement"]), "fig08_pair_lesions",
-       "**Figure 8. Lesions are catastrophic and no pair is privileged.** (a) Each pair's share of the summed pair-lesion damage, "
-       "fixation types pooled, ten fits per arm (dense white, constrained filled; bars: mean and SEM; dots: fits); the dashed line "
-       "is one sixth. No pair's share differs from one sixth (one-sample t, Holm-corrected; nothing marked). (b) Damage per lesion "
-       "family, mean over that family's lesions per fit, in units of the target's total variance, beside the matched control that "
-       "silences the same number of randomly chosen weights (black line); stars: the family's damage differs from its control "
-       "(paired t by fit, Holm-corrected). (c) Kendall's τ between fits' lesion rankings, per family and arm, against the 95th "
-       "percentile of the permutation null (black line).")
+figure(cviz.plot_pair_lesion_summary(pair_share, share_tests, T["lesion_ranking_agreement"]), "fig08_pair_lesions",
+       "**Figure 8. No pair is privileged, and the fits do not agree on a ranking.** (a) Each pair's share of the summed pair-lesion "
+       "damage, fixation types pooled, ten fits per arm (dense white, constrained filled; bars: mean and SEM; dots: fits); the dashed "
+       "line is one sixth. No pair's share differs from one sixth (one-sample t, Holm-corrected; nothing marked). (b) Kendall's τ "
+       "between fits' lesion rankings, per lesion family and arm, against the 95th percentile of the permutation null (black line). "
+       "The size of every lesion's damage, beside its matched random-weight control, is in the table below.")
 md("**Share of pair-lesion damage per pair** (mean ± sd over ten fits; chance is 0.167) and the one-sample tests:")
 display(pair_share.groupby(["arm", "pair"])["share"].agg(["mean", "std"]).unstack("arm").round(3))
 show_tests(share_tests, ["arm", "pair", "n", "mean", "statistic", "p", "p_holm", "stars"])
@@ -937,14 +935,15 @@ display(top.set_index(["arm", "condition"])[["tau_mean", "null_p95", "top_lesion
 '''
 
 R8_AFTER = r"""
-Two things are true at once. **Every lesion is catastrophic**: silencing one pair of
-pathways adds squared error equal to four times the target's total variance in the dense
-network and nearly six times in the constrained one — the pooled $R^2$ falls from 0.99 to
-about $-3$ — and a single pathway or a single within-region block does almost as much.
-This is the signature of a finely tuned system, not of a load-bearing connection: the
-matched random control, which silences the same number of weights chosen anywhere in the
-network, does as much or more damage than every lesion family (every family differs from
-its control, and in the direction of the control being worse). **And no pair is special**:
+Two things are true at once. **Every lesion is catastrophic** (table above): silencing
+one pair of pathways adds squared error equal to four times the target's total variance
+in the dense network and nearly six times in the constrained one — the pooled $R^2$ falls
+from 0.99 to about $-3$ — and a single pathway or a single within-region block does almost
+as much. This is the signature of a finely tuned system, not of a load-bearing connection:
+the matched random control, which silences the same number of weights chosen anywhere in
+the network, does as much or more damage than every lesion family (every family differs
+from its control, and in the direction of the control being worse). **And no pair is
+special** (Figure 8):
 each of the six pairs accounts for 0.15–0.18 of the summed pair-lesion damage in both arms,
 no pair's share differs from one sixth after correction, and the fit-to-fit spread is wider
 than any difference between pairs. The ten fits do not agree on which pair matters most
@@ -1014,16 +1013,13 @@ w2_tests = pd.concat([
     ch.paired_contrasts(lesioned[(lesioned["arm"] == arm) & (lesioned["where"] == where) & (lesioned["lesion_kind"] == "bidirectional")],
                         value="w2_to_intact", unit="unit", by="region").assign(arm=arm, where=where)
     for arm in ARMS for where in ("fixed_point", "trajectory")], ignore_index=True)
-figure(cviz.plot_lesion_spectra_distance(lesioned, w2_tests, lesion_kind="bidirectional"), "fig08d_spectra_distance_regions",
-       "**Figure 8d. How far a pair lesion moves each region's local spectrum, per fixation type.** 2-Wasserstein distance between the "
-       "lesioned and intact eigenvalues of a region's own block, every fit × pair lesion a value (60 per bar; bars: mean and SEM), at "
-       "the fixed point (top row) and along the trajectory (bottom row), dense (left) and constrained (right). Marks: paired t "
-       "between fixation types by fit × lesion, Holm-corrected within each panel; only significant contrasts are marked.")
-figure(cviz.plot_lesion_spectra_distance(lesioned, w2_tests, lesion_kind="bidirectional", regions=("network",), figsize=(5.0, 4.4)),
-       "fig08e_spectra_distance_network",
-       "**Figure 8e. The same for the whole-network linearisation.** 2-Wasserstein distance between the lesioned and intact spectra of "
-       "the full 160-unit Jacobian, every fit × pair lesion a value, at the fixed point (top) and along the trajectory (bottom); "
-       "marks as in Figure 8d.")
+figure(cviz.plot_lesion_spectra_distance(lesioned, w2_tests, lesion_kind="bidirectional", where="trajectory"), "fig08d_spectra_distance",
+       "**Figure 8d. How far a pair lesion moves the local spectrum, per region and for the whole network, per fixation type.** "
+       "2-Wasserstein distance between the lesioned and intact eigenvalues of the linearisation along the trajectory — each region's "
+       "own block, and the full 160-unit Jacobian — every fit × pair lesion a value (60 per bar; bars: mean and SEM; dots: values), "
+       "in the dense (a) and constrained (b) networks on one scale. Marks: paired t between fixation types by fit × lesion, "
+       "Holm-corrected within each panel; only significant contrasts are marked. The same distances at the nearest fixed point are "
+       "in the table below.")
 md("**Wasserstein distance to the intact spectrum** (mean over fits × pair lesions), per region, fixation type, arm and linearisation point:")
 display(lesioned[lesioned["lesion_kind"] == "bidirectional"].groupby(["where", "arm", "region", "condition"])["w2_to_intact"].mean()
         .unstack("condition").rename(columns=COND).round(4))
@@ -1034,24 +1030,26 @@ md("**Largest eigenvalue modulus and expanding modes of the intact linearisation
 display(spectra_summary[spectra_summary["lesion_kind"] == "intact"].groupby(["where", "arm", "region"])[["top_modulus", "n_expanding"]].mean().round(3))
 md(f"Fixed-point searches on the lesioned maps converged in **{100 * spectra_summary['fixed_point_converged'].mean():.0f}%** of cases; "
    "the remainder use the slowest point found.")
-md("**Tests behind Figures 8d and 8e:**")
+md("**Tests behind Figure 8d, and the same tests at the fixed point:**")
 show_tests(w2_tests[w2_tests["significant"]], ["arm", "where", "region", "a", "b", "n", "difference", "statistic", "p", "p_holm", "stars"])
 md(f"({int(w2_tests['significant'].sum())} of {len(w2_tests)} contrasts significant after Holm correction.)")
 '''
 
 R8B_AFTER = r"""
 **Reading.** The two scopes tell two stories. At the scope of a region's own block
-(Figures 8b, 8d) a pair lesion moves the local spectrum little. In the dense network the
-lesioned eigenvalues sit on top of the intact ones — a distance of 0.07–0.08 at the fixed
-point and 0.04–0.05 along the trajectory, against eigenvalue moduli of 0.6–0.75 — and the
-constrained network's blocks, being rank one, barely move at all (0.01–0.02). At this scope
-the fixation type matters only along the trajectory of the dense network, where interactive
-face's block spectra move most in every region (significantly more than both other
-fixation types in ACCg, dmPFC and OFC, and than non-interactive face in BLA); at the fixed
-point no fixation-type contrast is significant in either arm, and the change is the same
-size in all four regions. No region is singled out anywhere.
+(Figure 8b; the four region groups of Figure 8d) a pair lesion moves the local spectrum
+little. In the dense network the lesioned eigenvalues sit on top of the intact ones — a
+distance of 0.07–0.08 at the fixed point and 0.04–0.05 along the trajectory, against
+eigenvalue moduli of 0.6–0.75 — and the constrained network's blocks, being rank one,
+barely move at all (0.01–0.02). At this scope the fixation type matters only along the
+trajectory of the dense network, where interactive face's block spectra move most in every
+region (significantly more than both other fixation types in ACCg, dmPFC and OFC, and than
+non-interactive face in BLA); at the fixed point (table) no fixation-type contrast is
+significant in either arm, and the change is the same size in all four regions. No region
+is singled out anywhere.
 
-At the scope of the whole network (Figures 8c, 8e) the lesion's effect is larger — 0.10–0.13
+At the scope of the whole network (Figure 8c; the right-hand group of Figure 8d) the
+lesion's effect is larger — 0.10–0.13
 at the fixed point and 0.06–0.12 along the trajectory, on a spectrum whose leading modes sit
 just outside the unit circle (largest modulus 1.06 at the fixed point, 1.2–1.3 along the
 trajectory) — and it is unmistakably largest for interactive face. At the fixed point and
@@ -1083,17 +1081,19 @@ and Figure 11 what a lesion does to the trajectories.
 """
 
 R9_CODE = r'''
+fields_by_arm = {}
 for arm, path in ARMS.items():
     run_dir = next(d for d in audit.seed_run_dirs(path) if ens.seed_of(d) == representative[arm])
-    fields = ens.flow_fields(run_dir, scope="network")
-    figure(eviz.plot_flow_fields(fields, title=f"{arm} network · seed {representative[arm]}"), f"fig09_flow_fields_{arm}",
-           f"**Figure 9 ({arm}). The flow of each fixation type's map, one fit.** Each panel is the autonomous map for one fixation "
-           "type in the plane of the two leading principal axes of the pooled hidden-state trajectories (the same plane in all three; "
-           "the percentages are the share of hidden-state variance on each axis). Background: the speed of the flow, $\\|F_c(h) - h\\|$, "
-           "log scale, light is slow. Arrows: the direction of the flow projected into the plane. Line: the trajectory the network runs, "
-           "from the first bin of the window (circle, 495 ms before fixation onset, the trained initial state) to the last (square, "
-           "495 ms after), light to dark in time. Stars: fixed points of the map, filled if stable. Nothing is averaged over time; the "
-           "map is the same at every bin.")
+    fields_by_arm[arm] = ens.flow_fields(run_dir, scope="network")
+figure(cviz.plot_flow_fields_two_arms(fields_by_arm), "fig09_flow_fields",
+       "**Figure 9. The flow of each fixation type's map, one fit per arm.** (a) The dense network, (b) the constrained network, each "
+       "the fit whose worst combination is the median of its arm. Each panel is the autonomous map for one fixation type in the plane "
+       "of the two leading principal axes of that fit's pooled hidden-state trajectories (the same plane across a row; the "
+       "percentages are the share of hidden-state variance on each axis). Background: the speed of the flow, $\\|F_c(h) - h\\|$, log "
+       "scale, light is slow. Arrows: the direction of the flow projected into the plane. Line: the trajectory the network runs, from "
+       "the first bin of the window (circle, 495 ms before fixation onset, the trained initial state) to the last (square, 495 ms "
+       "after), light to dark in time. Stars: fixed points of the map, filled if stable. Nothing is averaged over time; the map is "
+       "the same at every bin.")
 '''
 
 R9B_CODE = r'''
@@ -1103,8 +1103,8 @@ dyn_tests = pd.concat([ch.paired_contrasts(dyn[dyn["property"] == p], value="val
                       ignore_index=True)
 figure(cviz.plot_dynamics_summary(dyn, dyn_tests), "fig10_dynamics_summary",
        "**Figure 10. The interactive-face state, in every fit.** The three fixation types side by side within the dense network "
-       "(left group) and the constrained network (right group), ten fits per box, every fit a dot: (a) extent of the state "
-       "trajectory; (b) its speed; (c) number of locally expanding modes of the linearisation along the trajectory. Marks: paired t "
+       "(left group) and the constrained network (right group), ten fits per bar (bars: mean and SEM; dots: fits): (a) extent of "
+       "the state trajectory; (b) its speed; (c) number of locally expanding modes of the linearisation along the trajectory. Marks: paired t "
        "between fixation types within an arm, Holm-corrected within each panel; only significant contrasts are marked. The remaining "
        "per-fixation-type quantities (dimensionality, speed at the end of the window, distance to the nearest fixed point) are in the "
        "table below and the §3.10 scoreboard.")
@@ -1403,7 +1403,7 @@ APPENDIX = r"""
 | 6 | `02b_bottleneck_properties` | the condition gap along each marginal, region heatmaps, where a region's drive comes from, alignment and dimensionality |
 | 7 | `03_ensemble` §3 | loss curves, every combination of both arms, reconstruction galleries of all ten fits, bootstrap intervals |
 | 8 | `03_ensemble` §7 | every lesion family per arm, per-target damage, per-fixation-type rankings, lesion-profile similarity |
-| 8b–8e | this notebook (`final/04_chapter/tables/lesion_region_spectra*.csv`) | eigenvalue spectra of the lesioned linearisations and their Wasserstein distances, region and network scope |
+| 8b–8d | this notebook (`final/04_chapter/tables/lesion_region_spectra*.csv`) | eigenvalue spectra of the lesioned linearisations and their Wasserstein distances, region and network scope, at the fixed point and along the trajectory |
 | 9–11 | `03_ensemble` §5–7 | drive and flow, per-region flow fields, fixed-point summaries, Jacobians along the trajectory, region timescales, lesioned dynamics on speed, modulus and dimensionality |
 | §3.10 | `03_ensemble` §4, §8–9 | the similarity boards per property and region; the identifiability battery against the untrained floor |
 

@@ -19,7 +19,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-from matplotlib.collections import PolyCollection
+from matplotlib.collections import LineCollection, PolyCollection
 from matplotlib.patches import Circle, FancyArrowPatch, FancyBboxPatch, Rectangle
 
 from dal_monte_2022_analysis.ephys.plotting.fixation_mrnn_audit import CORRECTED_COLOR, REPORTED_COLOR, _panel
@@ -497,7 +497,7 @@ def plot_ladder_traces(
     region: str,
     rungs: Sequence[int] = (0, 1, 2, 3),
     n_fits_by_rung: Mapping[int, int] | None = None,
-    figsize: tuple[float, float] = (7.4, 5.4),
+    figsize: tuple[float, float] = (7.4, 3.4),
 ):
     """Target against the rung-averaged reconstruction, three components overlaid per panel, each on its own scale.
 
@@ -541,8 +541,9 @@ def plot_ladder_traces(
             if i == 0:
                 ax.set_title(CONDITION_SHORT_LABELS[condition], fontsize=8, color=CONDITION_COLORS[condition])
             if j == 0:
-                count = f"\n({n_fits_by_rung[rung]} fits)" if n_fits_by_rung and rung in n_fits_by_rung else ""
-                ax.set_ylabel(f"{REGION_LABELS.get(region, region)} {RUNG_LABELS.get(rung, rung)}{count}", fontsize=7)
+                count = f"\n{n_fits_by_rung[rung]} fits" if n_fits_by_rung and rung in n_fits_by_rung else ""
+                short = {0: "alone", 1: "+1", 2: "+2", 3: "all four"}.get(rung, RUNG_LABELS.get(rung, rung))
+                ax.set_ylabel(f"{REGION_LABELS.get(region, region)} {short}{count}", fontsize=6.2, labelpad=2)
             if i == len(rungs) - 1:
                 ax.set_xlabel("time from fixation (s)")
             ax.tick_params(labelsize=6.5)
@@ -550,7 +551,7 @@ def plot_ladder_traces(
     labels = [f"target, PC{int(k) + 1}" for k in indices] + ["model (greys, same order)"]
     fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=len(labels), fontsize=6, frameon=False,
                title="each component on its own min–max scale; number: component $R^2$ at that rung", title_fontsize=6)
-    fig.tight_layout(h_pad=0.5, w_pad=0.5, rect=(0, 0, 1, 0.95))
+    fig.tight_layout(h_pad=0.3, w_pad=0.5, rect=(0, 0, 1, 0.92))
     return fig
 
 
@@ -849,10 +850,11 @@ def plot_ensemble_cost(
 ):
     """The selected model against the dense network, ten fits each.
 
-    (a) ceiling-relative $R^2$ per fixation type, dense (white) and constrained (filled),
-    Welch's t between arms; (b) the cost of the constraint per fixation type, with the
-    fixation-type gaps the constraint widens (Welch's t on per-seed gaps); (c) the
-    scale-free reading, unexplained variance constrained over dense, per seed.
+    (a) shortfall from the ceiling, 1 − R²/ceiling, per fixation type, dense (white) and
+    constrained (filled), Welch's t between arms -- the shortfall rather than R² itself so
+    that a bar from zero shows the difference; (b) the cost of the constraint per fixation
+    type, with the fixation-type gaps the constraint widens (Welch's t on per-seed gaps);
+    (c) the scale-free reading, unexplained variance constrained over dense, per seed.
     """
     conditions = [c for c in CONDITION_ORDER if c in set(fit_long["condition"])]
     fig, axes = plt.subplots(1, 3, figsize=figsize, gridspec_kw={"width_ratios": [1.25, 1.0, 1.0]})
@@ -861,18 +863,20 @@ def plot_ensemble_cost(
     for j, condition in enumerate(conditions):
         for arm, dx, filled in (("dense", -0.2, False), (constrained, 0.2, True)):
             block = fit_long[(fit_long["arm"] == arm) & (fit_long["condition"] == condition)]
-            entries.append({"x": j + dx, "values": block["r2_vs_ceiling"].to_numpy(float), "color": CONDITION_COLORS[condition], "filled": filled})
-    draw_boxes(ax, entries, width=0.32)
+            entries.append({"x": j + dx, "values": 1.0 - block["r2_vs_ceiling"].to_numpy(float), "color": CONDITION_COLORS[condition], "filled": filled})
+    draw_bars(ax, entries, width=0.36)
     ax.set_xticks(range(len(conditions)))
     ax.set_xticklabels([CONDITION_SHORT_LABELS[c] for c in conditions])
-    ax.set_ylabel("$R^2$ / ceiling  (mean over regions)")
+    shortfall = 1.0 - fit_long[fit_long["arm"].isin(["dense", constrained])]["r2_vs_ceiling"]
+    ax.set_ylim(min(0.0, float(shortfall.min()) * 1.1), None)
+    ax.set_ylabel("shortfall from the ceiling\n(1 − $R^2$ / ceiling, mean over regions)")
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=INK, lw=0.8), plt.Rectangle((0, 0), 1, 1, facecolor=INK, edgecolor="none")]
     ax.legend(handles, ["dense", "constrained"], loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=6, handlelength=1.0, frameon=False)
     nice_axis(ax)
     index = {c: k for k, c in enumerate(conditions)}
     if arm_tests is not None and not arm_tests.empty:
         marks = contrasts_to_marks(arm_tests, lambda row, side: index[row["condition"]] + (-0.2 if row[side] == "dense" else 0.2))
-        mark_contrasts(ax, marks, top=float(fit_long[fit_long["arm"].isin(["dense", constrained])]["r2_vs_ceiling"].max()))
+        mark_contrasts(ax, marks, top=float(shortfall.max()))
     _panel(ax, "a")
 
     ax = axes[1]
@@ -890,9 +894,10 @@ def plot_ensemble_cost(
     _panel(ax, "b")
 
     ax = axes[2]
-    draw_boxes(ax, [{"x": j, "values": block.loc[block["condition"] == c, "unexplained_ratio"].to_numpy(float), "color": CONDITION_COLORS[c]}
-                    for j, c in enumerate(conditions)], width=0.5)
-    ax.axhline(1.0, color=INK, lw=0.6, zorder=1)
+    draw_bars(ax, [{"x": j, "values": block.loc[block["condition"] == c, "unexplained_ratio"].to_numpy(float), "color": CONDITION_COLORS[c]}
+                   for j, c in enumerate(conditions)], width=0.6)
+    ax.set_ylim(bottom=0.0)
+    ax.axhline(1.0, color=INK, lw=1.0, ls="--", zorder=1)
     ax.set_xticks(range(len(conditions)))
     ax.set_xticklabels([CONDITION_SHORT_LABELS[c] for c in conditions])
     ax.set_ylabel("unexplained variance,\nconstrained / dense")
@@ -926,24 +931,20 @@ def plot_constraint_cost_summary(
 def plot_pair_lesion_summary(
     pair_share: pd.DataFrame,
     share_tests: pd.DataFrame,
-    damage_per_fit: pd.DataFrame,
-    damage_tests: pd.DataFrame,
     ranking: pd.DataFrame,
     *,
-    figsize: tuple[float, float] = (7.4, 2.7),
+    figsize: tuple[float, float] = (7.4, 2.5),
 ):
-    """(a) each pair's share of pair-lesion damage, (b) damage per lesion family beside its random control, (c) ranking agreement.
+    """(a) each pair's share of pair-lesion damage, (b) whether the fits agree on the lesion ranking.
 
-    (a) one box per pair and arm, fixation types pooled; the dashed line is one sixth, and a
-    star above a box marks a pair whose share differs from one sixth (one-sample t, Holm).
-    (b) per-fit mean damage per family, in units of the target's total variance, beside the
-    matched random control (ticks); a star marks a family whose damage differs from its
-    control (paired t by seed, Holm). (c) Kendall's τ between fits' lesion rankings against
-    the 95th percentile of the permutation null.
+    (a) one bar per pair and arm, fixation types pooled (mean, SEM, every fit a dot); the
+    dashed line is one sixth, and a star above a bar marks a pair whose share differs from
+    one sixth (one-sample t, Holm). (b) Kendall's tau between fits' lesion rankings per
+    family and arm, against the 95th percentile of the permutation null (black line).
     """
     arms = [a for a in ("dense", "constrained") if a in set(pair_share["arm"])]
     pairs = [p for p in ("ofc↔bla", "ofc↔dmpfc", "ofc↔accg", "bla↔dmpfc", "bla↔accg", "dmpfc↔accg") if p in set(pair_share["pair"])]
-    fig, axes = plt.subplots(1, 3, figsize=figsize, gridspec_kw={"width_ratios": [1.35, 1.0, 1.0]})
+    fig, axes = plt.subplots(1, 2, figsize=figsize, gridspec_kw={"width_ratios": [1.6, 1.0]})
 
     ax = axes[0]
     entries = []
@@ -961,7 +962,7 @@ def plot_pair_lesion_summary(
     ax.set_xticks(range(len(pairs)))
     ax.set_xticklabels(pairs, rotation=30, ha="right", fontsize=6.2)
     ax.set_ylim(bottom=0.0)
-    ax.set_ylabel("share of pair-lesion damage\n(fixation types pooled)")
+    ax.set_ylabel("share of pair-lesion damage")
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=ARM_COLORS["dense"], lw=0.8),
                plt.Rectangle((0, 0), 1, 1, facecolor=ARM_COLORS["constrained"], edgecolor="none")]
     ax.legend(handles, ["dense", "constrained"], loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=6, handlelength=1.0)
@@ -969,47 +970,24 @@ def plot_pair_lesion_summary(
     _panel(ax, "a")
 
     ax = axes[1]
-    families = [f for f in ("directed", "bidirectional", "within-region", "isolation") if f in set(damage_per_fit["family"])]
-    labels = {"directed": "one pathway", "bidirectional": "one pair", "within-region": "one own block", "isolation": "one region isolated"}
-    entries = []
-    for j, family in enumerate(families):
-        for arm, dx in zip(arms, (-0.2, 0.2) if len(arms) == 2 else (0.0,)):
-            block = damage_per_fit[(damage_per_fit["arm"] == arm) & (damage_per_fit["family"] == family)]
-            entries.append({"x": j + dx, "values": block["damage"].to_numpy(float), "color": ARM_COLORS[arm], "filled": arm != "dense"})
-            ax.plot([j + dx - 0.18, j + dx + 0.18], [block["control"].mean()] * 2, color=INK, lw=1.4, zorder=6)
-    draw_bars(ax, entries, width=0.36)
-    if damage_tests is not None and not damage_tests.empty:
-        for _, row in damage_tests[damage_tests["significant"]].iterrows():
-            x = families.index(row["family"]) + (-0.2 if row["arm"] == "dense" else 0.2)
-            own = damage_per_fit[(damage_per_fit["arm"] == row["arm"]) & (damage_per_fit["family"] == row["family"])]
-            ax.text(x, float(max(own["damage"].max(), own["control"].max())) + 0.15, row["stars"], ha="center", va="bottom", fontsize=5.6)
-    ax.set_xticks(range(len(families)))
-    ax.set_xticklabels([labels[f] for f in families], fontsize=6.0, rotation=25, ha="right")
-    ax.set_ylim(0, float(max(damage_per_fit["damage"].max(), damage_per_fit["control"].max())) * 1.18)
-    ax.set_ylabel("damage: added squared error /\ntarget's total variance")
-    ax.plot([], [], color=INK, lw=1.4, label="matched random-weight control")
-    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), fontsize=5.6, frameon=False)
-    nice_axis(ax)
-    _panel(ax, "b")
-
-    ax = axes[2]
     kinds = [k for k in ("directed", "bidirectional", "within-region", "isolation") if k in set(ranking["lesion_kind"])]
+    labels = {"directed": "one pathway", "bidirectional": "one pair", "within-region": "own block", "isolation": "region isolated"}
     for k, arm in enumerate(arms):
         block = ranking[ranking["arm"] == arm].set_index("lesion_kind").loc[kinds]
         x = np.arange(len(kinds)) + (k - 0.5) * 0.4
         ax.bar(x, block["tau_mean"], width=0.36, facecolor=ARM_COLORS[arm] if arm != "dense" else "white",
-               edgecolor=ARM_COLORS[arm], lw=0.9, zorder=2, label=arm)
+               edgecolor=ARM_COLORS[arm], lw=0.9, zorder=2)
         for xi, null in zip(x, block["null_p95"]):
             ax.plot([xi - 0.18, xi + 0.18], [null] * 2, color=INK, lw=1.4, zorder=4)
     ax.plot([], [], color=INK, lw=1.4, label="permutation null, 95th pct.")
     ax.axhline(0, color=INK, lw=0.6, zorder=1)
     ax.set_xticks(range(len(kinds)))
     ax.set_xticklabels([labels[f] for f in kinds], fontsize=6.0, rotation=25, ha="right")
-    ax.set_ylabel("agreement between fits on the\nlesion ranking (Kendall's τ)")
-    ax.set_ylim(-0.15, 1.05)
-    ax.legend(loc="upper left", fontsize=5.4)
+    ax.set_ylabel("ranking agreement between fits\n(Kendall's τ)")
+    ax.set_ylim(-0.15, 1.0)
+    ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), fontsize=5.8)
     nice_axis(ax)
-    _panel(ax, "c")
+    _panel(ax, "b")
     fig.tight_layout()
     return fig
 
@@ -1071,45 +1049,120 @@ def plot_lesion_spectra_distance(
     tests: pd.DataFrame,
     *,
     lesion_kind: str = "bidirectional",
-    regions: Sequence[str] | None = None,
-    figsize: tuple[float, float] = (7.4, 4.6),
+    where: str = "trajectory",
+    figsize: tuple[float, float] = (7.4, 2.4),
 ):
-    """Wasserstein distance between the lesioned and intact spectra, per region and fixation type, both arms and both linearisation points.
+    """Wasserstein distance between the lesioned and intact spectra: one panel per arm, each region's block and the whole network.
 
-    Rows: at the fixed point, along the trajectory. Columns: dense, constrained. Boxes pool
-    every (fit, lesion) of ``lesion_kind``; brackets mark significant fixation-type
-    contrasts within a region (paired t by fit × lesion, Holm within the panel). Pass
-    ``regions=("network",)`` for the whole-network Jacobian.
+    Bars pool every (fit, lesion) of ``lesion_kind`` at one linearisation point (``where``:
+    ``"trajectory"`` or ``"fixed_point"``); marks are significant fixation-type contrasts
+    within a scope (paired t by fit x lesion, Holm within the panel). The two panels share
+    the y-axis.
     """
     arms = [a for a in ("dense", "constrained") if a in set(summary["arm"])]
-    if regions is None:
-        regions = [r for r in DISPLAY_REGION_ORDER if r in set(summary["region"])]
-    labels = {**REGION_LABELS, "network": "whole network"}
-    fig, axes = plt.subplots(2, len(arms), figsize=figsize, squeeze=False)
-    letters = iter("abcdef")
-    kind_label = {"bidirectional": "pair lesions", "isolation": "region isolated"}.get(lesion_kind, lesion_kind)
-    for i, (where, label) in enumerate((("fixed_point", "at the fixed point"), ("trajectory", "along the trajectory"))):
-        row_block = summary[(summary["where"] == where) & (summary["lesion_kind"] == lesion_kind) & (summary["region"].isin(regions))]
-        top = float(row_block["w2_to_intact"].max())
-        ylim = (0.0, top * 1.02)
-        for j, arm in enumerate(arms):
-            ax = axes[i][j]
-            block = row_block[row_block["arm"] == arm]
-            panel_tests = None
-            if tests is not None and not tests.empty:
-                panel_tests = tests[(tests["arm"] == arm) & (tests["where"] == where)]
-            _grouped_condition_boxes(ax, block, value="w2_to_intact", group_col="region", groups=list(regions), gap_tests=panel_tests,
-                                     gap_group_col="region", labels=labels,
-                                     ylabel="spectrum change ($W_2$)" if j == 0 else "",
-                                     legend=False, label_fontsize=7, ylim=ylim, top=top)
-            if j > 0:
-                ax.tick_params(labelleft=False)
-            ax.set_title(f"{arm} network · {kind_label} · {label}", fontsize=7.5)
-            _panel(ax, next(letters))
+    scopes = [r for r in DISPLAY_REGION_ORDER if r in set(summary["region"])] + (["network"] if "network" in set(summary["region"]) else [])
+    labels = {**REGION_LABELS, "network": "whole\nnetwork"}
+    block_all = summary[(summary["where"] == where) & (summary["lesion_kind"] == lesion_kind) & (summary["region"].isin(scopes))]
+    top = float(block_all["w2_to_intact"].max())
+    where_label = {"trajectory": "along the trajectory", "fixed_point": "at the fixed point"}.get(where, where)
+    fig, axes = plt.subplots(1, len(arms), figsize=figsize, squeeze=False)
+    for j, arm in enumerate(arms):
+        ax = axes[0][j]
+        block = block_all[block_all["arm"] == arm]
+        panel_tests = None
+        if tests is not None and not tests.empty:
+            panel_tests = tests[(tests["arm"] == arm) & (tests["where"] == where)]
+        _grouped_condition_boxes(ax, block, value="w2_to_intact", group_col="region", groups=scopes, gap_tests=panel_tests,
+                                 gap_group_col="region", labels=labels,
+                                 ylabel="spectrum change ($W_2$)" if j == 0 else "",
+                                 legend=False, label_fontsize=6.6, ylim=(0.0, top * 1.02), top=top)
+        if j > 0:
+            ax.tick_params(labelleft=False)
+        ax.set_title(f"{arm} network · {where_label}", fontsize=8)
+        _panel(ax, "ab"[j])
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor=CONDITION_COLORS[c], edgecolor="none") for c in CONDITION_ORDER]
     fig.legend(handles, [CONDITION_SHORT_LABELS[c] for c in CONDITION_ORDER], loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=3,
                fontsize=6.5, handlelength=1.0, frameon=False)
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    return fig
+
+
+def _draw_flow_panel(ax, entry: Mapping[str, object], *, xs: np.ndarray, ys: np.ndarray, condition: str, norm, arrow_stride: int = 1) -> None:
+    """One flow-field panel: speed background, unit arrows, the trajectory light to dark, fixed points as stars.
+
+    Arrows are line segments rather than a Quiver because the repo's PDF export strips
+    clipping and an unclipped Quiver reports a bounding box thousands of inches wide.
+    """
+    gx, gy = np.meshgrid(xs, ys)
+    ax.pcolormesh(gx, gy, entry["speed"], cmap="Greys", norm=norm, shading="nearest", alpha=0.55, zorder=1)
+    s = arrow_stride
+    magnitude = np.hypot(entry["u"], entry["v"])
+    spacing = 0.8 * float(min(xs[1] - xs[0], ys[1] - ys[0]))
+    with np.errstate(invalid="ignore", divide="ignore"):
+        ux = np.where(magnitude > 0, entry["u"] / magnitude, 0.0)[::s, ::s].ravel()
+        uy = np.where(magnitude > 0, entry["v"] / magnitude, 0.0)[::s, ::s].ravel()
+    tails = np.stack([gx[::s, ::s].ravel(), gy[::s, ::s].ravel()], axis=-1)
+    tips = tails + spacing * np.stack([ux, uy], axis=-1)
+    cos_a, sin_a = np.cos(np.radians(28)), np.sin(np.radians(28))
+    head = 0.35 * spacing
+    left = tips - head * np.stack([ux * cos_a - uy * sin_a, uy * cos_a + ux * sin_a], axis=-1)
+    right = tips - head * np.stack([ux * cos_a + uy * sin_a, uy * cos_a - ux * sin_a], axis=-1)
+    segments = np.concatenate([np.stack([tails, tips], axis=1), np.stack([tips, left], axis=1), np.stack([tips, right], axis=1)])
+    ax.add_collection(LineCollection(segments, colors="#4b4b4b", linewidths=0.5, alpha=0.8, zorder=2))
+    trajectory = np.asarray(entry["trajectory"])
+    color = CONDITION_COLORS.get(condition, INK)
+    shades = plt.get_cmap("viridis")(np.linspace(0.15, 0.95, len(trajectory) - 1))
+    for t in range(len(trajectory) - 1):
+        ax.plot(trajectory[t: t + 2, 0], trajectory[t: t + 2, 1], color=shades[t], linewidth=1.6, zorder=4)
+    ax.scatter(*trajectory[0], s=26, color=color, edgecolor="white", linewidth=0.6, zorder=5, marker="o")
+    ax.scatter(*trajectory[-1], s=30, color=color, edgecolor="white", linewidth=0.6, zorder=5, marker="s")
+    outside = 0
+    for point, stable in zip(entry["fixed_points"], entry["fixed_point_stable"]):
+        if not (xs[0] <= point[0] <= xs[-1] and ys[0] <= point[1] <= ys[-1]):
+            outside += 1
+            continue
+        ax.scatter(point[0], point[1], s=70, marker="*", facecolor=color if stable else "white", edgecolor=color, linewidth=1.0, zorder=6)
+    if outside:
+        ax.text(0.98, 0.02, f"+{outside} fixed point{'s' if outside > 1 else ''} outside the window", transform=ax.transAxes,
+                ha="right", va="bottom", fontsize=5.6, color=INK)
+    ax.set_xlim(xs[0], xs[-1])
+    ax.set_ylim(ys[0], ys[-1])
+    ax.tick_params(labelsize=6.5)
+
+
+def plot_flow_fields_two_arms(fields_by_arm: Mapping[str, Mapping[str, object]], *, figsize: tuple[float, float] = (7.4, 5.0)):
+    """The flow of each fixation type's map, one row per arm (a: dense, b: constrained), one representative fit each.
+
+    Each row has its own state plane (the two leading principal axes of that fit's pooled
+    hidden-state trajectories) and its own speed scale; the three panels of a row share
+    both. Circle: the first bin of the window (the trained initial state); square: the
+    last bin; time runs light to dark. Stars: fixed points of the map, filled if stable.
+    """
+    from matplotlib.colors import LogNorm
+
+    arms = [a for a in ("dense", "constrained") if a in fields_by_arm]
+    conditions = [c for c in CONDITION_ORDER if all(c in fields_by_arm[a]["conditions"] for a in arms)]
+    fig, axes = plt.subplots(len(arms), len(conditions), figsize=figsize, squeeze=False)
+    for i, arm in enumerate(arms):
+        fields = fields_by_arm[arm]
+        xs, ys = np.asarray(fields["xs"]), np.asarray(fields["ys"])
+        speeds = np.concatenate([np.asarray(fields["conditions"][c]["speed"]).ravel() for c in conditions])
+        norm = LogNorm(vmin=max(float(speeds.min()), 1e-3), vmax=float(speeds.max()))
+        for j, condition in enumerate(conditions):
+            ax = axes[i][j]
+            _draw_flow_panel(ax, fields["conditions"][condition], xs=xs, ys=ys, condition=condition, norm=norm)
+            if i == 0:
+                ax.set_title(CONDITION_SHORT_LABELS.get(condition, condition), fontsize=8, color=CONDITION_COLORS.get(condition, INK))
+            if i == len(arms) - 1:
+                ax.set_xlabel(f"axis 1 ({fields['explained'][0]:.0%} of state variance)", fontsize=6.8)
+            else:
+                ax.set_xlabel(f"axis 1 ({fields['explained'][0]:.0%})", fontsize=6.8)
+            if j > 0:
+                ax.tick_params(labelleft=False)
+        seed = fields.get("seed", "")
+        axes[i][0].set_ylabel(f"{arm} network · seed {seed}\naxis 2 ({fields['explained'][1]:.0%})", fontsize=6.8)
+        _panel(axes[i][0], "ab"[i])
+    fig.tight_layout(h_pad=1.0)
     return fig
 
 
@@ -1138,9 +1191,9 @@ def plot_dynamics_summary(
     """Per-fixation-type dynamical quantities, grouped by arm so the fixation types sit side by side.
 
     One panel per property; within each, the dense network's three fixation types on the
-    left and the constrained network's on the right, boxes with every fit a dot. ``tests``
-    holds paired contrasts between fixation types within each arm, keyed by ``property``
-    and ``arm``; significant ones are marked.
+    left and the constrained network's on the right, bars (mean, SEM) with every fit a
+    dot. ``tests`` holds paired contrasts between fixation types within each arm, keyed by
+    ``property`` and ``arm``; significant ones are marked.
     """
     arms = [a for a in ("dense", "constrained") if a in set(long["arm"])]
     fig, axes = plt.subplots(1, len(properties), figsize=figsize, squeeze=False)
@@ -1150,7 +1203,7 @@ def plot_dynamics_summary(
         panel_tests = tests[tests["property"] == prop] if tests is not None and not tests.empty else None
         _grouped_condition_boxes(ax, block, value="value", group_col="arm", groups=arms, gap_tests=panel_tests, gap_group_col="arm",
                                  labels={"dense": "dense", "constrained": "constrained"}, ylabel=DYNAMICS_LABELS.get(prop, prop),
-                                 legend=False, label_fontsize=7, style="box", width=0.24, top=float(block["value"].max()))
+                                 legend=False, label_fontsize=7, style="bar", width=0.26, top=float(block["value"].max()))
         _panel(ax, "abcdefghi"[k])
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor=CONDITION_COLORS[c], edgecolor="none") for c in CONDITION_ORDER]
     fig.legend(handles, [CONDITION_SHORT_LABELS[c] for c in CONDITION_ORDER], loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=3,
@@ -1205,7 +1258,7 @@ __all__ = [
     "ARCHITECTURE_LABELS", "CONDITION_OFFSETS", "DYNAMICS_LABELS", "DYNAMICS_MAIN", "RUNG_LABELS", "SHORT_CONSTRAINT_LABELS",
     "condition_shades", "contrasts_to_marks", "draw_bars", "draw_boxes", "draw_violins", "mark_contrasts",
     "plot_architecture_cost", "plot_bottleneck_cost_by_condition", "plot_chapter_schematic", "plot_constraint_cost_summary",
-    "plot_dynamics_summary", "plot_ensemble_cost", "plot_ladder_summary", "plot_ladder_traces", "plot_lesion_extent_violins",
+    "plot_dynamics_summary", "plot_ensemble_cost", "plot_flow_fields_two_arms", "plot_ladder_summary", "plot_ladder_traces", "plot_lesion_extent_violins",
     "plot_lesion_spectra_clouds", "plot_lesion_spectra_distance", "plot_manipulation_schematic", "plot_pair_lesion_summary",
     "plot_rank_grid_composite",
 ]
