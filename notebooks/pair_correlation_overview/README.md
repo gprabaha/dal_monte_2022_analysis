@@ -4,8 +4,13 @@ Written as a **thesis chapter**: introduction, a methods section with the full
 equations, results and discussion, with the figures inline. Figures are also
 written as editable PDFs for stitching into a paper figure.
 
-Every pair is **two FDR-selective units recorded simultaneously**, and two things
-are measured on those same pairs, so they can be compared pair for pair.
+Every analysed pair is **two units recorded simultaneously, both selective** —
+each significant for at least one of the three pairwise fixation-type contrasts
+after multiple-comparison correction. That rule is applied twice per pair, so it
+costs roughly its own square: BLA has 53% of its units selective and keeps 38% of
+its pairs, and across groups 20–38% of recorded pairs survive. Figure 2 shows
+this. Two things are then measured on those same pairs, so they can be compared
+pair for pair.
 
 | | per-trial spike correlation | mean signal correlation |
 |---|---|---|
@@ -42,8 +47,8 @@ then average). Every figure title, axis label and paragraph uses one of those tw
 Eight numbered figures, each with a caption below it in the notebook.
 
 1. Method schematic — one set of trials, two orders of operation
-2. Donuts: pairs recorded per group and the fraction individually above null,
-   within region and across
+2. Donuts: pairs recorded per group and the fraction analysed, within region and
+   across
 3. **Mean signal**: null-corrected correlation across lags, within region
 4. **Per-trial**: observed against null, every region and fixation type
 5. **Both measures side by side**, each reduced to a ±250 ms mean minus its null,
@@ -65,6 +70,13 @@ do, and why the null-subtracted excess is around 10⁻³ and the bars are drawn
 ×10⁻³. They are different units and only their *ranks* are compared, in the
 Spearman table. Figures 5 and 8 put the two on adjacent axes precisely because
 only the *pattern across fixation types* is comparable, not the magnitudes.
+
+**Every bar panel is scaled to its own decade and names it in the axis label**
+(`, ×10⁻³`). The panels cannot share an axis — a shared one would flatten the
+cross-region bars to a line at zero — so the decade in the label is what makes
+magnitudes comparable *between* figures: the per-trial panel reads ×10⁻³ in
+Figure 5 and ×10⁻⁴ in Figure 8, and the ten-fold drop is a symbol rather than a
+count of leading zeros.
 
 ## Two lag windows, two questions
 

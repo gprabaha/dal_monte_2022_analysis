@@ -2002,6 +2002,58 @@ def count_significant_pairs(
     return result.sort_values(list(group_columns)).reset_index(drop=True)
 
 
+def summarize_analysed_pairs(pairs: pd.DataFrame) -> pd.DataFrame:
+    """How many pairs were recorded, and how many enter the analysis.
+
+    A pair is analysed when **both** its units are selective -- significant for at
+    least one fixation-type contrast after multiple-comparison correction
+    (``is_selective_unit_corrected``, which is itself an *any* over the three
+    pairwise contrasts).  That is the inclusion rule the whole chapter runs on,
+    and it costs most of the recorded pairs: requiring two selective units at once
+    is roughly the square of requiring one, so a region where two thirds of units
+    are selective keeps well under half its pairs.
+
+    ``n_recorded`` counts distinct pairs, not pair-conditions, so it is directly
+    comparable with ``n_analysed`` and their ratio is a fraction of the
+    simultaneously recorded population.
+    """
+    frame = pairs.copy()
+    if "scope" not in frame.columns:
+        frame["scope"] = np.where(frame["same_region"], "within_region", "cross_region")
+    unique = frame.drop_duplicates(subset=["pair_key"])
+
+    rows: list[dict] = []
+    for (scope, region_pair), group in unique.groupby(["scope", "region_pair"], observed=True):
+        n_recorded = int(len(group))
+        n_analysed = int(group["both_selective"].sum())
+        units_recorded = set(group["unit_uuid_1"].astype(str)) | set(
+            group["unit_uuid_2"].astype(str)
+        )
+        analysed = group.loc[group["both_selective"]]
+        units_analysed = set(analysed["unit_uuid_1"].astype(str)) | set(
+            analysed["unit_uuid_2"].astype(str)
+        )
+        rows.append(
+            {
+                "scope": str(scope),
+                "region_pair": str(region_pair),
+                "n_recorded": n_recorded,
+                "n_analysed": n_analysed,
+                "frac_analysed": float(n_analysed / n_recorded) if n_recorded else np.nan,
+                "n_units_recorded": int(len(units_recorded)),
+                "n_units_analysed": int(len(units_analysed)),
+                "n_sessions": int(group.groupby(["date", "session"], observed=True).ngroups),
+                "n_dates": int(group["date"].nunique()),
+            }
+        )
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    return result.sort_values(["scope", "n_recorded"], ascending=[True, False]).reset_index(
+        drop=True
+    )
+
+
 def summarize_significant_pairs(
     pairs: pd.DataFrame,
     *,

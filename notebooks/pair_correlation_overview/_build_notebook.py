@@ -60,10 +60,13 @@ display(Image(filename=str(paths["png"])))
 
 LOAD = '''
 # --- per-trial spike correlation: per-fixation trains, circular-shift null ---
-spikes = psc.load_pair_coordination(CFG_PATH)[0]
-spikes, dropped = psc.drop_zero_lag_artifact_dates(spikes)
-spikes = spikes.loc[spikes["both_selective"]].copy()
-spikes["scope"] = np.where(spikes["same_region"], "within_region", "cross_region")
+# Load every simultaneously recorded pair first.  The selectivity filter is what
+# Figure 2 is about, so the unfiltered table has to survive long enough to count.
+all_pairs = psc.load_pair_coordination(CFG_PATH)[0]
+all_pairs, dropped = psc.drop_zero_lag_artifact_dates(all_pairs)
+all_pairs["scope"] = np.where(all_pairs["same_region"], "within_region", "cross_region")
+
+spikes = all_pairs.loc[all_pairs["both_selective"]].copy()
 spike_traces = pd.read_pickle(SUMMARY_DIR / "traces_by_region_selective.pkl")
 print(f"per-trial spike correlation: {len(spikes):,} pair-conditions, "
       f"both units FDR-selective   (artifact dates removed: {dropped})")
@@ -92,25 +95,32 @@ spike_summary = psc.summarize_coordination(
 spike_contrasts = psc.compare_conditions(
     spikes, metric=SPIKE_METRIC, group_columns=("scope", "region_pair")
 )
+analysed_pairs = psc.summarize_analysed_pairs(all_pairs)
 pair_significance = psc.summarize_significant_pairs(spikes)
 '''
 
 PIES = '''
-fig, paths = viz.plot_pair_significance_pies(pair_significance, figs)
+fig, paths = viz.plot_analysed_pair_pies(analysed_pairs, figs)
 display(Image(filename=str(paths["png"])))
 '''
 
 COUNT_TABLES = '''
 counts = psc.build_recording_counts(spikes)
 
-display(Markdown("**Units, recording days, sessions and pairs behind each group**"))
+display(Markdown("**Recorded against analysed**, per group"))
+display(analysed_pairs.round(3))
+
+display(Markdown("**The analysed pairs**: units, recording days, sessions, and "
+                 "fixations per pair-condition"))
 display(
     counts.loc[:, ["scope", "region_pair", "n_units", "n_dates", "n_sessions", "n_pairs",
                    "median_pairs_per_session", "max_pairs_per_session",
                    "median_n_fixations"]]
 )
 
-display(Markdown("**Pairs above the circular-shift null, pooled over conditions**"))
+display(Markdown("**Of the analysed pairs, how many are individually above the "
+                 "circular-shift null** (FDR across all pair-and-condition tests "
+                 "in a group, counted once per pair)"))
 display(pair_significance.round(5))
 '''
 
@@ -310,21 +320,28 @@ METHODS = r"""
 
 Single units were recorded simultaneously from BLA, ACCg, dmPFC and OFC while
 two macaques viewed each other and non-social objects. Analysis is restricted to
-**FDR-corrected selective units** — units significantly selective for at least
-one fixation-condition contrast in the single-unit analysis
-(`three_condition_core` family, `is_selective_unit_corrected`). Two
-justifications: a unit with no reliable fixation response contributes a mean
+**selective units**: a unit is selective when at least one of the three pairwise
+fixation-type contrasts is significant for it in the single-unit analysis after
+multiple-comparison correction (`three_condition_core` family,
+`is_selective_unit_corrected`, which is itself an *any* over those contrasts).
+Two justifications: a unit with no reliable fixation response contributes a mean
 timeline that is mostly estimation noise, and correlating noise with noise adds
 variance and nothing else; and the question *do units that respond to fixation
 condition share response structure* presupposes units that respond.
 
-A **pair** is two selective units recorded in the same session. Both measures are
-defined on the same pairs, so they can be compared pair for pair. Pair counts
-grow with the square of the simultaneously recorded units, so a session with 20
-units contributes 190 within-region pairs and a session with 5 contributes 10;
-the counts reported below are therefore dominated by a minority of dense
-sessions, which is why the per-session distribution is given as a median and a
-maximum rather than a mean.
+A **pair** is two units recorded in the same session, and a pair is analysed only
+when **both** its units are selective. Both measures are defined on exactly the
+same pairs, so they can be compared pair for pair.
+
+Two consequences of counting pairs are worth stating before any number below is
+read. First, the inclusion rule applies twice, so it costs roughly its own square:
+BLA has 53% of its units selective and keeps 38% of its pairs, and across all
+groups between a fifth and two fifths of recorded pairs survive (Figure 2).
+Second, pair counts grow with the square of the simultaneously recorded units, so
+a session with 20 units contributes 190 within-region pairs and a session with 5
+contributes 10. A minority of dense sessions therefore supplies most of the pairs,
+which is why the per-session distribution below is given as a median and a maximum
+rather than a mean, and why the pairs are not independent observations.
 
 ### Fixation conditions
 
@@ -635,9 +652,10 @@ difference than as a reversal.
 
 ### The effect is a population shift, not a coupled subpopulation
 
-Figure 2 carries a result that is easy to skip past. The *population* of pairs
-sits above its null with p-values indistinguishable from zero — down to
-$10^{-263}$ in OFC — but at most **1.9%** of *individual* pairs survives FDR
+The tables under Figure 2 carry a result that is easy to skip past. The
+*population* of pairs sits above its null with p-values indistinguishable from
+zero — down to $10^{-263}$ in OFC — but at most **1.9%** of *individual* pairs
+survives FDR
 correction across pairs (dmPFC), it is 1.5% in OFC and 0.4% in BLA, it is **zero**
 in ACCg, and across regions it is 4 pairs out of 19,000. There is no subset of
 strongly coupled pairs driving the average; there is a small, broadly distributed
@@ -765,24 +783,28 @@ values.
 
 ### What the analysis is built from
 
-Every pair is two FDR-selective units recorded in the same session. The figure and
-tables below are the chapter's denominators.
+Every analysed pair is two units recorded in the same session, each significant for
+at least one fixation-type contrast after correction. The figure and tables below
+are the chapter's denominators: how many pairs were recorded, how many that rule
+keeps, and — of those kept — how many carry a per-trial signal on their own.
 """),
     code(LOAD),
     code(PIES),
     markdown("""
-**Figure 2. Pairs recorded, and pairs individually above the null.** One donut per
-group: within region on the top row, across regions on the bottom. The number in
-the hole is every simultaneously recorded selective pair the group contributes;
-the coloured wedge, with its count and percentage above, is the subset whose
-per-trial spike correlation exceeds the circular-shift null after
-Benjamini–Hochberg correction across all pair-and-condition tests in that group
-(counted once per pair, pooled over fixation types). The wedge is offset because
-it would otherwise be too thin to see. Two things to read off: the groups are very
-unequal — BLA alone supplies 16,582 pairs against ACCg's 2,117 — and the
-significant fraction is small everywhere, at most 1.9% within region, zero in
-ACCg, and 4 pairs in 19,000 across regions. The population result that follows is
-therefore a broad shift, not a coupled subset.
+**Figure 2. Pairs recorded, and pairs analysed.** One donut per group: within
+region on the top row, across regions on the bottom. The number in the hole is
+every pair of simultaneously recorded units the group contributes; the dark wedge,
+with its count and percentage above, is the subset this chapter analyses — pairs
+in which **both** units are selective, meaning significant for at least one
+fixation-type contrast after multiple-comparison correction. Between a fifth and
+two fifths of recorded pairs survive that rule. The cost is steep because it is
+applied twice: requiring a selective unit is a filter, requiring two at once is
+roughly its square, so BLA keeps 38% of its pairs while 53% of its units are
+selective. Two things to read off: the groups are very unequal — BLA supplies
+16,582 analysed pairs against ACCg's 2,117 — and the inclusion rate is similar
+across groups (20–38%), so the imbalance is in how much was recorded, not in how
+selectively each region was filtered. Everything from Figure 3 onward is computed
+on the dark wedges only.
 """),
     code(COUNT_TABLES),
 
@@ -824,13 +846,15 @@ adjacent panels is not a comparison a reader can make by eye.
 reduced to one number: its mean over ±250 ms, minus its null's. *Left:* mean
 signal correlation, a Pearson coefficient. *Right:* per-trial spike correlation on
 the trial-count-matched recomputation, in spike pairs per fixation, scaled by
-$10^{3}$. Bars are mean ± SEM across pairs; a horizontal bar with stars marks
+Bars are mean ± SEM across pairs; a horizontal bar with stars marks
 every paired Wilcoxon contrast surviving FDR within the panel, and nothing is
-marked where the contrast does not survive. The two y-axes are different
-quantities and are not comparable in magnitude — only the *pattern across
-fixation types* is. That pattern is the chapter's result: interactive face leads
-on both measures in OFC and dmPFC, but the mean-signal effect sizes reach 0.30
-where the per-trial ones reach 0.073.
+marked where the contrast does not survive. Each panel is scaled to its own
+decade, named in its axis label — the per-trial panel reads ×10⁻³ here and ×10⁻⁴
+in Figure 8, so the ten-fold drop across regions is a symbol rather than a count
+of leading zeros. The two y-axes are different quantities and are not comparable
+in magnitude; only the *pattern across fixation types* is. That pattern is the
+chapter's result: interactive face leads on both measures in OFC and dmPFC, but
+the mean-signal effect sizes reach 0.30 where the per-trial ones reach 0.073.
 """),
     code(bars_tables_cell("within_region")),
 
@@ -863,13 +887,13 @@ again the panel where observed sits visibly above null across the whole lag rang
     code(spike_null_table_cell("cross_region")),
     code(bars_cell("cross_region", "fig08_correlation_bars")),
     markdown("""
-**Figure 8. The two measures side by side, across regions.** As Figure 5. Note the
-axes: cross-region per-trial values are an order of magnitude below the
-within-region ones (0.15–0.73 against 0.6–4.9 $\\times 10^{-3}$), and mean signal
-correlation is negative for most combinations. Only BLA × dmPFC separates the
-fixation types, with interactive face above both others on **both** measures —
-the same combination, the same direction, the only place in the chapter where the
-two agree on a cross-region effect.
+**Figure 8. The two measures side by side, across regions.** As Figure 5. Read the
+decade in each axis label before the bar heights: the per-trial panel is ×10⁻⁴
+here against ×10⁻³ in Figure 5, so cross-region co-firing is an order of magnitude
+weaker than within-region, and mean signal correlation is negative for most
+combinations. Only BLA × dmPFC separates the fixation types, with interactive face
+above both others on **both** measures — the same combination, the same direction,
+the only place in the chapter where the two agree on a cross-region effect.
 """),
     code(bars_tables_cell("cross_region")),
 

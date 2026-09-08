@@ -29,6 +29,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination imp
     build_region_pair_inventory,
     compute_condition_coordination,
     count_significant_pairs,
+    summarize_analysed_pairs,
     summarize_significant_pairs,
     drop_zero_lag_artifact_dates,
     MATCHED_WINDOW_METRIC,
@@ -430,6 +431,31 @@ class TestRecordingCounts(unittest.TestCase):
             ]
             uncorrected = int((group["circular_shift_mean_z_pm10ms"] > 1.96).sum())
             self.assertLessEqual(row.n_significant, uncorrected)
+
+    def test_analysed_pairs_counts_both_selective_against_all_recorded(self):
+        """The inclusion rule is *both* units selective, applied to distinct pairs."""
+        pairs = _synthetic_pairs(n_pairs=90)
+        summary = summarize_analysed_pairs(pairs)
+        self.assertEqual(int(summary["n_recorded"].sum()), pairs["pair_key"].nunique())
+        unique = pairs.drop_duplicates(subset=["pair_key"])
+        self.assertEqual(int(summary["n_analysed"].sum()), int(unique["both_selective"].sum()))
+        # Analysed is a subset of recorded, always.
+        self.assertTrue((summary["n_analysed"] <= summary["n_recorded"]).all())
+        self.assertTrue(((summary["frac_analysed"] >= 0) & (summary["frac_analysed"] <= 1)).all())
+
+    def test_analysed_pair_counts_are_not_taken_from_a_prefiltered_table(self):
+        """Passing an already-filtered table must not silently report 100%.
+
+        The figure this feeds exists to show what the selectivity rule costs, and
+        it can only do that if the frame it is given still contains the pairs the
+        rule excludes.
+        """
+        pairs = _synthetic_pairs(n_pairs=90)
+        full = summarize_analysed_pairs(pairs)
+        prefiltered = summarize_analysed_pairs(pairs.loc[pairs["both_selective"]])
+        self.assertTrue((full["frac_analysed"] < 1.0).any())
+        self.assertTrue((prefiltered["frac_analysed"] == 1.0).all())
+        self.assertLess(int(full["n_analysed"].sum()), int(full["n_recorded"].sum()))
 
     def test_pooled_significance_counts_pairs_not_pair_conditions(self):
         """The pie chart's denominator is pairs, so its numerator must be too."""

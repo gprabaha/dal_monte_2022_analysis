@@ -89,7 +89,7 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_pair_correlation_overview i
     PairOverviewPlotSettings,
     plot_excess_by_condition,
     plot_spike_correlation_above_null,
-    plot_pair_significance_pies,
+    plot_analysed_pair_pies,
     plot_correlation_bars,
 )
 from dal_monte_2022_analysis.ephys.plotting.fixation_signal_correlation import (
@@ -195,7 +195,7 @@ __all__ = [
     "PairOverviewPlotSettings",
     "plot_excess_by_condition",
     "plot_spike_correlation_above_null",
-    "plot_pair_significance_pies",
+    "plot_analysed_pair_pies",
     "plot_correlation_bars",
     "SignalCorrelationPlotSettings",
     "plot_condition_summary",

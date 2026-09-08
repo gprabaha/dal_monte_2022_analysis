@@ -438,6 +438,54 @@ def plot_excess_by_condition(
     return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
 
 
+_SUPERSCRIPTS = str.maketrans("-0123456789", "⁻⁰¹²³⁴⁵⁶⁷⁸⁹")
+
+
+def _decade(values: Sequence[float]) -> int:
+    """Exponent ``n`` that puts the largest plotted magnitude in [1, 10).
+
+    Bar panels in this chapter cannot share a y-axis -- one is a Pearson
+    coefficient and another counts spike pairs per fixation, and within one
+    measure the cross-region values are a tenth of the within-region ones.  Left
+    to matplotlib each panel then gets tick labels like ``0.0005`` beside another
+    panel's ``0.08``, and the order-of-magnitude difference between them is
+    carried by counting zeros.
+
+    Normalising every panel to its own decade and naming that decade in the axis
+    label puts the same three or four digits on every panel and moves the
+    comparison to one symbol: a reader sees ×10⁻³ against ×10⁻⁴ rather than
+    inferring it.  The panel is still scaled to its own data, which is the point
+    -- the alternative, a shared axis, would flatten the small panels to a line.
+    """
+    magnitudes = np.abs(np.asarray(list(values), dtype=float))
+    magnitudes = magnitudes[np.isfinite(magnitudes) & (magnitudes > 0)]
+    if not magnitudes.size:
+        return 0
+    return int(np.floor(np.log10(magnitudes.max())))
+
+
+def _decade_suffix(exponent: int) -> str:
+    """``", ×10⁻³"`` for an exponent of -3, and nothing at all for 0."""
+    if exponent == 0:
+        return ""
+    return f", ×10{str(exponent).translate(_SUPERSCRIPTS)}"
+
+
+def _rescale_to_decade(rows: pd.DataFrame, columns: Sequence[str] = ("mean", "sem")) -> tuple[pd.DataFrame, int]:
+    """Divide the plotted columns by their own decade, and report which."""
+    rows = rows.copy()
+    present = [c for c in columns if c in rows.columns]
+    if not present:
+        return rows, 0
+    spread = rows[present[0]].astype(float).abs()
+    if len(present) > 1:
+        spread = spread + rows[present[1]].astype(float).abs()
+    exponent = _decade(spread.to_numpy())
+    for column in present:
+        rows[column] = rows[column].astype(float) / (10.0 ** exponent)
+    return rows, exponent
+
+
 def _bar_panel(
     ax,
     summary: pd.DataFrame,
@@ -526,36 +574,31 @@ def _bar_panel(
         ax.set_ylim(low, headroom)
 
 
-def plot_pair_significance_pies(
+def plot_analysed_pair_pies(
     summary: pd.DataFrame,
     settings: PairOverviewPlotSettings,
     *,
-    stem: str = "fig02_pair_significance",
+    stem: str = "fig02_analysed_pairs",
 ) -> tuple[plt.Figure, dict[str, Path]]:
-    """One donut per group: how many pairs were recorded, and how many carry a signal.
+    """One donut per group: pairs recorded, and the share the chapter analyses.
 
-    Drawn as donuts rather than filled pies so the total can sit in the hole.
-    The two numbers a reader needs are the denominator -- how much data the group
-    rests on -- and the share of it that is individually above the circular-shift
-    null, and a filled pie can show only the second.
+    A pair enters the analysis only when **both** its units are selective --
+    significant for at least one fixation-type contrast after correction.
+    Requiring that of two units at once is roughly the square of requiring it of
+    one, so the analysed share is far smaller than the selective share of units,
+    and the figure exists to make that cost explicit rather than leave it in a
+    methods sentence.
 
-    The significant wedge is pulled out and outlined because it is small
-    everywhere: 1.9% is a two-degree slice, and without an offset it is
-    indistinguishable from the seam between the wedges.  Its count and percentage
-    are printed beside it, so nothing here has to be estimated by eye -- which is
-    the usual and fair objection to a pie chart, and the reason the number is
-    given rather than implied.
-
-    A group with no significant pairs is drawn as a complete grey ring with
-    ``0 (0.0%)`` beside it, rather than omitted: an empty result is a result.
+    Drawn as donuts rather than filled pies so the recorded total can sit in the
+    hole: the two numbers a reader needs are the denominator and the share of it
+    that survives, and a filled pie can show only the second.  Both the count and
+    the percentage are printed, so nothing has to be estimated from an angle --
+    the usual and fair objection to a pie chart.
     """
     apply_thesis_plot_style()
     rows = summary.copy()
     rows["region_pair"] = rows["region_pair"].astype(str)
-    scopes = [
-        ("within_region", "Within region"),
-        ("cross_region", "Across regions"),
-    ]
+    scopes = (("within_region", "Within region"), ("cross_region", "Across regions"))
     layout = []
     for scope, label in scopes:
         available = rows.loc[rows["scope"].astype(str) == scope, "region_pair"]
@@ -564,7 +607,7 @@ def plot_pair_significance_pies(
 
     fig, axes = plt.subplots(
         len(layout), columns,
-        figsize=(1.62 * columns + 0.5, 1.95 * len(layout)),
+        figsize=(1.62 * columns + 0.5, 1.92 * len(layout)),
         squeeze=False,
     )
     lookup = rows.set_index(["scope", "region_pair"])
@@ -574,42 +617,30 @@ def plot_pair_significance_pies(
             if column >= len(groups):
                 ax.set_visible(False)
                 continue
-            group = groups[column]
-            record = lookup.loc[(scope, group)]
-            n_pairs = int(record["n_pairs"])
-            n_significant = int(record["n_significant"])
-            percent = 100.0 * n_significant / n_pairs if n_pairs else 0.0
+            record = lookup.loc[(scope, groups[column])]
+            n_recorded = int(record["n_recorded"])
+            n_analysed = int(record["n_analysed"])
+            percent = 100.0 * n_analysed / n_recorded if n_recorded else 0.0
 
-            sizes = [max(n_significant, 0), max(n_pairs - n_significant, 0)]
-            if n_significant == 0:
-                # A zero-width wedge is not drawn at all, so the ring would lose
-                # its outline; draw the remainder alone and say so in the label.
-                wedges = ax.pie(
-                    [1.0], colors=["#e3e3e3"], startangle=90, counterclock=False,
-                    wedgeprops={"width": 0.38, "edgecolor": "white", "linewidth": 0.6},
-                )[0]
-            else:
-                wedges = ax.pie(
-                    sizes, colors=[SPIKE_COLOUR, "#e3e3e3"],
-                    startangle=90, counterclock=False, explode=(0.09, 0.0),
-                    wedgeprops={"width": 0.38, "edgecolor": "white", "linewidth": 0.6},
-                )[0]
-                wedges[0].set_edgecolor(SPIKE_COLOUR)
-                wedges[0].set_linewidth(0.8)
+            wedges = ax.pie(
+                [max(n_analysed, 0), max(n_recorded - n_analysed, 0)],
+                colors=[INK, "#e3e3e3"], startangle=90, counterclock=False,
+                wedgeprops={"width": 0.38, "edgecolor": "white", "linewidth": 0.7},
+            )[0]
             ax.set_aspect("equal")
-            ax.text(0, 0.10, f"{n_pairs:,}", ha="center", va="center",
-                    fontsize=8.5, color=INK)
-            ax.text(0, -0.16, "pairs", ha="center", va="center",
+            ax.text(0, 0.12, f"{n_recorded:,}", ha="center", va="center",
+                    fontsize=8.5, color=MUTED_INK)
+            ax.text(0, -0.14, "recorded", ha="center", va="center",
                     fontsize=6.0, color=MUTED_INK)
-            ax.text(0, 1.30, f"{n_significant:,} ({percent:.1f}%)", ha="center",
-                    va="center", fontsize=6.8,
-                    color=SPIKE_COLOUR if n_significant else MUTED_INK)
-            ax.set_title(region_label(group), fontsize=7.2, color=INK, pad=13)
+            ax.text(0, 1.32, f"{n_analysed:,} analysed  ({percent:.0f}%)", ha="center",
+                    va="center", fontsize=6.8, color=INK)
+            ax.set_title(region_label(groups[column]), fontsize=7.2, color=INK, pad=13)
         axes[row_index][0].set_ylabel(label, fontsize=7.0, color=MUTED_INK)
 
-    fig.suptitle("Pairs recorded, and pairs above the circular-shift null",
-                 fontsize=8.5, color=INK)
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.suptitle("Simultaneously recorded pairs, and the pairs analysed\n"
+                 "(both units selective for at least one fixation-type contrast)",
+                 fontsize=8.0, color=INK, linespacing=1.5)
+    fig.tight_layout(rect=(0, 0, 1, 0.90))
     return fig, save_thesis_figure(fig, settings, stem)
 
 
@@ -621,7 +652,6 @@ def plot_correlation_bars(
     settings: PairOverviewPlotSettings,
     *,
     signal_measure: str = "window_excess_pm250ms",
-    spike_scale: float = 1e3,
     scope: str = "within_region",
     stem: str = "fig05_correlation_bars",
 ) -> tuple[plt.Figure, dict[str, Path]]:
@@ -636,8 +666,13 @@ def plot_correlation_bars(
     the chapter: they are computed from the same spikes, on the same pairs, over
     the same lags, and differ only in whether the trials were averaged before or
     after correlating.  The axes cannot be shared -- one is a Pearson coefficient
-    and the other is spike pairs per fixation, scaled here by 1000 -- so only the
-    *pattern across conditions* is comparable, which is what the figure is for.
+    and the other counts spike pairs per fixation -- so only the *pattern across
+    conditions* is comparable, which is what the figure is for.
+
+    Each panel is scaled to its own decade and says which one in its axis label,
+    so the magnitudes stay comparable *between* figures too: the cross-region
+    version of this figure reads x10^-4 beside this one's x10^-3, and the
+    ten-fold difference is a symbol rather than a count of leading zeros.
     """
     apply_thesis_plot_style()
     signal_rows = (
@@ -651,9 +686,8 @@ def plot_correlation_bars(
     spike_rows = spike_summary.copy()
     if "scope" in spike_rows.columns:
         spike_rows = spike_rows.loc[spike_rows["scope"].astype(str) == scope]
-    for column in ("mean", "sem"):
-        if column in spike_rows.columns:
-            spike_rows[column] = spike_rows[column].astype(float) * float(spike_scale)
+    signal_rows, signal_exponent = _rescale_to_decade(signal_rows)
+    spike_rows, spike_exponent = _rescale_to_decade(spike_rows)
     spike_local = spike_contrasts
     if spike_local is not None and len(spike_local) and "scope" in spike_local.columns:
         spike_local = spike_local.loc[spike_local["scope"].astype(str) == scope]
@@ -668,12 +702,16 @@ def plot_correlation_bars(
                  settings.panel_height_in + 1.0),
     )
     _bar_panel(axes[0], signal_rows, groups, contrasts=signal_local)
-    _finish(axes[0], ylabel="Mean signal correlation\n(observed − null, ±250 ms)",
+    _finish(axes[0],
+            ylabel="Mean signal correlation\n"
+                   f"(observed − null, ±250 ms{_decade_suffix(signal_exponent)})",
             title="Mean signal correlation", title_size=7.5)
 
     spike_groups = _group_order(list(spike_rows["region_pair"].astype(str).unique()), scope=scope)
     _bar_panel(axes[1], spike_rows, spike_groups, contrasts=spike_local)
-    _finish(axes[1], ylabel="Spike correlation − null\n(mean ±250 ms, ×10⁻³)",
+    _finish(axes[1],
+            ylabel="Per-trial spike correlation\n"
+                   f"(observed − null, ±250 ms{_decade_suffix(spike_exponent)})",
             title="Per-trial spike correlation", title_size=7.5)
 
     handles, labels = axes[0].get_legend_handles_labels()
