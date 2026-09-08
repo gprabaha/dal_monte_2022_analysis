@@ -916,23 +916,22 @@ def plot_ensemble_and_constraints(
     *,
     constrained: str,
     constraints: Sequence[str],
-    figsize: tuple[float, float] = (7.4, 5.3),
+    figsize: tuple[float, float] = (7.4, 2.7),
 ):
-    """The ensemble panels (a-c) over the every-constraint summary (d), in one figure.
+    """The ensemble panels (a-c) and the every-constraint summary (d) in one row.
 
     (a) shortfall from the ceiling per fixation type, dense against constrained; (b) the
     cost of the selected constraint per fixation type; (c) the unexplained-variance ratio;
     (d) the cost of every constraint in the chapter per fixation type, on one axis.
     """
-    fig = plt.figure(figsize=figsize)
-    grid = fig.add_gridspec(2, 3, height_ratios=[1.0, 1.05], width_ratios=[1.25, 1.0, 1.0], hspace=0.55, wspace=0.55)
-    top = [fig.add_subplot(grid[0, k]) for k in range(3)]
-    _draw_ensemble_row(top, fit_long, cost_per_seed, arm_tests, gap_tests_selected, constrained=constrained)
-    ax = fig.add_subplot(grid[1, :])
+    fig, axes = plt.subplots(1, 4, figsize=figsize, gridspec_kw={"width_ratios": [1.15, 0.72, 0.72, 2.0]})
+    _draw_ensemble_row(axes[:3], fit_long, cost_per_seed, arm_tests, gap_tests_selected, constrained=constrained)
+    ax = axes[3]
     groups = [c for c in constraints if c in set(cost_per_seed["arm"])]
     _grouped_condition_boxes(ax, cost_per_seed, value="cost", group_col="arm", groups=groups, gap_tests=gap_tests_all,
-                             labels=SHORT_CONSTRAINT_LABELS, ylabel="cost vs dense network\n($\\Delta R^2$ / ceiling)", label_fontsize=6.4)
+                             labels=SHORT_CONSTRAINT_LABELS, ylabel="cost vs dense network\n($\\Delta R^2$ / ceiling)", label_fontsize=5.8)
     _panel(ax, "d")
+    fig.tight_layout(w_pad=0.6)
     return fig
 
 
@@ -980,7 +979,7 @@ def plot_pair_lesion_summary(
     pairs = [p for p in ("ofc↔bla", "ofc↔dmpfc", "ofc↔accg", "bla↔dmpfc", "bla↔accg", "dmpfc↔accg") if p in set(pair_share["pair"])]
     offsets = dict(zip(arms, (-0.2, 0.2) if len(arms) == 2 else (0.0,)))
     families = [f for f in ("directed", "bidirectional", "within-region", "isolation") if f in set(damage_per_fit["family"])]
-    family_labels = {"directed": "pathway", "bidirectional": "pair", "within-region": "own block", "isolation": "isolation"}
+    family_labels = {"directed": "one pathway", "bidirectional": "one pair", "within-region": "own block", "isolation": "isolated region"}
     fig, axes = plt.subplots(1, 3, figsize=figsize, gridspec_kw={"width_ratios": [1.45, 1.0, 1.0]})
 
     ax = axes[0]
@@ -996,7 +995,7 @@ def plot_pair_lesion_summary(
             own = pair_share[(pair_share["arm"] == row["arm"]) & (pair_share["pair"] == row["pair"])]["share"].max()
             ax.text(pairs.index(row["pair"]) + offsets[row["arm"]], own + 0.004, row["stars"], ha="center", va="bottom", fontsize=6)
     ax.set_xticks(range(len(pairs)))
-    ax.set_xticklabels(pairs, rotation=30, ha="right", fontsize=6.2)
+    ax.set_xticklabels(["↔".join(REGION_LABELS.get(r, r) for r in pair.split("↔")) for pair in pairs], rotation=30, ha="right", fontsize=7)
     ax.set_ylim(bottom=0.0)
     ax.set_ylabel("share of pair-lesion damage")
     handles = [plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=ARM_COLORS["dense"], lw=0.8),
@@ -1019,7 +1018,7 @@ def plot_pair_lesion_summary(
             ax.text(families.index(row["family"]) + offsets[row["arm"]], float(max(own["damage"].max(), own["control"].max())) + 0.15,
                     row["stars"], ha="center", va="bottom", fontsize=5.6)
     ax.set_xticks(range(len(families)))
-    ax.set_xticklabels([family_labels[f] for f in families], fontsize=6.4, rotation=25, ha="right")
+    ax.set_xticklabels([family_labels[f] for f in families], fontsize=7, rotation=30, ha="right")
     ax.set_ylim(0, float(max(damage_per_fit["damage"].max(), damage_per_fit["control"].max())) * 1.18)
     ax.set_ylabel("damage (÷ target variance)")
     ax.plot([], [], color=INK, lw=1.4, label="random-weight control")
@@ -1039,7 +1038,7 @@ def plot_pair_lesion_summary(
     ax.plot([], [], color=INK, lw=1.4, label="permutation null, 95th pct.")
     ax.axhline(0, color=INK, lw=0.6, zorder=1)
     ax.set_xticks(range(len(kinds)))
-    ax.set_xticklabels([family_labels[f] for f in kinds], fontsize=6.4, rotation=25, ha="right")
+    ax.set_xticklabels([family_labels[f] for f in kinds], fontsize=7, rotation=30, ha="right")
     ax.set_ylabel("ranking agreement (Kendall's τ)")
     ax.set_ylim(-0.15, 1.0)
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), fontsize=5.8)
@@ -1234,15 +1233,19 @@ def _draw_flow_panel(ax, entry: Mapping[str, object], *, xs: np.ndarray, ys: np.
     ax.tick_params(labelsize=6.5)
 
 
-def plot_flow_fields_two_arms(fields_by_arm: Mapping[str, Mapping[str, object]], *, figsize: tuple[float, float] = (7.4, 5.0)):
+def plot_flow_fields_two_arms(fields_by_arm: Mapping[str, Mapping[str, object]], *, figsize: tuple[float, float] = (7.4, 5.4)):
     """The flow of each fixation type's map, one row per arm (a: dense, b: constrained), one representative fit each.
 
     Each row has its own state plane (the two leading principal axes of that fit's pooled
     hidden-state trajectories) and its own speed scale; the three panels of a row share
-    both. Circle: the first bin of the window (the trained initial state); square: the
-    last bin; time runs light to dark. Stars: fixed points of the map, filled if stable.
+    both. The row title names the arm and the fit. A legend at the foot explains the
+    trajectory (circle: first bin, square: last bin, light to dark in time), the fixed
+    points (stars, filled if stable) and the background (speed of the flow, light is slow).
     """
     from matplotlib.colors import LogNorm
+    from matplotlib.legend_handler import HandlerTuple
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
 
     arms = [a for a in ("dense", "constrained") if a in fields_by_arm]
     conditions = [c for c in CONDITION_ORDER if all(c in fields_by_arm[a]["conditions"] for a in arms)]
@@ -1255,18 +1258,34 @@ def plot_flow_fields_two_arms(fields_by_arm: Mapping[str, Mapping[str, object]],
         for j, condition in enumerate(conditions):
             ax = axes[i][j]
             _draw_flow_panel(ax, fields["conditions"][condition], xs=xs, ys=ys, condition=condition, norm=norm)
-            if i == 0:
-                ax.set_title(CONDITION_SHORT_LABELS.get(condition, condition), fontsize=8, color=CONDITION_COLORS.get(condition, INK))
-            if i == len(arms) - 1:
-                ax.set_xlabel(f"axis 1 ({fields['explained'][0]:.0%} of state variance)", fontsize=6.8)
-            else:
-                ax.set_xlabel(f"axis 1 ({fields['explained'][0]:.0%})", fontsize=6.8)
+            ax.set_title(CONDITION_SHORT_LABELS.get(condition, condition), fontsize=7.5, color=CONDITION_COLORS.get(condition, INK), pad=3)
+            ax.set_xlabel(f"axis 1 ({fields['explained'][0]:.0%} of state variance)", fontsize=6.6)
             if j > 0:
                 ax.tick_params(labelleft=False)
-        seed = fields.get("seed", "")
-        axes[i][0].set_ylabel(f"{arm} network · seed {seed}\naxis 2 ({fields['explained'][1]:.0%})", fontsize=6.8)
+        axes[i][0].set_ylabel(f"axis 2 ({fields['explained'][1]:.0%})", fontsize=6.6)
         _panel(axes[i][0], "ab"[i])
-    fig.tight_layout(h_pad=1.0)
+    viridis = plt.get_cmap("viridis")
+    handles = [
+        (Line2D([], [], color=viridis(0.15), lw=1.8), Line2D([], [], color=viridis(0.55), lw=1.8), Line2D([], [], color=viridis(0.95), lw=1.8)),
+        Line2D([], [], marker="o", color=INK, ls="none", ms=4.5),
+        Line2D([], [], marker="s", color=INK, ls="none", ms=4.5),
+        Line2D([], [], marker="*", mfc="white", mec=INK, ls="none", ms=8),
+        Line2D([], [], marker="*", mfc=INK, mec=INK, ls="none", ms=8),
+        Line2D([], [], color="#4b4b4b", lw=0.6),
+        Patch(facecolor="#dcdcdc", edgecolor="#8a8a8a", lw=0.5),
+    ]
+    labels = [
+        "trajectory, early → late", "first bin (−495 ms, trained initial state)", "last bin (+495 ms)",
+        "fixed point, saddle", "fixed point, stable", "arrows: direction of the flow", "background: speed of the flow (light = slow)",
+    ]
+    fig.legend(handles, labels, loc="lower center", ncol=4, fontsize=6, frameon=False, handlelength=2.2, columnspacing=1.4,
+               handler_map={tuple: HandlerTuple(ndivide=3, pad=0.0)}, bbox_to_anchor=(0.5, 0.0))
+    fig.tight_layout(h_pad=2.6, rect=(0, 0.075, 1, 1))
+    for i, arm in enumerate(arms):
+        left, right = axes[i][0].get_position(), axes[i][-1].get_position()
+        seed = fields_by_arm[arm].get("seed", "")
+        fig.text((left.x0 + right.x1) / 2, left.y1 + 0.052, f"{arm} network · representative fit, seed {seed}",
+                 ha="center", va="bottom", fontsize=8.5, color=INK)
     return fig
 
 
