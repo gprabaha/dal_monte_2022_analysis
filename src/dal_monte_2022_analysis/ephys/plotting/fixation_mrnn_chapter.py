@@ -625,6 +625,7 @@ def plot_ladder_summary(
 # ======================================================================================
 
 CONDITION_OFFSETS = {"face_interactive": -0.27, "face_non_interactive": 0.0, "object": 0.27}
+CONDITION_TWO_LINE = {"face_interactive": "Int\nface", "face_non_interactive": "Non-int\nface", "object": "Object"}
 
 
 def condition_legend(ax, conditions: Sequence[str] = CONDITION_ORDER, *, loc: str = "above", fontsize: float = 6.0) -> None:
@@ -851,7 +852,7 @@ def _draw_ensemble_row(axes, fit_long: pd.DataFrame, cost_per_seed: pd.DataFrame
             entries.append({"x": j + dx, "values": 1.0 - block["r2_vs_ceiling"].to_numpy(float), "color": CONDITION_COLORS[condition], "filled": filled})
     draw_bars(ax, entries, width=0.36)
     ax.set_xticks(range(len(conditions)))
-    ax.set_xticklabels([CONDITION_SHORT_LABELS[c] for c in conditions])
+    ax.set_xticklabels([CONDITION_TWO_LINE[c] for c in conditions], fontsize=6.6)
     shortfall = 1.0 - fit_long[fit_long["arm"].isin(["dense", constrained])]["r2_vs_ceiling"]
     ax.set_ylim(min(0.0, float(shortfall.min()) * 1.1), None)
     ax.set_ylabel("shortfall from the ceiling\n(1 − $R^2$ / ceiling, mean over regions)")
@@ -870,7 +871,7 @@ def _draw_ensemble_row(axes, fit_long: pd.DataFrame, cost_per_seed: pd.DataFrame
                    for j, c in enumerate(conditions)], width=0.6)
     ax.set_ylim(bottom=0.0)
     ax.set_xticks(range(len(conditions)))
-    ax.set_xticklabels([CONDITION_SHORT_LABELS[c] for c in conditions])
+    ax.set_xticklabels([CONDITION_TWO_LINE[c] for c in conditions], fontsize=6.6)
     ax.set_ylabel("cost of the constraint\n($\\Delta R^2$ / ceiling vs dense)")
     nice_axis(ax)
     if gap_tests is not None and not gap_tests.empty:
@@ -884,7 +885,7 @@ def _draw_ensemble_row(axes, fit_long: pd.DataFrame, cost_per_seed: pd.DataFrame
     ax.set_ylim(bottom=0.0)
     ax.axhline(1.0, color=INK, lw=1.0, ls="--", zorder=1)
     ax.set_xticks(range(len(conditions)))
-    ax.set_xticklabels([CONDITION_SHORT_LABELS[c] for c in conditions])
+    ax.set_xticklabels([CONDITION_TWO_LINE[c] for c in conditions], fontsize=6.6)
     ax.set_ylabel("unexplained variance,\nconstrained / dense")
     nice_axis(ax)
     _panel(ax, letters[2])
@@ -1018,7 +1019,7 @@ def plot_pair_lesion_summary(
             ax.text(families.index(row["family"]) + offsets[row["arm"]], float(max(own["damage"].max(), own["control"].max())) + 0.15,
                     row["stars"], ha="center", va="bottom", fontsize=5.6)
     ax.set_xticks(range(len(families)))
-    ax.set_xticklabels([family_labels[f] for f in families], fontsize=6.4)
+    ax.set_xticklabels([family_labels[f] for f in families], fontsize=6.4, rotation=25, ha="right")
     ax.set_ylim(0, float(max(damage_per_fit["damage"].max(), damage_per_fit["control"].max())) * 1.18)
     ax.set_ylabel("damage (÷ target variance)")
     ax.plot([], [], color=INK, lw=1.4, label="random-weight control")
@@ -1038,7 +1039,7 @@ def plot_pair_lesion_summary(
     ax.plot([], [], color=INK, lw=1.4, label="permutation null, 95th pct.")
     ax.axhline(0, color=INK, lw=0.6, zorder=1)
     ax.set_xticks(range(len(kinds)))
-    ax.set_xticklabels([family_labels[f] for f in kinds], fontsize=6.4)
+    ax.set_xticklabels([family_labels[f] for f in kinds], fontsize=6.4, rotation=25, ha="right")
     ax.set_ylabel("ranking agreement (Kendall's τ)")
     ax.set_ylim(-0.15, 1.0)
     ax.legend(loc="lower center", bbox_to_anchor=(0.5, 1.0), fontsize=5.8)
