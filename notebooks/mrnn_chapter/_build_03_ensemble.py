@@ -21,26 +21,32 @@ the comparison for everything here.*
 
 Tasks 01 and 02 established two things: a region reproduces its own trajectories only with
 the network attached, and the inter-regional channel is what costs fit when it is narrowed.
-This notebook takes the one model that came out of that and asks three questions of its
-ten independent fits, always against the ten dense fits:
+This notebook takes the one model that came out of that, fits it ten times, and reads the
+ten fits against the ten dense fits. **Three results:**
 
-1. **Does the constraint hurt one fixation type more?** Not "which is fitted worst" —
-   interactive face is, in every network — but whether the *drop* from dense to constrained
-   differs by fixation type, with a bootstrap over seeds. (§3)
-2. **Are the two face fixations more alike than either is to object?** For every
-   per-condition property the model has — the data itself, the state, the drives, the
-   network's share of a region's drive, the lesion profile, the fixed points — how similar
-   each pair of conditions is within one fit, and whether the network inherits that from
-   the data or imposes it. (§4, §9)
-3. **What is consistent across the ten fits?** Drive and flow, dynamics (fixed points, flow
-   fields, local linearisation), lesions (which region pairs matter, for which fixation
-   type, in which region), each with every seed on the page and a scoreboard at the end.
-   (§5–§9)
+1. **The constraint costs interactive face more than the other two fixation types.** The
+   drop from dense to constrained is 0.013 of ceiling-relative $R^2$ for interactive face
+   against 0.0097 for either other type; the difference (0.0033, 95% CI 0.0027–0.0040) is
+   positive in every bootstrap draw, and it survives the scale-free reading (unexplained
+   variance ×2.2 against ×1.9). This is the test the grid could only show as a mean. (§3)
+2. **The two face fixations are the closest pair in the data, and the network keeps that
+   in its state and amplifies it.** The two faces' hidden-state trajectories share their
+   shape (correlation 0.49 dense, 0.40 constrained) more than the data's own trajectories do
+   (0.22), and are the closest pair in 10/10 fits of both arms; their fixed points are also
+   the closest pair in most fits. How drive is *routed* does not carry this: cross share,
+   lesion profile and lesion ranking all sit at chance. (§4, §9)
+3. **What every fit agrees on is a dynamical portrait of interactive face; what no fit agrees
+   on is which connections matter.** In 10/10 fits of both arms interactive face runs the
+   smallest, slowest, lowest-dimensional trajectory, ends nearest a fixed point at the lowest
+   speed, and sits in the most locally expansive part of the flow (most expanding modes along
+   the trajectory); cutting any region pair shrinks the other two trajectories by 40–55% and
+   leaves interactive face's on average unchanged. No lesion ranking — directed, pair, isolation, per fixation type or
+   pooled — clears its permutation null in either arm. (§5–§9)
 
 Everything is computed *within* one fit and compared *across* conditions or *across* seeds.
-The audit found the fitted circuits unidentifiable (weights, spectra, state geometry all at
-their untrained floors, §8 repeats that check for this model), and within-model contrasts
-are the class of claim that survives that.
+The fitted circuits are unidentifiable (§8: every agreement measure at or below its
+untrained floor, in both arms), and within-model contrasts are the class of claim that
+survives that.
 
 | Section | |
 |---|---|
@@ -68,6 +74,7 @@ from __future__ import annotations
 from pathlib import Path
 import sys
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yaml
@@ -132,6 +139,7 @@ if (GRID_ROOT / "selected_bottleneck.yaml").exists():
 def show(figure, stem: str) -> None:
     save_thesis_figure(figure, FIGURES, stem)
     display(Image(data=figure_to_png_bytes(figure, dpi=190)))
+    plt.close(figure)
 
 
 def cached(name: str, build):
@@ -256,10 +264,16 @@ else:
     dense_fit = dense_fit[dense_fit["label"] == "full"]
     fit = pd.concat([dense_fit.assign(arm="dense"), constrained_fit.assign(arm="constrained")], ignore_index=True)
     fit["seed"] = fit["seed"].astype(str)
-    worst = fit.groupby(["arm", "seed"])["r2_vs_ceiling"].min().reset_index()
-    display(worst.groupby("arm")["r2_vs_ceiling"].agg(["mean", "min"]).rename(columns={"mean": "worst cell, mean over seeds", "min": "worst cell, min"}).round(4))
-    display(Markdown(f"Constrained seeds clearing {ADEQUATE_BAR} on their worst cell: "
-                     f"**{int((worst[worst['arm'] == 'constrained']['r2_vs_ceiling'] >= ADEQUATE_BAR).sum())}/{int((worst['arm'] == 'constrained').sum())}**."))
+    # Task 02 selected on the worst *condition* (regions pooled per seed); the worst region x condition *cell* is stricter.
+    worst = fit.groupby(["arm", "seed", "condition"])["r2_vs_ceiling"].mean().groupby(["arm", "seed"]).min().reset_index()
+    worst_cell = fit.groupby(["arm", "seed", "region", "condition"])["r2_vs_ceiling"].mean().groupby(["arm", "seed"]).min().reset_index()
+    summary = pd.concat([worst.groupby("arm")["r2_vs_ceiling"].agg(["mean", "min"]).add_prefix("worst condition, "),
+                         worst_cell.groupby("arm")["r2_vs_ceiling"].agg(["mean", "min"]).add_prefix("worst cell, ")], axis=1)
+    display(summary.round(4))
+    _c = worst[worst["arm"] == "constrained"]["r2_vs_ceiling"]; _cc = worst_cell[worst_cell["arm"] == "constrained"]["r2_vs_ceiling"]
+    display(Markdown(f"Constrained seeds clearing {ADEQUATE_BAR} on their worst condition (task 02's statistic): **{int((_c >= ADEQUATE_BAR).sum())}/{len(_c)}** "
+                     f"(mean {_c.mean():.4f}; task 02's five seeds gave {SELECTED['worst_condition']:.4f}); on their worst region × condition cell: "
+                     f"**{int((_cc >= ADEQUATE_BAR).sum())}/{len(_cc)}** (mean {_cc.mean():.4f})."))
 
     histories = {arm: [pd.read_csv(d / "history.csv") for d in audit.seed_run_dirs(p)] for arm, p in ARMS.items()}
     show(eviz.plot_loss_curves(histories), "fig01_loss_curves")
@@ -269,13 +283,19 @@ else:
     display(cost.set_index("condition").round(4).T)
 '''
 
-S3_AFTER = r"""**Reading.** Panel (b) of the cost figure is the test the grid could not run: the drop from
-dense to constrained per fixation type with a CI over seeds. The table's `fi_extra_cost` row
-is interactive face's cost minus each other condition's, with its CI and the bootstrap
-probability that it is positive. Panel (c) asks the same question scale-free (unexplained
-variance, constrained over dense), which is the fairer reading given that interactive face
-has half the variance.
+S3_AFTER = r"""**Reading.** The ten constrained fits reproduce the five grid fits: worst condition 0.983
+(bar 0.98) in every seed, worst region × condition cell 0.979 — the selected model sits *at*
+the bar, not above it, and every constrained fit is within 0.002 of every other. Against
+that, panel (b) of the cost figure is the test the grid could not run. The constraint costs
+interactive face 0.0130 of ceiling-relative $R^2$ and the other two fixation types 0.0097
+each; the extra cost to interactive face (0.0033, 95% CI 0.0027–0.0040) is positive in every
+bootstrap draw. Panel (c) is the scale-free reading — unexplained variance, constrained over
+dense — and says the same: ×2.19 for interactive face against ×1.93 and ×1.87. So the
+answer to "does the bottleneck hurt one fixation type more" is yes, and it is interactive
+face, *on top of* its being the hardest type in every network. The galleries below show what
+that costs in the traces: ten constrained fits overlaid on the target, then ten dense.
 """
+
 
 S3B_CODE = r'''
 if fit is not None:
@@ -316,10 +336,16 @@ if fit is not None:
                                          labels=PROPERTY_LABELS), "fig07_similarity_scoreboard")
 '''
 
-S4_AFTER = r"""**Reading.** Read the data row first, then whether the model rows keep its ordering. The
-scoreboard's left panel is the statistic that matters: the fraction of fits in which the
-two faces are the closest pair, dense against constrained, per property. §9 adds the
-lesion-profile and fixed-point rows once those are computed.
+S4_AFTER = r"""**Reading.** In the data the two faces are the closest pair: their PC trajectories share
+shape (correlation 0.22 against 0.03 and 0.02 for the two pairs involving object) and sit
+closest (distance 1.38 against 1.54 and 1.73). The model's hidden state keeps that ordering
+in 10/10 fits of both arms — and amplifies it: the two faces' state trajectories correlate
+at 0.49 (dense) and 0.40 (constrained), twice the data's 0.22, while the pairs involving
+object fall to zero or below. The drive's *routing* does not carry it: the time course of
+the network's share of a region's drive puts FI–FN closest in only half the fits, chance for
+three pairs. Per region the picture is the same (the second figure). The data row's fraction
+is 1 by construction — it is the same data in every fit — and is there as the reference, not
+as a consistency statistic.
 """
 
 
@@ -371,9 +397,16 @@ if fit is not None:
     display(pd.DataFrame(rows).round(3))
 '''
 
-S5_AFTER = r"""**Reading.** The flow matrices' second row is the seed sd of each pathway's share: the
-pathways the fits agree on are the ones with a large mean and a small sd. The τ table below
-them is the same question as a single number per arm.
+S5_AFTER = r"""**Reading.** Under the constraint every region takes ~0.96 of its drive energy from the
+network, for every fixation type and every seed (dense: 0.68). Beyond that the routing is
+not reproducible: the seeds agree moderately on which pathways carry the most drive in the
+dense network (Kendall τ 0.43) and not at all under the constraint (0.03, minimum −0.46) —
+the flow matrices' sd row shows the pathway shares moving by 0.05–0.12 between seeds. The
+condition contrasts that do hold: interactive face's drive and state are the lowest-
+dimensional (10/10, both arms) and its cross share is the *steadiest* through the trial
+(within-trial sd lowest in 10/10 dense, 9/10 constrained). Alignment between incoming and
+own drive is lowest for interactive face in 9/10 dense fits but only 6/10 constrained; under
+the constraint it is near zero for every fixation type, as 02b found.
 """
 
 
@@ -450,15 +483,25 @@ if fit is not None:
          "fig19_jacobian_by_condition")
 '''
 
-S6_AFTER = r"""**Reading.** Three things to take from the dynamics. (i) Whether the trajectory *ends* at
-a fixed point or is still moving (the fixed-point summary's distance and end-speed panels):
-a one-second window need not reach an attractor, and if it does not, the fixed points
-organise the transient rather than terminate it. (ii) Whether the fixation types differ in
-this — interactive face is the slowest and most compact trajectory in the data, and the
-question is whether that shows up as being nearer a fixed point, or nearer a stable one.
-(iii) What the within-region rank-1 constraint does to a region's *own* dynamics: the
-region-block Jacobian panel compares the intrinsic timescale of a region with its input
-held fixed, dense against constrained.
+S6_AFTER = r"""**Reading.** (i) *The dynamics in the window are transient.* Of 124 fixed points found
+across both arms, 8 are stable; the rest are saddles with 1–13 expanding modes and largest
+|λ| of 1.04–1.06. No trajectory reaches a fixed point: at the end of the window the state is
+still moving at 0.13–0.6 state units per bin and sits 0.4–0.9 state extents from the nearest
+fixed point. The fixed points organise the flow the trajectory passes through; they do not
+terminate it. (ii) *Interactive face is the fixation type nearest that organisation.* Its
+trajectory ends slowest in 10/10 fits of both arms (0.13 against 0.39–0.41 constrained; 0.17
+against 0.56–0.62 dense), ends nearest a fixed point (0.40 against 0.75 extents constrained,
+7/10 fits; 0.47 against 0.75–0.89 dense), and runs through the most locally expansive part of
+the flow: the most expanding modes along its trajectory in 10/10 constrained and 9/10 dense
+fits (constrained: ~5 against ~1–2 after the initial transient). The whole-network flow
+fields show it directly — a small loop beside the hollow stars, against the wide excursions
+of the other two. (iii) *The within-region rank-1 constraint removes a region's own slow
+dynamics.* With input held fixed, a region's block Jacobian has largest |λ| 0.60–0.70 in the
+dense network (a ~20–30 ms intrinsic timescale) and 0.20–0.33 under the constraint
+(~7 ms): the per-region flow fields are a single stable point the trajectory never
+approaches, and everything slow arrives through the channel. Interactive face has the highest
+region-block |λ| in 9/10 fits of both arms, but under the constraint the separation is below
+the seed spread.
 """
 
 
@@ -506,29 +549,46 @@ S7C_CODE = r'''
 if fit is not None:
     lesion_dyn = cached("lesion_dynamics", lambda: over_arms(ens.lesion_dynamics))
     lesion_dyn["seed"] = lesion_dyn["seed"].astype(str)
-    show(eviz.plot_lesion_dynamics(lesion_dyn, metric="delta_state_extent", ylabel="Δ state extent (lesioned − intact)"), "fig26_lesion_delta_extent")
+    # Relative to the intact trajectory, so a fixation type with a small trajectory is not read as "less affected" for that reason.
+    _intact = lesion_dyn[lesion_dyn["lesion_kind"] == "intact"].set_index(["arm", "seed", "condition"])
+    for metric in ("state_extent", "state_speed", "state_pr"):
+        lesion_dyn[f"rel_{metric}"] = lesion_dyn[f"delta_{metric}"] / pd.MultiIndex.from_frame(lesion_dyn[["arm", "seed", "condition"]]).map(_intact[metric])
+    show(eviz.plot_lesion_dynamics(lesion_dyn, metric="rel_state_extent", ylabel="state extent, lesioned relative to intact\n(Δ / intact)"), "fig26_lesion_delta_extent")
+    show(eviz.plot_lesion_dynamics(lesion_dyn, metric="rel_state_speed", ylabel="state speed, lesioned relative to intact\n(Δ / intact)"), "fig26b_lesion_delta_speed")
     show(eviz.plot_lesion_dynamics(lesion_dyn, metric="delta_end_top_modulus", ylabel="Δ |λ|max at the trajectory's end (lesioned − intact)"), "fig27_lesion_delta_modulus")
-    show(eviz.plot_lesion_dynamics(lesion_dyn, metric="delta_state_pr", ylabel="Δ state dimensionality (lesioned − intact)"), "fig28_lesion_delta_pr")
+    show(eviz.plot_lesion_dynamics(lesion_dyn, metric="rel_state_pr", ylabel="state dimensionality, lesioned relative to intact\n(Δ / intact)"), "fig28_lesion_delta_pr")
     display(lesion_dyn[lesion_dyn["lesion_kind"] == "intact"].groupby(["arm"])[["weight_spectral_radius", "weight_n_outside_unit"]].mean().round(3))
 '''
 
-S7_AFTER = r"""**Reading.** The pair-lesion panels are the "which pairs are crucial" answer: a pair whose
-share sits above the dashed line (one sixth) in every seed matters more than its size, and
-the per-condition ranking figure says whether the ten fits agree on that ranking *for each
-fixation type separately* (dashes are the permutation null). The profile-similarity figure
-asks whether the fixation types are hurt by the same connections — which is a different
-question from whether they are hurt by the same amount, and the one the variance confound
-cannot touch. The Δ panels are what a lesion does to the lesioned network's own trajectory:
-a lesion that shrinks the state for one fixation type and expands it for another is acting
-on the dynamics, not just on the readout.
+S7_AFTER = r"""**Reading.** *Which connections matter is not a reproducible property of these fits.* No
+lesion family's ranking clears its permutation null in either arm (Kendall τ between seeds
+≤ 0.09 for directed, pair, isolation and within-region lesions), and neither does any
+ranking computed per fixation type: the pair that hurts most is the top pair in at most 4 of
+10 fits, for any fixation type, in either arm. The pair-share panels say the same thing at
+a glance — every pair scatters around one sixth, with the seed spread wider than any pair
+difference. Nor are the fixation types hurt by different connections: their lesion profiles
+correlate at 0.3–0.55 with no pair ordering, and their pair rankings agree at τ ≈ 0.1.
+Interactive face is damaged *least* in absolute squared error (highest in 1/10 fits) —
+the variance confound reversed; it has the least to lose.
+
+*What a lesion does to the dynamics is reproducible, and it separates interactive face.*
+Cutting any region pair shrinks the trajectories of non-interactive face and object — by
+40–55% of their intact extent, in every seed and every pair of both arms — and leaves
+interactive face's on average unchanged (expanded in about half of the seed × pair cases,
+shrunk in the rest; least affected of the three in 10/10 seeds). Isolating a region shrinks
+all three, interactive face least. The intact network's inter-regional drive therefore does
+two different things: it drives the other two fixation types *out* into their excursions,
+and for interactive face it is as often holding the state *in* as pushing it out.
 """
 
 
 S8_TEXT = r"""## 8. Identifiability, for the record
 
 The rebuild's agreement battery (seven measures, three distances, each against fits of the
-untrained architecture with the same rank constraints), constrained beside dense. This is
-the check that the within-model framing above is necessary, not a result in itself.
+untrained architecture with the same rank constraints), constrained beside dense. Every
+similarity margin is at or below zero in both arms — the constrained fits agree *less* on
+their state geometry than untrained networks do — so the within-model framing above is
+necessary, not a choice.
 """
 
 S8_CODE = r'''
@@ -552,6 +612,14 @@ fraction of fits in which interactive face is the lowest (drawn to the left) or 
 at ±1 with separation above 1 is a property of the solution set. **Similarity**: the
 complete version of §4's board — every property including the lesion profile and the fixed
 points, the fraction of fits in which the two faces are the closest pair.
+
+What holds in 10/10 fits of both arms: interactive face has the lowest fit, the lowest
+drive and state dimensionality, the slowest and smallest state, the slowest trajectory end,
+and (9–10/10) the steadiest cross share and the most expanding modes along its trajectory.
+What does not hold: the origin of its drive (cross share), its alignment under the
+constraint, its fixed-point count and stability, and every lesion total. On similarity, the
+state (10/10) and the fixed points (8/10 constrained) keep the data's face–face ordering;
+routing and lesions do not.
 """
 
 S9_CODE = r'''
@@ -586,7 +654,33 @@ if fit is not None:
 
 S10 = r"""## 10. Reading the result
 
-*Filled in from the figures above; see the summary cell that follows.*
+**The bottleneck's cost is not evenly spread.** Squeezing the inter-regional channel to
+rank 10 (and self-recurrence to rank 1) costs interactive face a third more fit than either
+other fixation type, with a CI that excludes equality and a scale-free reading that agrees.
+Combined with 02b: interactive face is the hardest fixation type in every network *and* the
+one the channel carries most.
+
+**The two faces are alike in the data and more alike in the model.** The network's state
+keeps the data's face–face proximity in every fit and doubles it. Its drive routing does
+not carry the distinction at all, and neither do its lesions — the fixation types are hurt by
+the same connections in the same proportions.
+
+**Interactive face has a dynamical signature every fit reproduces.** A small, slow,
+low-dimensional trajectory that ends nearest a fixed point, threads the most locally
+expansive region of the flow, and is the one fixation type whose trajectory a pair lesion
+does not shrink — the other two lose 40–55% of their extent whichever pair is cut. None of
+this depends on which pair is cut, because which pair matters is the one thing the ten fits
+never agree on. The chapter's ensemble claim is
+therefore pitched at the level of dynamics and condition contrast, not circuit: the
+solution set has a reproducible portrait of the interactive-face state and no reproducible
+wiring.
+
+**Two caveats stated in the figures.** The selected model sits at the adequacy bar, not
+above it (worst condition 0.983 against 0.98; worst region × condition cell 0.979). And
+scale-carrying contrasts — extent, speed, dimensionality — are properties of the data that
+any adequate fit must show (the target-side control in the audit); the scale-free ones
+(expanding modes, end-speed relative to the fixed point, the sign of a lesion's effect on
+extent) are the model's own.
 """
 
 

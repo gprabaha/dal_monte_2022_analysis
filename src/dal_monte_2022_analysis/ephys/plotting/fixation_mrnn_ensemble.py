@@ -14,6 +14,7 @@ from typing import Mapping, Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.collections import LineCollection
 from matplotlib.colors import LogNorm
 
 from dal_monte_2022_analysis.ephys.plotting.fixation_mrnn_audit import GRID_KW, _panel
@@ -307,7 +308,7 @@ def plot_similarity_scoreboard(summary: pd.DataFrame, *, properties: Sequence[st
         ax.scatter([], [], s=18, color=PAIR_COLORS[pair], label=pair)
     ax.set_yticks(range(len(properties))); ax.set_yticklabels([])
     ax.invert_yaxis()
-    ax.set_xlabel("mean over fits  (similarity ↑ closer;  distance ↓ closer)")
+    ax.set_xlabel("mean over fits")
     ax.legend(frameon=False, fontsize=6.4, loc="best")
     for spine in ("top", "right"):
         ax.spines[spine].set_visible(False)
@@ -392,7 +393,7 @@ def plot_region_property_by_condition(frame: pd.DataFrame, prop: str, *, ylabel:
     fig, axes = plt.subplots(1, len(regions), figsize=figsize, sharey=True, squeeze=False)
     for ax, region, letter in zip(axes[0], regions, "abcd"):
         block = frame[frame["region"] == region].rename(columns={prop: "value"})
-        plot_property_by_condition(block, "value", ylabel=ylabel if region == regions[0] else "", ax=ax)
+        plot_property_by_condition(block, "value", ylabel=ylabel if region == regions[0] else " ", ax=ax)
         ax.set_title(REGION_LABELS.get(region, region), fontsize=8, color=REGION_COLORS.get(region, INK))
         _panel(ax, letter)
     arms = _arms_present(frame)
@@ -489,13 +490,22 @@ def plot_flow_fields(fields: Mapping[str, object], *, title: str | None = None, 
         s = arrow_stride
         # Direction only: the background carries the magnitude, so arrows are unit length
         # (0.8 of the grid spacing) and the small, slow region near the trajectory stays legible.
+        # Drawn as line segments rather than a Quiver: the repo's PDF export strips clipping,
+        # and an unclipped Quiver reports a tight bbox thousands of inches wide, which the PNG
+        # export that follows then tries to allocate.
         magnitude = np.hypot(entry["u"], entry["v"])
         spacing = 0.8 * float(min(xs[1] - xs[0], ys[1] - ys[0]))
         with np.errstate(invalid="ignore", divide="ignore"):
-            un = np.where(magnitude > 0, entry["u"] / magnitude * spacing, 0.0)
-            vn = np.where(magnitude > 0, entry["v"] / magnitude * spacing, 0.0)
-        ax.quiver(gx[::s, ::s], gy[::s, ::s], un[::s, ::s], vn[::s, ::s], color="#4b4b4b",
-                  angles="xy", scale_units="xy", scale=1.0, width=0.004, headwidth=3.5, alpha=0.8, zorder=2)
+            ux = np.where(magnitude > 0, entry["u"] / magnitude, 0.0)[::s, ::s].ravel()
+            uy = np.where(magnitude > 0, entry["v"] / magnitude, 0.0)[::s, ::s].ravel()
+        tails = np.stack([gx[::s, ::s].ravel(), gy[::s, ::s].ravel()], axis=-1)
+        tips = tails + spacing * np.stack([ux, uy], axis=-1)
+        cos_a, sin_a = np.cos(np.radians(28)), np.sin(np.radians(28))
+        head = 0.35 * spacing
+        left = tips - head * np.stack([ux * cos_a - uy * sin_a, uy * cos_a + ux * sin_a], axis=-1)
+        right = tips - head * np.stack([ux * cos_a + uy * sin_a, uy * cos_a - ux * sin_a], axis=-1)
+        segments = np.concatenate([np.stack([tails, tips], axis=1), np.stack([tips, left], axis=1), np.stack([tips, right], axis=1)])
+        ax.add_collection(LineCollection(segments, colors="#4b4b4b", linewidths=0.5, alpha=0.8, zorder=2))
         trajectory = entry["trajectory"]
         color = CONDITION_COLORS.get(condition, INK)
         shades = plt.get_cmap("viridis")(np.linspace(0.15, 0.95, len(trajectory) - 1))
@@ -503,9 +513,18 @@ def plot_flow_fields(fields: Mapping[str, object], *, title: str | None = None, 
             ax.plot(trajectory[t: t + 2, 0], trajectory[t: t + 2, 1], color=shades[t], linewidth=1.6, zorder=4)
         ax.scatter(*trajectory[0], s=26, color=color, edgecolor="white", linewidth=0.6, zorder=5, marker="o")
         ax.scatter(*trajectory[-1], s=30, color=color, edgecolor="white", linewidth=0.6, zorder=5, marker="s")
+        # Only fixed points inside the plotted window are drawn: the repo's savefig patch strips
+        # clipping, and a marker far outside the axes would expand the saved figure to contain it.
+        outside = 0
         for point, stable in zip(entry["fixed_points"], entry["fixed_point_stable"]):
+            if not (xs[0] <= point[0] <= xs[-1] and ys[0] <= point[1] <= ys[-1]):
+                outside += 1
+                continue
             ax.scatter(point[0], point[1], s=70, marker="*", facecolor=color if stable else "white", edgecolor=color,
                        linewidth=1.0, zorder=6)
+        if outside:
+            ax.text(0.98, 0.02, f"+{outside} fixed point{'s' if outside > 1 else ''} outside the window",
+                    transform=ax.transAxes, ha="right", va="bottom", fontsize=5.8, color=INK)
         ax.set_title(CONDITION_SHORT_LABELS.get(condition, condition), fontsize=8, color=color)
         ax.set_xlabel(f"axis 1 ({fields['explained'][0]:.0%} of state variance)", fontsize=6.8)
         ax.set_xlim(xs[0], xs[-1]); ax.set_ylim(ys[0], ys[-1])
@@ -667,10 +686,10 @@ def plot_lesion_ranking_by_condition(ranking: pd.DataFrame, *, figsize: tuple[fl
         ax.set_xticks(range(len(conditions))); ax.set_xticklabels([CONDITION_SHORT_LABELS.get(c, c) for c in conditions], fontsize=7)
         ax.set_title(f"{kind} lesions", fontsize=8)
         nice_axis(ax); _panel(ax, letter)
-    axes[0][0].set_ylabel("Kendall τ between seeds' rankings\n(dot = mean, tail to min; dashes = null 95%)")
+    axes[0][0].set_ylabel("Kendall τ between seeds' rankings\n(dot: mean; tail: min; dashes: null 95%)", fontsize=7)
     axes[0][0].scatter([], [], s=28, label="dense", **_arm_marker_kw("dense", INK))
     axes[0][0].scatter([], [], s=28, label="constrained", **_arm_marker_kw("constrained", INK))
-    axes[0][0].legend(frameon=False, fontsize=6.2, loc="best")
+    axes[0][0].legend(frameon=False, fontsize=6.2, loc="lower left")
     fig.tight_layout()
     return fig
 
