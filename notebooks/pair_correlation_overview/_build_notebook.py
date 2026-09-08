@@ -405,12 +405,20 @@ the observed value and the null carry the identical taper, so it cancels in
 $E$ and in $z$.
 
 **Scalar summaries.** A correlogram is reduced to one number by averaging over a
-lag window of half-width $W$:
+lag window of half-width $W$ — the excess and the $z$ trace each in their own
+right, the average taken over lags rather than the ratio of two averages:
 
 $$
-\bar{E}_{ij}^{c}(W) \;=\; \frac{1}{|\mathcal{L}_W|} \sum_{\ell \in \mathcal{L}_W} E_{ij}^{c}(\ell),
+\bar{E}_{ij}^{c}(W) = \frac{1}{|\mathcal{L}_W|} \sum_{\ell \in \mathcal{L}_W} E_{ij}^{c}(\ell),
+\qquad
+\bar{z}_{ij}^{c}(W) = \frac{1}{|\mathcal{L}_W|} \sum_{\ell \in \mathcal{L}_W} z_{ij}^{c}(\ell),
 \qquad \mathcal{L}_W = \{\ell : |\ell| \le W\}.
 $$
+
+Only $|\ell| \le 250$ ms of each correlogram is stored, which sets the widest
+window available. That is not a limitation in practice: every peak in this data
+returns to baseline well before 250 ms, and the overlap taper makes the far lags
+progressively noisier — at $\ell = 900$ ms only 100 of the 1000 bins contribute.
 
 Two windows are used, for two different questions.
 $W = 250$ ms is the chapter's reporting window, chosen to match the signal
@@ -526,8 +534,9 @@ is barely bent, however small the p-value beside it.
 the per-pair $\bar{E}$ against zero, zero being the null's own expectation.
 
 **Is one pair above its null** is a separate question, answered by converting
-$z_{ij}^{c}$ at $W = 10$ ms to a one-sided p-value $p_{ij} = 1 - \Phi(z_{ij}^{c})$ and
-applying Benjamini–Hochberg **across the pairs within each group**. The normal
+that pair's $\bar{z}_{ij}^{c}(10\text{ ms})$ to a one-sided p-value
+$p_{ij} = 1 - \Phi(\bar{z}_{ij}^{c})$ and applying Benjamini–Hochberg **across the
+pairs within each group**. The normal
 approximation is the weak step — the null spread comes from 50 draws, so the
 statistic is t-like and the tail is slightly heavier than assumed — which makes
 these counts mildly optimistic. No claim in this chapter rests on them; they are
@@ -549,11 +558,12 @@ DISCUSSION = """
 
 The clearest result is a dissociation. Signal correlation differs between
 fixation conditions — interactive face is higher than both other conditions in
-BLA and OFC, with rank-biserial effect sizes around 0.09 and 0.25, and these
-survive correction. Per-trial spike correlation is modulated far more weakly:
+BLA ($r_{\\text{rb}} = 0.045$ and $0.071$) and, far more strongly, in OFC
+($0.19$ and $0.30$), and these survive correction. Per-trial spike correlation is
+modulated far more weakly:
 the largest within-region effect size is **0.073** (dmPFC, interactive face
-against object) and most sit below 0.05, so a "significant" contrast there
-describes a population split of roughly 52% to 48%.
+against non-interactive) and most sit below 0.05, so a "significant" contrast
+there describes a population split of roughly 52% to 48%.
 
 The two measures are computed from the same spike trains, on the same pairs, in
 the same window, against equally conservative nulls. The difference between them
@@ -570,8 +580,9 @@ correlation.
 
 The qualification matters, though, and the bar figures are where it shows. The
 per-trial effect is not zero. In dmPFC and OFC interactive face is above both
-other conditions with $r_{\\text{rb}} \\approx 0.07$, and it holds after trial-count
-matching, so it is not an artifact of interactive fixations being more numerous.
+other conditions with $r_{\\text{rb}}$ between 0.04 and 0.07, and it holds after
+trial-count matching, so it is not an artifact of interactive fixations being
+more numerous.
 The honest statement is a difference of degree: both measures move in the same
 direction, and signal correlation moves several times further.
 
@@ -584,18 +595,22 @@ excitability. Signal correlation sits clearly above a null built from real,
 fixation-locked units of the same region.
 
 The magnitudes are ordered the same way on both measures. OFC and dmPFC carry the
-largest per-trial excess (≈ 4.5 and ≈ 2.5 $\\times 10^{-3}$), BLA and ACCg the
-smallest (≈ 1 and ≈ 0.6 $\\times 10^{-3}$), and OFC also has the largest signal
-correlation and the largest condition effect. ACCg is the weakest on both and is
-the one region where non-interactive face rather than interactive face is highest
-in signal correlation.
+largest per-trial excess (≈ 4.7 and ≈ 2.6 $\\times 10^{-3}$), BLA and ACCg the
+smallest (≈ 1.1 and ≈ 0.65 $\\times 10^{-3}$), and OFC also has the largest signal
+correlation and by far the largest condition effect on it. ACCg is the weakest on
+both and is the only region where no signal-correlation contrast survives
+correction at all. The one place the conditions invert is BLA's per-trial
+measure, where non-interactive face is nominally highest — and that is also the
+one BLA contrast that does not survive correction, so it is better read as an
+absence of difference than as a reversal.
 
 ### The effect is a population shift, not a coupled subpopulation
 
 The inventory figure carries a result that is easy to skip past. The *population*
-of pairs sits above its null with p-values indistinguishable from zero, but only
-**0.4–2%** of *individual* pairs survives FDR correction across pairs, and in
-cross-region pairs essentially none does. There is no subset of strongly coupled
+of pairs sits above its null with p-values indistinguishable from zero — down to
+$10^{-263}$ in OFC — but at most **1.9%** of *individual* pairs survives FDR
+correction across pairs (dmPFC and OFC interactive face), it is under 0.5% in
+BLA, it is **zero** in ACCg, and across regions it is 4 pairs out of 33,000. There is no subset of strongly coupled
 pairs driving the average; there is a small, broadly distributed shift in a large
 population. Any claim phrased in terms of "coordinated pairs" would be describing
 one or two percent of the data.
@@ -603,20 +618,24 @@ one or two percent of the data.
 ### Shared tuning and co-firing are related, but only within a region
 
 Pairs with more shared tuning also co-fire more, within region: OFC interactive
-face reaches ρ = 0.35, dmPFC object ρ = 0.17, BLA interactive face ρ = 0.10. This
-is not automatic — the two quantities come from different operations and either
+face reaches ρ = 0.54, dmPFC object ρ = 0.18, and all three BLA conditions are
+positive with non-interactive face highest at ρ = 0.16. This is not automatic — the two quantities come from different operations and either
 can exist without the other — so a positive relationship says the same local
-circuitry plausibly produces both. It does not hold everywhere: several region
-and condition combinations show nothing, so the relationship is a feature of some
-circuits rather than a general law.
+circuitry plausibly produces both. It does not hold everywhere: no ACCg combination reaches
+significance, and dmPFC's interactive-face correlation is negative (ρ = −0.09,
+n.s.) while its object correlation is the region's strongest. The relationship is
+a feature of particular circuits and conditions rather than a general law.
 
-Across regions the relationship is absent, and so is most of the coupling.
+Across regions the relationship is all but absent — one of nine combinations
+reaches significance (BLA × dmPFC, non-interactive face, ρ = 0.13) — and so is
+most of the coupling.
 Cross-region per-trial excess is an order of magnitude below within-region
 (≈ 0.15–0.7 $\\times 10^{-3}$ against 0.6–5), and cross-region signal correlation is
 at or below zero for most combinations. The one exception is **BLA × dmPFC during
 interactive face**, which stands above both other conditions on *both* measures —
-the only cross-region combination where anything appears, and the only place in
-the chapter where the two measures agree on a cross-region effect. That it
+$r_{\\text{rb}} = 0.13$ and $0.14$ on signal correlation, $0.037$ and $0.042$ on
+the per-trial measure — and is the only cross-region signal correlation anywhere
+in the chapter that is positive rather than at or below its null. That it
 involves BLA and dmPFC specifically is worth following up rather than treating as
 noise, but it is one comparison among nine and should be replicated before it
 carries weight.
@@ -718,8 +737,8 @@ The third panel is the one that changes how the rest reads. Every group's
 
 The cross-session null is subtracted, so zero means "resembles a same-region
 unit from another session no more than chance". Interactive face is above the
-other two conditions in BLA and OFC; ACCg is the exception, with non-interactive
-face highest.
+other two conditions in every region, but only in BLA and OFC does the difference
+survive correction, and in OFC it is several times larger than anywhere else.
 """),
     code(signal_traces_cell("within_region", "fig03_signal_excess")),
     markdown("""
@@ -743,18 +762,25 @@ Each curve above, reduced to its mean over ±250 ms minus the null's, on the
 trial-count-matched recomputation. Bars are marked only where the paired
 contrast survives FDR.
 
-Interactive face is highest in dmPFC and OFC and the contrasts are significant,
-but the rank-biserial effect sizes are 0.04–0.07 — a population split near 53%
-to 47%. BLA runs the other way, with non-interactive face marginally highest.
+Interactive face is highest in dmPFC and OFC and both contrasts survive
+correction, but the rank-biserial effect sizes are 0.037–0.073 — a population
+split near 53% to 47%, against effect sizes on signal correlation that reach 0.30
+in OFC. BLA runs the other way, with non-interactive face nominally highest;
+that is also the one BLA contrast that does not survive correction, so it is an
+absence of difference rather than a reversal.
 """),
     code(spike_bars_cell("within_region", "fig05_spike_bars")),
     markdown("""
 #### Figure 6 — Signal correlation, and how the two measures relate
 
-Left: the same reduction applied to signal correlation. Right: the Spearman
-correlation across pairs between a pair's signal correlation and its per-trial
-spike correlation, per region and condition. Positive in some combinations and
-not others — this is a property of particular circuits, not a general law.
+Left: the same reduction applied to signal correlation. The OFC contrasts are
+the largest in the chapter on either measure. Right: the Spearman correlation
+across pairs between a pair's signal correlation and its per-trial spike
+correlation, per region and condition — both summarised over the same ±250 ms, so
+the two quantities being ranked are matched in construction. Strongly positive in
+OFC interactive face (ρ = 0.54), positive throughout BLA, absent in ACCg, and
+negative though not significant in dmPFC interactive face. This is a property of
+particular circuits and conditions, not a general law.
 """),
     code(summary_bars_cell("within_region", "fig06_summary_bars")),
     markdown("""
@@ -776,9 +802,9 @@ dmPFC × OFC comes from a handful of sessions.
 #### Figure 9 — Per-trial spike correlation by fixation type
 
 Note the axis: cross-region values are an order of magnitude below the
-within-region ones. Only BLA × dmPFC separates the conditions, with interactive
-face above both others — the same combination that stands out in cross-region
-signal correlation.
+within-region ones (0.15–0.73 against 0.6–4.9 $\\times 10^{-3}$). Only BLA × dmPFC
+separates the conditions, with interactive face above both others — the same
+combination, and the same direction, as in cross-region signal correlation.
 """),
     code(spike_bars_cell("cross_region", "fig09_spike_bars")),
     markdown("""
