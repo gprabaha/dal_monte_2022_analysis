@@ -88,10 +88,9 @@ from dal_monte_2022_analysis.ephys.plotting.fixation_population_pc_subspace impo
 from dal_monte_2022_analysis.ephys.plotting.fixation_pair_correlation_overview import (
     PairOverviewPlotSettings,
     plot_excess_by_condition,
-    plot_summary_bars,
     plot_spike_correlation_above_null,
-    plot_spike_correlation_bars,
-    plot_recording_inventory,
+    plot_pair_significance_pies,
+    plot_correlation_bars,
 )
 from dal_monte_2022_analysis.ephys.plotting.fixation_signal_correlation import (
     SignalCorrelationPlotSettings,
@@ -195,10 +194,9 @@ __all__ = [
     "plot_time_resolved_separation",
     "PairOverviewPlotSettings",
     "plot_excess_by_condition",
-    "plot_summary_bars",
     "plot_spike_correlation_above_null",
-    "plot_spike_correlation_bars",
-    "plot_recording_inventory",
+    "plot_pair_significance_pies",
+    "plot_correlation_bars",
     "SignalCorrelationPlotSettings",
     "plot_condition_summary",
     "plot_correlation_traces",

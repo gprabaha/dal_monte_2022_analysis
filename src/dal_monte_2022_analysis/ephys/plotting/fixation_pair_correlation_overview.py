@@ -1,10 +1,16 @@
-"""Combined figures for signal and per-trial spike correlation in simultaneous pairs.
+"""Figures for mean signal and per-trial spike correlation in simultaneous pairs.
 
 The two analyses answer different questions on the same pairs, and the point of
 putting them together is that neither is interpretable alone: per-trial spike
-correlation without signal correlation cannot say whether co-firing reflects
-shared tuning, and signal correlation without it cannot say whether shared
-tuning is accompanied by trial-by-trial coupling.
+correlation without mean signal correlation cannot say whether co-firing
+reflects shared tuning, and mean signal correlation without it cannot say
+whether shared tuning is accompanied by trial-by-trial coupling.
+
+The two names are used exactly as written throughout -- **mean signal
+correlation** for the correlation of the two units' condition-averaged rate
+timelines, **per-trial spike correlation** for the correlation of their spike
+trains within single fixations.  Each name says which operation came first,
+which is the only thing that separates them.
 
 The second measure is deliberately **not** called noise correlation here.  The
 classical noise correlation is a single number per pair -- the correlation of
@@ -218,7 +224,7 @@ def plot_method_schematic(
     ax.plot(lags, null_s, color=MUTED_INK, lw=1.0, ls=(0, (3, 2)))
     ax.set_ylim(-0.004, 0.115)
     strip(ax)
-    ax.set_title("SIGNAL\ncorrelation", fontsize=7.6, color=SIGNAL_COLOUR, pad=9)
+    ax.set_title("MEAN SIGNAL\ncorrelation", fontsize=7.4, color=SIGNAL_COLOUR, pad=9)
 
     # ---- right of centre: correlate first ----------------------------------
     ax = axes[3]
@@ -520,226 +526,155 @@ def _bar_panel(
         ax.set_ylim(low, headroom)
 
 
-def plot_spike_correlation_bars(
+def plot_pair_significance_pies(
     summary: pd.DataFrame,
-    contrasts: pd.DataFrame,
     settings: PairOverviewPlotSettings,
     *,
-    scope: str = "within_region",
-    scale: float = 1e3,
-    ylabel: str = "Spike correlation − null\n(mean over ±250 ms, ×10⁻³)",
-    title: str = "Per-trial spike correlation by fixation type",
-    stem: str = "fig04_spike_correlation_bars",
+    stem: str = "fig02_pair_significance",
 ) -> tuple[plt.Figure, dict[str, Path]]:
-    """Null-subtracted per-trial spike correlation, one bar per fixation type.
+    """One donut per group: how many pairs were recorded, and how many carry a signal.
 
-    The trace figure shows that the observed correlogram sits above its null; it
-    cannot show whether the three fixation types differ, because three pairs of
-    near-identical curves in adjacent panels is not a comparison a reader can
-    make by eye.  This reduces each curve to one number -- its mean over the
-    ±250 ms window, minus the null's -- so the three sit side by side on one
-    axis with the paired contrasts marked.
+    Drawn as donuts rather than filled pies so the total can sit in the hole.
+    The two numbers a reader needs are the denominator -- how much data the group
+    rests on -- and the share of it that is individually above the circular-shift
+    null, and a filled pie can show only the second.
 
-    Values are multiplied by 1000.  The correlogram is unnormalised, so an
-    excess is a count of extra spike pairs per fixation per bin and lands around
-    10⁻³; left unscaled every tick label carries an exponent and matplotlib
-    floats a shared one above the axis, which is easy to miss and easy to
-    misread.
+    The significant wedge is pulled out and outlined because it is small
+    everywhere: 1.9% is a two-degree slice, and without an offset it is
+    indistinguishable from the seam between the wedges.  Its count and percentage
+    are printed beside it, so nothing here has to be estimated by eye -- which is
+    the usual and fair objection to a pie chart, and the reason the number is
+    given rather than implied.
 
-    Cross-region bars are expected to sit near zero.  They are drawn on their own
-    axis rather than beside the within-region ones: sharing an axis would flatten
-    them to a line at zero and hide whatever differences they do carry.
+    A group with no significant pairs is drawn as a complete grey ring with
+    ``0 (0.0%)`` beside it, rather than omitted: an empty result is a result.
     """
     apply_thesis_plot_style()
-    rows = summary.loc[summary["scope"].astype(str) == scope].copy() \
-        if "scope" in summary.columns else summary.copy()
-    groups = _group_order(list(rows["region_pair"].astype(str).unique()), scope=scope)
-    if not len(rows) or not groups:
-        fig, ax = plt.subplots(figsize=(3.2, 1.4))
-        ax.text(0.5, 0.5, f"No {scope.replace('_', ' ')} groups", ha="center",
-                va="center", fontsize=7, color=MUTED_INK)
-        _bare(ax)
-        return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
+    rows = summary.copy()
+    rows["region_pair"] = rows["region_pair"].astype(str)
+    scopes = [
+        ("within_region", "Within region"),
+        ("cross_region", "Across regions"),
+    ]
+    layout = []
+    for scope, label in scopes:
+        available = rows.loc[rows["scope"].astype(str) == scope, "region_pair"]
+        layout.append((scope, label, _group_order(list(available), scope=scope)))
+    columns = max((len(groups) for _, _, groups in layout), default=1)
 
-    for column in ("mean", "sem"):
-        if column in rows.columns:
-            rows[column] = rows[column].astype(float) * float(scale)
-
-    local = contrasts
-    if local is not None and len(local) and "scope" in local.columns:
-        local = local.loc[local["scope"].astype(str) == scope]
-
-    fig, ax = plt.subplots(
-        figsize=(settings.panel_width_in * 1.0 * len(groups) + 0.9,
-                 settings.panel_height_in + 0.85),
+    fig, axes = plt.subplots(
+        len(layout), columns,
+        figsize=(1.62 * columns + 0.5, 1.95 * len(layout)),
+        squeeze=False,
     )
-    _bar_panel(ax, rows, groups, contrasts=local)
-    _finish(ax, ylabel=ylabel, title=title, title_size=7.5)
-
-    counts = rows.set_index(["region_pair", "condition"])["n_pairs"] \
-        if "n_pairs" in rows.columns else None
-    if counts is not None:
-        labels = []
-        for group in groups:
-            available = [int(counts[group, c]) for c in CONDITION_ORDER
-                         if (group, c) in counts.index]
-            labels.append(f"{region_label(group)}\n" + (f"n={min(available):,}–{max(available):,}"
-                                                        if available else ""))
-        ax.set_xticklabels(labels, fontsize=6.0)
-
-    handles, labels_ = ax.get_legend_handles_labels()
-    fig.legend(handles, labels_, frameon=False, fontsize=6.5, ncol=3,
-               loc="lower center", bbox_to_anchor=(0.5, -0.015))
-    fig.tight_layout(rect=(0, 0.10, 1, 1))
-    return fig, save_thesis_figure(fig, settings, f"{stem}_{scope}")
-
-
-def plot_recording_inventory(
-    counts: pd.DataFrame,
-    significant: pd.DataFrame,
-    settings: PairOverviewPlotSettings,
-    *,
-    stem: str = "fig02_recording_inventory",
-) -> tuple[plt.Figure, dict[str, Path]]:
-    """What the chapter is built from: units, pairs, and how many pairs carry a signal.
-
-    Three panels, left to right: how many selective units contribute to
-    within-region pairs in each region; how many pairs each group supplies, with
-    the cross-region groups separated because they are drawn from the same units
-    and would otherwise be double counted by eye; and what fraction of pairs are
-    individually above the circular-shift null after correction across pairs.
-
-    The third panel is the one that changes how the rest of the chapter reads.
-    The population of pairs sits well above its null, but only a small percentage
-    of *individual* pairs does -- so the effect is a small shift in a large
-    population rather than a subset of strongly coupled pairs, and any claim
-    phrased as "coordinated pairs" would be describing 1% of the data.
-    """
-    apply_thesis_plot_style()
-    fig, axes = plt.subplots(1, 3, figsize=(7.1, 2.15),
-                             gridspec_kw={"width_ratios": [0.85, 1.15, 1.35]})
-
-    within = counts.loc[counts["scope"].astype(str) == "within_region"]
-    cross = counts.loc[counts["scope"].astype(str) == "cross_region"]
-    within_groups = _group_order(list(within["region_pair"].astype(str)), scope="within_region")
-    cross_groups = _group_order(list(cross["region_pair"].astype(str)), scope="cross_region")
-
-    # -- units --------------------------------------------------------------
-    ax = axes[0]
-    lookup = within.set_index("region_pair")
-    values = [int(lookup.loc[g, "n_units"]) for g in within_groups]
-    ax.bar(np.arange(len(within_groups)), values, width=0.62,
-           color=MUTED_INK, edgecolor="none")
-    for position, group in enumerate(within_groups):
-        ax.text(position, values[position] + 0.02 * max(values),
-                f"{int(lookup.loc[group, 'n_dates'])} d", ha="center", va="bottom",
-                fontsize=5.8, color=MUTED_INK)
-    ax.set_xticks(np.arange(len(within_groups)))
-    ax.set_xticklabels([region_label(g) for g in within_groups], fontsize=6.5)
-    ax.set_xlim(-0.72, len(within_groups) - 0.28)
-    ax.set_ylim(0, max(values) * 1.20 if values else 1)
-    _finish(ax, ylabel="Selective units used", title="Units  (recording days)",
-            title_size=7.5)
-
-    # -- pairs --------------------------------------------------------------
-    ax = axes[1]
-    both = list(within_groups) + list(cross_groups)
-    lookup = counts.set_index("region_pair")
-    values = [int(lookup.loc[g, "n_pairs"]) for g in both]
-    colours = [SPIKE_COLOUR] * len(within_groups) + ["#e0b0a8"] * len(cross_groups)
-    positions = np.arange(len(both), dtype=float)
-    positions[len(within_groups):] += 0.6       # a gap, not a second axis
-    ax.bar(positions, values, width=0.62, color=colours, edgecolor="none")
-    ax.set_xticks(positions)
-    ax.set_xticklabels([region_label(g) for g in both], fontsize=5.8,
-                       rotation=32, ha="right")
-    ax.set_ylim(0, max(values) * 1.16 if values else 1)
-    for span, label in ((positions[:len(within_groups)], "within"),
-                        (positions[len(within_groups):], "across")):
-        if len(span):
-            ax.text(float(np.mean(span)), max(values) * 1.10, label, ha="center",
-                    va="bottom", fontsize=5.8, color=MUTED_INK)
-    _finish(ax, ylabel="Simultaneous pairs", title="Pairs", title_size=7.5)
-
-    # -- individually significant pairs -------------------------------------
-    ax = axes[2]
-    frame = significant.copy()
-    frame["percent"] = 100.0 * frame["frac_significant"].astype(float)
-    width = 0.8 / max(len(CONDITION_ORDER), 1)
-    for index, condition in enumerate(CONDITION_ORDER):
-        block = frame.loc[frame["condition"] == condition].set_index(["scope", "region_pair"])
-        xs, ys = [], []
-        for position, group in enumerate(both):
-            scope = "within_region" if position < len(within_groups) else "cross_region"
-            if (scope, group) not in block.index:
+    lookup = rows.set_index(["scope", "region_pair"])
+    for row_index, (scope, label, groups) in enumerate(layout):
+        for column in range(columns):
+            ax = axes[row_index][column]
+            if column >= len(groups):
+                ax.set_visible(False)
                 continue
-            xs.append(positions[position] + (index - 1) * width)
-            ys.append(float(block.loc[(scope, group), "percent"]))
-        if xs:
-            ax.bar(xs, ys, width=width, color=CONDITION_COLORS.get(condition, MUTED_INK),
-                   edgecolor="none", label=condition_label(condition))
-    ax.set_xticks(positions)
-    ax.set_xticklabels([region_label(g) for g in both], fontsize=5.8,
-                       rotation=32, ha="right")
-    _finish(ax, ylabel="Pairs above null (%)",
-            title="Individually significant pairs", title_size=7.5)
-    ax.legend(frameon=False, fontsize=5.5, loc="upper right")
+            group = groups[column]
+            record = lookup.loc[(scope, group)]
+            n_pairs = int(record["n_pairs"])
+            n_significant = int(record["n_significant"])
+            percent = 100.0 * n_significant / n_pairs if n_pairs else 0.0
 
-    fig.tight_layout()
+            sizes = [max(n_significant, 0), max(n_pairs - n_significant, 0)]
+            if n_significant == 0:
+                # A zero-width wedge is not drawn at all, so the ring would lose
+                # its outline; draw the remainder alone and say so in the label.
+                wedges = ax.pie(
+                    [1.0], colors=["#e3e3e3"], startangle=90, counterclock=False,
+                    wedgeprops={"width": 0.38, "edgecolor": "white", "linewidth": 0.6},
+                )[0]
+            else:
+                wedges = ax.pie(
+                    sizes, colors=[SPIKE_COLOUR, "#e3e3e3"],
+                    startangle=90, counterclock=False, explode=(0.09, 0.0),
+                    wedgeprops={"width": 0.38, "edgecolor": "white", "linewidth": 0.6},
+                )[0]
+                wedges[0].set_edgecolor(SPIKE_COLOUR)
+                wedges[0].set_linewidth(0.8)
+            ax.set_aspect("equal")
+            ax.text(0, 0.10, f"{n_pairs:,}", ha="center", va="center",
+                    fontsize=8.5, color=INK)
+            ax.text(0, -0.16, "pairs", ha="center", va="center",
+                    fontsize=6.0, color=MUTED_INK)
+            ax.text(0, 1.30, f"{n_significant:,} ({percent:.1f}%)", ha="center",
+                    va="center", fontsize=6.8,
+                    color=SPIKE_COLOUR if n_significant else MUTED_INK)
+            ax.set_title(region_label(group), fontsize=7.2, color=INK, pad=13)
+        axes[row_index][0].set_ylabel(label, fontsize=7.0, color=MUTED_INK)
+
+    fig.suptitle("Pairs recorded, and pairs above the circular-shift null",
+                 fontsize=8.5, color=INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
     return fig, save_thesis_figure(fig, settings, stem)
 
 
-def plot_summary_bars(
+def plot_correlation_bars(
     signal_summary: pd.DataFrame,
     signal_contrasts: pd.DataFrame,
-    correlations: pd.DataFrame,
+    spike_summary: pd.DataFrame,
+    spike_contrasts: pd.DataFrame,
     settings: PairOverviewPlotSettings,
     *,
-    measure: str = "window_excess_pm250ms",
+    signal_measure: str = "window_excess_pm250ms",
+    spike_scale: float = 1e3,
     scope: str = "within_region",
-    stem: str = "fig05_summary_bars",
+    stem: str = "fig05_correlation_bars",
 ) -> tuple[plt.Figure, dict[str, Path]]:
-    """Signal correlation, and how it tracks per-trial spike correlation.
+    """The two measures side by side, each reduced to one number per condition.
 
-    Left: null-corrected signal correlation per region and fixation condition,
-    with a bar over each contrast that survives FDR.  Right: the Spearman
-    correlation, across pairs, between each pair's signal correlation and its
-    per-trial spike correlation, starred where it differs from zero.
+    Left: mean signal correlation, null-corrected, averaged over +-250 ms.
+    Right: per-trial spike correlation over the same window, on the
+    trial-count-matched recomputation.  A bar sits over every contrast that
+    survives FDR and nowhere else.
 
-    The legend sits below both panels rather than inside either: the brackets
-    grow upward from the tallest bar, and any in-axes legend ends up underneath
-    them in whichever region happens to have the largest effect.
+    Putting them on adjacent axes rather than in separate figures is the point of
+    the chapter: they are computed from the same spikes, on the same pairs, over
+    the same lags, and differ only in whether the trials were averaged before or
+    after correlating.  The axes cannot be shared -- one is a Pearson coefficient
+    and the other is spike pairs per fixation, scaled here by 1000 -- so only the
+    *pattern across conditions* is comparable, which is what the figure is for.
     """
     apply_thesis_plot_style()
-    rows = (
-        signal_summary.loc[signal_summary["measure"] == measure]
+    signal_rows = (
+        signal_summary.loc[signal_summary["measure"] == signal_measure]
         if "measure" in signal_summary.columns else signal_summary
-    )
-    groups = _group_order(list(rows["region_pair"].astype(str).unique()), scope=scope)
-    contrasts = signal_contrasts
-    if contrasts is not None and "measure" in contrasts.columns:
-        contrasts = contrasts.loc[contrasts["measure"] == measure]
+    ).copy()
+    signal_local = signal_contrasts
+    if signal_local is not None and "measure" in signal_local.columns:
+        signal_local = signal_local.loc[signal_local["measure"] == signal_measure]
+
+    spike_rows = spike_summary.copy()
+    if "scope" in spike_rows.columns:
+        spike_rows = spike_rows.loc[spike_rows["scope"].astype(str) == scope]
+    for column in ("mean", "sem"):
+        if column in spike_rows.columns:
+            spike_rows[column] = spike_rows[column].astype(float) * float(spike_scale)
+    spike_local = spike_contrasts
+    if spike_local is not None and len(spike_local) and "scope" in spike_local.columns:
+        spike_local = spike_local.loc[spike_local["scope"].astype(str) == scope]
+
+    groups = _group_order(list(signal_rows["region_pair"].astype(str).unique()), scope=scope)
+    if not groups:
+        groups = _group_order(list(spike_rows["region_pair"].astype(str).unique()), scope=scope)
 
     fig, axes = plt.subplots(
         1, 2,
         figsize=(settings.panel_width_in * 1.05 * max(len(groups), 1) + 1.6,
                  settings.panel_height_in + 1.0),
     )
-    _bar_panel(axes[0], rows, groups, contrasts=contrasts)
-    _finish(axes[0], ylabel="Signal correlation, mean ±250 ms\n(observed − null)",
-            title="Signal correlation by fixation type", title_size=7.5)
+    _bar_panel(axes[0], signal_rows, groups, contrasts=signal_local)
+    _finish(axes[0], ylabel="Mean signal correlation\n(observed − null, ±250 ms)",
+            title="Mean signal correlation", title_size=7.5)
 
-    if len(correlations):
-        spearman = correlations.copy()
-        spearman = spearman.rename(columns={"spearman_rho": "mean"})
-        groups_r = _group_order(list(spearman["region_pair"].astype(str).unique()), scope=scope)
-        _bar_panel(axes[1], spearman, groups_r, value="mean", error=None,
-                   star_column="p_value")
-    # Descriptive, not a claim.  The relationship holds in some region and
-    # condition combinations and not others, so a title asserting that it holds
-    # would be contradicted by half its own panel.
-    _finish(axes[1], ylabel="Spearman ρ across pairs",
-            title="Signal against per-trial spike correlation", title_size=7.5)
+    spike_groups = _group_order(list(spike_rows["region_pair"].astype(str).unique()), scope=scope)
+    _bar_panel(axes[1], spike_rows, spike_groups, contrasts=spike_local)
+    _finish(axes[1], ylabel="Spike correlation − null\n(mean ±250 ms, ×10⁻³)",
+            title="Per-trial spike correlation", title_size=7.5)
 
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, frameon=False, fontsize=6.5, ncol=3,

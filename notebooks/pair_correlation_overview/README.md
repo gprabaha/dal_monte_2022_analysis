@@ -1,4 +1,4 @@
-# Signal and per-trial spike correlation in simultaneously recorded selective pairs
+# Mean signal and per-trial spike correlation in simultaneously recorded selective pairs
 
 Written as a **thesis chapter**: introduction, a methods section with the full
 equations, results and discussion, with the figures inline. Figures are also
@@ -7,7 +7,7 @@ written as editable PDFs for stitching into a paper figure.
 Every pair is **two FDR-selective units recorded simultaneously**, and two things
 are measured on those same pairs, so they can be compared pair for pair.
 
-| | per-trial spike correlation | signal correlation |
+| | per-trial spike correlation | mean signal correlation |
 |---|---|---|
 | computed on | per-fixation 1 ms spike trains | condition-averaged rate timelines |
 | asks | do they fire together **within** a fixation | do their **mean responses** share a shape |
@@ -30,25 +30,41 @@ timing that a count correlation integrates away, and being unnormalised it does
 not live on [−1, 1]. Reporting it under the other name would invite comparing
 magnitudes against a literature that measured something else.
 
+## Naming
+
+The two measures are named after the operation that defines them and the names are
+used verbatim throughout: **mean signal correlation** (average the fixations, then
+correlate) and **per-trial spike correlation** (correlate within each fixation,
+then average). Every figure title, axis label and paragraph uses one of those two.
+
 ## Structure
 
+Eight numbered figures, each with a caption below it in the notebook.
+
 1. Method schematic — one set of trials, two orders of operation
-2. Recording inventory — units, sessions, pairs, individually significant pairs
-3. **Signal**: null-corrected correlation across lags (within region)
-4. **Per-trial**: observed against null, every region and condition
-5. **Per-trial**: null-subtracted mean by fixation type, with the paired contrasts
-6. **Signal**: same reduction, plus the Spearman relating the two measures
-7–10. The same four figures across regions
+2. Donuts: pairs recorded per group and the fraction individually above null,
+   within region and across
+3. **Mean signal**: null-corrected correlation across lags, within region
+4. **Per-trial**: observed against null, every region and fixation type
+5. **Both measures side by side**, each reduced to a ±250 ms mean minus its null,
+   with the paired contrasts marked
+6–8. The same three figures across regions
+
+The Spearman correlation relating the two measures is reported as a table, not a
+figure: the coefficients are positive in some region-and-condition combinations
+and absent or negative in others, and bars would give a scattered set of values
+the visual weight of a result.
 
 ## Why the two y-axes are not comparable
 
-Signal correlation is a Pearson coefficient, bounded in [−1, 1]. The per-trial
-measure is **spike pairs per fixation**: at each 1 ms lag, the number of spike
+Mean signal correlation is a Pearson coefficient, bounded in [−1, 1]. The
+per-trial measure is **spike pairs per fixation**: at each 1 ms lag, the number of spike
 pairs separated by that lag. Chance is roughly `rate₁ × rate₂ × bin width` —
 about 0.05 for two 7 Hz units — which is why the observed traces sit where they
 do, and why the null-subtracted excess is around 10⁻³ and the bars are drawn
 ×10⁻³. They are different units and only their *ranks* are compared, in the
-Spearman panel.
+Spearman table. Figures 5 and 8 put the two on adjacent axes precisely because
+only the *pattern across fixation types* is comparable, not the magnitudes.
 
 ## Two lag windows, two questions
 
@@ -65,8 +81,8 @@ Spearman panel.
 Interactive-face fixations outnumber the others about six to one, so
 interactive-face estimates are more precise and correlate better with anything.
 Every **per-trial** condition contrast runs on the trial-count-matched
-recomputation and does not carry this. The signal-correlation contrasts cannot
-be matched, because no matched average exists, so their absolute sizes are upper
+recomputation and does not carry this. The mean-signal contrasts cannot be
+matched, because no matched average exists, so their absolute sizes are upper
 bounds. `notebooks/signal_correlation/` has the stratification that bounds it
 directly.
 

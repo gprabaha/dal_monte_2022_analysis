@@ -29,6 +29,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_pair_spike_coordination imp
     build_region_pair_inventory,
     compute_condition_coordination,
     count_significant_pairs,
+    summarize_significant_pairs,
     drop_zero_lag_artifact_dates,
     MATCHED_WINDOW_METRIC,
     overlap_bins,
@@ -429,6 +430,29 @@ class TestRecordingCounts(unittest.TestCase):
             ]
             uncorrected = int((group["circular_shift_mean_z_pm10ms"] > 1.96).sum())
             self.assertLessEqual(row.n_significant, uncorrected)
+
+    def test_pooled_significance_counts_pairs_not_pair_conditions(self):
+        """The pie chart's denominator is pairs, so its numerator must be too."""
+        pairs = _synthetic_pairs(n_pairs=200, seed=12)
+        pooled = summarize_significant_pairs(pairs)
+        per_condition = count_significant_pairs(pairs)
+        for row in pooled.itertuples():
+            group = pairs.loc[
+                (pairs["region_pair"] == row.region_pair)
+                & (pairs["scope"] if "scope" in pairs.columns else pairs["same_region"]).notna()
+            ]
+            expected_pairs = group.loc[
+                group["region_pair"] == row.region_pair, "pair_key"
+            ].nunique()
+            self.assertEqual(row.n_pairs, expected_pairs)
+            # A pair counts once however many of its conditions survive, so the
+            # pooled count can never exceed the sum of the per-condition ones.
+            block = per_condition.loc[
+                (per_condition["scope"] == row.scope)
+                & (per_condition["region_pair"] == row.region_pair)
+            ]
+            self.assertLessEqual(row.n_significant, int(block["n_significant"].sum()))
+            self.assertLessEqual(row.n_significant, row.n_pairs)
 
     def test_chapter_window_metrics_are_excess_not_z(self):
         """Conditions are compared on a null-corrected excess, never a z."""

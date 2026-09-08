@@ -2002,6 +2002,61 @@ def count_significant_pairs(
     return result.sort_values(list(group_columns)).reset_index(drop=True)
 
 
+def summarize_significant_pairs(
+    pairs: pd.DataFrame,
+    *,
+    z_column: str = ABOVE_NULL_METRIC,
+    group_columns: Sequence[str] = ("scope", "region_pair"),
+    alpha: float = 0.05,
+) -> pd.DataFrame:
+    """Distinct pairs above the null, pooled over fixation conditions.
+
+    :func:`count_significant_pairs` answers the question per condition, which is
+    the right shape for a condition comparison and the wrong shape for "how much
+    of this region's data carries a signal at all".  Here the correction is
+    applied across every ``(pair, condition)`` test in a group at once, and a
+    **pair** counts as significant when at least one of its conditions survives.
+    The unit of the returned count is therefore the pair, not the pair-condition,
+    so ``n_significant`` and ``n_pairs`` are on the same footing and their ratio
+    is a fraction of the recorded pairs.
+
+    Pooling the conditions rather than reporting the best of three is what keeps
+    this honest: the correction already covers all three tests, so a pair does
+    not become significant by being tried three times.
+    """
+    from scipy.stats import norm
+
+    frame = pairs.copy()
+    if "scope" not in frame.columns:
+        frame["scope"] = np.where(frame["same_region"], "within_region", "cross_region")
+
+    rows: list[dict] = []
+    for keys, group in frame.groupby(list(group_columns), observed=True, dropna=False):
+        keys = keys if isinstance(keys, tuple) else (keys,)
+        z_values = group[z_column].to_numpy(dtype=float)
+        testable = np.isfinite(z_values)
+        reject = np.zeros(z_values.shape, dtype=bool)
+        if testable.any():
+            reject[testable] = _fdr_reject(norm.sf(z_values[testable]), alpha=alpha)
+        keys_of_pairs = group["pair_key"].astype(str).to_numpy()
+        significant_pairs = set(keys_of_pairs[reject])
+        n_pairs = int(len(set(keys_of_pairs)))
+        row = dict(zip(group_columns, [str(k) for k in keys]))
+        row.update(
+            {
+                "n_pairs": n_pairs,
+                "n_tests": int(testable.sum()),
+                "n_significant": int(len(significant_pairs)),
+                "frac_significant": float(len(significant_pairs) / n_pairs) if n_pairs else np.nan,
+            }
+        )
+        rows.append(row)
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    return result.sort_values(list(group_columns)).reset_index(drop=True)
+
+
 def verify_null_sensitivity(
     *,
     n_fixations: int = 120,

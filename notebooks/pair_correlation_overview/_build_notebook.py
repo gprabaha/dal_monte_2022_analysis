@@ -1,4 +1,4 @@
-"""Author the pair-correlation chapter: signal and per-trial spike correlation."""
+"""Author the pair-correlation chapter: mean signal and per-trial spike correlation."""
 
 from __future__ import annotations
 
@@ -7,7 +7,10 @@ from itertools import count
 from pathlib import Path
 
 FILENAME = "pair_correlation_overview.ipynb"
-TITLE = "Signal and per-trial spike correlation in simultaneously recorded selective pairs"
+TITLE = (
+    "Mean signal and per-trial spike correlation in simultaneously recorded "
+    "selective pairs"
+)
 
 SETUP = '''
 from __future__ import annotations
@@ -62,10 +65,10 @@ spikes, dropped = psc.drop_zero_lag_artifact_dates(spikes)
 spikes = spikes.loc[spikes["both_selective"]].copy()
 spikes["scope"] = np.where(spikes["same_region"], "within_region", "cross_region")
 spike_traces = pd.read_pickle(SUMMARY_DIR / "traces_by_region_selective.pkl")
-print(f"spike correlation: {len(spikes):,} pair-conditions, both units FDR-selective   "
-      f"(artifact dates removed: {dropped})")
+print(f"per-trial spike correlation: {len(spikes):,} pair-conditions, "
+      f"both units FDR-selective   (artifact dates removed: {dropped})")
 
-# --- signal correlation: condition-averaged timelines, cross-session null ----
+# --- mean signal correlation: condition-averaged timelines, cross-session null
 signal_settings = sc.SignalCorrelationSettings(cfg_path=CFG_PATH)
 units, timeline = sc.load_condition_timelines(signal_settings)
 signal, signal_lags = sc.build_pair_correlations(units, timeline, signal_settings)
@@ -73,34 +76,42 @@ signal_traces = {
     "lags_ms": signal_lags,
     "traces": sc.build_group_traces(signal, signal_settings),
 }
-print(f"signal: {len(signal):,} pairs from {len(units)} FDR-selective units")
+print(f"mean signal correlation: {len(signal):,} pairs from {len(units)} "
+      f"FDR-selective units")
 
 joined = sc.join_with_spike_correlation(
     signal, signal_settings, signal_metric=sc.WINDOW_METRIC,
     spike_metric=psc.WINDOW_METRIC,
 )
 correlations = sc.correlate_signal_with_spike_correlation(joined)
+
+# Summaries and paired contrasts, computed once and reused by every figure.
+spike_summary = psc.summarize_coordination(
+    spikes, metric=SPIKE_METRIC, group_columns=("scope", "region_pair", "condition")
+)
+spike_contrasts = psc.compare_conditions(
+    spikes, metric=SPIKE_METRIC, group_columns=("scope", "region_pair")
+)
+pair_significance = psc.summarize_significant_pairs(spikes)
 '''
 
-COUNTS = '''
-counts = psc.build_recording_counts(spikes)
-significant = psc.count_significant_pairs(spikes)
-
-fig, paths = viz.plot_recording_inventory(counts, significant, figs)
+PIES = '''
+fig, paths = viz.plot_pair_significance_pies(pair_significance, figs)
 display(Image(filename=str(paths["png"])))
+'''
 
-display(Markdown("**Units, sessions and pairs behind each reported group**"))
+COUNT_TABLES = '''
+counts = psc.build_recording_counts(spikes)
+
+display(Markdown("**Units, recording days, sessions and pairs behind each group**"))
 display(
     counts.loc[:, ["scope", "region_pair", "n_units", "n_dates", "n_sessions", "n_pairs",
                    "median_pairs_per_session", "max_pairs_per_session",
                    "median_n_fixations"]]
 )
 
-display(Markdown("**Pairs individually above the circular-shift null (FDR across pairs)**"))
-display(
-    significant.loc[:, ["scope", "region_pair", "condition", "n_pairs",
-                        "n_significant", "frac_significant", "median_z"]].round(5)
-)
+display(Markdown("**Pairs above the circular-shift null, pooled over conditions**"))
+display(pair_significance.round(5))
 '''
 
 
@@ -108,8 +119,8 @@ def signal_traces_cell(scope: str, stem: str) -> str:
     return f'''
 fig, paths = viz.plot_excess_by_condition(
     signal_traces, figs, scope="{scope}", max_lag_ms=250.0,
-    ylabel="Signal correlation\\n(observed − null)",
-    title="Signal correlation, null-corrected",
+    ylabel="Mean signal correlation\\n(observed − null)",
+    title="Mean signal correlation, null-corrected",
     stem="{stem}",
 )
 display(Image(filename=str(paths["png"])))
@@ -122,7 +133,13 @@ fig, paths = viz.plot_spike_correlation_above_null(
     spike_traces, figs, scope="{scope}", stem="{stem}"
 )
 display(Image(filename=str(paths["png"])))
+'''
 
+
+def spike_null_table_cell(scope: str) -> str:
+    return f'''
+display(Markdown("**Is each group above its null?**  One-sample Wilcoxon of the "
+                 "per-pair ±250 ms excess against zero."))
 display(
     psc.test_against_null(
         spikes.loc[spikes["scope"] == "{scope}"], metric=psc.WINDOW_METRIC,
@@ -132,20 +149,38 @@ display(
 '''
 
 
-def spike_bars_cell(scope: str, stem: str) -> str:
+def bars_cell(scope: str, stem: str) -> str:
     return f'''
-spike_summary = psc.summarize_coordination(
-    spikes, metric=SPIKE_METRIC, group_columns=("scope", "region_pair", "condition")
+signal_summary = sc.summarize_lag_measures(
+    signal, signal_settings, measures=(sc.WINDOW_METRIC,), scope="{scope}"
 )
-spike_contrasts = psc.compare_conditions(
-    spikes, metric=SPIKE_METRIC, group_columns=("scope", "region_pair")
+signal_contrasts = sc.compare_lag_measures(
+    signal, signal_settings, measures=(sc.WINDOW_METRIC,), scope="{scope}"
 )
 
-fig, paths = viz.plot_spike_correlation_bars(
-    spike_summary, spike_contrasts, figs, scope="{scope}", stem="{stem}"
+fig, paths = viz.plot_correlation_bars(
+    signal_summary, signal_contrasts, spike_summary, spike_contrasts, figs,
+    scope="{scope}", stem="{stem}",
 )
 display(Image(filename=str(paths["png"])))
+'''
 
+
+def bars_tables_cell(scope: str) -> str:
+    return f'''
+display(Markdown("**Mean signal correlation** — group means, then paired contrasts"))
+display(
+    signal_summary.pivot_table(index="region_pair", columns="condition", values="mean").round(4)
+)
+display(
+    signal_contrasts.loc[
+        :, ["region_pair", "condition_a", "condition_b", "n_pairs", "mean_difference",
+            "effect_size_rank_biserial", "p_value_corrected", "significant"]
+    ].round(4)
+)
+
+display(Markdown("**Per-trial spike correlation** — group means (×10⁻³), then paired "
+                 "contrasts, on the trial-count-matched recomputation"))
 display(
     spike_summary.loc[spike_summary["scope"] == "{scope}"]
     .pivot_table(index="region_pair", columns="condition", values="mean")
@@ -161,30 +196,18 @@ display(
 '''
 
 
-def summary_bars_cell(scope: str, stem: str) -> str:
-    return f'''
-summary = sc.summarize_lag_measures(
-    signal, signal_settings, measures=(sc.WINDOW_METRIC,), scope="{scope}"
-)
-contrasts = sc.compare_lag_measures(
-    signal, signal_settings, measures=(sc.WINDOW_METRIC,), scope="{scope}"
-)
-rho = correlations.loc[correlations["scope"] == "{scope}"]
-
-fig, paths = viz.plot_summary_bars(summary, contrasts, rho, figs, scope="{scope}",
-                                   stem="{stem}")
-display(Image(filename=str(paths["png"])))
-
+RELATIONSHIP = '''
+display(Markdown(
+    "Spearman correlation across pairs between each pair's **mean signal "
+    "correlation** and its **per-trial spike correlation**, both summarised as "
+    "the mean over ±250 ms so the two ranked quantities are matched in "
+    "construction."
+))
 display(
-    summary.pivot_table(index="region_pair", columns="condition", values="mean").round(4)
-)
-display(
-    contrasts.loc[
-        :, ["region_pair", "condition_a", "condition_b", "n_pairs", "mean_difference",
-            "effect_size_rank_biserial", "p_value_corrected", "significant"]
+    correlations.loc[
+        :, ["scope", "region_pair", "condition", "n_pairs", "spearman_rho", "p_value"]
     ].round(4)
 )
-display(rho.loc[:, ["region_pair", "condition", "n_pairs", "spearman_rho", "p_value"]].round(4))
 '''
 
 
@@ -212,22 +235,30 @@ carries information that neither carries alone, gates what downstream targets
 receive, and changes with behavioural state even when firing rates do not.
 
 Two neurons recorded at the same time can be related in two distinct ways, and
-conflating them is the standard error in this literature.
+conflating them is the standard error in this literature. This chapter keeps them
+apart by naming each after the operation that defines it.
 
-**Signal correlation** is similarity of *tuning*. If two neurons both respond to
-fixation onset with the same time course, their trial-averaged responses
-resemble each other. This is a statement about what the two neurons encode, and
-it survives averaging: it is visible in the mean response and requires no
-simultaneous recording in principle.
+**Mean signal correlation** is similarity of *tuning*. Each neuron's fixations are
+averaged into a mean rate timeline first, and the two timelines are correlated. If
+two neurons both respond to fixation onset with the same time course, their
+averages resemble each other. This is a statement about what the two neurons
+encode, and it survives averaging: it is visible in the mean response and requires
+no simultaneous recording in principle.
 
-**Per-trial spike correlation** is trial-by-trial *co-firing*. If, within the
-same fixation, one neuron's spikes fall at a reliable delay from the other's,
-beyond what their average rate profiles predict, the two are coupled in time.
-This requires simultaneous recording by definition, and averaging destroys it.
+**Per-trial spike correlation** is co-firing *within a fixation*. The two spike
+trains are correlated inside each fixation first, and the correlograms are
+averaged afterwards. If one neuron's spikes fall at a reliable delay from the
+other's, beyond what their average rate profiles predict, the two are coupled in
+time. This requires simultaneous recording by definition, and averaging destroys
+it.
 
-### A note on the name
+The names differ in one word — *mean* against *per-trial* — because the measures
+differ in one step: whether the fixations are averaged before or after
+correlating.
 
-This second measure is conventionally called *noise correlation*, and that name
+### A note on the second name
+
+The per-trial measure is conventionally called *noise correlation*, and that name
 is avoided here deliberately. Classical noise correlation is a single number per
 pair: the Pearson correlation, across trials, of the two neurons' spike **counts**
 in a window, after each neuron's condition mean has been subtracted. What is
@@ -243,8 +274,8 @@ see and in what scale they live on:
 | what a null must destroy | trial-to-trial count covariation | fine temporal alignment |
 
 Reporting the second under the first's name would invite comparing magnitudes
-with a literature that measured something else. Everything below therefore says
-*per-trial spike correlation*, and *trial* means one fixation.
+with a literature that measured something else. Everywhere below, *trial* means
+one fixation.
 
 ### Why the distinction matters
 
@@ -253,9 +284,8 @@ responses and be statistically independent trial to trial; two neurons with
 unrelated tuning can co-fire tightly through shared input. Which of the two a
 behavioural variable modulates is therefore a substantive question, not a
 technicality — modulating shared tuning means the population's *representation*
-changes, while modulating co-firing means its *correlation structure* changes,
-and these have opposite consequences for how much information the population
-carries.
+changes, while modulating co-firing means its *correlation structure* changes, and
+these have opposite consequences for how much information the population carries.
 
 This chapter asks which of the two, if either, distinguishes **interactive-face**
 fixations from non-interactive-face and object fixations, in each of four
@@ -264,8 +294,8 @@ support.
 
 ### What is asked
 
-1. Is there signal correlation between simultaneously recorded selective pairs,
-   beyond what any two units of the same region show?
+1. Is there mean signal correlation between simultaneously recorded selective
+   pairs, beyond what any two units of the same region show?
 2. Does it depend on the fixation condition?
 3. Is there per-trial spike correlation beyond what each unit's own
    fixation-locked rate profile predicts?
@@ -273,8 +303,6 @@ support.
 5. Are the two related — do pairs with shared tuning also co-fire?
 6. Does any of this extend across regions?
 """
-
-
 METHODS = r"""
 ## Methods
 
@@ -310,7 +338,7 @@ results can be joined without translation:
 ### Analysis window
 
 All correlations use spikes within $[-500, +500]$ ms of fixation onset. The
-per-trial measure uses 1 ms bins, **unsmoothed** ($N = 1000$ bins); the signal
+per-trial measure uses 1 ms bins, **unsmoothed** ($N = 1000$ bins); the mean signal
 measure uses the 10 ms binned rates ($M = 100$ bins) produced by the same
 extraction, so the fixations, units and trials are identical to those in every
 other chapter. Smoothing before cross-correlation blurs exactly the fine timing
@@ -421,7 +449,7 @@ returns to baseline well before 250 ms, and the overlap taper makes the far lags
 progressively noisier — at $\ell = 900$ ms only 100 of the 1000 bins contribute.
 
 Two windows are used, for two different questions.
-$W = 250$ ms is the chapter's reporting window, chosen to match the signal
+$W = 250$ ms is the chapter's reporting window, chosen to match the mean signal
 correlation's so the two are read on the same span of lags; it answers *how much
 excess co-firing does this condition carry in total*.
 $W = 10$ ms is used **only** for whether one individual pair is coordinated,
@@ -457,10 +485,10 @@ cannot be corrected pair by pair.
 
 ---
 
-### Signal correlation
+### Mean signal correlation
 
 **The statistic.** For each pair and condition, the condition-averaged rate
-timelines in 10 ms bins,
+timelines in 10 ms bins — the *mean* the measure is named after,
 
 $$
 \bar{f}_i^{\,c}[m] \;=\; \frac{1}{T_c}\sum_{t} f_i^{(t)}[m], \qquad m = 1,\dots,M,
@@ -535,8 +563,11 @@ the per-pair $\bar{E}$ against zero, zero being the null's own expectation.
 
 **Is one pair above its null** is a separate question, answered by converting
 that pair's $\bar{z}_{ij}^{c}(10\text{ ms})$ to a one-sided p-value
-$p_{ij} = 1 - \Phi(\bar{z}_{ij}^{c})$ and applying Benjamini–Hochberg **across the
-pairs within each group**. The normal
+$p_{ij} = 1 - \Phi(\bar{z}_{ij}^{c})$ and applying Benjamini–Hochberg **across every
+$(\text{pair}, \text{condition})$ test in a region at once**. A pair is then
+counted once if any of its conditions survives, so what is reported is a fraction
+of the *recorded pairs* rather than of the pair-condition tests, and a pair does
+not become significant merely by being tested three times. The normal
 approximation is the weak step — the null spread comes from 50 draws, so the
 statistic is t-like and the tail is slightly heavier than assumed — which makes
 these counts mildly optimistic. No claim in this chapter rests on them; they are
@@ -545,144 +576,145 @@ individual pairs that mostly are not is itself the finding.
 
 **Relating the two measures** is a Spearman rank correlation, across pairs within
 each region and condition, between each pair's $\bar{E}$ (per-trial, $\pm 250$ ms)
-and its $\Delta$ (signal, $\pm 250$ ms). Spearman rather than Pearson because
+and its $\Delta$ (mean signal, $\pm 250$ ms). Spearman rather than Pearson because
 neither distribution is symmetric and the per-trial excess is bounded below by
 its null.
 """
 
 
+
 DISCUSSION = """
 ## Discussion
 
-### The fixation-condition effect is in shared tuning, not co-firing
+### The fixation-condition effect is mostly in shared tuning
 
-The clearest result is a dissociation. Signal correlation differs between
-fixation conditions — interactive face is higher than both other conditions in
-BLA ($r_{\\text{rb}} = 0.045$ and $0.071$) and, far more strongly, in OFC
-($0.19$ and $0.30$), and these survive correction. Per-trial spike correlation is
-modulated far more weakly:
-the largest within-region effect size is **0.073** (dmPFC, interactive face
-against non-interactive) and most sit below 0.05, so a "significant" contrast
-there describes a population split of roughly 52% to 48%.
+The clearest result is a dissociation of degree. Mean signal correlation differs
+sharply between fixation conditions: interactive face is higher than both other
+conditions in BLA ($r_{\\\\text{rb}} = 0.045$ and $0.071$) and, far more strongly, in
+OFC ($0.19$ and $0.30$). Per-trial spike correlation moves in the same direction
+but several times less far — the largest within-region effect is **0.073** (dmPFC,
+interactive face against non-interactive) and most sit below 0.05, so a
+"significant" contrast there describes a population split near 52% to 48%.
 
 The two measures are computed from the same spike trains, on the same pairs, in
 the same window, against equally conservative nulls. The difference between them
-is one step — whether trials are averaged before or after correlating. That the
-condition effect is large on one side of that step and marginal on the other is
-informative: what interactive fixation changes is mostly **how much two neurons'
+is one step — whether fixations are averaged before or after correlating. Figure 5
+puts them on adjacent axes so that step is the only thing separating the two
+patterns, and what interactive fixation changes is mostly **how much two neurons'
 average responses resemble each other**, and only marginally how tightly they
 co-fire within a fixation.
 
-Framed in population terms, this is a change in the *representation* rather than
-in the *correlation structure*. It is the less common of the two findings in this
+Framed in population terms, this is a change in the *representation* more than in
+the *correlation structure*. It is the less common of the two findings in this
 literature, where attention and state effects are usually reported on noise
 correlation.
 
-The qualification matters, though, and the bar figures are where it shows. The
-per-trial effect is not zero. In dmPFC and OFC interactive face is above both
-other conditions with $r_{\\text{rb}}$ between 0.04 and 0.07, and it holds after
-trial-count matching, so it is not an artifact of interactive fixations being
-more numerous.
-The honest statement is a difference of degree: both measures move in the same
-direction, and signal correlation moves several times further.
+The qualification matters. The per-trial effect is not zero: in dmPFC and OFC
+interactive face is above both other conditions with $r_{\\\\text{rb}}$ between 0.04
+and 0.07, and it holds after trial-count matching, so it is not an artifact of
+interactive fixations being more numerous. The honest statement is that both
+measures move, and one moves several times further.
 
 ### Both forms of coupling exist, and are regionally organised
 
 Neither result is a null. Per-trial spike correlation sits clearly above the
 circular-shift null in every region and condition — a null that already preserves
 each fixation's spike count and slow envelope, and so credits nothing to shared
-excitability. Signal correlation sits clearly above a null built from real,
+excitability. Mean signal correlation sits clearly above a null built from real,
 fixation-locked units of the same region.
 
 The magnitudes are ordered the same way on both measures. OFC and dmPFC carry the
-largest per-trial excess (≈ 4.7 and ≈ 2.6 $\\times 10^{-3}$), BLA and ACCg the
-smallest (≈ 1.1 and ≈ 0.65 $\\times 10^{-3}$), and OFC also has the largest signal
-correlation and by far the largest condition effect on it. ACCg is the weakest on
-both and is the only region where no signal-correlation contrast survives
-correction at all. The one place the conditions invert is BLA's per-trial
-measure, where non-interactive face is nominally highest — and that is also the
-one BLA contrast that does not survive correction, so it is better read as an
-absence of difference than as a reversal.
+largest per-trial excess (≈ 4.7 and ≈ 2.6 $\\\\times 10^{-3}$), BLA and ACCg the
+smallest (≈ 1.1 and ≈ 0.65 $\\\\times 10^{-3}$), and OFC also has the largest mean
+signal correlation and by far the largest condition effect on it. ACCg is the
+weakest on both and is the only region where no mean-signal contrast survives
+correction at all. The one place the conditions invert is BLA's per-trial measure,
+where non-interactive face is nominally highest — and that is also the one BLA
+contrast that does not survive correction, so it is better read as an absence of
+difference than as a reversal.
 
 ### The effect is a population shift, not a coupled subpopulation
 
-The inventory figure carries a result that is easy to skip past. The *population*
-of pairs sits above its null with p-values indistinguishable from zero — down to
+Figure 2 carries a result that is easy to skip past. The *population* of pairs
+sits above its null with p-values indistinguishable from zero — down to
 $10^{-263}$ in OFC — but at most **1.9%** of *individual* pairs survives FDR
-correction across pairs (dmPFC and OFC interactive face), it is under 0.5% in
-BLA, it is **zero** in ACCg, and across regions it is 4 pairs out of 33,000. There is no subset of strongly coupled
-pairs driving the average; there is a small, broadly distributed shift in a large
-population. Any claim phrased in terms of "coordinated pairs" would be describing
-one or two percent of the data.
+correction across pairs (dmPFC), it is 1.5% in OFC and 0.4% in BLA, it is **zero**
+in ACCg, and across regions it is 4 pairs out of 19,000. There is no subset of
+strongly coupled pairs driving the average; there is a small, broadly distributed
+shift in a large population. Any claim phrased in terms of "coordinated pairs"
+would be describing one or two percent of the data.
 
 ### Shared tuning and co-firing are related, but only within a region
 
 Pairs with more shared tuning also co-fire more, within region: OFC interactive
 face reaches ρ = 0.54, dmPFC object ρ = 0.18, and all three BLA conditions are
-positive with non-interactive face highest at ρ = 0.16. This is not automatic — the two quantities come from different operations and either
-can exist without the other — so a positive relationship says the same local
-circuitry plausibly produces both. It does not hold everywhere: no ACCg combination reaches
+positive with non-interactive face highest at ρ = 0.16. This is not automatic —
+the two quantities come from different operations and either can exist without the
+other — so a positive relationship says the same local circuitry plausibly
+produces both. It does not hold everywhere: no ACCg combination reaches
 significance, and dmPFC's interactive-face correlation is negative (ρ = −0.09,
 n.s.) while its object correlation is the region's strongest. The relationship is
-a feature of particular circuits and conditions rather than a general law.
+a feature of particular circuits and conditions rather than a general law, which
+is why it is tabulated rather than plotted — a bar chart of it would give a
+scattered set of coefficients the visual weight of a finding.
 
 Across regions the relationship is all but absent — one of nine combinations
 reaches significance (BLA × dmPFC, non-interactive face, ρ = 0.13) — and so is
-most of the coupling.
-Cross-region per-trial excess is an order of magnitude below within-region
-(≈ 0.15–0.7 $\\times 10^{-3}$ against 0.6–5), and cross-region signal correlation is
-at or below zero for most combinations. The one exception is **BLA × dmPFC during
-interactive face**, which stands above both other conditions on *both* measures —
-$r_{\\text{rb}} = 0.13$ and $0.14$ on signal correlation, $0.037$ and $0.042$ on
-the per-trial measure — and is the only cross-region signal correlation anywhere
-in the chapter that is positive rather than at or below its null. That it
-involves BLA and dmPFC specifically is worth following up rather than treating as
-noise, but it is one comparison among nine and should be replicated before it
-carries weight.
+most of the coupling. Cross-region per-trial excess is an order of magnitude below
+within-region (≈ 0.15–0.73 $\\\\times 10^{-3}$ against 0.6–4.9), and cross-region
+mean signal correlation is at or below zero for most combinations. The one
+exception is **BLA × dmPFC during interactive face**, which stands above both
+other conditions on *both* measures — $r_{\\\\text{rb}} = 0.13$ and $0.14$ on mean
+signal correlation, $0.037$ and $0.042$ on the per-trial measure — and is the only
+cross-region mean signal correlation anywhere in the chapter that is positive
+rather than at or below its null. That it involves BLA and dmPFC specifically is
+worth following up rather than treating as noise, but it is one comparison among
+nine and should be replicated before it carries weight.
 
 ### Limitations
 
-**Trial-count imbalance is the main threat to the signal-correlation result.**
+**Trial-count imbalance is the main threat to the mean-signal result.**
 Interactive-face fixations outnumber the others roughly six to one, so
 interactive-face mean timelines are estimated more precisely and correlate better
 with anything. The cross-session null does not absorb this: the null partner
 shares no tuning, so its correlation sits near zero whatever the precision. The
-per-trial contrasts are trial-count matched and do not carry the problem; the
+per-trial contrasts are trial-count matched and do not carry the problem; the mean
 signal contrasts cannot be, because no matched average exists. Stratifying by the
 interactive-to-object trial ratio bounds it directly, and in the lowest stratum
-the advantage is near zero — so the reported signal-correlation sizes should be
+the advantage is near zero — so the reported mean-signal effect sizes should be
 treated as **upper bounds**. A definitive test requires re-averaging the per-trial
 PSTHs at matched trial counts.
 
 **Spearman's correction for attenuation is unavailable here.** It would be the
-textbook remedy for comparing correlations between differently reliable
-estimates, but it needs each timeline's reliability, and these means are smoothed
-before averaging while the SEMs are not correspondingly reduced, so the estimate
-comes out negative for most units. The estimator is retained as a diagnostic that
+textbook remedy for comparing correlations between differently reliable estimates,
+but it needs each timeline's reliability, and these means are smoothed before
+averaging while the SEMs are not correspondingly reduced, so the estimate comes
+out negative for most units. The estimator is retained as a diagnostic that
 reports its own failure rather than silently producing a number.
 
 **Cross-region coverage is set by the recordings, not by choice.** Every
 well-populated cross-region combination involves BLA; ACCg and OFC were never
 recorded simultaneously, and dmPFC × OFC comes from a handful of sessions. The
-absence of a cross-region effect is therefore a statement about BLA–frontal
-pairs, not about cortico-cortical coupling in general.
+absence of a cross-region effect is therefore a statement about BLA–frontal pairs,
+not about cortico-cortical coupling in general.
 
 **Pair counts are not independent observations.** A session with 20 simultaneous
-units contributes 190 pairs sharing 20 units, so the effective sample size is
-well below the pair count and the p-values are correspondingly optimistic. This
-is why effect sizes carry the argument here, and why the pairing structure — the
-same pair in all three conditions — is doing the real work: it makes each
-contrast a within-pair comparison, immune to how many pairs a session supplied.
+units contributes 190 pairs sharing 20 units, so the effective sample size is well
+below the pair count and the p-values are correspondingly optimistic. This is why
+effect sizes carry the argument here, and why the pairing structure — the same
+pair in all three conditions — is doing the real work: it makes each contrast a
+within-pair comparison, immune to how many pairs a session supplied.
 
 **Selective units only.** Restricting to selective units makes the question well
 posed but means these results describe the responsive subpopulation. Whether
 non-selective pairs show the same architecture is untested here.
 
-**Simultaneity is required by the per-trial measure but not the signal measure.**
-Signal correlation is computed on simultaneously recorded pairs so the two can be
-compared pair for pair, but it could in principle be computed across sessions —
-indeed that is what the null does. The restriction costs statistical power on the
-signal side and should be relaxed if signal correlation is ever the sole question.
+**Simultaneity is required by the per-trial measure but not the mean-signal one.**
+Mean signal correlation is computed on simultaneously recorded pairs so the two
+can be compared pair for pair, but it could in principle be computed across
+sessions — indeed that is what its null does. The restriction costs statistical
+power on that side and should be relaxed if mean signal correlation is ever the
+sole question.
 
 ### Conclusion
 
@@ -693,8 +725,8 @@ the signature of a coupled minority. Interactive-face fixation modulates shared
 tuning substantially and co-firing only marginally, most strongly in OFC and
 dmPFC, and the two forms of coupling are related within a region but not across
 regions. What social interaction changes in these circuits, on this evidence, is
-mostly what pairs of neurons jointly represent — rather than how tightly they
-fire together while representing it.
+mostly what pairs of neurons jointly represent — rather than how tightly they fire
+together while representing it.
 """
 
 
@@ -702,115 +734,157 @@ CELLS = [
     markdown(INTRO),
     markdown(METHODS),
     code(SETUP),
-    markdown("""
-### Figure 1 — What the two measures are
 
-Both paths start from the same trials and diverge at one step: whether the
-trials are averaged before correlating or after. Averaging first is what removes
-trial-by-trial co-firing, which is why the left-hand path can be computed on
-units that were never recorded together and the right-hand path cannot.
+    # ---- Figure 1 ---------------------------------------------------------
+    markdown("""
+---
+
+## Figures
 """),
     code(SCHEMATIC),
     markdown("""
+**Figure 1. The two measures differ in one step.** Both paths begin from the same
+set of fixations (centre), in which two simultaneously recorded units each
+contribute a 1 ms spike train over ±500 ms of fixation onset. *Leftward:* the
+fixations are averaged into one mean rate timeline per unit, and the two timelines
+are cross-correlated — **mean signal correlation**, shaded against its
+cross-session null. *Rightward:* the two trains are cross-correlated within each
+fixation and the resulting correlograms are averaged — **per-trial spike
+correlation**, shaded against its circular-shift null. Averaging first is the only
+difference between the two, and it is what removes trial-by-trial co-firing: the
+left path can in principle be computed on units never recorded together, the right
+path cannot. Traces are drawn from formulae, not data, so the axes carry no
+values.
+"""),
+
+    # ---- Results: what the analysis is built from -------------------------
+    markdown("""
+---
+
 ## Results
 
 ### What the analysis is built from
 
-The tables and figure below are the chapter's denominators: how many selective
-units contribute a pair, over how many recording days and sessions, how many
-pairs each group supplies, and how many of those pairs are individually above
-the circular-shift null.
+Every pair is two FDR-selective units recorded in the same session. The figure and
+tables below are the chapter's denominators.
 """),
     code(LOAD),
+    code(PIES),
     markdown("""
-#### Figure 2 — Units, pairs and individually significant pairs
-
-The third panel is the one that changes how the rest reads. Every group's
-*population* of pairs sits above its null, but only a small percentage of
-*individual* pairs does. The effect is a broad shift, not a coupled subset.
+**Figure 2. Pairs recorded, and pairs individually above the null.** One donut per
+group: within region on the top row, across regions on the bottom. The number in
+the hole is every simultaneously recorded selective pair the group contributes;
+the coloured wedge, with its count and percentage above, is the subset whose
+per-trial spike correlation exceeds the circular-shift null after
+Benjamini–Hochberg correction across all pair-and-condition tests in that group
+(counted once per pair, pooled over fixation types). The wedge is offset because
+it would otherwise be too thin to see. Two things to read off: the groups are very
+unequal — BLA alone supplies 16,582 pairs against ACCg's 2,117 — and the
+significant fraction is small everywhere, at most 1.9% within region, zero in
+ACCg, and 4 pairs in 19,000 across regions. The population result that follows is
+therefore a broad shift, not a coupled subset.
 """),
-    code(COUNTS),
+    code(COUNT_TABLES),
+
+    # ---- Within region ----------------------------------------------------
     markdown("""
+---
+
 ### Within region
-
-#### Figure 3 — Signal correlation
-
-The cross-session null is subtracted, so zero means "resembles a same-region
-unit from another session no more than chance". Interactive face is above the
-other two conditions in every region, but only in BLA and OFC does the difference
-survive correction, and in OFC it is several times larger than anywhere else.
 """),
     code(signal_traces_cell("within_region", "fig03_signal_excess")),
     markdown("""
-#### Figure 4 — Per-trial spike correlation against its null
-
-Rows are fixation conditions, columns are regions. The gap between the two
-curves is the coordination; the observed curve alone is not, since an
-unnormalised cross-correlation scales with the product of the two firing rates.
-Every panel shows a clear gap, and the accompanying test is a one-sample
-Wilcoxon of each pair's ±250 ms excess against zero.
-
-The three rows look alike. Whether they *are* alike is the next figure's
-question — three near-identical pairs of curves in adjacent panels is not a
-comparison a reader can make by eye.
+**Figure 3. Mean signal correlation, within region.** Null-corrected correlation
+between the two units' condition-averaged rate timelines, against lag, one panel
+per region and one trace per fixation type (mean ± SEM across pairs). The
+cross-session null is subtracted, so zero means "resembles a same-region unit from
+another session no more than chance", and the dashed line at zero is that null,
+not an axis. Interactive face is above the other two conditions in every region,
+but only in BLA and OFC does the difference survive correction (Figure 5), and in
+OFC it is several times larger than anywhere else.
 """),
     code(spike_traces_cell("within_region", "fig04_spike_above_null")),
     markdown("""
-#### Figure 5 — Per-trial spike correlation by fixation type
-
-Each curve above, reduced to its mean over ±250 ms minus the null's, on the
-trial-count-matched recomputation. Bars are marked only where the paired
-contrast survives FDR.
-
-Interactive face is highest in dmPFC and OFC and both contrasts survive
-correction, but the rank-biserial effect sizes are 0.037–0.073 — a population
-split near 53% to 47%, against effect sizes on signal correlation that reach 0.30
-in OFC. BLA runs the other way, with non-interactive face nominally highest;
-that is also the one BLA contrast that does not survive correction, so it is an
-absence of difference rather than a reversal.
+**Figure 4. Per-trial spike correlation against its null, within region.** Rows are
+fixation types, columns are regions; the observed correlogram (colour) is plotted
+against the circular-shift null (dashed grey), both mean ± SEM across pairs, with
+pair counts in the column headings. The **gap between the two curves** is the
+coordination — the observed curve alone is not, since an unnormalised
+cross-correlation scales with the product of the two firing rates, which is why
+the panels sit at different heights. The lag axis is identical in every panel and
+is drawn once, on the bottom row. Every panel shows a clear gap, confirmed by the
+one-sample Wilcoxon tests below. The three rows look alike; whether they *are*
+alike is Figure 5's question, since three near-identical pairs of curves in
+adjacent panels is not a comparison a reader can make by eye.
 """),
-    code(spike_bars_cell("within_region", "fig05_spike_bars")),
+    code(spike_null_table_cell("within_region")),
+    code(bars_cell("within_region", "fig05_correlation_bars")),
     markdown("""
-#### Figure 6 — Signal correlation, and how the two measures relate
-
-Left: the same reduction applied to signal correlation. The OFC contrasts are
-the largest in the chapter on either measure. Right: the Spearman correlation
-across pairs between a pair's signal correlation and its per-trial spike
-correlation, per region and condition — both summarised over the same ±250 ms, so
-the two quantities being ranked are matched in construction. Strongly positive in
-OFC interactive face (ρ = 0.54), positive throughout BLA, absent in ACCg, and
-negative though not significant in dmPFC interactive face. This is a property of
-particular circuits and conditions, not a general law.
+**Figure 5. The two measures side by side, within region.** Each curve above,
+reduced to one number: its mean over ±250 ms, minus its null's. *Left:* mean
+signal correlation, a Pearson coefficient. *Right:* per-trial spike correlation on
+the trial-count-matched recomputation, in spike pairs per fixation, scaled by
+$10^{3}$. Bars are mean ± SEM across pairs; a horizontal bar with stars marks
+every paired Wilcoxon contrast surviving FDR within the panel, and nothing is
+marked where the contrast does not survive. The two y-axes are different
+quantities and are not comparable in magnitude — only the *pattern across
+fixation types* is. That pattern is the chapter's result: interactive face leads
+on both measures in OFC and dmPFC, but the mean-signal effect sizes reach 0.30
+where the per-trial ones reach 0.073.
 """),
-    code(summary_bars_cell("within_region", "fig06_summary_bars")),
+    code(bars_tables_cell("within_region")),
+
+    # ---- Across regions ---------------------------------------------------
     markdown("""
+---
+
 ### Across regions
 
 A cross-region pair exists only where both regions were recorded in the same
 session, which was not true uniformly. Only BLA × ACCg, BLA × dmPFC and BLA × OFC
 are populated enough to report: ACCg and OFC were never recorded together, and
 dmPFC × OFC comes from a handful of sessions.
+"""),
+    code(signal_traces_cell("cross_region", "fig06_signal_excess")),
+    markdown("""
+**Figure 6. Mean signal correlation, across regions.** As Figure 3, for the three
+reportable cross-region combinations. Most traces sit at or below zero — two units
+in different regions resemble each other no more than a unit from another session
+does. BLA × dmPFC during interactive face is the exception and the only positive
+cross-region trace in the chapter.
+"""),
+    code(spike_traces_cell("cross_region", "fig07_spike_above_null")),
+    markdown("""
+**Figure 7. Per-trial spike correlation against its null, across regions.** As
+Figure 4. The gaps are far narrower than within region, and in most panels the
+observed curve tracks the null closely. BLA × dmPFC during interactive face is
+again the panel where observed sits visibly above null across the whole lag range.
+"""),
+    code(spike_null_table_cell("cross_region")),
+    code(bars_cell("cross_region", "fig08_correlation_bars")),
+    markdown("""
+**Figure 8. The two measures side by side, across regions.** As Figure 5. Note the
+axes: cross-region per-trial values are an order of magnitude below the
+within-region ones (0.15–0.73 against 0.6–4.9 $\\times 10^{-3}$), and mean signal
+correlation is negative for most combinations. Only BLA × dmPFC separates the
+fixation types, with interactive face above both others on **both** measures —
+the same combination, the same direction, the only place in the chapter where the
+two agree on a cross-region effect.
+"""),
+    code(bars_tables_cell("cross_region")),
 
-#### Figure 7 — Signal correlation
-"""),
-    code(signal_traces_cell("cross_region", "fig07_signal_excess")),
+    # ---- The relationship between the two measures ------------------------
     markdown("""
-#### Figure 8 — Per-trial spike correlation against its null
-"""),
-    code(spike_traces_cell("cross_region", "fig08_spike_above_null")),
-    markdown("""
-#### Figure 9 — Per-trial spike correlation by fixation type
+---
 
-Note the axis: cross-region values are an order of magnitude below the
-within-region ones (0.15–0.73 against 0.6–4.9 $\\times 10^{-3}$). Only BLA × dmPFC
-separates the conditions, with interactive face above both others — the same
-combination, and the same direction, as in cross-region signal correlation.
+### Do the two measures track each other?
+
+Reported as a table rather than a figure. The coefficients are positive in some
+region-and-condition combinations and absent or negative in others, and plotting
+them as bars would give a scattered set of values the visual weight of a result.
 """),
-    code(spike_bars_cell("cross_region", "fig09_spike_bars")),
-    markdown("""
-#### Figure 10 — Signal correlation, and how the two measures relate
-"""),
-    code(summary_bars_cell("cross_region", "fig10_summary_bars")),
+    code(RELATIONSHIP),
+
     markdown(DISCUSSION),
 ]
 
