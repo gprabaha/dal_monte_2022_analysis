@@ -841,7 +841,7 @@ def plot_bottleneck_cost_by_condition(
 
 
 def _draw_ensemble_row(axes, fit_long: pd.DataFrame, cost_per_seed: pd.DataFrame, arm_tests: pd.DataFrame | None,
-                       gap_tests: pd.DataFrame | None, *, constrained: str, letters: str = "abc") -> None:
+                       gap_tests: pd.DataFrame | None, *, constrained: str, letters: str = "abc", legend: bool = True) -> None:
     """The three ensemble panels: shortfall from the ceiling by arm, cost per fixation type, unexplained-variance ratio."""
     conditions = [c for c in CONDITION_ORDER if c in set(fit_long["condition"])]
     ax = axes[0]
@@ -852,13 +852,13 @@ def _draw_ensemble_row(axes, fit_long: pd.DataFrame, cost_per_seed: pd.DataFrame
             entries.append({"x": j + dx, "values": 1.0 - block["r2_vs_ceiling"].to_numpy(float), "color": CONDITION_COLORS[condition], "filled": filled})
     draw_bars(ax, entries, width=0.36)
     ax.set_xticks(range(len(conditions)))
-    ax.set_xticklabels([CONDITION_TWO_LINE[c] for c in conditions], fontsize=6.0)
+    ax.set_xticklabels([CONDITION_SHORT_LABELS[c] for c in conditions], fontsize=6.4, rotation=30, ha="right")
     shortfall = 1.0 - fit_long[fit_long["arm"].isin(["dense", constrained])]["r2_vs_ceiling"]
     ax.set_ylim(min(0.0, float(shortfall.min()) * 1.1), None)
     ax.set_ylabel("shortfall from the ceiling\n(1 − $R^2$ / ceiling, mean over regions)")
-    handles = [plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=INK, lw=0.8), plt.Rectangle((0, 0), 1, 1, facecolor=INK, edgecolor="none")]
-    ax.legend(handles, ["dense", "constrained"], loc="lower right", bbox_to_anchor=(1.02, 1.0), ncol=2, fontsize=6, handlelength=1.0,
-              columnspacing=0.8, frameon=False)
+    if legend:
+        handles = [plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=INK, lw=0.8), plt.Rectangle((0, 0), 1, 1, facecolor=INK, edgecolor="none")]
+        ax.legend(handles, ["dense", "constrained"], loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=6, handlelength=1.0, frameon=False)
     nice_axis(ax)
     index = {c: k for k, c in enumerate(conditions)}
     if arm_tests is not None and not arm_tests.empty:
@@ -872,7 +872,7 @@ def _draw_ensemble_row(axes, fit_long: pd.DataFrame, cost_per_seed: pd.DataFrame
                    for j, c in enumerate(conditions)], width=0.6)
     ax.set_ylim(bottom=0.0)
     ax.set_xticks(range(len(conditions)))
-    ax.set_xticklabels([CONDITION_TWO_LINE[c] for c in conditions], fontsize=6.0)
+    ax.set_xticklabels([CONDITION_SHORT_LABELS[c] for c in conditions], fontsize=6.4, rotation=30, ha="right")
     ax.set_ylabel("cost of the constraint\n($\\Delta R^2$ / ceiling vs dense)")
     nice_axis(ax)
     if gap_tests is not None and not gap_tests.empty:
@@ -886,7 +886,7 @@ def _draw_ensemble_row(axes, fit_long: pd.DataFrame, cost_per_seed: pd.DataFrame
     ax.set_ylim(bottom=0.0)
     ax.axhline(1.0, color=INK, lw=1.0, ls="--", zorder=1)
     ax.set_xticks(range(len(conditions)))
-    ax.set_xticklabels([CONDITION_TWO_LINE[c] for c in conditions], fontsize=6.0)
+    ax.set_xticklabels([CONDITION_SHORT_LABELS[c] for c in conditions], fontsize=6.4, rotation=30, ha="right")
     ax.set_ylabel("unexplained variance,\nconstrained / dense")
     nice_axis(ax)
     _panel(ax, letters[2])
@@ -926,13 +926,18 @@ def plot_ensemble_and_constraints(
     (d) the cost of every constraint in the chapter per fixation type, on one axis.
     """
     fig, axes = plt.subplots(1, 4, figsize=figsize, gridspec_kw={"width_ratios": [1.05, 0.85, 0.85, 1.9]})
-    _draw_ensemble_row(axes[:3], fit_long, cost_per_seed, arm_tests, gap_tests_selected, constrained=constrained)
+    _draw_ensemble_row(axes[:3], fit_long, cost_per_seed, arm_tests, gap_tests_selected, constrained=constrained, legend=False)
     ax = axes[3]
     groups = [c for c in constraints if c in set(cost_per_seed["arm"])]
     _grouped_condition_boxes(ax, cost_per_seed, value="cost", group_col="arm", groups=groups, gap_tests=gap_tests_all,
-                             labels=SHORT_CONSTRAINT_LABELS, ylabel="cost vs dense network\n($\\Delta R^2$ / ceiling)", label_fontsize=5.8)
+                             labels=SHORT_CONSTRAINT_LABELS, ylabel="cost vs dense network\n($\\Delta R^2$ / ceiling)", label_fontsize=5.8,
+                             legend=False)
     _panel(ax, "d")
-    fig.tight_layout(w_pad=0.6)
+    handles = [plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=INK, lw=0.8), plt.Rectangle((0, 0), 1, 1, facecolor=INK, edgecolor="none")]
+    handles += [plt.Rectangle((0, 0), 1, 1, facecolor=CONDITION_COLORS[c], edgecolor="none") for c in CONDITION_ORDER]
+    labels = ["dense", "constrained"] + [CONDITION_SHORT_LABELS[c] for c in CONDITION_ORDER]
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.0), ncol=5, fontsize=6.5, handlelength=1.0, frameon=False)
+    fig.tight_layout(w_pad=0.6, rect=(0, 0, 1, 0.93))
     return fig
 
 
