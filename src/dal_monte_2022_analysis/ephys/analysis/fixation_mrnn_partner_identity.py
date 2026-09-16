@@ -369,18 +369,24 @@ def matrix_fit_table(fit: pd.DataFrame, architectures: Sequence[PartnerIdentityA
     """``fit`` (one row per region x condition x fit, as ``score_variant_fit`` returns) collapsed onto the 16 scored cells.
 
     Adds ``scored_region``/``partner_region``/``arm`` by looking the fit's ``label`` up in
-    ``architectures`` and expanding a cross-pair fit's single trained network into its two
-    scored cells (the region read against each of the two blocks) exactly as
-    :func:`scored_cells` enumerates them.
+    ``architectures`` and reading *both* blocks a trained network produced -- for a
+    cross-pair these are the two directions :func:`scored_cells` enumerates (region A read
+    against region B's network and vice versa); for a self-pair they are the two
+    independent halves' own reconstructions (A's block and B's block), which the network
+    computes for free but which :func:`PartnerIdentityArchitecture.virtual_regions` only
+    ever names one of ("A" as scored, "B" as partner). Scoring both halves gives the
+    self arm the same "read the whole trained network" treatment the cross arm already
+    gets, rather than discarding half of what was already computed.
     """
     by_label = {a.label: a for a in architectures}
     rows = []
     for label, block in fit.groupby("label"):
         arch = by_label[str(label)]
         virtual_scored, virtual_partner = arch.virtual_regions()
-        cell_regions = [(arch.scored_region, arch.partner_region, virtual_scored)]
-        if arch.arm == "cross":
-            cell_regions.append((arch.partner_region, arch.scored_region, virtual_partner))
+        cell_regions = [
+            (arch.scored_region, arch.partner_region, virtual_scored),
+            (arch.partner_region, arch.scored_region, virtual_partner),
+        ]
         for scored, partner, virtual in cell_regions:
             cell = block[block["region"] == virtual].copy()
             cell["scored_region"] = scored
