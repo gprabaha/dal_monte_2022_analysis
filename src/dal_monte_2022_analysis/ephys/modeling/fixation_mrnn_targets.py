@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -259,15 +259,25 @@ def build_fixation_mrnn_targets_from_dataframe(
     pca_variance_threshold: float = 0.95,
     pca_n_components: int | None = None,
     temporal_basis_count: int = 20,
+    region_name_mapping: Mapping[str, str] | None = None,
+    allowed_regions: Sequence[str] | None = None,
 ) -> FixationMRNNTargets:
-    """Build raw firing-rate and region-PC targets from combined PSTH rows."""
+    """Build raw firing-rate and region-PC targets from combined PSTH rows.
+
+    ``region_name_mapping``/``allowed_regions`` are passed straight through to
+    :func:`build_mrnn_training_dataframe` and default to its own canonical mapping and
+    category set, so this is a no-op for every caller except the partner-identity
+    experiment, which relabels units into virtual per-half regions before this point.
+    """
     region_order = _validate_order(region_order, name="region_order")
     condition_order = _validate_order(condition_order, name="condition_order")
     missing_conditions = sorted(set(condition_order) - set(CONDITION_TO_COLUMN))
     if missing_conditions:
         raise ValueError(f"Unsupported conditions: {missing_conditions}")
 
-    frame = build_mrnn_training_dataframe(combined_dataframe)
+    frame = build_mrnn_training_dataframe(
+        combined_dataframe, region_name_mapping=region_name_mapping, allowed_regions=allowed_regions,
+    )
     # ``region_order`` may name a subset of the recorded regions -- a single region, or a
     # pair -- so that "can this region reproduce itself without the others" can be asked by
     # fitting it alone. Two things keep such a fit comparable with the full model:

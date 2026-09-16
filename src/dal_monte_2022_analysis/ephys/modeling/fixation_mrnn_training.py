@@ -722,8 +722,19 @@ def train_one_initialization(
     run_dir: str | Path,
     seed: int,
     overwrite: bool = False,
+    targets: FixationMRNNTargets | None = None,
 ) -> dict[str, object]:
-    """Train one mRNN initialization and save artifacts."""
+    """Train one mRNN initialization and save artifacts.
+
+    ``targets`` lets a caller supply an already-built target (region PCs fitted on
+    whatever units it chose) instead of the one ``make_targets(settings)`` would build
+    from the dataframe named in ``settings``. Used by the partner-identity experiment,
+    which fits every region's PCA on a random half of its units and needs the specific
+    half-region pairing named by ``settings.region_order`` rather than whatever the
+    dataframe on disk would produce for those names -- everything else about the run
+    (model, loss, checkpoint) is unchanged, so this is the one hook that has to exist
+    for a caller to substitute its own targets without duplicating this function.
+    """
     run_dir = Path(run_dir)
     if run_dir.exists() and (run_dir / "checkpoint_final.pth").exists() and not overwrite:
         raise FileExistsError(f"Run already exists: {run_dir}")
@@ -734,7 +745,7 @@ def train_one_initialization(
     np.random.seed(int(seed) % (2**32 - 1))
     device = resolve_device(settings.device)
     target_mode = normalize_target_mode(settings.target_mode)
-    targets = make_targets(settings)
+    targets = make_targets(settings) if targets is None else targets
     targets_by_region, target = _target_tensors(
         targets, target_mode=target_mode, device=device,
         surrogate=settings.target_surrogate, surrogate_seed=int(settings.target_surrogate_seed),

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import pickle
+from typing import Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -204,9 +205,24 @@ def _validate_trace_lengths(
 
 def build_mrnn_training_dataframe(
     combined_dataframe: pd.DataFrame,
+    *,
+    region_name_mapping: Mapping[str, str] | None = None,
+    allowed_regions: Sequence[str] | None = None,
 ) -> pd.DataFrame:
-    """Reshape combined PSTHs into one-row-per-unit legacy mRNN training format."""
+    """Reshape combined PSTHs into one-row-per-unit legacy mRNN training format.
+
+    ``region_name_mapping`` and ``allowed_regions`` default to the module's canonical
+    four-region mapping and category set, so every existing caller is unaffected. They
+    exist for the partner-identity experiment (``fixation_mrnn_partner_identity``), which
+    relabels a random half of each region's units into a virtual region (``"bla_a"``,
+    ``"bla_b"``, ...) before this function ever sees the dataframe, and needs both the
+    mapping and the categorical dtype widened to those virtual names -- otherwise this
+    function's own validation, not just ``ANALYSIS_TO_MRNN_REGION``, would silently turn
+    every relabelled unit into a dropped ``NaN`` region.
+    """
     _validate_required_columns(combined_dataframe)
+    mapping = region_name_mapping if region_name_mapping is not None else ANALYSIS_TO_MRNN_REGION
+    categories = tuple(allowed_regions) if allowed_regions is not None else MRNN_REGION_ORDER
 
     condition_frames = [
         _subset_condition_frame(combined_dataframe, condition_name=condition_name)
@@ -226,7 +242,7 @@ def build_mrnn_training_dataframe(
     if training_df.empty:
         raise ValueError("No units remained after merging the modeled conditions.")
 
-    training_df["region"] = training_df["source_region"].map(ANALYSIS_TO_MRNN_REGION)
+    training_df["region"] = training_df["source_region"].map(mapping)
     if training_df["region"].isna().any():
         missing = sorted(training_df.loc[training_df["region"].isna(), "source_region"].unique())
         raise ValueError(
@@ -239,7 +255,7 @@ def build_mrnn_training_dataframe(
         condition_columns=MRNN_CONDITION_COLUMN_ORDER,
     )
 
-    region_type = pd.CategoricalDtype(categories=MRNN_REGION_ORDER, ordered=True)
+    region_type = pd.CategoricalDtype(categories=categories, ordered=True)
     training_df["region"] = training_df["region"].astype(region_type)
     if training_df["region"].isna().any():
         raise ValueError("Some modeled units were assigned an invalid mRNN region label.")
