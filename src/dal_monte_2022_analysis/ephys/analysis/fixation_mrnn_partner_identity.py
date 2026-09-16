@@ -297,3 +297,110 @@ def index_runs(root: str | Path, architectures: Sequence[PartnerIdentityArchitec
 
 
 __all__ += ["RELABELLED_INPUT_ROOT", "TRAIN_SCRIPT", "index_runs", "job_commands", "run_dir_for"]
+
+
+# ======================================================================================
+# 4. The matched ceiling, one per virtual region per seed
+# ======================================================================================
+
+
+def ceiling_by_cell_for_seed(
+    run_dir: str | Path,
+    unit_ceiling: pd.DataFrame,
+    *,
+    region_order: Sequence[str] = MRNN_REGION_ORDER,
+    conditions: Sequence[str] = ("face_interactive", "face_non_interactive", "object"),
+    device: str = "cpu",
+) -> pd.DataFrame:
+    """The matched per-(virtual region, condition) ceiling for one seed, read from any one of its checkpoints.
+
+    A virtual region's PCA basis and normalisation scale are identical wherever it
+    appears within a seed (the same guarantee the ladder relies on for its four canonical
+    regions), so one checkpoint that happens to contain a given virtual region is enough to
+    score it -- there is no need to touch every architecture. ``population_ceiling_by_cell``
+    is called once per canonical region with the matching half's ``PCAMetadata``, keyed by
+    the *canonical* name (the only name ``unit_ceiling`` itself carries), and the returned
+    rows are relabelled to the virtual name before being combined.
+    """
+    from dal_monte_2022_analysis.ephys.analysis.fixation_psth_noise_ceiling import population_ceiling_by_cell
+    from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import replay_fixation_mrnn_run
+
+    replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
+    checkpoint = replay["checkpoint"]
+    pca_by_region: Mapping[str, PCAMetadata] = checkpoint["pca_by_region"]
+    normalization_scale = checkpoint.get("normalization_scale")
+
+    frames = []
+    for region in region_order:
+        for half in HALVES:
+            virtual = virtual_region_label(region, half)
+            if virtual not in pca_by_region:
+                continue
+            meta = pca_by_region[virtual]
+            serialized = {"mean": meta.mean, "components": meta.components,
+                         "explained_variance_ratio": meta.explained_variance_ratio,
+                         "n_components_required": meta.n_components_required,
+                         "source_features": list(meta.source_features)} if isinstance(meta, PCAMetadata) else meta
+            per_cell = population_ceiling_by_cell(
+                unit_ceiling, pca_by_region={region: serialized}, normalization_scale=normalization_scale,
+                conditions=list(conditions),
+            )
+            per_cell["region"] = virtual
+            frames.append(per_cell)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def ceiling_lookup(ceiling_cell: pd.DataFrame) -> dict[tuple[str, str], float]:
+    """``{(virtual_region, condition): reliability}`` for the non-pooled rows, ready for ``score_variant_fit``."""
+    block = ceiling_cell[ceiling_cell["condition"] != "all"]
+    return {(str(r), str(c)): float(v) for r, c, v in
+            block[["region", "condition", "reliability"]].itertuples(index=False)}
+
+
+__all__ += ["ceiling_by_cell_for_seed", "ceiling_lookup"]
+
+
+# ======================================================================================
+# 5. Reading the 4x4 matrix and its statistics
+# ======================================================================================
+
+
+def matrix_fit_table(fit: pd.DataFrame, architectures: Sequence[PartnerIdentityArchitecture]) -> pd.DataFrame:
+    """``fit`` (one row per region x condition x fit, as ``score_variant_fit`` returns) collapsed onto the 16 scored cells.
+
+    Adds ``scored_region``/``partner_region``/``arm`` by looking the fit's ``label`` up in
+    ``architectures`` and expanding a cross-pair fit's single trained network into its two
+    scored cells (the region read against each of the two blocks) exactly as
+    :func:`scored_cells` enumerates them.
+    """
+    by_label = {a.label: a for a in architectures}
+    rows = []
+    for label, block in fit.groupby("label"):
+        arch = by_label[str(label)]
+        virtual_scored, virtual_partner = arch.virtual_regions()
+        cell_regions = [(arch.scored_region, arch.partner_region, virtual_scored)]
+        if arch.arm == "cross":
+            cell_regions.append((arch.partner_region, arch.scored_region, virtual_partner))
+        for scored, partner, virtual in cell_regions:
+            cell = block[block["region"] == virtual].copy()
+            cell["scored_region"] = scored
+            cell["partner_region"] = partner
+            cell["arm"] = arch.arm
+            cell["architecture"] = label
+            rows.append(cell)
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+
+
+def self_vs_cross_per_seed(matrix_fit: pd.DataFrame, *, value: str = "r2_vs_ceiling") -> pd.DataFrame:
+    """Per region and seed: the self-pair score and the mean of the three cross-pair scores, regions/conditions pooled.
+
+    One row per (region, seed), ready for a paired test (self vs. cross, paired by seed).
+    """
+    pooled = matrix_fit.groupby(["scored_region", "partner_region", "arm", "seed"])[value].mean().reset_index()
+    self_scores = pooled[pooled["arm"] == "self"].rename(columns={value: "self"}).drop(columns=["partner_region", "arm"])
+    cross_scores = (pooled[pooled["arm"] == "cross"].groupby(["scored_region", "seed"])[value].mean()
+                    .reset_index().rename(columns={value: "cross"}))
+    return self_scores.merge(cross_scores, on=["scored_region", "seed"], how="inner")
+
+
+__all__ += ["matrix_fit_table", "self_vs_cross_per_seed"]
