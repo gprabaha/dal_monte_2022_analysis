@@ -231,8 +231,15 @@ TRAIN_SCRIPT = "scripts/ephys/modeling/train_fixation_mrnn_partner_identity_cell
 RELABELLED_INPUT_ROOT = "ephys/psth/fixation_psth_averages_partner_identity"
 
 
-def run_dir_for(root: str | Path, architecture: PartnerIdentityArchitecture, seed: int) -> Path:
-    return Path(root) / architecture.label / f"seed={int(seed)}"
+def run_dir_for(
+    root: str | Path, architecture: PartnerIdentityArchitecture, seed: int, *, bottleneck_tag: str | None = None,
+) -> Path:
+    """The dense grid's layout is ``root/label/seed=``; a bottleneck variant nests under its own tag
+    (``root/bottleneck_tag/label/seed=``) so a rank sweep never collides with the dense checkpoints
+    or with another point in the sweep.
+    """
+    base = Path(root) if bottleneck_tag is None else Path(root) / bottleneck_tag
+    return base / architecture.label / f"seed={int(seed)}"
 
 
 def job_commands(
@@ -244,6 +251,9 @@ def job_commands(
     epochs: int = 100_000,
     conda_env: str = "gaze_processing",
     exclude_run_dirs: Sequence[str | Path] = (),
+    within_region_bottleneck_dim: int | None = None,
+    recurrent_bottleneck_dim: int | None = None,
+    bottleneck_tag: str | None = None,
 ) -> tuple[list[str], list[Path]]:
     """One shell command per missing (architecture, seed) cell; mirrors ``sweep.variant_job_commands``' shape.
 
@@ -253,6 +263,11 @@ def job_commands(
     ``FixationMRNNRunSettings``-driven loader, so no ``run_config.yaml`` is written here --
     the architecture and seed fully determine the run, and are recorded in
     ``run_dir/architecture.json`` by the training script itself.
+
+    ``within_region_bottleneck_dim``/``recurrent_bottleneck_dim`` default to ``None`` (the dense,
+    unconstrained grid already trained); passing either reuses the same relabelled datasets and
+    architectures but trains under a rank-constrained recurrence, and should be paired with a
+    ``bottleneck_tag`` (e.g. ``"w1_c3"``) so the runs land in their own subtree.
     """
     repo_root = Path(repo_root)
     claimed = {str(Path(path).resolve()) for path in exclude_run_dirs}
@@ -260,34 +275,40 @@ def job_commands(
     run_dirs: list[Path] = []
     for architecture in architectures:
         for seed in seeds:
-            run_dir = run_dir_for(root, architecture, seed)
+            run_dir = run_dir_for(root, architecture, seed, bottleneck_tag=bottleneck_tag)
             run_dirs.append(run_dir)
             if (run_dir / "checkpoint_best.pth").exists() or str(run_dir.resolve()) in claimed:
                 continue
             run_dir.mkdir(parents=True, exist_ok=True)
             input_subdir = f"{RELABELLED_INPUT_ROOT}/seed={int(seed)}"
-            commands.append(
-                " ".join([
-                    "conda", "run", "-n", conda_env, "python", str(repo_root / TRAIN_SCRIPT),
-                    "--relabelled-input-subdir", input_subdir,
-                    "--scored-region", architecture.scored_region,
-                    "--partner-region", architecture.partner_region,
-                    "--arm", architecture.arm,
-                    "--label", architecture.label,
-                    "--run-dir", str(run_dir),
-                    "--seed", str(int(seed)),
-                    "--epochs", str(int(epochs)),
-                ])
-            )
+            command = [
+                "conda", "run", "-n", conda_env, "python", str(repo_root / TRAIN_SCRIPT),
+                "--relabelled-input-subdir", input_subdir,
+                "--scored-region", architecture.scored_region,
+                "--partner-region", architecture.partner_region,
+                "--arm", architecture.arm,
+                "--label", architecture.label,
+                "--run-dir", str(run_dir),
+                "--seed", str(int(seed)),
+                "--epochs", str(int(epochs)),
+            ]
+            if within_region_bottleneck_dim is not None:
+                command += ["--within-region-bottleneck-dim", str(int(within_region_bottleneck_dim))]
+            if recurrent_bottleneck_dim is not None:
+                command += ["--recurrent-bottleneck-dim", str(int(recurrent_bottleneck_dim))]
+            commands.append(" ".join(command))
     return commands, run_dirs
 
 
-def index_runs(root: str | Path, architectures: Sequence[PartnerIdentityArchitecture], seeds: Sequence[int]) -> pd.DataFrame:
+def index_runs(
+    root: str | Path, architectures: Sequence[PartnerIdentityArchitecture], seeds: Sequence[int],
+    *, bottleneck_tag: str | None = None,
+) -> pd.DataFrame:
     """One row per (architecture, seed) cell: whether it has a best checkpoint yet."""
     rows = []
     for architecture in architectures:
         for seed in seeds:
-            run_dir = run_dir_for(root, architecture, seed)
+            run_dir = run_dir_for(root, architecture, seed, bottleneck_tag=bottleneck_tag)
             rows.append({
                 "label": architecture.label, "arm": architecture.arm, "scored_region": architecture.scored_region,
                 "partner_region": architecture.partner_region, "seed": str(int(seed)), "run_dir": str(run_dir),
@@ -410,3 +431,42 @@ def self_vs_cross_per_seed(matrix_fit: pd.DataFrame, *, value: str = "r2_vs_ceil
 
 
 __all__ += ["matrix_fit_table", "self_vs_cross_per_seed"]
+
+
+# ======================================================================================
+# 6. Region-pair size asymmetry, for the rank-bottleneck sweep
+# ======================================================================================
+
+
+def region_pair_asymmetry(
+    relabelled_root: str | Path, seeds: Sequence[int], *, region_order: Sequence[str] = MRNN_REGION_ORDER,
+) -> pd.DataFrame:
+    """Every region pair's mean half size and size ratio, read from each seed's ``halves.json``.
+
+    A self-pair is included with ``region_a == region_b`` and ``size_ratio == 1.0`` (up to the
+    ceil/floor rounding, negligible) -- the matched anchor a cost-vs-asymmetry comparison needs,
+    since it is architecturally identical to a cross-pair, just with the most symmetric possible
+    partner. Sizes are averaged over the given seeds; in practice they barely vary seed to seed
+    since a region's total unit count is fixed and only the 50/50 cut position is reshuffled.
+    """
+    import json
+    from itertools import combinations as _combinations
+
+    half_sizes: dict[str, list[float]] = {region: [] for region in region_order}
+    for seed in seeds:
+        halves = json.loads((Path(relabelled_root) / f"seed={int(seed)}" / "halves.json").read_text())
+        for region in region_order:
+            sides = halves[region]
+            half_sizes[region].append((len(sides["a"]) + len(sides["b"])) / 2)
+    mean_half = {region: float(np.mean(sizes)) for region, sizes in half_sizes.items()}
+
+    rows = [{"region_a": region, "region_b": region, "half_size_a": mean_half[region],
+            "half_size_b": mean_half[region], "size_ratio": 1.0} for region in region_order]
+    for a, b in _combinations(region_order, 2):
+        ratio = max(mean_half[a], mean_half[b]) / min(mean_half[a], mean_half[b])
+        rows.append({"region_a": a, "region_b": b, "half_size_a": mean_half[a],
+                    "half_size_b": mean_half[b], "size_ratio": ratio})
+    return pd.DataFrame(rows).sort_values("size_ratio").reset_index(drop=True)
+
+
+__all__ += ["region_pair_asymmetry"]

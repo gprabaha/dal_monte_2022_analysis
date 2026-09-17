@@ -73,6 +73,10 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=100_000)
     parser.add_argument("--device", default=None)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--within-region-bottleneck-dim", type=int, default=None,
+                        help="Override BASE_SETTINGS' within_region_bottleneck_dim (None reproduces the dense grid).")
+    parser.add_argument("--recurrent-bottleneck-dim", type=int, default=None,
+                        help="Override BASE_SETTINGS' recurrent_bottleneck_dim (None reproduces the dense grid).")
     args = parser.parse_args()
 
     arch = PartnerIdentityArchitecture(label=args.label, arm=args.arm, scored_region=args.scored_region,
@@ -97,6 +101,10 @@ def main() -> None:
 
     settings_kwargs = {k: v for k, v in BASE_SETTINGS.items() if k not in
                        ("normalize_targets", "normalization_stabilizer", "pca_variance_threshold")}
+    if args.within_region_bottleneck_dim is not None:
+        settings_kwargs["within_region_bottleneck_dim"] = args.within_region_bottleneck_dim
+    if args.recurrent_bottleneck_dim is not None:
+        settings_kwargs["recurrent_bottleneck_dim"] = args.recurrent_bottleneck_dim
     settings = FixationMRNNRunSettings(
         region_order=region_order, epochs=int(args.epochs), seed=int(args.seed),
         device=args.device or "auto", **settings_kwargs,
@@ -107,7 +115,9 @@ def main() -> None:
     (run_dir / "architecture.json").write_text(
         __import__("json").dumps({"label": arch.label, "arm": arch.arm, "scored_region": arch.scored_region,
                                   "partner_region": arch.partner_region, "region_order": list(region_order),
-                                  "relabelled_input_subdir": args.relabelled_input_subdir}, indent=1)
+                                  "relabelled_input_subdir": args.relabelled_input_subdir,
+                                  "within_region_bottleneck_dim": settings_kwargs["within_region_bottleneck_dim"],
+                                  "recurrent_bottleneck_dim": settings_kwargs["recurrent_bottleneck_dim"]}, indent=1)
     )
 
     try:

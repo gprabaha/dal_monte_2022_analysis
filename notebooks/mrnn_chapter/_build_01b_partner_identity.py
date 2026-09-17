@@ -53,9 +53,11 @@ dimensionality), lr 3e-4 cosine, tanh, spectral radius 1.1, 100k iterations.
 | 5 | Which fixation type is most affected? |
 | 6 | Which region -- or which pair -- is most affected? |
 | 7 | What the fits look like |
-| 8 | Reading the result |
+| 8 | A rank-bottleneck sweep: is spare capacity hiding the effect? |
+| 9 | Region-pair size asymmetry: does a tight cross-region channel cost more for mismatched pairs? |
+| 10 | Reading the result |
 
-**Nothing here submits a job unless `SUBMIT` is set to `True`.**
+**Nothing here submits a job unless `SUBMIT` or `SUBMIT_BOTTLENECK` is set to `True`.**
 """
 
 
@@ -367,9 +369,156 @@ if matrix_fit is not None:
 '''
 
 
-S8 = r"""## 8. Reading the result
+S8_TEXT = r"""## 8. A rank-bottleneck sweep: is spare capacity hiding the effect?
 
-Three things this task can support, in order of what they would mean:
+Every cell in §4-§6 sits at 98.5-100.3% of ceiling regardless of arm. That is not a bug in
+the acid test -- it is the same thing task 02's own rank grid found for the dense ladder:
+a network needing only a rank-1 within-region recurrence and a rank-10 cross-region channel
+(`w1_c10`, `02_rank_grid/selected_bottleneck.yaml`) already reaches 98% of ceiling on the
+*full* population. `base_model.yaml`'s 40 dense hidden units per block are several times
+that, so there is at most ~1.5% of ceiling left for a partner-identity effect to move in --
+which is roughly the size of what §4 finds (ACC and interactive face, the two combinations
+with the most headroom below ceiling, show the largest and only Holm-significant gaps, and
+even those are a few tenths of a percent of ceiling).
+
+This retrains the same ten architectures and five seeds under a tighter cross-region
+channel, holding the within-region bottleneck at task 02's already-selected
+`within_region_bottleneck_dim = 1` and sweeping `recurrent_bottleneck_dim` over **{1, 3,
+5}** -- below task 02's own cross rank of 10, since that point was chosen to keep the dense
+ladder's fit intact, not to maximise this contrast. No new data preparation: the same
+relabelled datasets and virtual regions from §1 are reused as-is, so this costs exactly
+3 x 10 x 5 = **150** more training runs, landing in their own `w1_c{cross_dim}` subtree
+alongside (not over) the dense grid already trained.
+"""
+
+S8_CODE = r'''
+WITHIN_BOTTLENECK = 1        # task 02's own selection: the lowest within-region rank that still
+                              # keeps every dense-ladder cell >= 98% of ceiling.
+CROSS_BOTTLENECK_DIMS = [1, 3, 5]   # below task 02's cross rank of 10, chosen for the dense
+                                     # ladder's fit rather than for this contrast.
+
+SUBMIT_BOTTLENECK = False   # <-- set to True to queue every missing cell across all three cross dims as one array
+
+flight_bn = sweep.in_flight_run_dirs(TASK_ROOT / "_jobs")
+bottleneck_commands, bottleneck_run_dirs, bottleneck_inventory_parts = [], [], []
+for cross_dim in CROSS_BOTTLENECK_DIMS:
+    tag = f"w{WITHIN_BOTTLENECK}_c{cross_dim}"
+    cmds, dirs = pid.job_commands(
+        ARCHITECTURES, SEEDS, root=TASK_ROOT, repo_root=repo_root, epochs=EPOCHS,
+        exclude_run_dirs=flight_bn["run_dirs"], within_region_bottleneck_dim=WITHIN_BOTTLENECK,
+        recurrent_bottleneck_dim=cross_dim, bottleneck_tag=tag,
+    )
+    inv = pid.index_runs(TASK_ROOT, ARCHITECTURES, SEEDS, bottleneck_tag=tag)
+    inv["cross_bottleneck_dim"] = cross_dim
+    bottleneck_commands += cmds
+    bottleneck_run_dirs += dirs
+    bottleneck_inventory_parts.append(inv)
+bottleneck_inventory = pd.concat(bottleneck_inventory_parts, ignore_index=True)
+
+display(bottleneck_inventory.groupby("cross_bottleneck_dim")["complete"].agg(["sum", "count"])
+        .rename(columns={"sum": "complete", "count": "total"}))
+display(Markdown(
+    f"**{int(bottleneck_inventory['complete'].sum())} complete**, **{len(bottleneck_commands)} queued or unqueued** "
+    f"of {len(bottleneck_inventory)} ({len(CROSS_BOTTLENECK_DIMS)} cross-dims x {len(ARCHITECTURES)} architectures "
+    f"x {len(SEEDS)} seeds)."))
+
+if SUBMIT_BOTTLENECK and bottleneck_commands:
+    from datetime import datetime
+    from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
+
+    jobs_dir = TASK_ROOT / "_jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    job_file = jobs_dir / f"partner_identity_bottleneck_{stamp}.txt"
+    write_job_file(job_file, bottleneck_commands)
+    job_id = submit_dsq_array_job(
+        job_file_path=job_file, sbatch_script_path=jobs_dir / f"partner_identity_bottleneck_{stamp}.sh",
+        log_dir=jobs_dir / "logs", job_name="mrnn_partner_identity_bottleneck", partition="psych_gpu",
+        cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
+    )
+    sweep.record_submission(jobs_dir, job_id=job_id, run_dirs=bottleneck_run_dirs,
+                            label=f"partner_identity_bottleneck {stamp}")
+    (jobs_dir / "bottleneck_job_id.txt").write_text(str(job_id) + "\n")
+    display(Markdown(f"Submitted **{len(bottleneck_commands)}** runs as array **{job_id}**."))
+elif bottleneck_commands:
+    display(Markdown("`SUBMIT_BOTTLENECK` is **False** -- nothing was submitted."))
+elif int(bottleneck_inventory["complete"].sum()) == len(bottleneck_inventory):
+    display(Markdown("The bottleneck sweep is fully trained."))
+else:
+    display(Markdown("Every missing cell already has a job in flight; nothing new to queue."))
+'''
+
+
+S9_TEXT = r"""## 9. Region-pair size asymmetry: does a tight cross-region channel cost more for mismatched pairs?
+
+The six cross-pairs span better than a two-and-a-half-fold range in relative half size:
+ACC-OFC are nearly matched (half sizes ~118 vs ~120, ratio 1.02), BLA-dmPFC are the most
+mismatched (~269 vs ~94, ratio 2.87). Each self-pair is architecturally its own matched
+anchor at ratio 1.0. If a narrow cross-region channel is a bigger handicap when the two
+partners carry very different amounts of information, cost (`1 - r2_vs_ceiling`) at the
+tighter cross dims should climb with this ratio; if the channel's rank is what limits fit
+and the size gap is not the relevant variable, it should not.
+"""
+
+S9_CODE = r'''
+RELABELLED_ROOT = repo_root.parent / "local_data" / "dal_monte_2022" / "analysis_outputs" / pid.RELABELLED_INPUT_ROOT
+ASYMMETRY = pid.region_pair_asymmetry(RELABELLED_ROOT, SEEDS)
+display(ASYMMETRY.round(3))
+
+bottleneck_matrix_fits = {}
+for cross_dim in CROSS_BOTTLENECK_DIMS:
+    tag = f"w{WITHIN_BOTTLENECK}_c{cross_dim}"
+    done_bn = bottleneck_inventory[(bottleneck_inventory["cross_bottleneck_dim"] == cross_dim)
+                                   & (bottleneck_inventory["complete"])]
+    if done_bn.empty:
+        continue
+
+    def build_ceiling_bn(done_bn=done_bn):
+        frames = []
+        for seed in SEEDS:
+            self_dirs = done_bn[(done_bn["arm"] == "self") & (done_bn["seed"] == str(seed))]
+            if self_dirs.empty:
+                continue
+            per_seed = pd.concat(
+                [pid.ceiling_by_cell_for_seed(row.run_dir, unit_ceiling) for row in self_dirs.itertuples()],
+                ignore_index=True)
+            per_seed["seed"] = str(seed)
+            frames.append(per_seed)
+        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+    ceiling_cell_bn = cached(f"ceiling_by_cell_{tag}", build_ceiling_bn)
+    if ceiling_cell_bn is None or ceiling_cell_bn.empty:
+        continue
+    lookup_bn = pid.ceiling_lookup(ceiling_cell_bn.groupby(["region", "condition"])["reliability"].mean().reset_index())
+    from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import score_variant_fit
+    fit_bn = cached(f"fit_{tag}",
+                    lambda done_bn=done_bn, lookup_bn=lookup_bn: score_variant_fit(done_bn, ceiling_by_region={}, ceiling_by_cell=lookup_bn))
+    bottleneck_matrix_fits[cross_dim] = cached(f"matrix_fit_{tag}", lambda fit_bn=fit_bn: pid.matrix_fit_table(fit_bn, ARCHITECTURES))
+
+if not bottleneck_matrix_fits:
+    display(Markdown("*Nothing in the §8 sweep is trained yet -- set `SUBMIT_BOTTLENECK = True` there first.*"))
+else:
+    cost_rows = []
+    for cross_dim, mf in bottleneck_matrix_fits.items():
+        per_pair = mf.groupby(["scored_region", "partner_region", "arm"])["r2_vs_ceiling"].mean().reset_index()
+        for row in per_pair.itertuples():
+            a, b = sorted((row.scored_region, row.partner_region))
+            ratio = 1.0 if row.arm == "self" else float(
+                ASYMMETRY[(ASYMMETRY["region_a"] == a) & (ASYMMETRY["region_b"] == b)]["size_ratio"].iloc[0])
+            cost_rows.append({"cross_bottleneck_dim": cross_dim, "scored_region": row.scored_region,
+                              "partner_region": row.partner_region, "arm": row.arm,
+                              "size_ratio": ratio, "cost": 1.0 - row.r2_vs_ceiling})
+    cost = pd.DataFrame(cost_rows)
+    display(cost.round(4))
+    for cross_dim, block in cost.groupby("cross_bottleneck_dim"):
+        r = np.corrcoef(block["size_ratio"], block["cost"])[0, 1] if block["size_ratio"].nunique() > 1 else float("nan")
+        md(f"`recurrent_bottleneck_dim={cross_dim}`: corr(size ratio, cost) = {r:.3f} (n={len(block)})")
+'''
+
+
+S10 = r"""## 10. Reading the result
+
+Four things this task can support, in order of what they would mean:
 
 1. **Whether the ladder's "the network helps" result survives matched parameter count.**
    The self-vs-cross contrast in §4, per region and Holm-corrected across all four. If
@@ -382,11 +531,21 @@ Three things this task can support, in order of what they would mean:
    breakdown is descriptive at five seeds; a genuine ranking among the three real partners
    of one region needs more seeds than a coarse self-vs-cross average does, exactly the
    kind of question task 01's pair matrix could not resolve either.
+4. **Whether the dense network's spare capacity is masking a larger effect, and whether
+   that masking is worse for size-mismatched pairs.** §8-§9: at full connectivity every
+   cell already sits within ~1.5% of ceiling, leaving little room for architecture to
+   matter regardless of whether it truly doesn't or the network simply has enough capacity
+   to route around a missing or wrong partner. A tighter cross-region channel that still
+   costs mismatched pairs (BLA-dmPFC) more than matched ones (ACC-OFC) would say the
+   dense result understates a real, size-dependent dependence on partner identity; a flat
+   cost-vs-ratio relationship across all three cross dims would say the small dense-grid
+   gap is close to the true effect, not an artefact of spare capacity.
 
 At five seeds this task can say whether the self-vs-cross gap exists and roughly how big it
 is; it is underpowered for anything finer (which specific partner, whether the effect is
 uniform across regions) unless it turns out to be large. The grid is written so extending
-`SEEDS` to ten costs only the fifty new fits, not a rebuild of anything already trained.
+`SEEDS` to ten costs only the fifty (or, with the sweep, two hundred) new fits, not a
+rebuild of anything already trained.
 """
 
 
@@ -409,7 +568,9 @@ def build() -> dict:
         _cell("markdown", S5_TEXT), _cell("code", S5_CODE),
         _cell("markdown", S6_TEXT), _cell("code", S6_CODE),
         _cell("markdown", S7_TEXT), _cell("code", S7_CODE),
-        _cell("markdown", S8),
+        _cell("markdown", S8_TEXT), _cell("code", S8_CODE),
+        _cell("markdown", S9_TEXT), _cell("code", S9_CODE),
+        _cell("markdown", S10),
     ]
     return {"cells": cells, "metadata": {
         "kernelspec": {"display_name": "gaze_processing", "language": "python", "name": "python3"},
