@@ -381,34 +381,45 @@ which is roughly the size of what §4 finds (ACC and interactive face, the two c
 with the most headroom below ceiling, show the largest and only Holm-significant gaps, and
 even those are a few tenths of a percent of ceiling).
 
-This retrains the same ten architectures and five seeds under a tighter cross-region
-channel, holding the within-region bottleneck at task 02's already-selected
-`within_region_bottleneck_dim = 1` and sweeping `recurrent_bottleneck_dim` over **{1, 3,
-5}** -- below task 02's own cross rank of 10, since that point was chosen to keep the dense
-ladder's fit intact, not to maximise this contrast. No new data preparation: the same
-relabelled datasets and virtual regions from §1 are reused as-is, so this costs exactly
-3 x 10 x 5 = **150** more training runs, landing in their own `w1_c{cross_dim}` subtree
-alongside (not over) the dense grid already trained.
+This probes rather than commits: hold the within-region bottleneck at task 02's already-
+selected `within_region_bottleneck_dim = 1`, and train only the two *endpoints* of the
+cross-region rank -- **(1, 1)**, as tight as a channel can be, and **(1, 10)**, task 02's
+own selection -- on two seeds rather than all five, since at this stage the question is
+only "does tightening the channel open up a visibly bigger self-vs-cross gap at all",
+not yet a Holm-corrected effect size. That is 2 cross-dims x 10 architectures x 2 seeds =
+**40** training runs, landing in their own `w1_c{cross_dim}` subtree alongside (not over)
+the dense grid already trained; no new data preparation, since both probe seeds already
+have a relabelled dataset from §1.
+
+If (1, 1) shows a clearly larger, reproducible-across-both-seeds self-vs-cross gap than
+(1, 10) -- which should itself land close to the dense grid's near-null result, since it is
+close to what the dense ladder already uses -- that confirms spare capacity is masking a
+real effect, and only then is it worth adding an intermediate cross dim (edit
+`EXTRA_CROSS_DIMS` below) and widening `BOTTLENECK_SEEDS` toward the full five for a
+properly powered read. If (1, 1) looks no different from (1, 10), a bottleneck is not the
+answer and the dense grid's small gap is probably close to the true effect.
 """
 
 S8_CODE = r'''
-WITHIN_BOTTLENECK = 1        # task 02's own selection: the lowest within-region rank that still
-                              # keeps every dense-ladder cell >= 98% of ceiling.
-CROSS_BOTTLENECK_DIMS = [1, 3, 5]   # below task 02's cross rank of 10, chosen for the dense
-                                     # ladder's fit rather than for this contrast.
+WITHIN_BOTTLENECK = 1              # task 02's own selection.
+PROBE_CROSS_DIMS = [1, 10]         # the two endpoints: as tight as possible, and task 02's own choice.
+EXTRA_CROSS_DIMS = []              # add an intermediate value (e.g. [5]) here once the probe says it's worth it.
+CROSS_BOTTLENECK_DIMS = PROBE_CROSS_DIMS + EXTRA_CROSS_DIMS
 
-SUBMIT_BOTTLENECK = False   # <-- set to True to queue every missing cell across all three cross dims as one array
+BOTTLENECK_SEEDS = protocol.protocol_seeds(n_seeds=2)   # a prefix of SEEDS; widen toward SEEDS once a dim is chosen.
+
+SUBMIT_BOTTLENECK = False   # <-- set to True to queue every missing cell across all cross dims as one array
 
 flight_bn = sweep.in_flight_run_dirs(TASK_ROOT / "_jobs")
 bottleneck_commands, bottleneck_run_dirs, bottleneck_inventory_parts = [], [], []
 for cross_dim in CROSS_BOTTLENECK_DIMS:
     tag = f"w{WITHIN_BOTTLENECK}_c{cross_dim}"
     cmds, dirs = pid.job_commands(
-        ARCHITECTURES, SEEDS, root=TASK_ROOT, repo_root=repo_root, epochs=EPOCHS,
+        ARCHITECTURES, BOTTLENECK_SEEDS, root=TASK_ROOT, repo_root=repo_root, epochs=EPOCHS,
         exclude_run_dirs=flight_bn["run_dirs"], within_region_bottleneck_dim=WITHIN_BOTTLENECK,
         recurrent_bottleneck_dim=cross_dim, bottleneck_tag=tag,
     )
-    inv = pid.index_runs(TASK_ROOT, ARCHITECTURES, SEEDS, bottleneck_tag=tag)
+    inv = pid.index_runs(TASK_ROOT, ARCHITECTURES, BOTTLENECK_SEEDS, bottleneck_tag=tag)
     inv["cross_bottleneck_dim"] = cross_dim
     bottleneck_commands += cmds
     bottleneck_run_dirs += dirs
@@ -420,7 +431,7 @@ display(bottleneck_inventory.groupby("cross_bottleneck_dim")["complete"].agg(["s
 display(Markdown(
     f"**{int(bottleneck_inventory['complete'].sum())} complete**, **{len(bottleneck_commands)} queued or unqueued** "
     f"of {len(bottleneck_inventory)} ({len(CROSS_BOTTLENECK_DIMS)} cross-dims x {len(ARCHITECTURES)} architectures "
-    f"x {len(SEEDS)} seeds)."))
+    f"x {len(BOTTLENECK_SEEDS)} seeds)."))
 
 if SUBMIT_BOTTLENECK and bottleneck_commands:
     from datetime import datetime
@@ -475,7 +486,7 @@ for cross_dim in CROSS_BOTTLENECK_DIMS:
 
     def build_ceiling_bn(done_bn=done_bn):
         frames = []
-        for seed in SEEDS:
+        for seed in BOTTLENECK_SEEDS:
             self_dirs = done_bn[(done_bn["arm"] == "self") & (done_bn["seed"] == str(seed))]
             if self_dirs.empty:
                 continue
@@ -498,6 +509,13 @@ for cross_dim in CROSS_BOTTLENECK_DIMS:
 if not bottleneck_matrix_fits:
     display(Markdown("*Nothing in the §8 sweep is trained yet -- set `SUBMIT_BOTTLENECK = True` there first.*"))
 else:
+    md("**Does (1, 1) show a bigger, both-seeds-agree self-vs-cross gap than (1, 10)?** "
+       "(pooled over regions and fixation types; compare against the dense grid's near-null in §4):")
+    for cross_dim, mf in bottleneck_matrix_fits.items():
+        per_seed = pid.self_vs_cross_per_seed(mf).assign(gap=lambda d: d["cross"] - d["self"])
+        display(per_seed.assign(cross_bottleneck_dim=cross_dim)
+                [["cross_bottleneck_dim", "scored_region", "seed", "self", "cross", "gap"]].round(4))
+
     cost_rows = []
     for cross_dim, mf in bottleneck_matrix_fits.items():
         per_pair = mf.groupby(["scored_region", "partner_region", "arm"])["r2_vs_ceiling"].mean().reset_index()
@@ -532,20 +550,22 @@ Four things this task can support, in order of what they would mean:
    of one region needs more seeds than a coarse self-vs-cross average does, exactly the
    kind of question task 01's pair matrix could not resolve either.
 4. **Whether the dense network's spare capacity is masking a larger effect, and whether
-   that masking is worse for size-mismatched pairs.** §8-§9: at full connectivity every
-   cell already sits within ~1.5% of ceiling, leaving little room for architecture to
-   matter regardless of whether it truly doesn't or the network simply has enough capacity
-   to route around a missing or wrong partner. A tighter cross-region channel that still
-   costs mismatched pairs (BLA-dmPFC) more than matched ones (ACC-OFC) would say the
-   dense result understates a real, size-dependent dependence on partner identity; a flat
-   cost-vs-ratio relationship across all three cross dims would say the small dense-grid
-   gap is close to the true effect, not an artefact of spare capacity.
+   that masking is worse for size-mismatched pairs.** §8-§9's two-point, two-seed probe
+   at full connectivity's every cell already sits within ~1.5% of ceiling, leaving little
+   room for architecture to matter regardless of whether it truly doesn't or the network
+   simply has enough capacity to route around a missing or wrong partner. If (1, 1) shows
+   a bigger, both-seeds-agree gap than (1, 10) -- especially one that costs mismatched
+   pairs (BLA-dmPFC) more than matched ones (ACC-OFC) -- the dense result understates a
+   real, size-dependent dependence on partner identity, and it is worth adding an
+   intermediate cross dim and the remaining seeds. If the two probe points look alike, a
+   bottleneck is not the answer and the dense grid's small gap is probably close to the
+   true effect.
 
 At five seeds this task can say whether the self-vs-cross gap exists and roughly how big it
 is; it is underpowered for anything finer (which specific partner, whether the effect is
 uniform across regions) unless it turns out to be large. The grid is written so extending
-`SEEDS` to ten costs only the fifty (or, with the sweep, two hundred) new fits, not a
-rebuild of anything already trained.
+`SEEDS` to ten, or `BOTTLENECK_SEEDS`/`CROSS_BOTTLENECK_DIMS` to a fuller sweep, costs only
+the new fits, not a rebuild of anything already trained.
 """
 
 
