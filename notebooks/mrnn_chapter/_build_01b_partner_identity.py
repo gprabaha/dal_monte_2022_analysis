@@ -54,8 +54,9 @@ dimensionality), lr 3e-4 cosine, tanh, spectral radius 1.1, 100k iterations.
 | 6 | Which region -- or which pair -- is most affected? |
 | 7 | What the fits look like |
 | 8 | A rank-bottleneck sweep: is spare capacity hiding the effect? |
-| 9 | Region-pair size asymmetry: does a tight cross-region channel cost more for mismatched pairs? |
-| 10 | Reading the result |
+| 9 | Does tightening the channel affect a particular region or fixation type more? |
+| 10 | Region-pair size asymmetry: does a tight cross-region channel cost more for mismatched pairs? |
+| 11 | Reading the result |
 
 **Nothing here submits a job unless `SUBMIT` or `SUBMIT_BOTTLENECK` is set to `True`.**
 """
@@ -460,22 +461,17 @@ else:
 '''
 
 
-S9_TEXT = r"""## 9. Region-pair size asymmetry: does a tight cross-region channel cost more for mismatched pairs?
+S9_TEXT = r"""## 9. Does tightening the channel affect a particular region or fixation type more?
 
-The six cross-pairs span better than a two-and-a-half-fold range in relative half size:
-ACC-OFC are nearly matched (half sizes ~118 vs ~120, ratio 1.02), BLA-dmPFC are the most
-mismatched (~269 vs ~94, ratio 2.87). Each self-pair is architecturally its own matched
-anchor at ratio 1.0. If a narrow cross-region channel is a bigger handicap when the two
-partners carry very different amounts of information, cost (`1 - r2_vs_ceiling`) at the
-tighter cross dims should climb with this ratio; if the channel's rank is what limits fit
-and the size gap is not the relevant variable, it should not.
+Three figures, self drawn hollow and cross filled throughout: the headline self-vs-cross
+gap at each cross-region rank, pooling everything; the same gap broken out by scored
+region; and by fixation type. A region or fixation type whose bars separate more at rank 1
+than at rank 10 is the one the dense grid's spare capacity was hiding. The gallery at the
+end shows what that separation actually looks like in the traces themselves, for BLA's
+leading component at the tightest rank probed.
 """
 
 S9_CODE = r'''
-RELABELLED_ROOT = repo_root.parent / "local_data" / "dal_monte_2022" / "analysis_outputs" / pid.RELABELLED_INPUT_ROOT
-ASYMMETRY = pid.region_pair_asymmetry(RELABELLED_ROOT, SEEDS)
-display(ASYMMETRY.round(3))
-
 bottleneck_matrix_fits = {}
 for cross_dim in CROSS_BOTTLENECK_DIMS:
     tag = f"w{WITHIN_BOTTLENECK}_c{cross_dim}"
@@ -508,33 +504,81 @@ for cross_dim in CROSS_BOTTLENECK_DIMS:
 
 if not bottleneck_matrix_fits:
     display(Markdown("*Nothing in the §8 sweep is trained yet -- set `SUBMIT_BOTTLENECK = True` there first.*"))
+    bottleneck_fit_all = None
 else:
-    md("**Does (1, 1) show a bigger, both-seeds-agree self-vs-cross gap than (1, 10)?** "
-       "(pooled over regions and fixation types; compare against the dense grid's near-null in §4):")
-    for cross_dim, mf in bottleneck_matrix_fits.items():
-        per_seed = pid.self_vs_cross_per_seed(mf).assign(gap=lambda d: d["cross"] - d["self"])
-        display(per_seed.assign(cross_bottleneck_dim=cross_dim)
-                [["cross_bottleneck_dim", "scored_region", "seed", "self", "cross", "gap"]].round(4))
+    bottleneck_fit_all = pd.concat(
+        [mf.assign(cross_bottleneck_dim=cross_dim) for cross_dim, mf in bottleneck_matrix_fits.items()], ignore_index=True)
 
-    cost_rows = []
-    for cross_dim, mf in bottleneck_matrix_fits.items():
-        per_pair = mf.groupby(["scored_region", "partner_region", "arm"])["r2_vs_ceiling"].mean().reset_index()
-        for row in per_pair.itertuples():
-            a, b = sorted((row.scored_region, row.partner_region))
-            ratio = 1.0 if row.arm == "self" else float(
-                ASYMMETRY[(ASYMMETRY["region_a"] == a) & (ASYMMETRY["region_b"] == b)]["size_ratio"].iloc[0])
-            cost_rows.append({"cross_bottleneck_dim": cross_dim, "scored_region": row.scored_region,
-                              "partner_region": row.partner_region, "arm": row.arm,
-                              "size_ratio": ratio, "cost": 1.0 - row.r2_vs_ceiling})
-    cost = pd.DataFrame(cost_rows)
-    display(cost.round(4))
-    for cross_dim, block in cost.groupby("cross_bottleneck_dim"):
-        r = np.corrcoef(block["size_ratio"], block["cost"])[0, 1] if block["size_ratio"].nunique() > 1 else float("nan")
-        md(f"`recurrent_bottleneck_dim={cross_dim}`: corr(size ratio, cost) = {r:.3f} (n={len(block)})")
+    dim_long = (bottleneck_fit_all.groupby(["cross_bottleneck_dim", "arm", "seed"])["r2_vs_ceiling"].mean()
+               .reset_index().rename(columns={"r2_vs_ceiling": "value"}))
+    dim_tests = ch.paired_contrasts(dim_long, value="value", group="arm", unit="seed",
+                                    by="cross_bottleneck_dim", pairs=[("cross", "self")])
+    show(pviz.plot_bottleneck_self_vs_cross(bottleneck_fit_all, dim_tests), "fig05_bottleneck_self_vs_cross")
+    show(pviz.plot_bottleneck_by_region(bottleneck_fit_all), "fig06_bottleneck_by_region")
+    show(pviz.plot_bottleneck_by_condition(bottleneck_fit_all), "fig07_bottleneck_by_condition")
+
+    tightest = min(CROSS_BOTTLENECK_DIMS)
+    tag = f"w{WITHIN_BOTTLENECK}_c{tightest}"
+    done_bn = bottleneck_inventory[(bottleneck_inventory["cross_bottleneck_dim"] == tightest)
+                                   & (bottleneck_inventory["complete"])]
+    mf = bottleneck_matrix_fits.get(tightest)
+    if done_bn.empty or mf is None or mf.empty:
+        display(Markdown(f"*No completed cells at cross-region rank {tightest} yet for the gallery.*"))
+    else:
+        GALLERY_REGION = "bla"
+        best_partner = (mf[(mf["scored_region"] == GALLERY_REGION) & (mf["arm"] == "cross")]
+                        .groupby("partner_region")["r2_vs_ceiling"].mean().idxmax())
+        self_label = f"self_{GALLERY_REGION}"
+        cross_label = next(a.label for a in ARCHITECTURES if a.arm == "cross"
+                           and {a.scored_region, a.partner_region} == {GALLERY_REGION, best_partner})
+        for label, arm in ((self_label, "self"), (cross_label, "cross")):
+            block = done_bn[done_bn["label"] == label]
+            virtual = f"{GALLERY_REGION}_a"
+            traces = cached(f"gallery_{tag}_{GALLERY_REGION}_{arm}",
+                            lambda block=block, virtual=virtual: ens.reconstruction_traces(list(block["run_dir"]), region=virtual, indices=(0,)))
+            if traces is not None and len(traces):
+                show(eviz.plot_reconstruction_overlay(
+                        traces, arm=arm,
+                        title=f"{REGION_LABELS.get(GALLERY_REGION, GALLERY_REGION)} ({arm}), leading component, cross-region rank {tightest}"),
+                     f"fig08_gallery_{tag}_{GALLERY_REGION}_{arm}")
 '''
 
 
-S10 = r"""## 10. Reading the result
+S10_TEXT = r"""## 10. Region-pair size asymmetry: does a tight cross-region channel cost more for mismatched pairs?
+
+The six cross-pairs span better than a two-and-a-half-fold range in relative half size:
+ACC-OFC are nearly matched (half sizes ~118 vs ~120, ratio 1.02), BLA-dmPFC are the most
+mismatched (~269 vs ~94, ratio 2.87). Each self-pair is architecturally its own matched
+anchor at ratio 1.0. If a narrow cross-region channel is a bigger handicap when the two
+partners carry very different amounts of information, cost (`1 - r2_vs_ceiling`) at the
+tighter cross dims should climb with this ratio; if the channel's rank is what limits fit
+and the size gap is not the relevant variable, it should not.
+"""
+
+S10_CODE = r'''
+RELABELLED_ROOT = repo_root.parent / "local_data" / "dal_monte_2022" / "analysis_outputs" / pid.RELABELLED_INPUT_ROOT
+ASYMMETRY = pid.region_pair_asymmetry(RELABELLED_ROOT, SEEDS)
+display(ASYMMETRY.round(3))
+
+if bottleneck_fit_all is None:
+    display(Markdown("*Nothing in the §8 sweep is trained yet.*"))
+else:
+    per_pair = (bottleneck_fit_all.groupby(["cross_bottleneck_dim", "scored_region", "partner_region", "arm"])
+               ["r2_vs_ceiling"].mean().reset_index())
+    cost_rows = []
+    for row in per_pair.itertuples():
+        a, b = sorted((row.scored_region, row.partner_region))
+        ratio = 1.0 if row.arm == "self" else float(
+            ASYMMETRY[(ASYMMETRY["region_a"] == a) & (ASYMMETRY["region_b"] == b)]["size_ratio"].iloc[0])
+        cost_rows.append({"cross_bottleneck_dim": row.cross_bottleneck_dim, "scored_region": row.scored_region,
+                          "partner_region": row.partner_region, "arm": row.arm,
+                          "size_ratio": ratio, "cost": 1.0 - row.r2_vs_ceiling})
+    cost = pd.DataFrame(cost_rows)
+    show(pviz.plot_bottleneck_cost_vs_asymmetry(cost), "fig09_bottleneck_cost_vs_asymmetry")
+'''
+
+
+S11 = r"""## 11. Reading the result
 
 Four things this task can support, in order of what they would mean:
 
@@ -550,7 +594,7 @@ Four things this task can support, in order of what they would mean:
    of one region needs more seeds than a coarse self-vs-cross average does, exactly the
    kind of question task 01's pair matrix could not resolve either.
 4. **Whether the dense network's spare capacity is masking a larger effect, and whether
-   that masking is worse for size-mismatched pairs.** §8-§9's two-point, two-seed probe
+   that masking is worse for size-mismatched pairs.** §8-§10's two-point, two-seed probe
    at full connectivity's every cell already sits within ~1.5% of ceiling, leaving little
    room for architecture to matter regardless of whether it truly doesn't or the network
    simply has enough capacity to route around a missing or wrong partner. If (1, 1) shows
@@ -590,7 +634,8 @@ def build() -> dict:
         _cell("markdown", S7_TEXT), _cell("code", S7_CODE),
         _cell("markdown", S8_TEXT), _cell("code", S8_CODE),
         _cell("markdown", S9_TEXT), _cell("code", S9_CODE),
-        _cell("markdown", S10),
+        _cell("markdown", S10_TEXT), _cell("code", S10_CODE),
+        _cell("markdown", S11),
     ]
     return {"cells": cells, "metadata": {
         "kernelspec": {"display_name": "gaze_processing", "language": "python", "name": "python3"},

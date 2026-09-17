@@ -462,7 +462,7 @@ def region_pair_asymmetry(
 
     rows = [{"region_a": region, "region_b": region, "half_size_a": mean_half[region],
             "half_size_b": mean_half[region], "size_ratio": 1.0} for region in region_order]
-    for a, b in _combinations(region_order, 2):
+    for a, b in _combinations(sorted(region_order), 2):
         ratio = max(mean_half[a], mean_half[b]) / min(mean_half[a], mean_half[b])
         rows.append({"region_a": a, "region_b": b, "half_size_a": mean_half[a],
                     "half_size_b": mean_half[b], "size_ratio": ratio})
