@@ -22,43 +22,54 @@ The ladder asks whether a region reproduces its own trajectories better inside t
 than alone, and finds that it does. But a "pair" network has strictly more parameters than
 a "single" network, so part of that gain could be generic extra capacity -- a second
 recurrent block helping regardless of what it represents -- rather than anything specific
-to the partner region's identity. This task builds the matched control: every region's
-units are split into two independent, non-overlapping halves ("a" and "b"), each with its
-own PCA fit from scratch, so a **self-pair** (an area with an independent half of itself)
-has exactly the architecture and parameter count of a **cross-pair** (two different areas)
--- the only thing that differs is whether the partner's target carries that area's actual
-information or an independent draw of the same area's own.
+to the partner region's identity. This task builds the matched control: a **self-pair**
+duplicates one region into two blocks that both read its *entire* neuron population -- same
+PCA, bit-identical target, independently trained weights per block -- so it has exactly the
+architecture and parameter count of a **cross-pair** (two different areas, each also fitted
+on its own full population). The only thing that differs is whether a block's partner
+carries that area's actual information or a second copy of the scored region's own.
+
+**Every region's PCA is fitted on all of its neurons.** An earlier version of this task
+instead split each region's units into two independent, non-overlapping halves, precisely so
+that a self-pair would not be a literal duplicate. That bought independence at the cost of
+fitting PCs on half the population and complicating the matched ceiling with a per-seed
+split; here, fitting on the full population is worth a different confound instead: a
+self-pair's two blocks can partly reproduce their target by mirroring each other rather than
+by using their own recurrence, so **"self beats cross" is weaker evidence against partner
+identity mattering than it would be under independent halves, and "cross beats self" is
+correspondingly a *stronger* finding.** Hold that in mind wherever the self-vs-cross contrast
+is read below.
 
 Four regions give **ten unique two-block networks**: four self-pairs and six cross-pairs.
 Each network is scored on both of its blocks, filling a **4x4 matrix of 16 (scored region,
-partner) cells** from those ten fits. If a region reproduces itself equally well paired
-with itself as paired with a real different area, the ladder's "the network helps" result
-is mostly capacity; if cross-pairs reliably beat self-pairs, the partner's identity
-matters -- and this task also asks *for which fixation type* and *for which region* that
-is truest.
+partner) cells** from those ten fits. If a region reproduces itself equally well paired with
+a duplicate of itself as paired with a real different area, the ladder's "the network helps"
+result is mostly capacity; if cross-pairs reliably beat self-pairs *despite* the self-pair's
+mirroring advantage, the partner's identity matters -- and this task also asks *for which
+fixation type* and *for which region* that is truest, and whether a cross-pair does not just
+fit as well but gets there faster.
 
-**Design.** Two disjoint halves per region per seed (matching the noise-ceiling split-half
-convention already used elsewhere), five seeds to start -- 50 fits -- with the grid
-written so a later run can extend to ten without touching anything already trained. Every
-fit uses the same recipe as the rest of the final series: minimax objective, 40 units per
-block, full dense connectivity (no rank bottleneck -- this task is about identity, not
-dimensionality), lr 3e-4 cosine, tanh, spectral radius 1.1, 100k iterations.
+**Design.** Five seeds, one five-seed grid -- 50 fits. Nothing about the target depends on
+the training seed any more (no per-seed data split), so a seed now varies only the network's
+weight initialisation, the same as every other task in the series. Every fit uses the same
+recipe as the rest of the final series: minimax objective, 40 units per block, full dense
+connectivity (no rank bottleneck -- this task is about identity, not dimensionality), lr 3e-4
+cosine, tanh, spectral radius 1.1, 100k iterations.
 
 | Section | |
 |---|---|
 | 1 | The grid, and where its data live |
 | 2 | Run state and submission (off by default) |
-| 3 | Convergence and the matched ceiling |
-| 4 | The 4x4 matrix: does a region need this partner, or any partner? |
-| 5 | Which fixation type is most affected? |
-| 6 | Which region -- or which pair -- is most affected? |
-| 7 | What the fits look like |
-| 8 | A rank-bottleneck sweep: is spare capacity hiding the effect? |
-| 9 | Does tightening the channel affect a particular region or fixation type more? |
-| 10 | Region-pair size asymmetry: does a tight cross-region channel cost more for mismatched pairs? |
-| 11 | Reading the result |
+| 3 | The matched ceiling (full-population, needs no checkpoint) |
+| 4 | Convergence and adequacy: is every cell actually fitting well? |
+| 5 | The 4x4 matrix: does a region need this partner, or any partner? |
+| 6 | Which fixation type is most affected? |
+| 7 | Which region -- or which pair -- is most affected? |
+| 8 | Does a cross-pair not just fit as well, but converge faster? |
+| 9 | What the fits look like: PC and firing-rate reconstruction |
+| 10 | Reading the result |
 
-**Nothing here submits a job unless `SUBMIT` or `SUBMIT_BOTTLENECK` is set to `True`.**
+**Nothing here submits a job unless `SUBMIT` or `SUBMIT_RETRY` is set to `True`.**
 """
 
 
@@ -102,13 +113,15 @@ pd.set_option("display.width", 200)
 pd.set_option("display.max_columns", 40)
 
 TREE = "final"
-TASK_ROOT = sweep.resolve_task_root("01b_partner_identity", DATASET_CFG_PATH, tree=TREE)
-FIGURE_DIR = syn.resolve_output_dir(DATASET_CFG_PATH, scope="final_01b_partner_identity")
+#: A new task name -- not ``01b_partner_identity`` -- so this full-population grid never
+#: shares a directory with the original half-split grid's checkpoints (90 trained, several
+#: still in flight at the time this task was rebuilt). Nothing here reads or deletes those;
+#: they remain available separately if the half-split design is ever wanted again.
+TASK_ROOT = sweep.resolve_task_root("01b_partner_identity_full_population", DATASET_CFG_PATH, tree=TREE)
+FIGURE_DIR = syn.resolve_output_dir(DATASET_CFG_PATH, scope="final_01b_partner_identity_full_population")
 FIGURES = ThesisFigureSettings(output_dir=FIGURE_DIR)
 COND = CONDITION_SHORT_LABELS
 
-#: Five seeds now; room to extend to ten later just by adding seeds here -- every
-#: already-trained cell is skipped on resubmission (`skip_existing` in job_commands).
 N_SEEDS = 5
 ARCHITECTURES = pid.partner_identity_architectures()
 SEEDS = protocol.protocol_seeds(n_seeds=N_SEEDS)
@@ -148,14 +161,16 @@ print("task root:", TASK_ROOT)
 
 S1_TEXT = r"""## 1. The grid, and where its data live
 
-Every architecture is one of ten unique two-block networks; every seed draws its own
-independent 50/50 split of each region's units (`write_relabelled_dataset`, called once per
-seed, writes a relabelled copy of the combined fixation PSTH export with eight virtual
-regions -- `<region>_a`, `<region>_b` -- in place of the four canonical ones, plus a
-`halves.json` recording exactly which units went into which half). A region's target is
-bit-identical everywhere it appears within a seed, the same guarantee the ladder gives its
-four canonical regions: the normalisation scale is pooled over all eight virtual regions of
-a seed regardless of which two a given architecture trains on.
+Every architecture is one of ten unique two-block networks, built directly from the
+canonical combined fixation-PSTH export -- no pre-written per-seed dataset, since nothing
+about a target depends on the training seed any more. A **self-pair**'s two blocks both read
+*all* of the scored region's neurons (`pid.duplicate_region_dataframe`: the region's rows are
+copied under two virtual labels, `<region>_1` and `<region>_2`, bit-identical); a
+**cross-pair**'s two blocks are just its two canonical region names, the same mechanism the
+ladder's own region-pairs already use. Every architecture, self or cross, is normalised to
+the same scale (`pid.build_architecture_targets`'s `normalization_scale_override`), pooled
+once from the untouched four-region dataframe -- otherwise a self-pair's duplicated region
+would pool a slightly different scale than a cross-pair's untouched one.
 """
 
 S1_CODE = r'''
@@ -210,61 +225,110 @@ else:
 '''
 
 
-S3_TEXT = r"""## 3. Convergence and the matched ceiling
+S3_TEXT = r"""## 3. The matched ceiling (full-population, needs no checkpoint)
 
-The matched per-(virtual region, fixation type) ceiling only needs the four **self-pair**
-checkpoints of a seed: together they cover all eight virtual regions exactly once, and a
-virtual region's PCA basis is identical wherever it appears within that seed, so this is
-enough to score every one of that seed's ten architectures.
+Unlike the half-split design, the full-population PCA basis for a canonical region does not
+depend on the training seed -- it is a fixed function of the data and the recipe's own PCA
+settings. The ceiling can therefore be computed once, directly from the combined PSTH export,
+before any cell finishes training (`pid.full_population_ceiling_by_cell`); a self-pair's two
+blocks (`<region>_1`, `<region>_2`) read off their canonical region's value
+(`pid.ceiling_lookup`), since a duplicate shares that region's PCA basis exactly.
 """
 
 S3_CODE = r'''
+unit_ceiling = pd.read_pickle(UNIT_CEILING_PATH)
+ceiling_cell = cached("ceiling_by_cell", lambda: pid.full_population_ceiling_by_cell(DATASET_CFG_PATH, unit_ceiling))
+display(ceiling_cell.pivot(index="region", columns="condition", values="reliability").round(4))
+lookup = pid.ceiling_lookup(ceiling_cell, ARCHITECTURES)
+'''
+
+
+S4_TEXT = r"""## 4. Convergence and adequacy: is every cell actually fitting well?
+
+The minimax objective optimises the *worst* region x condition cell, but a well-optimised
+worst cell is not the same claim as a well-fit one: minimax tells the optimiser what to
+prioritise, not whether it succeeded. Two different failures would otherwise look alike in
+a bare fit table, so they are checked separately, in order:
+
+1. **Convergence** (`sweep.convergence_table`) -- did training settle, or is the best
+   iterate just the luckiest point on a jittery walk? A configuration that merely confuses
+   the optimiser looks the same in the final loss as one the data genuinely cannot
+   tolerate, and only a flagged convergence failure tells them apart.
+2. **Adequacy** (`pid.adequacy_table`) -- *given* a converged fit, does its worst condition
+   actually clear the noise ceiling (within the grid's own seed-to-seed spread)? This is the
+   "all the models are fitting well" check: not just that the objective's worst cell was
+   targeted, but that it ended up near ceiling once training finished.
+
+Any architecture failing step 1 is queued for a retry at a lower learning rate (`SUBMIT_RETRY`
+below, off by default) rather than folded into the comparison as-is -- a non-converged fit
+would masquerade as "this architecture cannot fit the data" when it may only mean the
+inherited learning rate could not optimise it.
+"""
+
+S4_CODE = r'''
 done = inventory[inventory["complete"]]
 if done.empty:
     display(Markdown("*Nothing trained yet.*"))
     fit = matrix_fit = None
 else:
-    unit_ceiling = pd.read_pickle(UNIT_CEILING_PATH)
+    histories_by_seed = pid.load_histories_by_seed(done)
+    convergence = sweep.convergence_table({label: list(by_seed.values()) for label, by_seed in histories_by_seed.items()})
+    md("**Convergence, per architecture** (`n_converged` out of `n_seeds` on the bar task 00 fixed):")
+    display(convergence.round(4))
 
-    def build_ceiling():
-        frames = []
-        for seed in SEEDS:
-            self_dirs = done[(done["arm"] == "self") & (done["seed"] == str(seed))]
-            if self_dirs.empty:
-                continue
-            per_seed = pd.concat(
-                [pid.ceiling_by_cell_for_seed(row.run_dir, unit_ceiling) for row in self_dirs.itertuples()],
-                ignore_index=True,
-            )
-            per_seed["seed"] = str(seed)
-            frames.append(per_seed)
-        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    SUBMIT_RETRY = False   # <-- set to True to queue a lower-learning-rate retry for every architecture that failed
 
-    ceiling_cell = cached("ceiling_by_cell", build_ceiling)
-    if ceiling_cell is None or ceiling_cell.empty:
-        display(Markdown("*No seed has all four self-pairs done yet -- the ceiling needs at least one full seed of self-pairs.*"))
-        fit = matrix_fit = None
+    retry_flight = sweep.in_flight_run_dirs(TASK_ROOT / "_jobs")
+    retry_commands, retry_run_dirs = pid.retry_commands_for_nonconverged(
+        ARCHITECTURES, convergence, SEEDS, root=TASK_ROOT, repo_root=repo_root, epochs=EPOCHS,
+        exclude_run_dirs=retry_flight["run_dirs"],
+    )
+    if not retry_commands:
+        display(Markdown("Every architecture that has finished training converged; no retry needed."))
+    elif SUBMIT_RETRY:
+        from datetime import datetime
+        from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
+
+        jobs_dir = TASK_ROOT / "_jobs"
+        jobs_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        job_file = jobs_dir / f"partner_identity_retry_{stamp}.txt"
+        write_job_file(job_file, retry_commands)
+        job_id = submit_dsq_array_job(
+            job_file_path=job_file, sbatch_script_path=jobs_dir / f"partner_identity_retry_{stamp}.sh",
+            log_dir=jobs_dir / "logs", job_name="mrnn_partner_identity_retry", partition="psych_gpu",
+            cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
+        )
+        sweep.record_submission(jobs_dir, job_id=job_id, run_dirs=retry_run_dirs, label=f"partner_identity_retry {stamp}")
+        display(Markdown(f"Submitted **{len(retry_commands)}** retry runs as array **{job_id}**."))
     else:
-        # One ceiling per (virtual region, condition), pooling seeds only if every seed agrees closely enough to average;
-        # in practice these are near-identical because the halves' sizes barely vary seed to seed.
-        pooled_ceiling = ceiling_cell.groupby(["region", "condition"])["reliability"].mean().reset_index()
-        lookup = pid.ceiling_lookup(pooled_ceiling)
-        from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import score_variant_fit
-        fit = cached("fit", lambda: score_variant_fit(done, ceiling_by_region={}, ceiling_by_cell=lookup))
-        matrix_fit = cached("matrix_fit", lambda: pid.matrix_fit_table(fit, ARCHITECTURES))
-        worst = matrix_fit.groupby(["architecture", "seed"])["r2_vs_ceiling"].min().reset_index()
-        display(Markdown("**Worst scored-cell x fixation-type combination per fit:**"))
-        display(worst.groupby("seed")["r2_vs_ceiling"].agg(["mean", "min", "max", "count"]).round(4))
+        display(Markdown(f"**{len(retry_commands)}** cells failed convergence and would be retried at a lower "
+                         "learning rate -- `SUBMIT_RETRY` is **False**, so nothing was submitted."))
+
+    from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import score_variant_fit
+    fit = cached("fit", lambda: score_variant_fit(done, ceiling_by_region={}, ceiling_by_cell=lookup))
+    matrix_fit = cached("matrix_fit", lambda: pid.matrix_fit_table(fit, ARCHITECTURES))
+
+    adequacy = pid.adequacy_table(matrix_fit)
+    md("**Adequacy, per architecture** (worst region x condition cell against ceiling; `adequate` uses the grid's own seed spread as tolerance):")
+    display(adequacy.round(4))
+    if not adequacy["adequate"].all():
+        md(f"**{int((~adequacy['adequate']).sum())} of {len(adequacy)} architectures fall outside tolerance on their worst "
+           "condition** -- read §5 onward with that in mind; a failing architecture's own cells are not excluded "
+           "below; they are flagged here so a comparison can be reread in light of them.")
 '''
 
 
-S4_TEXT = r"""## 4. The 4x4 matrix: does a region need this partner, or any partner?
+S5_TEXT = r"""## 5. The 4x4 matrix: does a region need this partner, or any partner?
 
 The matrix, and the direct test: for each region, is its self-pair fit reliably lower than
-the mean of its three cross-pair fits, paired by seed?
+the mean of its three cross-pair fits, paired by seed? Recall the self-pair's mirroring
+advantage (§ header): this contrast is conservative in the direction that matters -- a
+self-pair can partly fit by copying its duplicate partner, so any residual cross-pair
+advantage found here is not explained by that advantage.
 """
 
-S4_CODE = r'''
+S5_CODE = r'''
 if matrix_fit is not None:
     show(pviz.plot_partner_identity_matrix(matrix_fit), "fig01_matrix")
     display(matrix_fit.groupby(["scored_region", "partner_region", "arm"])["r2_vs_ceiling"].mean()
@@ -284,14 +348,14 @@ if matrix_fit is not None:
 '''
 
 
-S5_TEXT = r"""## 5. Which fixation type is most affected?
+S6_TEXT = r"""## 6. Which fixation type is most affected?
 
 The same self-vs-cross contrast, now per fixation type with regions pooled: does
-interactive face lose more from being paired with an independent half of itself than the
-other two fixation types do?
+interactive face lose more from being paired with a duplicate of itself than the other two
+fixation types do?
 """
 
-S5_CODE = r'''
+S6_CODE = r'''
 if matrix_fit is not None:
     cond_per_fit = matrix_fit.groupby(["arm", "seed", "condition"])["r2_vs_ceiling"].mean().reset_index()
     cond_tests = ch.paired_contrasts(cond_per_fit, value="r2_vs_ceiling", group="arm", unit="seed",
@@ -305,7 +369,7 @@ if matrix_fit is not None:
 '''
 
 
-S6_TEXT = r"""## 6. Which region -- or which pair -- is most affected?
+S7_TEXT = r"""## 7. Which region -- or which pair -- is most affected?
 
 Figure 2 already shows whether the self-vs-cross gap is uniform across regions or
 concentrated in one or two. This section adds the finer-grained read: for each scored
@@ -313,7 +377,7 @@ region, which *specific* partner helps most, and does the identity of the partne
 "a partner exists") matter within the six cross-pairs?
 """
 
-S6_CODE = r'''
+S7_CODE = r'''
 if matrix_fit is not None:
     per_partner = matrix_fit.groupby(["scored_region", "partner_region", "arm", "seed"])["r2_vs_ceiling"].mean().reset_index()
     md("**Every partner, per scored region** (mean over fits and fixation types; the diagonal is the self-pair):")
@@ -340,13 +404,41 @@ if matrix_fit is not None:
 '''
 
 
-S7_TEXT = r"""## 7. What the fits look like
+S8_TEXT = r"""## 8. Does a cross-pair not just fit as well, but converge faster?
 
-Target-prominent, model-thin-grey overlays (the chapter's Figure 2 convention) for one
-region's leading components, self-paired against its best cross-pair, across every seed.
+Fitting equally well (§5) and getting there equally fast are different claims. Two fits can
+land at the same final adequacy while one took a fraction of the iterations to get there --
+not visible in the final cell alone, only in the training trajectory. Scored on
+`worst_cell_unexplained`, the same per-iteration quantity the minimax objective optimises, so
+"converges faster" means faster on the objective's own terms.
 """
 
-S7_CODE = r'''
+S8_CODE = r'''
+if matrix_fit is not None and done is not None and not done.empty:
+    speed = pid.convergence_speed_table(histories_by_seed, ARCHITECTURES)
+    show(pviz.plot_convergence_curves(histories_by_seed, ARCHITECTURES), "fig05_convergence_curves")
+    speed_tests = ch.paired_contrasts(speed, value="iterations_to_tolerance", group="arm", unit="seed",
+                                      by="scored_region", pairs=[("cross", "self")])
+    show(pviz.plot_convergence_speed(speed, speed_tests), "fig06_convergence_speed")
+    md("**Iterations to converge, self vs. cross, per region** (lower = faster):")
+    display(speed.groupby(["scored_region", "arm"])["iterations_to_tolerance"].agg(["mean", "std"]).unstack("arm").round(1))
+    md("**Tests:**")
+    display(speed_tests[["scored_region", "n", "mean_a", "mean_b", "difference", "statistic", "p", "p_holm", "stars"]].round(5)
+            if not speed_tests.empty else speed_tests)
+'''
+
+
+S9_TEXT = r"""## 9. What the fits look like: PC and firing-rate reconstruction
+
+Target-prominent, model-thin overlays (the chapter's Figure 2 convention), in true native
+units with no vertical offset between components or units -- one small panel per
+component/unit x fixation type, every seed's reconstruction overlaid on the one observed
+trace. Shown in both spaces: the region-PC space the model is actually trained in, and the
+PC-backprojected firing-rate space the neurons were recorded in, for one region's leading
+components/units, self-paired against its best cross-pair, across every seed.
+"""
+
+S9_CODE = r'''
 GALLERY_REGION = "bla"
 
 if matrix_fit is not None:
@@ -360,256 +452,52 @@ if matrix_fit is not None:
 
     for label, arm in ((self_label, "self"), (cross_label, "cross")):
         block = done[done["label"] == label]
-        virtual = f"{GALLERY_REGION}_a"
-        traces = cached(f"gallery_{GALLERY_REGION}_{arm}",
-                        lambda block=block, virtual=virtual: ens.reconstruction_traces(list(block["run_dir"]), region=virtual))
-        if traces is not None and len(traces):
-            show(eviz.plot_reconstruction_overlay(traces, arm=arm,
-                 title=f"{REGION_LABELS.get(GALLERY_REGION, GALLERY_REGION)} ({arm}) · target (black) and every seed's fit"),
-                 f"fig04_gallery_{GALLERY_REGION}_{arm}")
-'''
-
-
-S8_TEXT = r"""## 8. A rank-bottleneck sweep: is spare capacity hiding the effect?
-
-Every cell in §4-§6 sits at 98.5-100.3% of ceiling regardless of arm. That is not a bug in
-the acid test -- it is the same thing task 02's own rank grid found for the dense ladder:
-a network needing only a rank-1 within-region recurrence and a rank-10 cross-region channel
-(`w1_c10`, `02_rank_grid/selected_bottleneck.yaml`) already reaches 98% of ceiling on the
-*full* population. `base_model.yaml`'s 40 dense hidden units per block are several times
-that, so there is at most ~1.5% of ceiling left for a partner-identity effect to move in --
-which is roughly the size of what §4 finds (ACC and interactive face, the two combinations
-with the most headroom below ceiling, show the largest and only Holm-significant gaps, and
-even those are a few tenths of a percent of ceiling).
-
-This probes rather than commits: hold the within-region bottleneck at task 02's already-
-selected `within_region_bottleneck_dim = 1`, and train only the two *endpoints* of the
-cross-region rank -- **(1, 1)**, as tight as a channel can be, and **(1, 10)**, task 02's
-own selection -- on two seeds rather than all five, since at this stage the question is
-only "does tightening the channel open up a visibly bigger self-vs-cross gap at all",
-not yet a Holm-corrected effect size. That is 2 cross-dims x 10 architectures x 2 seeds =
-**40** training runs, landing in their own `w1_c{cross_dim}` subtree alongside (not over)
-the dense grid already trained; no new data preparation, since both probe seeds already
-have a relabelled dataset from §1.
-
-If (1, 1) shows a clearly larger, reproducible-across-both-seeds self-vs-cross gap than
-(1, 10) -- which should itself land close to the dense grid's near-null result, since it is
-close to what the dense ladder already uses -- that confirms spare capacity is masking a
-real effect, and only then is it worth adding an intermediate cross dim (edit
-`EXTRA_CROSS_DIMS` below) and widening `BOTTLENECK_SEEDS` toward the full five for a
-properly powered read. If (1, 1) looks no different from (1, 10), a bottleneck is not the
-answer and the dense grid's small gap is probably close to the true effect.
-"""
-
-S8_CODE = r'''
-WITHIN_BOTTLENECK = 1              # task 02's own selection.
-PROBE_CROSS_DIMS = [1, 10]         # the two endpoints: as tight as possible, and task 02's own choice.
-EXTRA_CROSS_DIMS = []              # add an intermediate value (e.g. [5]) here once the probe says it's worth it.
-CROSS_BOTTLENECK_DIMS = PROBE_CROSS_DIMS + EXTRA_CROSS_DIMS
-
-BOTTLENECK_SEEDS = protocol.protocol_seeds(n_seeds=2)   # a prefix of SEEDS; widen toward SEEDS once a dim is chosen.
-
-SUBMIT_BOTTLENECK = False   # <-- set to True to queue every missing cell across all cross dims as one array
-
-flight_bn = sweep.in_flight_run_dirs(TASK_ROOT / "_jobs")
-bottleneck_commands, bottleneck_run_dirs, bottleneck_inventory_parts = [], [], []
-for cross_dim in CROSS_BOTTLENECK_DIMS:
-    tag = f"w{WITHIN_BOTTLENECK}_c{cross_dim}"
-    cmds, dirs = pid.job_commands(
-        ARCHITECTURES, BOTTLENECK_SEEDS, root=TASK_ROOT, repo_root=repo_root, epochs=EPOCHS,
-        exclude_run_dirs=flight_bn["run_dirs"], within_region_bottleneck_dim=WITHIN_BOTTLENECK,
-        recurrent_bottleneck_dim=cross_dim, bottleneck_tag=tag,
-    )
-    inv = pid.index_runs(TASK_ROOT, ARCHITECTURES, BOTTLENECK_SEEDS, bottleneck_tag=tag)
-    inv["cross_bottleneck_dim"] = cross_dim
-    bottleneck_commands += cmds
-    bottleneck_run_dirs += dirs
-    bottleneck_inventory_parts.append(inv)
-bottleneck_inventory = pd.concat(bottleneck_inventory_parts, ignore_index=True)
-
-display(bottleneck_inventory.groupby("cross_bottleneck_dim")["complete"].agg(["sum", "count"])
-        .rename(columns={"sum": "complete", "count": "total"}))
-display(Markdown(
-    f"**{int(bottleneck_inventory['complete'].sum())} complete**, **{len(bottleneck_commands)} queued or unqueued** "
-    f"of {len(bottleneck_inventory)} ({len(CROSS_BOTTLENECK_DIMS)} cross-dims x {len(ARCHITECTURES)} architectures "
-    f"x {len(BOTTLENECK_SEEDS)} seeds)."))
-
-if SUBMIT_BOTTLENECK and bottleneck_commands:
-    from datetime import datetime
-    from dal_monte_2022_analysis.runtime.hpc.jobs import submit_dsq_array_job, write_job_file
-
-    jobs_dir = TASK_ROOT / "_jobs"
-    jobs_dir.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    job_file = jobs_dir / f"partner_identity_bottleneck_{stamp}.txt"
-    write_job_file(job_file, bottleneck_commands)
-    job_id = submit_dsq_array_job(
-        job_file_path=job_file, sbatch_script_path=jobs_dir / f"partner_identity_bottleneck_{stamp}.sh",
-        log_dir=jobs_dir / "logs", job_name="mrnn_partner_identity_bottleneck", partition="psych_gpu",
-        cpus_per_task=1, mem_per_cpu="12G", time_limit="06:00:00", gres="gpu:1",
-    )
-    sweep.record_submission(jobs_dir, job_id=job_id, run_dirs=bottleneck_run_dirs,
-                            label=f"partner_identity_bottleneck {stamp}")
-    (jobs_dir / "bottleneck_job_id.txt").write_text(str(job_id) + "\n")
-    display(Markdown(f"Submitted **{len(bottleneck_commands)}** runs as array **{job_id}**."))
-elif bottleneck_commands:
-    display(Markdown("`SUBMIT_BOTTLENECK` is **False** -- nothing was submitted."))
-elif int(bottleneck_inventory["complete"].sum()) == len(bottleneck_inventory):
-    display(Markdown("The bottleneck sweep is fully trained."))
-else:
-    display(Markdown("Every missing cell already has a job in flight; nothing new to queue."))
-'''
-
-
-S9_TEXT = r"""## 9. Does tightening the channel affect a particular region or fixation type more?
-
-Three figures, self drawn hollow and cross filled throughout: the headline self-vs-cross
-gap at each cross-region rank, pooling everything; the same gap broken out by scored
-region; and by fixation type. A region or fixation type whose bars separate more at rank 1
-than at rank 10 is the one the dense grid's spare capacity was hiding. The gallery at the
-end shows what that separation actually looks like in the traces themselves, for BLA's
-leading component at the tightest rank probed.
-"""
-
-S9_CODE = r'''
-bottleneck_matrix_fits = {}
-for cross_dim in CROSS_BOTTLENECK_DIMS:
-    tag = f"w{WITHIN_BOTTLENECK}_c{cross_dim}"
-    done_bn = bottleneck_inventory[(bottleneck_inventory["cross_bottleneck_dim"] == cross_dim)
-                                   & (bottleneck_inventory["complete"])]
-    if done_bn.empty:
-        continue
-
-    def build_ceiling_bn(done_bn=done_bn):
-        frames = []
-        for seed in BOTTLENECK_SEEDS:
-            self_dirs = done_bn[(done_bn["arm"] == "self") & (done_bn["seed"] == str(seed))]
-            if self_dirs.empty:
-                continue
-            per_seed = pd.concat(
-                [pid.ceiling_by_cell_for_seed(row.run_dir, unit_ceiling) for row in self_dirs.itertuples()],
-                ignore_index=True)
-            per_seed["seed"] = str(seed)
-            frames.append(per_seed)
-        return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-    ceiling_cell_bn = cached(f"ceiling_by_cell_{tag}", build_ceiling_bn)
-    if ceiling_cell_bn is None or ceiling_cell_bn.empty:
-        continue
-    lookup_bn = pid.ceiling_lookup(ceiling_cell_bn.groupby(["region", "condition"])["reliability"].mean().reset_index())
-    from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_sweep import score_variant_fit
-    fit_bn = cached(f"fit_{tag}",
-                    lambda done_bn=done_bn, lookup_bn=lookup_bn: score_variant_fit(done_bn, ceiling_by_region={}, ceiling_by_cell=lookup_bn))
-    bottleneck_matrix_fits[cross_dim] = cached(f"matrix_fit_{tag}", lambda fit_bn=fit_bn: pid.matrix_fit_table(fit_bn, ARCHITECTURES))
-
-if not bottleneck_matrix_fits:
-    display(Markdown("*Nothing in the §8 sweep is trained yet -- set `SUBMIT_BOTTLENECK = True` there first.*"))
-    bottleneck_fit_all = None
-else:
-    bottleneck_fit_all = pd.concat(
-        [mf.assign(cross_bottleneck_dim=cross_dim) for cross_dim, mf in bottleneck_matrix_fits.items()], ignore_index=True)
-
-    dim_long = (bottleneck_fit_all.groupby(["cross_bottleneck_dim", "arm", "seed"])["r2_vs_ceiling"].mean()
-               .reset_index().rename(columns={"r2_vs_ceiling": "value"}))
-    dim_tests = ch.paired_contrasts(dim_long, value="value", group="arm", unit="seed",
-                                    by="cross_bottleneck_dim", pairs=[("cross", "self")])
-    show(pviz.plot_bottleneck_self_vs_cross(bottleneck_fit_all, dim_tests), "fig05_bottleneck_self_vs_cross")
-    show(pviz.plot_bottleneck_by_region(bottleneck_fit_all), "fig06_bottleneck_by_region")
-    show(pviz.plot_bottleneck_by_condition(bottleneck_fit_all), "fig07_bottleneck_by_condition")
-
-    tightest = min(CROSS_BOTTLENECK_DIMS)
-    tag = f"w{WITHIN_BOTTLENECK}_c{tightest}"
-    done_bn = bottleneck_inventory[(bottleneck_inventory["cross_bottleneck_dim"] == tightest)
-                                   & (bottleneck_inventory["complete"])]
-    mf = bottleneck_matrix_fits.get(tightest)
-    if done_bn.empty or mf is None or mf.empty:
-        display(Markdown(f"*No completed cells at cross-region rank {tightest} yet for the gallery.*"))
-    else:
-        GALLERY_REGION = "bla"
-        best_partner = (mf[(mf["scored_region"] == GALLERY_REGION) & (mf["arm"] == "cross")]
-                        .groupby("partner_region")["r2_vs_ceiling"].mean().idxmax())
-        self_label = f"self_{GALLERY_REGION}"
-        cross_label = next(a.label for a in ARCHITECTURES if a.arm == "cross"
-                           and {a.scored_region, a.partner_region} == {GALLERY_REGION, best_partner})
-        for label, arm in ((self_label, "self"), (cross_label, "cross")):
-            block = done_bn[done_bn["label"] == label]
-            virtual = f"{GALLERY_REGION}_a"
-            traces = cached(f"gallery_{tag}_{GALLERY_REGION}_{arm}",
-                            lambda block=block, virtual=virtual: ens.reconstruction_traces(list(block["run_dir"]), region=virtual, indices=(0,)))
+        arch = next(a for a in ARCHITECTURES if a.label == label)
+        virtual = arch.scored_region if arm == "cross" else arch.virtual_regions()[0]
+        for space, fig_stem in (("pc", "fig07_gallery_pc"), ("fr", "fig08_gallery_fr")):
+            traces = cached(f"gallery_{GALLERY_REGION}_{arm}_{space}",
+                            lambda block=block, virtual=virtual, space=space: ens.reconstruction_traces(
+                                list(block["run_dir"]), region=virtual, space=space))
             if traces is not None and len(traces):
-                show(eviz.plot_reconstruction_overlay(
-                        traces, arm=arm,
-                        title=f"{REGION_LABELS.get(GALLERY_REGION, GALLERY_REGION)} ({arm}), leading component, cross-region rank {tightest}"),
-                     f"fig08_gallery_{tag}_{GALLERY_REGION}_{arm}")
+                space_label = "region PCs" if space == "pc" else "PC-backprojected firing rate"
+                show(eviz.plot_reconstruction_overlay(traces, arm=arm,
+                     title=f"{REGION_LABELS.get(GALLERY_REGION, GALLERY_REGION)} ({arm}), {space_label} · "
+                           "target (black) and every seed's fit"),
+                     f"{fig_stem}_{GALLERY_REGION}_{arm}")
 '''
 
 
-S10_TEXT = r"""## 10. Region-pair size asymmetry: does a tight cross-region channel cost more for mismatched pairs?
+S10 = r"""## 10. Reading the result
 
-The six cross-pairs span better than a two-and-a-half-fold range in relative half size:
-ACC-OFC are nearly matched (half sizes ~118 vs ~120, ratio 1.02), BLA-dmPFC are the most
-mismatched (~269 vs ~94, ratio 2.87). Each self-pair is architecturally its own matched
-anchor at ratio 1.0. If a narrow cross-region channel is a bigger handicap when the two
-partners carry very different amounts of information, cost (`1 - r2_vs_ceiling`) at the
-tighter cross dims should climb with this ratio; if the channel's rank is what limits fit
-and the size gap is not the relevant variable, it should not.
-"""
-
-S10_CODE = r'''
-RELABELLED_ROOT = repo_root.parent / "local_data" / "dal_monte_2022" / "analysis_outputs" / pid.RELABELLED_INPUT_ROOT
-ASYMMETRY = pid.region_pair_asymmetry(RELABELLED_ROOT, SEEDS)
-display(ASYMMETRY.round(3))
-
-if bottleneck_fit_all is None:
-    display(Markdown("*Nothing in the §8 sweep is trained yet.*"))
-else:
-    per_pair = (bottleneck_fit_all.groupby(["cross_bottleneck_dim", "scored_region", "partner_region", "arm"])
-               ["r2_vs_ceiling"].mean().reset_index())
-    cost_rows = []
-    for row in per_pair.itertuples():
-        a, b = sorted((row.scored_region, row.partner_region))
-        ratio = 1.0 if row.arm == "self" else float(
-            ASYMMETRY[(ASYMMETRY["region_a"] == a) & (ASYMMETRY["region_b"] == b)]["size_ratio"].iloc[0])
-        cost_rows.append({"cross_bottleneck_dim": row.cross_bottleneck_dim, "scored_region": row.scored_region,
-                          "partner_region": row.partner_region, "arm": row.arm,
-                          "size_ratio": ratio, "cost": 1.0 - row.r2_vs_ceiling})
-    cost = pd.DataFrame(cost_rows)
-    show(pviz.plot_bottleneck_cost_vs_asymmetry(cost), "fig09_bottleneck_cost_vs_asymmetry")
-'''
-
-
-S11 = r"""## 11. Reading the result
-
-Four things this task can support, in order of what they would mean:
+Three things this task can support, in order of what they would mean:
 
 1. **Whether the ladder's "the network helps" result survives matched parameter count.**
-   The self-vs-cross contrast in §4, per region and Holm-corrected across all four. If
-   self-pairs reproduce a region about as well as cross-pairs do, the ladder's gain was
-   mostly extra capacity; if cross-pairs reliably win, the partner's content matters.
-2. **Whether that matters more for one fixation type.** §5, mirroring how the chapter reads
-   "does this constraint cost interactive face more" -- here the constraint is *which*
-   partner, not how narrow the channel is.
-3. **Whether it is one region, or a specific pair, carrying the effect.** §6's partner
+   The self-vs-cross contrast in §5, per region and Holm-corrected across all four, read
+   against the self-pair's mirroring advantage (header): if self-pairs reproduce a region
+   about as well as cross-pairs do *despite* that advantage, the ladder's gain was mostly
+   extra capacity; if cross-pairs still win, the partner's content matters, and more clearly
+   so than an independent-halves design could show.
+2. **Whether that matters more for one fixation type, or gets there faster.** §6 mirrors how
+   the chapter reads "does this constraint cost interactive face more"; §8 asks the
+   complementary question of training speed, not just final adequacy.
+3. **Whether it is one region, or a specific pair, carrying the effect.** §7's partner
    breakdown is descriptive at five seeds; a genuine ranking among the three real partners
-   of one region needs more seeds than a coarse self-vs-cross average does, exactly the
-   kind of question task 01's pair matrix could not resolve either.
-4. **Whether the dense network's spare capacity is masking a larger effect, and whether
-   that masking is worse for size-mismatched pairs.** §8-§10's two-point, two-seed probe
-   at full connectivity's every cell already sits within ~1.5% of ceiling, leaving little
-   room for architecture to matter regardless of whether it truly doesn't or the network
-   simply has enough capacity to route around a missing or wrong partner. If (1, 1) shows
-   a bigger, both-seeds-agree gap than (1, 10) -- especially one that costs mismatched
-   pairs (BLA-dmPFC) more than matched ones (ACC-OFC) -- the dense result understates a
-   real, size-dependent dependence on partner identity, and it is worth adding an
-   intermediate cross dim and the remaining seeds. If the two probe points look alike, a
-   bottleneck is not the answer and the dense grid's small gap is probably close to the
-   true effect.
+   of one region needs more seeds than a coarse self-vs-cross average does.
 
-At five seeds this task can say whether the self-vs-cross gap exists and roughly how big it
-is; it is underpowered for anything finer (which specific partner, whether the effect is
-uniform across regions) unless it turns out to be large. The grid is written so extending
-`SEEDS` to ten, or `BOTTLENECK_SEEDS`/`CROSS_BOTTLENECK_DIMS` to a fuller sweep, costs only
-the new fits, not a rebuild of anything already trained.
+Read all three only in light of §4: an architecture flagged as non-converged or inadequate
+there is not a clean read of "the data cannot tolerate this architecture" until it has had
+its retry.
+
+**Deferred: the rank-bottleneck probe.** The half-split design's final sections asked whether
+a dense network's spare capacity was masking a larger partner-identity effect, by retraining
+at a tight cross-region rank. That probe is not rebuilt here -- revisit it once the dense
+full-population grid's own read is in hand, since (1) the self-pair's mirroring advantage
+changes what a "mask" would even mean here, and (2) the half-split design's region-pair
+size-asymmetry motivation does not carry over the same way: a full-population self-pair is
+trivially size-matched (a region against all of itself), where the half-split one was an
+independent half against an independent half. The legacy functions
+(`pid.relabel_combined_dataframe`, `pid.region_pair_asymmetry`, ...) and the half-split
+grid's own checkpoints remain available if this is picked back up.
 """
 
 
@@ -634,8 +522,7 @@ def build() -> dict:
         _cell("markdown", S7_TEXT), _cell("code", S7_CODE),
         _cell("markdown", S8_TEXT), _cell("code", S8_CODE),
         _cell("markdown", S9_TEXT), _cell("code", S9_CODE),
-        _cell("markdown", S10_TEXT), _cell("code", S10_CODE),
-        _cell("markdown", S11),
+        _cell("markdown", S10),
     ]
     return {"cells": cells, "metadata": {
         "kernelspec": {"display_name": "gaze_processing", "language": "python", "name": "python3"},

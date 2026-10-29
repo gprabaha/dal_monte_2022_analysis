@@ -47,6 +47,7 @@ from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_audit import (
     seed_run_dirs,
 )
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import (
+    backproject_replay_outputs_to_firing_rates,
     extract_region_current_vectors,
     replay_fixation_mrnn_run,
     replay_fixation_mrnn_run_with_ablations,
@@ -163,20 +164,35 @@ def reconstruction_traces(
     *,
     region: str,
     indices: Sequence[int] = (0, 1, 2),
+    space: str = "pc",
     device: str = "cpu",
 ) -> pd.DataFrame:
-    """Observed and predicted PC traces of one region for every seed, for an overlay gallery."""
+    """Observed and predicted traces of one region for every seed, for an overlay gallery.
+
+    ``space="pc"`` (the default) reads the region-PC target and output directly, in true
+    native units -- no rescaling, no offset between components, one row per (seed,
+    condition, component). ``space="fr"`` instead reads the PC-backprojected firing rate
+    (:func:`backproject_replay_outputs_to_firing_rates`), with ``indices`` then selecting
+    *units* rather than components, for a visual check of the reconstruction in the space
+    the neurons were actually recorded in.
+    """
     frames = []
     for run_dir in run_dirs:
         replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
         timeline = np.asarray(replay["checkpoint"]["timeline_s"], dtype=float)
-        target = _target_by_region(replay)[region]
-        predicted = replay["output_by_region"][region].detach().cpu().numpy()
+        if space == "fr":
+            target = np.asarray(replay["checkpoint"]["pc_reconstructed_raw_by_region"][region], dtype=float)
+            predicted = np.asarray(backproject_replay_outputs_to_firing_rates(replay)[region], dtype=float)
+        else:
+            target = _target_by_region(replay)[region]
+            predicted = replay["output_by_region"][region].detach().cpu().numpy()
         for c, condition in enumerate(replay["condition_order"]):
             for index in indices:
+                if index >= target.shape[-1]:
+                    continue
                 frames.append(pd.DataFrame({
                     "seed": seed_of(run_dir), "region": region, "condition": str(condition), "index": int(index),
-                    "time_s": timeline[: target.shape[1]],
+                    "space": space, "time_s": timeline[: target.shape[1]],
                     "observed": target[c, :, index], "predicted": predicted[c, : target.shape[1], index],
                 }))
     return pd.concat(frames, ignore_index=True)

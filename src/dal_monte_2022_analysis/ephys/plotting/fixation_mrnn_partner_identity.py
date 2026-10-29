@@ -152,6 +152,85 @@ def plot_self_vs_cross_by_condition(
     return fig
 
 
+def plot_convergence_speed(
+    speed: pd.DataFrame,
+    tests: pd.DataFrame | None,
+    *,
+    value: str = "iterations_to_tolerance",
+    regions: Sequence[str] = DISPLAY_REGION_ORDER,
+    figsize: tuple[float, float] = (4.4, 2.6),
+):
+    """Iterations to reach each fit's own tolerance band, self (hollow) vs. cross (filled), by region.
+
+    Lower is faster. Fitting equally well (§4) and getting there equally fast are different
+    claims -- this is the second one. ``tests`` is a paired-contrasts table keyed by
+    ``scored_region``, ``a``, ``b`` (self vs. cross, paired by seed); only significant
+    region-level contrasts are marked.
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    entries = []
+    for j, region in enumerate(regions):
+        for arm, dx in (("self", -0.16), ("cross", 0.16)):
+            block = speed[(speed["scored_region"] == region) & (speed["arm"] == arm)]
+            entries.append({"x": j + dx, "values": block[value].to_numpy(float), "color": REGION_COLORS.get(region, INK),
+                            "filled": arm == "cross"})
+    draw_bars(ax, entries, width=0.28)
+    ax.set_xticks(range(len(regions)))
+    ax.set_xticklabels([REGION_LABELS.get(r, r) for r in regions])
+    ax.set_ylabel("iterations to converge\n(lower = faster)")
+    handles = [plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=INK, lw=0.8),
+               plt.Rectangle((0, 0), 1, 1, facecolor=INK, edgecolor="none")]
+    ax.legend(handles, ["self", "cross"], loc="lower center", bbox_to_anchor=(0.5, 1.0), ncol=2, fontsize=6.5,
+             handlelength=1.0, frameon=False)
+    nice_axis(ax)
+    if tests is not None and not tests.empty:
+        index = {r: k for k, r in enumerate(regions)}
+        offset = {"self": -0.16, "cross": 0.16}
+        marks = contrasts_to_marks(tests, lambda row, side: index[row["scored_region"]] + offset[row[side]])
+        mark_contrasts(ax, marks, top=float(speed[value].max()))
+    fig.tight_layout()
+    return fig
+
+
+def plot_convergence_curves(
+    histories_by_seed: Mapping[str, Mapping[str, pd.DataFrame]],
+    architectures: Sequence,
+    *,
+    column: str = "worst_cell_unexplained",
+    figsize: tuple[float, float] = (4.2, 2.8),
+):
+    """Mean +/- range of the training trajectory, self vs. cross pooled over every region and seed.
+
+    Log y-axis on the quantity the minimax objective itself optimises, so "converges faster"
+    means faster on the objective's own terms, not a proxy for it.
+    """
+    by_label = {a.label: a for a in architectures}
+    fig, ax = plt.subplots(figsize=figsize)
+    for arm, color in ARM_COLORS.items():
+        curves = []
+        for label, by_seed in histories_by_seed.items():
+            arch = by_label.get(str(label))
+            if arch is None or arch.arm != arm:
+                continue
+            for history in by_seed.values():
+                curves.append(history.set_index("iteration")[column])
+        if not curves:
+            continue
+        stacked = pd.concat(curves, axis=1)
+        mean = stacked.mean(axis=1, skipna=True)
+        lo = stacked.min(axis=1, skipna=True)
+        hi = stacked.max(axis=1, skipna=True)
+        ax.fill_between(mean.index, lo, hi, color=color, alpha=0.18, linewidth=0)
+        ax.plot(mean.index, mean, color=color, linewidth=1.4, label=arm)
+    ax.set_yscale("log")
+    ax.set_xlabel("iteration")
+    ax.set_ylabel(column.replace("_", " "))
+    ax.legend(loc="upper right", fontsize=7, frameon=False)
+    nice_axis(ax)
+    fig.tight_layout()
+    return fig
+
+
 def plot_bottleneck_self_vs_cross(
     bottleneck_fit: pd.DataFrame,
     tests: pd.DataFrame | None = None,
@@ -311,6 +390,7 @@ def plot_bottleneck_cost_vs_asymmetry(
 
 __all__ = [
     "ARM_COLORS", "DISPLAY_REGION_ORDER", "plot_bottleneck_by_condition", "plot_bottleneck_by_region",
-    "plot_bottleneck_cost_vs_asymmetry", "plot_bottleneck_self_vs_cross", "plot_partner_identity_matrix",
+    "plot_bottleneck_cost_vs_asymmetry", "plot_bottleneck_self_vs_cross", "plot_convergence_curves",
+    "plot_convergence_speed", "plot_partner_identity_matrix",
     "plot_self_vs_cross_by_condition", "plot_self_vs_cross_by_region",
 ]

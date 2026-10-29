@@ -3,33 +3,47 @@
 The ladder (task 01) compares a region fitted alone against a region fitted with the
 network attached, and finds the network helps -- but a "pair" network has more parameters
 than a "single" network, so part of the gain could be generic extra capacity rather than
-anything specific to the partner region. This module builds the matched control: every
-region's units are split into two independent, non-overlapping halves ("A" and "B"), each
-refit with its own PCA, so a **self-pair** (region A with region B of the *same* area) has
-exactly the same architecture and parameter count as a **cross-pair** (region A of one area
-with region A of another) -- the only thing that differs is whether the partner's target
-carries that area's actual information or an independent draw of the same area's own.
+anything specific to the partner region. This module builds the matched control: a
+**self-pair** duplicates one region into two blocks that both read its *entire* neuron
+population (same PCA, bit-identical target, independently trained weights per block), so it
+has exactly the architecture and parameter count of a **cross-pair** (two different areas,
+each also fitted on its own full population) -- the only thing that differs is whether the
+partner's target carries that area's actual information or a second copy of the scored
+region's own.
+
+Every region's PCA is fitted on all of its neurons -- there is no unit-splitting here (an
+earlier version of this module split each region into two independent halves so a self-pair
+would not be a literal duplicate; see the "legacy half-split grid" section below for why that
+was abandoned and what it is kept for). Fitting a self-pair as a literal duplicate trades one
+confound for another: a block can partly fit its target by mirroring its partner block rather
+than by using its own recurrence, so "self beats cross" is weaker evidence against partner
+identity mattering than it would be under independent halves, and "cross beats self" is a
+correspondingly *stronger* finding. Say so wherever the self-vs-cross contrast is read.
 
 Four regions give ten unique two-block networks: four self-pairs and six cross-pairs. Each
 network is scored on both of its blocks, filling a 4x4 matrix of (scored region, partner)
-cells. If a region reproduces itself equally well paired with itself as paired with a real
-different area, the ladder's "the network helps" result is mostly capacity; if cross-pairs
-reliably beat self-pairs, the partner's identity matters.
+cells. If a region reproduces itself equally well paired with a duplicate of itself as paired
+with a real different area, the ladder's "the network helps" result is mostly capacity; if
+cross-pairs reliably beat self-pairs *despite* the self-pair's mirroring advantage, the
+partner's identity matters.
 
-Everything downstream of target construction is the untouched mRNN pipeline: the halves are
-ordinary "regions" as far as :class:`FixationMRNNModel`, :func:`train_one_initialization`,
-:func:`replay_fixation_mrnn_run` and :func:`score_variant_fit` are concerned, because those
-only ever iterate ``region_order`` as arbitrary strings. The one place a virtual region is
-not already a first-class citizen is :func:`build_mrnn_training_dataframe`, which hard-casts
-its ``region`` column to a category set fixed at the four canonical names; the
-``region_name_mapping``/``allowed_regions`` parameters added there and threaded through
-:func:`build_fixation_mrnn_targets_from_dataframe` are what let a relabelled dataframe
-through unchanged for everyone else.
+Everything downstream of target construction is the untouched mRNN pipeline: a self- or
+cross-pair's virtual/canonical region names are ordinary "regions" as far as
+:class:`FixationMRNNModel`, :func:`train_one_initialization`, :func:`replay_fixation_mrnn_run`
+and :func:`score_variant_fit` are concerned, because those only ever iterate ``region_order``
+as arbitrary strings. The one place a duplicated region is not already a first-class citizen
+is :func:`build_mrnn_training_dataframe`, which hard-casts its ``region`` column to a category
+set fixed at the four canonical names; the ``region_name_mapping``/``allowed_regions``
+parameters added there and threaded through :func:`build_fixation_mrnn_targets_from_dataframe`
+are what let a dataframe with a region duplicated under two virtual labels through unchanged
+for everyone else. A cross-pair needs none of this -- its two blocks are just a two-element
+subset of the canonical ``region_order``, already supported by
+:func:`build_fixation_mrnn_targets_from_dataframe` for the ladder's own pairs.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -38,32 +52,38 @@ import numpy as np
 import pandas as pd
 
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_bridge import (
-    CombinedFixationPSTHLoadResult,
     MRNN_REGION_ORDER,
     load_combined_fixation_psth,
-    resolve_combined_fixation_psth_paths,
 )
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_targets import (
-    PCAMetadata,
+    build_fixation_mrnn_targets,
     build_fixation_mrnn_targets_from_dataframe,
     serialize_pca_metadata,
 )
 
-HALVES: tuple[str, str] = ("a", "b")
+#: Suffixes a duplicated region's two blocks carry (``"<region>_1"``, ``"<region>_2"``).
+DUPLICATE_TAGS: tuple[str, str] = ("1", "2")
+
+CONDITIONS: tuple[str, ...] = ("face_interactive", "face_non_interactive", "object")
+
+#: The recipe's own PCA/normalisation settings (mirrors ``BASE_SETTINGS`` in
+#: ``train_fixation_mrnn_partner_identity_cell.py``): every region's target is built the same
+#: way regardless of which architecture uses it, so there is exactly one PCA basis per
+#: canonical region and the ceiling can be computed from it directly, without a checkpoint.
+TARGET_BUILD_SETTINGS: dict[str, object] = dict(
+    input_subdir="ephys/psth/fixation_psth_averages",
+    dataframe_filename="fixations_psth_10ms_combined_window_neg500ms_to_pos500ms.pkl",
+    timeline_filename="fixations_psth_10ms_bin_centers_s_rel_window_neg500ms_to_pos500ms.pkl",
+    normalize_targets=True,
+    normalization_stabilizer=5.0,
+    pca_variance_threshold=0.95,
+    pca_n_components=42,
+    temporal_basis_count=0,
+)
 
 
-def virtual_region_label(region: str, half: str) -> str:
-    return f"{region}_{half}"
-
-
-def virtual_region_labels(region_order: Sequence[str] = MRNN_REGION_ORDER) -> tuple[str, ...]:
-    """Every virtual region a relabelled dataframe carries: two halves per canonical region."""
-    return tuple(virtual_region_label(region, half) for region in region_order for half in HALVES)
-
-
-def region_name_mapping(region_order: Sequence[str] = MRNN_REGION_ORDER) -> dict[str, str]:
-    """The identity mapping ``build_mrnn_training_dataframe`` needs to accept virtual labels."""
-    return {label: label for label in virtual_region_labels(region_order)}
+def virtual_region_label(region: str, tag: str) -> str:
+    return f"{region}_{tag}"
 
 
 # ======================================================================================
@@ -73,7 +93,7 @@ def region_name_mapping(region_order: Sequence[str] = MRNN_REGION_ORDER) -> dict
 
 @dataclass(frozen=True)
 class PartnerIdentityArchitecture:
-    """One of the ten unique two-block networks, before a seed's halves are chosen."""
+    """One of the ten unique two-block networks."""
 
     label: str
     arm: str  # "self" or "cross"
@@ -81,10 +101,17 @@ class PartnerIdentityArchitecture:
     partner_region: str
 
     def virtual_regions(self) -> tuple[str, str]:
-        """``(scored, partner)`` virtual labels: a self-pair always reads as (A, B)."""
+        """``(scored, partner)`` region names as they appear in ``region_order``.
+
+        A self-pair reads as (``<region>_1``, ``<region>_2``) -- both blocks carry the full
+        population of the *same* canonical region. A cross-pair reads as the two canonical
+        region names directly; no relabelling is needed since its two blocks are just a
+        two-element subset of the recorded regions.
+        """
         if self.arm == "self":
-            return (virtual_region_label(self.scored_region, "a"), virtual_region_label(self.scored_region, "b"))
-        return (virtual_region_label(self.scored_region, "a"), virtual_region_label(self.partner_region, "a"))
+            return (virtual_region_label(self.scored_region, DUPLICATE_TAGS[0]),
+                    virtual_region_label(self.scored_region, DUPLICATE_TAGS[1]))
+        return (self.scored_region, self.partner_region)
 
 
 def partner_identity_architectures(region_order: Sequence[str] = MRNN_REGION_ORDER) -> list[PartnerIdentityArchitecture]:
@@ -115,111 +142,102 @@ def scored_cells(architectures: Sequence[PartnerIdentityArchitecture]) -> list[t
     return cells
 
 
+__all__ = [
+    "CONDITIONS", "DUPLICATE_TAGS", "PartnerIdentityArchitecture", "TARGET_BUILD_SETTINGS",
+    "partner_identity_architectures", "scored_cells", "virtual_region_label",
+]
+
+
 # ======================================================================================
-# 2. Splitting each region's units into two independent halves
+# 2. Full-neuron target construction: duplicate for self-pairs, plain subset for cross-pairs
 # ======================================================================================
 
 
-def sample_region_halves(unit_ids: Sequence[str], *, seed: int, region_index: int) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """A deterministic, non-overlapping 50/50 split of ``unit_ids``.
+def duplicate_region_dataframe(
+    combined_dataframe: pd.DataFrame, region: str, *, tags: tuple[str, str] = DUPLICATE_TAGS,
+) -> pd.DataFrame:
+    """Replace one region's rows with two full-population copies, labelled ``<region>_<tag>``.
 
-    ``region_index`` (this region's position in ``region_order``) enters the seed sequence
-    alongside ``seed`` so that every region gets an independent shuffle even though they
-    share the same top-level seed -- without it, every region would draw the identical
-    permutation pattern relative to its own sorted unit list. Odd counts put the extra unit
-    in half A; sizes therefore differ by at most one, and every unit lands in exactly one
-    half (verified by the caller).
-    """
-    ordered = sorted(str(u) for u in unit_ids)
-    rng = np.random.default_rng(np.random.SeedSequence([int(seed), int(region_index)]))
-    shuffled = [ordered[i] for i in rng.permutation(len(ordered))]
-    cut = -(-len(shuffled) // 2)  # ceil(n / 2)
-    return tuple(sorted(shuffled[:cut])), tuple(sorted(shuffled[cut:]))
-
-
-def relabel_combined_dataframe(
-    combined_dataframe: pd.DataFrame,
-    *,
-    region_order: Sequence[str] = MRNN_REGION_ORDER,
-    seed: int,
-) -> tuple[pd.DataFrame, dict[str, dict[str, tuple[str, ...]]]]:
-    """A copy of the combined PSTH dataframe with every unit's ``region`` replaced by its virtual half.
-
-    Returns ``(relabelled_dataframe, halves)`` where ``halves[region] = {"a": unit_ids, "b": unit_ids}``
-    records exactly which units went into which half, for provenance and for computing the
-    matched noise ceiling later. Rows for regions outside ``region_order`` are left alone;
-    every unit of a region *in* ``region_order`` is relabelled into exactly one virtual half,
-    so the pooled-normalisation-scale guarantee the ladder relies on (a region's target is
-    identical wherever it appears) carries over unit-for-unit to the virtual regions.
+    Every unit of ``region`` appears twice, once under each virtual label, bit-identical --
+    this is what makes a self-pair's two blocks carry exactly the same information a
+    cross-pair's two (different) regions would, modulo which region it is. Every other
+    region's rows are left untouched, so the pooled normalisation scale
+    (:func:`build_fixation_mrnn_targets_from_dataframe`) still sees all four recorded
+    regions, just as it does for a cross-pair or the ladder's own pairs.
     """
     out = combined_dataframe.copy()
     out["region"] = out["region"].astype(str)
-    halves: dict[str, dict[str, tuple[str, ...]]] = {}
-    for index, region in enumerate(region_order):
-        region_mask = out["region"] == region
-        unit_ids = out.loc[region_mask, "unit_uuid"].astype(str).unique()
-        half_a, half_b = sample_region_halves(unit_ids, seed=seed, region_index=index)
-        assert not (set(half_a) & set(half_b)), f"{region}: halves overlap"
-        assert set(half_a) | set(half_b) == set(str(u) for u in unit_ids), f"{region}: a unit was dropped"
-        halves[region] = {"a": half_a, "b": half_b}
-        is_a = region_mask & out["unit_uuid"].astype(str).isin(half_a)
-        is_b = region_mask & out["unit_uuid"].astype(str).isin(half_b)
-        out.loc[is_a, "region"] = virtual_region_label(region, "a")
-        out.loc[is_b, "region"] = virtual_region_label(region, "b")
-    return out, halves
+    region_rows = out.loc[out["region"] == region]
+    if region_rows.empty:
+        raise ValueError(f"No rows found for region {region!r}.")
+    duplicates = []
+    for tag in tags:
+        copy = region_rows.copy()
+        copy["region"] = virtual_region_label(region, tag)
+        duplicates.append(copy)
+    remainder = out.loc[out["region"] != region]
+    return pd.concat([remainder, *duplicates], ignore_index=True)
 
 
-def write_relabelled_dataset(
+def duplicate_region_mapping(
+    region: str, *, region_order: Sequence[str] = MRNN_REGION_ORDER, tags: tuple[str, str] = DUPLICATE_TAGS,
+) -> dict[str, str]:
+    """The identity mapping ``build_mrnn_training_dataframe`` needs for a duplicated dataframe."""
+    mapping = {str(r): str(r) for r in region_order if r != region}
+    mapping.update({virtual_region_label(region, tag): virtual_region_label(region, tag) for tag in tags})
+    return mapping
+
+
+def duplicate_region_allowed(
+    region: str, *, region_order: Sequence[str] = MRNN_REGION_ORDER, tags: tuple[str, str] = DUPLICATE_TAGS,
+) -> tuple[str, ...]:
+    """The widened category set ``build_mrnn_training_dataframe`` needs for a duplicated dataframe."""
+    others = tuple(str(r) for r in region_order if r != region)
+    return others + tuple(virtual_region_label(region, tag) for tag in tags)
+
+
+def build_architecture_targets(
+    architecture: PartnerIdentityArchitecture,
+    combined_dataframe: pd.DataFrame,
     *,
-    dataset_cfg_path: str | Path,
-    output_root: str | Path,
-    seed: int,
+    timeline_s: np.ndarray,
     region_order: Sequence[str] = MRNN_REGION_ORDER,
-    source_input_subdir: str = "ephys/psth/fixation_psth_averages",
-    source_dataframe_filename: str = "fixations_psth_10ms_combined_window_neg500ms_to_pos500ms.pkl",
-    source_timeline_filename: str = "fixations_psth_10ms_bin_centers_s_rel_window_neg500ms_to_pos500ms.pkl",
-) -> dict[str, object]:
-    """Write one seed's relabelled combined-PSTH pickle (plus its timeline and a halves manifest) to disk.
+    normalization_scale_override: float | None = None,
+):
+    """Full-neuron :class:`FixationMRNNTargets` for one architecture's two blocks.
 
-    ``output_root / f"seed={seed}"`` becomes an ``input_subdir`` a normal
-    :class:`FixationMRNNRunSettings` can point at: it contains a dataframe with the same
-    schema as the canonical export, just with eight virtual regions in place of the four
-    canonical ones, plus the timeline (copied verbatim) and ``halves.json`` for provenance.
-    Idempotent: re-running with the same seed reproduces the same split and overwrites the
-    same files.
+    Self-pairs train on a duplicated dataframe (:func:`duplicate_region_dataframe`);
+    cross-pairs train directly on the canonical dataframe, naming their two regions as a
+    subset of ``region_order`` -- the same mechanism the ladder's own pairs already use.
+
+    Pass ``normalization_scale_override`` (see
+    :func:`build_fixation_mrnn_targets_from_dataframe`) -- typically
+    ``full_population_targets(...).normalization_scale`` -- so a self-pair's duplicated
+    dataframe and a cross-pair's plain one land on the same scale rather than each pooling
+    its own, which would otherwise differ because a self-pair's scored region contributes
+    twice to a freshly-pooled scale and a cross-pair's does not.
     """
-    import json
-
-    result = load_combined_fixation_psth(
-        dataset_cfg_path, input_subdir=source_input_subdir,
-        dataframe_filename=source_dataframe_filename, timeline_filename=source_timeline_filename,
+    virtual = architecture.virtual_regions()
+    build_kwargs = {k: v for k, v in TARGET_BUILD_SETTINGS.items()
+                    if k not in ("input_subdir", "dataframe_filename", "timeline_filename")}
+    build_kwargs["normalization_scale_override"] = normalization_scale_override
+    if architecture.arm == "self":
+        region = architecture.scored_region
+        dataframe = duplicate_region_dataframe(combined_dataframe, region)
+        return build_fixation_mrnn_targets_from_dataframe(
+            dataframe, timeline_s=timeline_s, region_order=virtual,
+            region_name_mapping=duplicate_region_mapping(region, region_order=region_order),
+            allowed_regions=duplicate_region_allowed(region, region_order=region_order),
+            **build_kwargs,
+        )
+    return build_fixation_mrnn_targets_from_dataframe(
+        combined_dataframe, timeline_s=timeline_s, region_order=virtual, **build_kwargs,
     )
-    relabelled, halves = relabel_combined_dataframe(result.dataframe, region_order=region_order, seed=seed)
-
-    seed_dir = Path(output_root) / f"seed={int(seed)}"
-    seed_dir.mkdir(parents=True, exist_ok=True)
-    dataframe_path = seed_dir / Path(source_dataframe_filename).name
-    timeline_path = seed_dir / Path(source_timeline_filename).name
-    relabelled.to_pickle(dataframe_path)
-    import shutil
-
-    shutil.copyfile(result.timeline_path, timeline_path)
-    manifest_path = seed_dir / "halves.json"
-    with manifest_path.open("w", encoding="utf-8") as handle:
-        json.dump({region: {half: list(ids) for half, ids in sides.items()} for region, sides in halves.items()},
-                  handle, indent=1)
-    return {
-        "seed": int(seed), "seed_dir": seed_dir, "dataframe_path": dataframe_path,
-        "timeline_path": timeline_path, "manifest_path": manifest_path, "n_units": {
-            region: {half: len(ids) for half, ids in sides.items()} for region, sides in halves.items()
-        },
-    }
 
 
-__all__ = [
-    "HALVES", "PartnerIdentityArchitecture", "partner_identity_architectures", "region_name_mapping",
-    "relabel_combined_dataframe", "sample_region_halves", "scored_cells", "virtual_region_label",
-    "virtual_region_labels", "write_relabelled_dataset",
+__all__ += [
+    "build_architecture_targets", "duplicate_region_allowed", "duplicate_region_dataframe",
+    "duplicate_region_mapping",
 ]
 
 
@@ -228,17 +246,21 @@ __all__ = [
 # ======================================================================================
 
 TRAIN_SCRIPT = "scripts/ephys/modeling/train_fixation_mrnn_partner_identity_cell.py"
-RELABELLED_INPUT_ROOT = "ephys/psth/fixation_psth_averages_partner_identity"
 
 
 def run_dir_for(
-    root: str | Path, architecture: PartnerIdentityArchitecture, seed: int, *, bottleneck_tag: str | None = None,
+    root: str | Path, architecture: PartnerIdentityArchitecture, seed: int, *,
+    bottleneck_tag: str | None = None, retry_tag: str | None = None,
 ) -> Path:
-    """The dense grid's layout is ``root/label/seed=``; a bottleneck variant nests under its own tag
-    (``root/bottleneck_tag/label/seed=``) so a rank sweep never collides with the dense checkpoints
-    or with another point in the sweep.
+    """The dense grid's layout is ``root/label/seed=``; a bottleneck variant or a
+    convergence retry nests under its own tag (``root/<tag>/label/seed=``) so neither ever
+    collides with the dense checkpoints or with each other.
     """
-    base = Path(root) if bottleneck_tag is None else Path(root) / bottleneck_tag
+    base = Path(root)
+    if bottleneck_tag is not None:
+        base = base / bottleneck_tag
+    if retry_tag is not None:
+        base = base / retry_tag
     return base / architecture.label / f"seed={int(seed)}"
 
 
@@ -254,20 +276,24 @@ def job_commands(
     within_region_bottleneck_dim: int | None = None,
     recurrent_bottleneck_dim: int | None = None,
     bottleneck_tag: str | None = None,
+    lr: float | None = None,
+    retry_tag: str | None = None,
+    dataset_cfg: str = "configs/dataset.yaml",
 ) -> tuple[list[str], list[Path]]:
-    """One shell command per missing (architecture, seed) cell; mirrors ``sweep.variant_job_commands``' shape.
+    """One shell command per missing (architecture, seed) cell.
 
-    Every cell for a given seed reads that seed's already-written relabelled dataframe
-    (``write_relabelled_dataset`` must have been called for every seed first); the training
-    script builds that cell's target directly rather than through the generic
+    Every architecture builds its own target directly from the canonical combined PSTH
+    export named by ``dataset_cfg`` (no pre-written per-seed dataset, since nothing about
+    the target depends on the training seed any more) -- the training script builds that
+    cell's target itself rather than through the generic
     ``FixationMRNNRunSettings``-driven loader, so no ``run_config.yaml`` is written here --
     the architecture and seed fully determine the run, and are recorded in
     ``run_dir/architecture.json`` by the training script itself.
 
-    ``within_region_bottleneck_dim``/``recurrent_bottleneck_dim`` default to ``None`` (the dense,
-    unconstrained grid already trained); passing either reuses the same relabelled datasets and
-    architectures but trains under a rank-constrained recurrence, and should be paired with a
-    ``bottleneck_tag`` (e.g. ``"w1_c3"``) so the runs land in their own subtree.
+    ``within_region_bottleneck_dim``/``recurrent_bottleneck_dim`` default to ``None`` (the
+    dense, unconstrained grid); ``lr`` overrides the recipe's learning rate for a targeted
+    convergence retry and should be paired with a ``retry_tag`` (e.g. ``"retry_lr1em4"``) so
+    the retried cells land in their own subtree instead of overwriting the first attempt.
     """
     repo_root = Path(repo_root)
     claimed = {str(Path(path).resolve()) for path in exclude_run_dirs}
@@ -275,15 +301,14 @@ def job_commands(
     run_dirs: list[Path] = []
     for architecture in architectures:
         for seed in seeds:
-            run_dir = run_dir_for(root, architecture, seed, bottleneck_tag=bottleneck_tag)
+            run_dir = run_dir_for(root, architecture, seed, bottleneck_tag=bottleneck_tag, retry_tag=retry_tag)
             run_dirs.append(run_dir)
             if (run_dir / "checkpoint_best.pth").exists() or str(run_dir.resolve()) in claimed:
                 continue
             run_dir.mkdir(parents=True, exist_ok=True)
-            input_subdir = f"{RELABELLED_INPUT_ROOT}/seed={int(seed)}"
             command = [
                 "conda", "run", "-n", conda_env, "python", str(repo_root / TRAIN_SCRIPT),
-                "--relabelled-input-subdir", input_subdir,
+                "--dataset-cfg", str(dataset_cfg),
                 "--scored-region", architecture.scored_region,
                 "--partner-region", architecture.partner_region,
                 "--arm", architecture.arm,
@@ -296,19 +321,21 @@ def job_commands(
                 command += ["--within-region-bottleneck-dim", str(int(within_region_bottleneck_dim))]
             if recurrent_bottleneck_dim is not None:
                 command += ["--recurrent-bottleneck-dim", str(int(recurrent_bottleneck_dim))]
+            if lr is not None:
+                command += ["--lr", str(float(lr))]
             commands.append(" ".join(command))
     return commands, run_dirs
 
 
 def index_runs(
     root: str | Path, architectures: Sequence[PartnerIdentityArchitecture], seeds: Sequence[int],
-    *, bottleneck_tag: str | None = None,
+    *, bottleneck_tag: str | None = None, retry_tag: str | None = None,
 ) -> pd.DataFrame:
     """One row per (architecture, seed) cell: whether it has a best checkpoint yet."""
     rows = []
     for architecture in architectures:
         for seed in seeds:
-            run_dir = run_dir_for(root, architecture, seed, bottleneck_tag=bottleneck_tag)
+            run_dir = run_dir_for(root, architecture, seed, bottleneck_tag=bottleneck_tag, retry_tag=retry_tag)
             rows.append({
                 "label": architecture.label, "arm": architecture.arm, "scored_region": architecture.scored_region,
                 "partner_region": architecture.partner_region, "seed": str(int(seed)), "run_dir": str(run_dir),
@@ -317,68 +344,69 @@ def index_runs(
     return pd.DataFrame(rows)
 
 
-__all__ += ["RELABELLED_INPUT_ROOT", "TRAIN_SCRIPT", "index_runs", "job_commands", "run_dir_for"]
+__all__ += ["TRAIN_SCRIPT", "index_runs", "job_commands", "run_dir_for"]
 
 
 # ======================================================================================
-# 4. The matched ceiling, one per virtual region per seed
+# 4. The matched ceiling -- one per canonical region, no checkpoint required
 # ======================================================================================
 
 
-def ceiling_by_cell_for_seed(
-    run_dir: str | Path,
+def full_population_targets(
+    dataset_cfg_path: str | Path, *, region_order: Sequence[str] = MRNN_REGION_ORDER,
+):
+    """The canonical 4-region targets the recipe uses: PCA fitted on every neuron of every region.
+
+    Deterministic given the recipe's own settings (:data:`TARGET_BUILD_SETTINGS`), so this
+    needs no trained checkpoint -- unlike the half-split grid's matched ceiling, which had to
+    read one back to learn that seed's halves. One call here gives every architecture's
+    ceiling at once, since a self-pair's two blocks and any cross-pair containing a region
+    all share this same PCA basis for it.
+    """
+    return build_fixation_mrnn_targets(dataset_cfg_path, region_order=tuple(region_order), **TARGET_BUILD_SETTINGS)
+
+
+def full_population_ceiling_by_cell(
+    dataset_cfg_path: str | Path,
     unit_ceiling: pd.DataFrame,
     *,
     region_order: Sequence[str] = MRNN_REGION_ORDER,
-    conditions: Sequence[str] = ("face_interactive", "face_non_interactive", "object"),
-    device: str = "cpu",
+    conditions: Sequence[str] = CONDITIONS,
 ) -> pd.DataFrame:
-    """The matched per-(virtual region, condition) ceiling for one seed, read from any one of its checkpoints.
-
-    A virtual region's PCA basis and normalisation scale are identical wherever it
-    appears within a seed (the same guarantee the ladder relies on for its four canonical
-    regions), so one checkpoint that happens to contain a given virtual region is enough to
-    score it -- there is no need to touch every architecture. ``population_ceiling_by_cell``
-    is called once per canonical region with the matching half's ``PCAMetadata``, keyed by
-    the *canonical* name (the only name ``unit_ceiling`` itself carries), and the returned
-    rows are relabelled to the virtual name before being combined.
-    """
+    """Per-(canonical region, condition) ceiling, in the recipe's own full-population PCA basis."""
     from dal_monte_2022_analysis.ephys.analysis.fixation_psth_noise_ceiling import population_ceiling_by_cell
-    from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import replay_fixation_mrnn_run
 
-    replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
-    checkpoint = replay["checkpoint"]
-    pca_by_region: Mapping[str, PCAMetadata] = checkpoint["pca_by_region"]
-    normalization_scale = checkpoint.get("normalization_scale")
-
-    frames = []
-    for region in region_order:
-        for half in HALVES:
-            virtual = virtual_region_label(region, half)
-            if virtual not in pca_by_region:
-                continue
-            meta = pca_by_region[virtual]
-            serialized = {"mean": meta.mean, "components": meta.components,
-                         "explained_variance_ratio": meta.explained_variance_ratio,
-                         "n_components_required": meta.n_components_required,
-                         "source_features": list(meta.source_features)} if isinstance(meta, PCAMetadata) else meta
-            per_cell = population_ceiling_by_cell(
-                unit_ceiling, pca_by_region={region: serialized}, normalization_scale=normalization_scale,
-                conditions=list(conditions),
-            )
-            per_cell["region"] = virtual
-            frames.append(per_cell)
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    targets = full_population_targets(dataset_cfg_path, region_order=region_order)
+    serialized = serialize_pca_metadata(targets.pca_by_region)
+    return population_ceiling_by_cell(
+        unit_ceiling, pca_by_region=serialized, normalization_scale=targets.normalization_scale,
+        conditions=list(conditions),
+    )
 
 
-def ceiling_lookup(ceiling_cell: pd.DataFrame) -> dict[tuple[str, str], float]:
-    """``{(virtual_region, condition): reliability}`` for the non-pooled rows, ready for ``score_variant_fit``."""
-    block = ceiling_cell[ceiling_cell["condition"] != "all"]
-    return {(str(r), str(c)): float(v) for r, c, v in
-            block[["region", "condition", "reliability"]].itertuples(index=False)}
+def ceiling_lookup(
+    ceiling_by_cell: pd.DataFrame, architectures: Sequence[PartnerIdentityArchitecture],
+) -> dict[tuple[str, str], float]:
+    """``{(region_as_it_appears_in_a_fit, condition): reliability}``, ready for ``score_variant_fit``.
+
+    A cross-pair's blocks are already canonical region names, so the base table covers them
+    directly; a self-pair's two blocks (``<region>_1``, ``<region>_2``) are added by copying
+    their canonical region's value, since a duplicate shares that region's PCA basis exactly.
+    """
+    block = ceiling_by_cell[ceiling_by_cell["condition"] != "all"]
+    base = {(str(r), str(c)): float(v) for r, c, v in block[["region", "condition", "reliability"]].itertuples(index=False)}
+    lookup = dict(base)
+    for arch in architectures:
+        if arch.arm != "self":
+            continue
+        for virtual in arch.virtual_regions():
+            for (region, condition), value in base.items():
+                if region == arch.scored_region:
+                    lookup[(virtual, condition)] = value
+    return lookup
 
 
-__all__ += ["ceiling_by_cell_for_seed", "ceiling_lookup"]
+__all__ += ["ceiling_lookup", "full_population_ceiling_by_cell", "full_population_targets"]
 
 
 # ======================================================================================
@@ -390,25 +418,26 @@ def matrix_fit_table(fit: pd.DataFrame, architectures: Sequence[PartnerIdentityA
     """``fit`` (one row per region x condition x fit, as ``score_variant_fit`` returns) collapsed onto the 16 scored cells.
 
     Adds ``scored_region``/``partner_region``/``arm`` by looking the fit's ``label`` up in
-    ``architectures`` and reading *both* blocks a trained network produced -- for a
-    cross-pair these are the two directions :func:`scored_cells` enumerates (region A read
-    against region B's network and vice versa); for a self-pair they are the two
-    independent halves' own reconstructions (A's block and B's block), which the network
-    computes for free but which :func:`PartnerIdentityArchitecture.virtual_regions` only
-    ever names one of ("A" as scored, "B" as partner). Scoring both halves gives the
-    self arm the same "read the whole trained network" treatment the cross arm already
-    gets, rather than discarding half of what was already computed.
+    ``architectures``. A cross-pair's network produces both directions :func:`scored_cells`
+    enumerates (region A read against region B's network and vice versa) directly under
+    their canonical names; a self-pair's two blocks (``<region>_1``, ``<region>_2``) both
+    fold onto the one diagonal cell, scoring both of what the network computes for free
+    rather than discarding half of it.
     """
     by_label = {a.label: a for a in architectures}
     rows = []
     for label, block in fit.groupby("label"):
         arch = by_label[str(label)]
-        virtual_scored, virtual_partner = arch.virtual_regions()
-        cell_regions = [
-            (arch.scored_region, arch.partner_region, virtual_scored),
-            (arch.partner_region, arch.scored_region, virtual_partner),
-        ]
-        for scored, partner, virtual in cell_regions:
+        if arch.arm == "self":
+            cell_regions = [(arch.scored_region, v, arch.scored_region, arch.scored_region)
+                            for v in arch.virtual_regions()]
+        else:
+            scored, partner = arch.virtual_regions()
+            cell_regions = [
+                (arch.scored_region, scored, arch.scored_region, arch.partner_region),
+                (arch.partner_region, partner, arch.partner_region, arch.scored_region),
+            ]
+        for _, virtual, scored, partner in cell_regions:
             cell = block[block["region"] == virtual].copy()
             cell["scored_region"] = scored
             cell["partner_region"] = partner
@@ -434,8 +463,283 @@ __all__ += ["matrix_fit_table", "self_vs_cross_per_seed"]
 
 
 # ======================================================================================
-# 6. Region-pair size asymmetry, for the rank-bottleneck sweep
+# 6. Convergence and adequacy: making sure every cell is actually fitting well
 # ======================================================================================
+
+
+def adequacy_table(matrix_fit: pd.DataFrame, *, tolerance_multiple: float = 2.0) -> pd.DataFrame:
+    """Per (architecture, arm): the worst region x condition cell against the ceiling, and whether it clears it.
+
+    Mirrors ``fixation_mrnn_sweep.adequacy_table``'s logic -- adequacy is judged on the
+    **worst cell**, not the mean, and the tolerance is the fits' own seed-to-seed spread
+    rather than a number chosen by hand -- but there is no single external "dense baseline"
+    label here the way there is in the ladder's rung sweep, since every architecture in this
+    grid is expected to sit near ceiling on its own terms. The tolerance is instead the
+    median seed-spread across all ten architectures.
+
+    Read this **before** §4 onward: a cell that converged (no loss spikes, final near best)
+    but still sits well below ceiling on its worst condition is telling you the constraint
+    (or here, the architecture) genuinely limits the fit, not that the optimiser struggled --
+    the opposite failure a :func:`convergence_table` entry would catch.
+    """
+    per_seed = matrix_fit.groupby(["architecture", "arm", "seed", "condition"])["r2_vs_ceiling"].mean().reset_index()
+    worst = per_seed.groupby(["architecture", "arm", "seed"])["r2_vs_ceiling"].min().reset_index()
+    spread = float(worst.groupby("architecture")["r2_vs_ceiling"].std().median())
+    tolerance = tolerance_multiple * (spread if np.isfinite(spread) else 0.0)
+    summary = (worst.groupby(["architecture", "arm"])["r2_vs_ceiling"]
+               .agg(worst_condition="mean", seed_spread="std").reset_index())
+    summary["tolerance"] = tolerance
+    summary["adequate"] = summary["worst_condition"] >= 1.0 - tolerance
+    return summary
+
+
+#: Learning rates tried, in order, for an architecture that fails the convergence bar at the
+#: inherited rate (same ladder ``fixation_mrnn_sweep`` uses, reused here so a retry needs no
+#: separate tuning history of its own).
+RETRY_LEARNING_RATE_LADDER: tuple[float, ...] = (3e-4, 1e-4, 3e-5)
+
+
+def retry_tag_for_lr(lr: float) -> str:
+    return f"retry_lr{lr:g}".replace(".", "p").replace("-", "m")
+
+
+def retry_commands_for_nonconverged(
+    architectures: Sequence[PartnerIdentityArchitecture],
+    convergence: pd.DataFrame,
+    seeds: Sequence[int],
+    *,
+    root: str | Path,
+    repo_root: str | Path,
+    epochs: int,
+    inherited_lr: float = 3e-4,
+    ladder: Sequence[float] = RETRY_LEARNING_RATE_LADDER,
+    exclude_run_dirs: Sequence[str | Path] = (),
+) -> tuple[list[str], list[Path]]:
+    """Re-fit architectures that failed the convergence bar, at the next lower learning rate.
+
+    ``convergence`` is a ``fixation_mrnn_sweep.convergence_table`` keyed by ``label``. Only
+    architectures with ``n_converged < n_seeds`` are retried; they land under their own
+    ``retry_lr<rate>`` subtree so the first (possibly non-converged) attempt is never
+    overwritten and both remain inspectable.
+    """
+    failed_labels = set(convergence.loc[convergence["n_converged"] < convergence["n_seeds"], "label"])
+    lower = [rate for rate in ladder if float(rate) < float(inherited_lr)]
+    if not lower or not failed_labels:
+        return [], []
+    rate = lower[0]
+    retry_architectures = [a for a in architectures if a.label in failed_labels]
+    return job_commands(
+        retry_architectures, seeds, root=root, repo_root=repo_root, epochs=epochs,
+        exclude_run_dirs=exclude_run_dirs, lr=rate, retry_tag=retry_tag_for_lr(rate),
+    )
+
+
+__all__ += ["RETRY_LEARNING_RATE_LADDER", "adequacy_table", "retry_commands_for_nonconverged", "retry_tag_for_lr"]
+
+
+# ======================================================================================
+# 6b. Convergence speed: does a cross-pair not just fit as well, but get there faster?
+# ======================================================================================
+
+
+def load_histories_by_seed(inventory: pd.DataFrame) -> dict[str, dict[str, pd.DataFrame]]:
+    """``{label: {seed: history_frame}}`` for every completed cell with a ``history.csv``.
+
+    Keeps the seed tag explicit, unlike ``fixation_mrnn_sweep.load_histories``'s positional
+    per-label list -- that matters here because the self-vs-cross contrasts below are paired
+    *by seed*, and a cell can go missing for one architecture without the others, which would
+    silently misalign a positional list.
+    """
+    histories: dict[str, dict[str, pd.DataFrame]] = {}
+    for _, run in inventory[inventory["complete"].astype(bool)].iterrows():
+        path = Path(run["run_dir"]) / "history.csv"
+        if not path.exists():
+            continue
+        histories.setdefault(str(run["label"]), {})[str(run["seed"])] = pd.read_csv(path)
+    return histories
+
+
+def iterations_to_tolerance(history: pd.DataFrame, *, column: str = "worst_cell_unexplained", tolerance: float = 1.1) -> dict[str, float]:
+    """The first iteration at which ``column`` falls within ``tolerance`` of its own run-best.
+
+    Two fits can converge to the same final adequacy while one gets there in a fraction of
+    the iterations -- not visible in the final-cell fit alone, only in the trajectory. Scored
+    on ``worst_cell_unexplained`` by default, the same per-iteration quantity the minimax
+    objective optimises, so "converged" here means the same thing the objective means by it.
+    """
+    values = history[column].to_numpy(dtype=float)
+    iterations = history["iteration"].to_numpy(dtype=float)
+    finite = np.isfinite(values)
+    if not finite.any():
+        return {"iterations_to_tolerance": float("nan"), "best_value": float("nan"), "n_iterations": float(len(values))}
+    best = float(np.nanmin(values[finite]))
+    target = best * float(tolerance) if best > 0 else best
+    hit = np.flatnonzero(finite & (values <= target))
+    reached = int(iterations[hit[0]]) if hit.size else int(iterations[-1])
+    return {"iterations_to_tolerance": float(reached), "best_value": best, "n_iterations": float(len(values))}
+
+
+def convergence_speed_table(
+    histories_by_seed: Mapping[str, Mapping[str, pd.DataFrame]],
+    architectures: Sequence[PartnerIdentityArchitecture],
+    *,
+    column: str = "worst_cell_unexplained",
+    tolerance: float = 1.1,
+) -> pd.DataFrame:
+    """One row per (architecture, seed): how many iterations until the fit stopped improving.
+
+    ``histories_by_seed`` is :func:`load_histories_by_seed`'s output. Pass the result straight
+    to ``fixation_mrnn_chapter.paired_contrasts`` (``group="arm"``, ``unit="seed"``) to ask
+    whether cross-pairs reach their own adequate fit in fewer iterations than self-pairs do,
+    paired by seed -- "fits equally well" and "gets there equally fast" are different claims,
+    and only the first is what §4 tests.
+    """
+    by_label = {a.label: a for a in architectures}
+    rows: list[dict[str, object]] = []
+    for label, by_seed in histories_by_seed.items():
+        arch = by_label.get(str(label))
+        if arch is None:
+            continue
+        for seed, history in by_seed.items():
+            scored = iterations_to_tolerance(history, column=column, tolerance=tolerance)
+            rows.append({
+                "label": label, "arm": arch.arm, "scored_region": arch.scored_region,
+                "partner_region": arch.partner_region, "seed": str(seed), **scored,
+            })
+    return pd.DataFrame(rows)
+
+
+__all__ += ["convergence_speed_table", "iterations_to_tolerance", "load_histories_by_seed"]
+
+
+# ======================================================================================
+# 7. Legacy half-split grid (kept for the already-trained runs under the original scheme)
+# ======================================================================================
+#
+# Everything below built the earlier design, where every region's units were split into two
+# independent, non-overlapping halves so a self-pair would not be a literal duplicate. It is
+# kept only because checkpoints already exist under it (``01b_partner_identity``'s original
+# tree) and because the deferred rank-bottleneck probe (notebook sections 8-10 of the earlier
+# build) reads ``halves.json`` for its region-pair size-asymmetry table; neither is used by
+# the current full-neuron grid. See the module docstring for why the design changed.
+
+HALVES: tuple[str, str] = ("a", "b")
+RELABELLED_INPUT_ROOT = "ephys/psth/fixation_psth_averages_partner_identity"
+
+
+def sample_region_halves(unit_ids: Sequence[str], *, seed: int, region_index: int) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """A deterministic, non-overlapping 50/50 split of ``unit_ids``. Legacy half-split grid only."""
+    ordered = sorted(str(u) for u in unit_ids)
+    rng = np.random.default_rng(np.random.SeedSequence([int(seed), int(region_index)]))
+    shuffled = [ordered[i] for i in rng.permutation(len(ordered))]
+    cut = -(-len(shuffled) // 2)  # ceil(n / 2)
+    return tuple(sorted(shuffled[:cut])), tuple(sorted(shuffled[cut:]))
+
+
+def relabel_combined_dataframe(
+    combined_dataframe: pd.DataFrame,
+    *,
+    region_order: Sequence[str] = MRNN_REGION_ORDER,
+    seed: int,
+) -> tuple[pd.DataFrame, dict[str, dict[str, tuple[str, ...]]]]:
+    """A copy of the combined PSTH dataframe with every unit's ``region`` replaced by its virtual half.
+
+    Legacy half-split grid only -- see section 7's header.
+    """
+    out = combined_dataframe.copy()
+    out["region"] = out["region"].astype(str)
+    halves: dict[str, dict[str, tuple[str, ...]]] = {}
+    for index, region in enumerate(region_order):
+        region_mask = out["region"] == region
+        unit_ids = out.loc[region_mask, "unit_uuid"].astype(str).unique()
+        half_a, half_b = sample_region_halves(unit_ids, seed=seed, region_index=index)
+        assert not (set(half_a) & set(half_b)), f"{region}: halves overlap"
+        assert set(half_a) | set(half_b) == set(str(u) for u in unit_ids), f"{region}: a unit was dropped"
+        halves[region] = {"a": half_a, "b": half_b}
+        is_a = region_mask & out["unit_uuid"].astype(str).isin(half_a)
+        is_b = region_mask & out["unit_uuid"].astype(str).isin(half_b)
+        out.loc[is_a, "region"] = f"{region}_a"
+        out.loc[is_b, "region"] = f"{region}_b"
+    return out, halves
+
+
+def write_relabelled_dataset(
+    *,
+    dataset_cfg_path: str | Path,
+    output_root: str | Path,
+    seed: int,
+    region_order: Sequence[str] = MRNN_REGION_ORDER,
+    source_input_subdir: str = "ephys/psth/fixation_psth_averages",
+    source_dataframe_filename: str = "fixations_psth_10ms_combined_window_neg500ms_to_pos500ms.pkl",
+    source_timeline_filename: str = "fixations_psth_10ms_bin_centers_s_rel_window_neg500ms_to_pos500ms.pkl",
+) -> dict[str, object]:
+    """Write one seed's relabelled combined-PSTH pickle (plus its timeline and a halves manifest) to disk.
+
+    Legacy half-split grid only -- see section 7's header.
+    """
+    import json
+    import shutil
+
+    result = load_combined_fixation_psth(
+        dataset_cfg_path, input_subdir=source_input_subdir,
+        dataframe_filename=source_dataframe_filename, timeline_filename=source_timeline_filename,
+    )
+    relabelled, halves = relabel_combined_dataframe(result.dataframe, region_order=region_order, seed=seed)
+
+    seed_dir = Path(output_root) / f"seed={int(seed)}"
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    dataframe_path = seed_dir / Path(source_dataframe_filename).name
+    timeline_path = seed_dir / Path(source_timeline_filename).name
+    relabelled.to_pickle(dataframe_path)
+    shutil.copyfile(result.timeline_path, timeline_path)
+    manifest_path = seed_dir / "halves.json"
+    with manifest_path.open("w", encoding="utf-8") as handle:
+        json.dump({region: {half: list(ids) for half, ids in sides.items()} for region, sides in halves.items()},
+                  handle, indent=1)
+    return {
+        "seed": int(seed), "seed_dir": seed_dir, "dataframe_path": dataframe_path,
+        "timeline_path": timeline_path, "manifest_path": manifest_path, "n_units": {
+            region: {half: len(ids) for half, ids in sides.items()} for region, sides in halves.items()
+        },
+    }
+
+
+def ceiling_by_cell_for_seed(
+    run_dir: str | Path,
+    unit_ceiling: pd.DataFrame,
+    *,
+    region_order: Sequence[str] = MRNN_REGION_ORDER,
+    conditions: Sequence[str] = CONDITIONS,
+    device: str = "cpu",
+) -> pd.DataFrame:
+    """The matched per-(virtual region, condition) ceiling for one seed of the legacy half-split grid."""
+    from dal_monte_2022_analysis.ephys.analysis.fixation_psth_noise_ceiling import population_ceiling_by_cell
+    from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_analysis import replay_fixation_mrnn_run
+    from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_targets import PCAMetadata
+
+    replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
+    checkpoint = replay["checkpoint"]
+    pca_by_region: Mapping[str, PCAMetadata] = checkpoint["pca_by_region"]
+    normalization_scale = checkpoint.get("normalization_scale")
+
+    frames = []
+    for region in region_order:
+        for half in HALVES:
+            virtual = f"{region}_{half}"
+            if virtual not in pca_by_region:
+                continue
+            meta = pca_by_region[virtual]
+            serialized = {"mean": meta.mean, "components": meta.components,
+                         "explained_variance_ratio": meta.explained_variance_ratio,
+                         "n_components_required": meta.n_components_required,
+                         "source_features": list(meta.source_features)} if isinstance(meta, PCAMetadata) else meta
+            per_cell = population_ceiling_by_cell(
+                unit_ceiling, pca_by_region={region: serialized}, normalization_scale=normalization_scale,
+                conditions=list(conditions),
+            )
+            per_cell["region"] = virtual
+            frames.append(per_cell)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
 def region_pair_asymmetry(
@@ -443,11 +747,11 @@ def region_pair_asymmetry(
 ) -> pd.DataFrame:
     """Every region pair's mean half size and size ratio, read from each seed's ``halves.json``.
 
-    A self-pair is included with ``region_a == region_b`` and ``size_ratio == 1.0`` (up to the
-    ceil/floor rounding, negligible) -- the matched anchor a cost-vs-asymmetry comparison needs,
-    since it is architecturally identical to a cross-pair, just with the most symmetric possible
-    partner. Sizes are averaged over the given seeds; in practice they barely vary seed to seed
-    since a region's total unit count is fixed and only the 50/50 cut position is reshuffled.
+    Legacy half-split grid only -- see section 7's header. Used by the deferred
+    rank-bottleneck probe, which asks whether a tight cross-region channel costs more for
+    size-mismatched pairs; that question has no counterpart in the full-neuron grid, where
+    every self-pair is trivially size-matched (a region against all of itself) rather than
+    against an independent half.
     """
     import json
     from itertools import combinations as _combinations
@@ -469,4 +773,7 @@ def region_pair_asymmetry(
     return pd.DataFrame(rows).sort_values("size_ratio").reset_index(drop=True)
 
 
-__all__ += ["region_pair_asymmetry"]
+__all__ += [
+    "HALVES", "RELABELLED_INPUT_ROOT", "ceiling_by_cell_for_seed", "region_pair_asymmetry",
+    "relabel_combined_dataframe", "sample_region_halves", "write_relabelled_dataset",
+]

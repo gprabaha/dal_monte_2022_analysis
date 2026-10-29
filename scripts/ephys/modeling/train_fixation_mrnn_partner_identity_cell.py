@@ -1,18 +1,19 @@
-"""Train one cell of the partner-identity grid: two virtual half-regions, one seed.
+"""Train one cell of the partner-identity grid: one architecture, one seed.
 
 Deliberately a sibling of ``train_fixation_mrnn_into_run_dir.py`` rather than a mode of it:
 the generic script resolves its target through ``FixationMRNNRunSettings.dataframe_filename``
 and the untouched ``build_mrnn_training_dataframe``, which hard-casts ``region`` to the four
-canonical categories. This script instead loads the seed's already-relabelled combined PSTH
-(written once by ``fixation_mrnn_partner_identity.write_relabelled_dataset``), builds the
-target for the two named virtual regions directly, and hands it to
+canonical categories. This script instead loads the canonical combined PSTH directly and
+builds the architecture's target itself (full population PCA; a self-pair duplicates its
+region into two blocks, a cross-pair just names its two canonical regions) via
+``fixation_mrnn_partner_identity.build_architecture_targets``, and hands it to
 ``train_one_initialization`` through its ``targets=`` override -- the one hook that lets a
 caller substitute its own target without duplicating the training loop.
 
     conda run -n gaze_processing python scripts/ephys/modeling/train_fixation_mrnn_partner_identity_cell.py \
-        --dataset-cfg configs/dataset.yaml --relabelled-input-subdir <seed dir> \
+        --dataset-cfg configs/dataset.yaml \
         --scored-region bla --partner-region bla --arm self \
-        --run-dir <destination> --seed <seed>
+        --label self_bla --run-dir <destination> --seed <seed>
 """
 
 from __future__ import annotations
@@ -28,10 +29,13 @@ if str(_SRC_ROOT) not in sys.path:
 
 from dal_monte_2022_analysis.ephys.analysis.fixation_mrnn_partner_identity import (
     PartnerIdentityArchitecture,
-    region_name_mapping,
-    virtual_region_labels,
+    TARGET_BUILD_SETTINGS,
+    build_architecture_targets,
 )
-from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_bridge import load_combined_fixation_psth
+from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_bridge import (
+    MRNN_REGION_ORDER,
+    load_combined_fixation_psth,
+)
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_targets import build_fixation_mrnn_targets_from_dataframe
 from dal_monte_2022_analysis.ephys.modeling.fixation_mrnn_training import (
     FixationMRNNRunSettings,
@@ -60,10 +64,10 @@ BASE_SETTINGS = dict(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train one cell of the partner-identity grid.")
     parser.add_argument("--dataset-cfg", default="configs/dataset.yaml")
-    parser.add_argument("--relabelled-input-subdir", required=True,
-                        help="input_subdir (relative to analysis_output_root) holding this seed's relabelled dataframe.")
-    parser.add_argument("--dataframe-filename", default="fixations_psth_10ms_combined_window_neg500ms_to_pos500ms.pkl")
-    parser.add_argument("--timeline-filename", default="fixations_psth_10ms_bin_centers_s_rel_window_neg500ms_to_pos500ms.pkl")
+    parser.add_argument("--input-subdir", default=TARGET_BUILD_SETTINGS["input_subdir"],
+                        help="Canonical combined-PSTH subdir (no per-seed relabelling any more).")
+    parser.add_argument("--dataframe-filename", default=TARGET_BUILD_SETTINGS["dataframe_filename"])
+    parser.add_argument("--timeline-filename", default=TARGET_BUILD_SETTINGS["timeline_filename"])
     parser.add_argument("--scored-region", required=True)
     parser.add_argument("--partner-region", required=True)
     parser.add_argument("--arm", required=True, choices=("self", "cross"))
@@ -73,6 +77,8 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=100_000)
     parser.add_argument("--device", default=None)
     parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--lr", type=float, default=None,
+                        help="Override BASE_SETTINGS' learning rate -- used for a convergence retry.")
     parser.add_argument("--within-region-bottleneck-dim", type=int, default=None,
                         help="Override BASE_SETTINGS' within_region_bottleneck_dim (None reproduces the dense grid).")
     parser.add_argument("--recurrent-bottleneck-dim", type=int, default=None,
@@ -84,19 +90,20 @@ def main() -> None:
     region_order = arch.virtual_regions()
 
     result = load_combined_fixation_psth(
-        args.dataset_cfg, input_subdir=args.relabelled_input_subdir,
+        args.dataset_cfg, input_subdir=args.input_subdir,
         dataframe_filename=args.dataframe_filename, timeline_filename=args.timeline_filename,
     )
-    mapping = region_name_mapping()
-    allowed = virtual_region_labels()
-    targets = build_fixation_mrnn_targets_from_dataframe(
-        result.dataframe, timeline_s=result.timeline_s_rel, region_order=region_order,
-        normalize_targets=BASE_SETTINGS["normalize_targets"],
-        normalization_stabilizer=BASE_SETTINGS["normalization_stabilizer"],
-        pca_variance_threshold=BASE_SETTINGS["pca_variance_threshold"],
-        pca_n_components=BASE_SETTINGS["pca_n_components"],
-        temporal_basis_count=BASE_SETTINGS["temporal_basis_count"],
-        region_name_mapping=mapping, allowed_regions=allowed,
+    # One normalisation scale, pooled once over the plain canonical dataframe, shared by
+    # every architecture -- otherwise a self-pair's duplicated region would pool a slightly
+    # different scale than a cross-pair's untouched one (see ``build_architecture_targets``).
+    canonical_build_kwargs = {k: v for k, v in TARGET_BUILD_SETTINGS.items()
+                             if k not in ("input_subdir", "dataframe_filename", "timeline_filename")}
+    canonical = build_fixation_mrnn_targets_from_dataframe(
+        result.dataframe, timeline_s=result.timeline_s_rel, region_order=MRNN_REGION_ORDER, **canonical_build_kwargs,
+    )
+    targets = build_architecture_targets(
+        arch, result.dataframe, timeline_s=result.timeline_s_rel,
+        normalization_scale_override=canonical.normalization_scale,
     )
 
     settings_kwargs = {k: v for k, v in BASE_SETTINGS.items() if k not in
@@ -105,6 +112,8 @@ def main() -> None:
         settings_kwargs["within_region_bottleneck_dim"] = args.within_region_bottleneck_dim
     if args.recurrent_bottleneck_dim is not None:
         settings_kwargs["recurrent_bottleneck_dim"] = args.recurrent_bottleneck_dim
+    if args.lr is not None:
+        settings_kwargs["lr"] = float(args.lr)
     settings = FixationMRNNRunSettings(
         region_order=region_order, epochs=int(args.epochs), seed=int(args.seed),
         device=args.device or "auto", **settings_kwargs,
@@ -115,7 +124,7 @@ def main() -> None:
     (run_dir / "architecture.json").write_text(
         __import__("json").dumps({"label": arch.label, "arm": arch.arm, "scored_region": arch.scored_region,
                                   "partner_region": arch.partner_region, "region_order": list(region_order),
-                                  "relabelled_input_subdir": args.relabelled_input_subdir,
+                                  "input_subdir": args.input_subdir, "lr": settings_kwargs["lr"],
                                   "within_region_bottleneck_dim": settings_kwargs["within_region_bottleneck_dim"],
                                   "recurrent_bottleneck_dim": settings_kwargs["recurrent_bottleneck_dim"]}, indent=1)
     )

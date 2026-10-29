@@ -261,13 +261,23 @@ def build_fixation_mrnn_targets_from_dataframe(
     temporal_basis_count: int = 20,
     region_name_mapping: Mapping[str, str] | None = None,
     allowed_regions: Sequence[str] | None = None,
+    normalization_scale_override: float | None = None,
 ) -> FixationMRNNTargets:
     """Build raw firing-rate and region-PC targets from combined PSTH rows.
 
     ``region_name_mapping``/``allowed_regions`` are passed straight through to
     :func:`build_mrnn_training_dataframe` and default to its own canonical mapping and
     category set, so this is a no-op for every caller except the partner-identity
-    experiment, which relabels units into virtual per-half regions before this point.
+    experiment, which relabels units into virtual regions before this point.
+
+    ``normalization_scale_override``, when given, is used in place of the scale this
+    function would otherwise pool from ``combined_dataframe`` itself. Needed by the
+    partner-identity experiment's self-pairs: duplicating one region into two full-population
+    blocks makes that region's rows contribute twice to a freshly-pooled scale, which a
+    cross-pair's untouched dataframe would not do, breaking the "a region's target is
+    identical wherever it appears" guarantee this function otherwise provides. Passing the
+    scale pooled once from the plain canonical dataframe keeps every architecture on the same
+    normalization regardless of how its dataframe was relabelled.
     """
     region_order = _validate_order(region_order, name="region_order")
     condition_order = _validate_order(condition_order, name="condition_order")
@@ -308,13 +318,16 @@ def build_fixation_mrnn_targets_from_dataframe(
 
     normalization_scale = None
     if normalize_targets:
-        pooled = np.concatenate(
-            [matrix.reshape(-1) for matrices in matrices_by_region.values() for matrix in matrices]
-        )
-        normalization_scale = global_robust_scale(
-            pooled,
-            stabilizer=float(normalization_stabilizer),
-        )
+        if normalization_scale_override is not None:
+            normalization_scale = float(normalization_scale_override)
+        else:
+            pooled = np.concatenate(
+                [matrix.reshape(-1) for matrices in matrices_by_region.values() for matrix in matrices]
+            )
+            normalization_scale = global_robust_scale(
+                pooled,
+                stabilizer=float(normalization_stabilizer),
+            )
     # Everything downstream iterates ``region_order``; the extra regions were only needed
     # for the scale.
     matrices_by_region = {region: matrices_by_region[region] for region in region_order}
