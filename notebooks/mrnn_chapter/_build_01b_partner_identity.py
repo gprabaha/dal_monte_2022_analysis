@@ -64,6 +64,7 @@ cosine, tanh, spectral radius 1.1, 100k iterations.
 | 4 | Convergence and adequacy: is every cell actually fitting well? |
 | 5 | The 4x4 matrix: does a region need this partner, or any partner? |
 | 6 | Which fixation type is most affected? |
+| 6b | Does a cross-pair reproduce different frequencies than a self-pair? |
 | 7 | Which region -- or which pair -- is most affected? |
 | 8 | Does a cross-pair not just fit as well, but converge faster? |
 | 9 | What the fits look like: PC and firing-rate reconstruction |
@@ -94,12 +95,14 @@ if str(repo_root / "src") not in sys.path:
     sys.path.insert(0, str(repo_root / "src"))
 
 from dal_monte_2022_analysis.config.load import load_config
+from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_audit as audit
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_chapter as ch
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_ensemble as ens
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_partner_identity as pid
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_protocol as protocol
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_sweep as sweep
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_synthesis as syn
+from dal_monte_2022_analysis.ephys.plotting import fixation_mrnn_audit as aviz
 from dal_monte_2022_analysis.ephys.plotting import fixation_mrnn_ensemble as eviz
 from dal_monte_2022_analysis.ephys.plotting import fixation_mrnn_partner_identity as pviz
 from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
@@ -369,6 +372,39 @@ if matrix_fit is not None:
 '''
 
 
+S6B_TEXT = r"""## 6b. Does a cross-pair reproduce different frequencies than a self-pair?
+
+§5 asks about total fit; this asks *where in the spectrum* self and cross differ, the same
+band-resolved recovery the ladder reports (`fixation_mrnn_audit.band_resolved_recovery`):
+the fraction of each region's target power, per frequency band, left in the residual.
+Regions pooled, paired by seed. A region's own slow envelope is easy either way; if the
+self-pair's mirroring advantage (header) shows up anywhere, it should be at the fast bands,
+where a block has the least to gain from copying a duplicate of itself and the most to gain
+from genuine inter-regional structure -- or, if cross still wins there despite that
+advantage, that is the clearest sign the partner's actual identity carries fast structure a
+duplicate cannot supply.
+"""
+
+S6B_CODE = r'''
+if matrix_fit is not None:
+    band_recovery = cached("band_recovery", lambda: pd.concat(
+        [audit.band_resolved_recovery(r.run_dir).assign(label=r.label) for r in done.itertuples()],
+        ignore_index=True))
+    band_matrix = pid.matrix_fit_table(band_recovery, ARCHITECTURES)
+    band_per_fit = band_matrix.groupby(["arm", "seed", "band"])["residual_fraction"].mean().reset_index()
+    band_tests = ch.paired_contrasts(band_per_fit, value="residual_fraction", group="arm", unit="seed",
+                                     by="band", pairs=[("self", "cross")])
+    show(aviz.plot_band_recovery_self_vs_cross(band_per_fit, band_tests), "fig03b_band_recovery_self_vs_cross")
+    md("**Residual (unreproduced) fraction of target power, self-pair vs. cross-pair** "
+       "(regions pooled; `difference` = self − cross; positive means cross recovers more of that band):")
+    display(band_per_fit.groupby(["band", "arm"])["residual_fraction"].mean().unstack("arm").round(4))
+    md("**Tests:**")
+    display(band_tests[["band", "n", "mean_a", "mean_b", "difference", "statistic", "p", "p_holm", "stars"]]
+            .rename(columns={"mean_a": "self", "mean_b": "cross"}).round(5)
+            if not band_tests.empty else band_tests)
+'''
+
+
 S7_TEXT = r"""## 7. Which region -- or which pair -- is most affected?
 
 Figure 2 already shows whether the self-vs-cross gap is uniform across regions or
@@ -519,6 +555,7 @@ def build() -> dict:
         _cell("markdown", S4_TEXT), _cell("code", S4_CODE),
         _cell("markdown", S5_TEXT), _cell("code", S5_CODE),
         _cell("markdown", S6_TEXT), _cell("code", S6_CODE),
+        _cell("markdown", S6B_TEXT), _cell("code", S6B_CODE),
         _cell("markdown", S7_TEXT), _cell("code", S7_CODE),
         _cell("markdown", S8_TEXT), _cell("code", S8_CODE),
         _cell("markdown", S9_TEXT), _cell("code", S9_CODE),
