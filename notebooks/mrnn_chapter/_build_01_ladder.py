@@ -58,6 +58,7 @@ fraction of target power left in the residual, per frequency band.
 | 7 | Where the network acts: band-resolved recovery, self vs. cross-region connections |
 | 8 | Every fixation type, every rung |
 | 9 | Reading the result |
+| 10 | The headline figure: self vs. cross-region connections, by frequency band |
 
 **Nothing here submits a job unless `SUBMIT` is set to `True`.**
 """
@@ -491,6 +492,23 @@ falls below the bar, and which of the two is the low-dimensional channel.
 """
 
 
+S10_TEXT = r"""## 10. The headline figure: self vs. cross-region connections, by frequency band
+
+Point 2 above, shown rather than summarised. Every band loses significantly less of its
+target power under the full network than a region fitted alone, and the gap is largest at
+10–20 Hz — the band a region cannot generate on its own, and the clearest single piece of
+evidence that inter-regional input is supplying genuine fast dynamical structure rather than
+just more capacity.
+"""
+
+S10_CODE = r'''
+if fit is not None:
+    show(aviz.plot_band_recovery_self_vs_cross(band_long, band_tests), "fig_final_band_recovery_self_vs_cross")
+    display(band_tests[["band", "n", "mean_a", "mean_b", "difference", "statistic", "p", "p_holm", "stars"]]
+            .rename(columns={"mean_a": "self", "mean_b": "cross"}).round(5))
+'''
+
+
 def _cell(kind: str, source: str) -> dict:
     cell = {"cell_type": kind, "id": f"cell-{next(_CELL_COUNTER):02d}", "metadata": {},
             "source": source.strip("\n").splitlines(keepends=True)}
@@ -516,6 +534,7 @@ def build() -> dict:
         _cell("markdown", S8_TEXT), _cell("code", S8_CODE),
         _cell("markdown", S8B_TEXT), _cell("code", S8B_CODE),
         _cell("markdown", S9),
+        _cell("markdown", S10_TEXT), _cell("code", S10_CODE),
     ]
     return {"cells": cells, "metadata": {
         "kernelspec": {"display_name": "gaze_processing", "language": "python", "name": "python3"},
