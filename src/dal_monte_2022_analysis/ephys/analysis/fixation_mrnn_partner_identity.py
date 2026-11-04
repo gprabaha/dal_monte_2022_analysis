@@ -593,6 +593,12 @@ def convergence_speed_table(
     whether cross-pairs reach their own adequate fit in fewer iterations than self-pairs do,
     paired by seed -- "fits equally well" and "gets there equally fast" are different claims,
     and only the first is what §4 tests.
+
+    A cross-pair's two blocks share one training run and therefore one convergence speed, so
+    (mirroring :func:`matrix_fit_table`) a cross-pair contributes a row under *each* of its
+    two regions rather than only the one named ``scored_region`` in the architecture's own
+    definition -- a region that never happens to be a cross label's first element (``accg`` in
+    ``MRNN_REGION_ORDER``) would otherwise end up with no cross-arm rows at all.
     """
     by_label = {a.label: a for a in architectures}
     rows: list[dict[str, object]] = []
@@ -600,12 +606,15 @@ def convergence_speed_table(
         arch = by_label.get(str(label))
         if arch is None:
             continue
+        region_pairs = ([(arch.scored_region, arch.scored_region)] if arch.arm == "self"
+                        else [(arch.scored_region, arch.partner_region), (arch.partner_region, arch.scored_region)])
         for seed, history in by_seed.items():
             scored = iterations_to_tolerance(history, column=column, tolerance=tolerance)
-            rows.append({
-                "label": label, "arm": arch.arm, "scored_region": arch.scored_region,
-                "partner_region": arch.partner_region, "seed": str(seed), **scored,
-            })
+            for region, partner in region_pairs:
+                rows.append({
+                    "label": label, "arm": arch.arm, "scored_region": region,
+                    "partner_region": partner, "seed": str(seed), **scored,
+                })
     return pd.DataFrame(rows)
 
 
