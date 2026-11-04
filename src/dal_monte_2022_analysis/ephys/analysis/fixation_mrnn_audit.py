@@ -1403,6 +1403,27 @@ def band_resolved_recovery(
     return pd.DataFrame(rows)
 
 
+def self_vs_cross_band_recovery(
+    recovery: pd.DataFrame, *, self_rung: int = 0, cross_rung: int = 3,
+) -> pd.DataFrame:
+    """Per-band residual fraction, region alone ("self") vs. the full network ("cross"), one row per seed and band.
+
+    ``recovery`` is :func:`band_resolved_recovery`'s output concatenated across rungs, with
+    an ``n_partners`` column added (as the ladder notebook does). ``self_rung`` (default 0,
+    no cross-region connections at all) and ``cross_rung`` (default 3, every other region
+    present) pick the two endpoints of the ladder rather than every rung in between, for a
+    direct test of whether cross-region connections recover more power in fast bands than
+    slow ones. Regions are pooled per seed, so the contrast is pooled over region rather than
+    split by it as well -- the per-region, per-rung curve is :func:`plot_band_recovery_by_rung`'s.
+    """
+    block = recovery[recovery["n_partners"].isin([self_rung, cross_rung])].copy()
+    block["arm"] = block["n_partners"].map({self_rung: "self", cross_rung: "cross"})
+    return block.groupby(["arm", "seed", "band"])["residual_fraction"].mean().reset_index()
+
+
+__all__ += ["self_vs_cross_band_recovery"]
+
+
 def rank_grid_variants(
     ranks: Sequence[int],
     *,

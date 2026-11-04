@@ -1400,6 +1400,55 @@ def plot_band_recovery_pooled(
     return fig
 
 
+def plot_band_recovery_self_vs_cross(
+    long: pd.DataFrame,
+    tests: pd.DataFrame | None,
+    *,
+    bands: Sequence[str] = ("0-5 Hz", "5-10 Hz", "10-20 Hz", "20-50 Hz"),
+    figsize: tuple[float, float] = (4.6, 2.6),
+):
+    """Region alone ("self", hollow) vs. the full network ("cross", filled), one group per band.
+
+    ``long`` is ``fixation_mrnn_audit.self_vs_cross_band_recovery``'s output (one row per
+    arm x seed x band, regions pooled); ``tests`` is a paired-contrasts table keyed by
+    ``band``, ``a``, ``b`` with ``pairs=[("self", "cross")]`` so a positive, marked
+    ``difference`` means the full network leaves *less* residual -- i.e. recovers more of
+    that band's power -- than the region does alone.
+    """
+    from dal_monte_2022_analysis.ephys.plotting.fixation_mrnn_chapter import (
+        contrasts_to_marks, draw_bars, mark_contrasts,
+    )
+
+    palette = dict(zip(bands, plt.get_cmap("cividis")(np.linspace(0.05, 0.9, len(bands)))))
+    fig, ax = plt.subplots(figsize=figsize)
+    entries = []
+    for j, band in enumerate(bands):
+        for arm, dx in (("self", -0.16), ("cross", 0.16)):
+            block = long[(long["band"] == band) & (long["arm"] == arm)]
+            entries.append({"x": j + dx, "values": block["residual_fraction"].to_numpy(float),
+                            "color": palette[band], "filled": arm == "cross"})
+    draw_bars(ax, entries, width=0.28)
+    ax.set_xticks(range(len(bands)))
+    ax.set_xticklabels(bands)
+    ax.set_ylabel("target power\nnot reproduced")
+    ax.set_ylim(bottom=0)
+    handles = [plt.Rectangle((0, 0), 1, 1, facecolor="white", edgecolor=INK, lw=0.8),
+               plt.Rectangle((0, 0), 1, 1, facecolor=INK, edgecolor="none")]
+    ax.legend(handles, ["alone (self)", "full network (cross)"], loc="upper right", fontsize=6.5,
+             handlelength=1.0, frameon=False)
+    nice_axis(ax)
+    if tests is not None and not tests.empty:
+        index = {b: k for k, b in enumerate(bands)}
+        offset = {"self": -0.16, "cross": 0.16}
+        marks = contrasts_to_marks(tests, lambda row, side: index[row["band"]] + offset[row[side]])
+        mark_contrasts(ax, marks, top=float(long["residual_fraction"].max()))
+    fig.tight_layout()
+    return fig
+
+
+__all__ += ["plot_band_recovery_self_vs_cross"]
+
+
 def plot_ladder_cell_heatmap(
     fit: pd.DataFrame,
     *,

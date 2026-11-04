@@ -55,7 +55,7 @@ fraction of target power left in the residual, per frequency band.
 | 4 | Convergence and fit against the ceiling |
 | 5 | The ladder: each region against the number of partners |
 | 6 | Which partner helps whom |
-| 7 | Where the network acts: band-resolved recovery |
+| 7 | Where the network acts: band-resolved recovery, self vs. cross-region connections |
 | 8 | Every fixation type, every rung |
 | 9 | Reading the result |
 
@@ -85,6 +85,7 @@ if str(repo_root / "src") not in sys.path:
 
 from dal_monte_2022_analysis.config.load import load_config
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_audit as audit
+from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_chapter as ch
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_protocol as protocol
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_sweep as sweep
 from dal_monte_2022_analysis.ephys.analysis import fixation_mrnn_synthesis as syn
@@ -407,6 +408,28 @@ if fit is not None:
 '''
 
 
+S7B_TEXT = r"""### 7b. Self vs. cross-region connections: do fast bands gain the most?
+
+The curves above show the whole dose-response; this is the direct test at its two
+endpoints. **Self** is a region fitted alone — no cross-region connections at all, only its
+own within-region recurrence. **Cross** is the full network — every other region present.
+Regions are pooled per seed, paired by seed, Holm-corrected across the four bands.
+"""
+
+S7B_CODE = r'''
+if fit is not None:
+    band_long = audit.self_vs_cross_band_recovery(recovery)
+    band_tests = ch.paired_contrasts(band_long, value="residual_fraction", group="arm", unit="seed",
+                                     by="band", pairs=[("self", "cross")])
+    show(aviz.plot_band_recovery_self_vs_cross(band_long, band_tests), "fig03c_band_recovery_self_vs_cross")
+    display(Markdown(
+        "**Residual (unreproduced) fraction of target power, alone vs. full network** "
+        "(`difference` = self − cross; positive means the full network recovers more of that band):"))
+    display(band_tests[["band", "n", "mean_a", "mean_b", "difference", "statistic", "p", "p_holm", "stars"]]
+            .rename(columns={"mean_a": "self", "mean_b": "cross"}).round(5))
+'''
+
+
 S8_TEXT = r"""## 8. Every fixation type, every rung
 
 Under minimax the three conditions should sit close together at every rung — that is what the
@@ -489,6 +512,7 @@ def build() -> dict:
         _cell("markdown", S5_TEXT), _cell("code", S5_CODE),
         _cell("markdown", S6_TEXT), _cell("code", S6_CODE),
         _cell("markdown", S7_TEXT), _cell("code", S7_CODE),
+        _cell("markdown", S7B_TEXT), _cell("code", S7B_CODE),
         _cell("markdown", S8_TEXT), _cell("code", S8_CODE),
         _cell("markdown", S8B_TEXT), _cell("code", S8B_CODE),
         _cell("markdown", S9),
