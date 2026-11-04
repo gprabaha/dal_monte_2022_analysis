@@ -394,7 +394,8 @@ if matrix_fit is not None:
     band_per_fit = band_matrix.groupby(["arm", "seed", "band"])["residual_fraction"].mean().reset_index()
     band_tests = ch.paired_contrasts(band_per_fit, value="residual_fraction", group="arm", unit="seed",
                                      by="band", pairs=[("self", "cross")])
-    show(aviz.plot_band_recovery_self_vs_cross(band_per_fit, band_tests), "fig03b_band_recovery_self_vs_cross")
+    show(aviz.plot_band_recovery_self_vs_cross(band_per_fit, band_tests, arm_labels=("self-pair", "cross-pair")),
+         "fig03b_band_recovery_self_vs_cross")
     md("**Residual (unreproduced) fraction of target power, self-pair vs. cross-pair** "
        "(regions pooled; `difference` = self − cross; positive means cross recovers more of that band):")
     display(band_per_fit.groupby(["band", "arm"])["residual_fraction"].mean().unstack("arm").round(4))
