@@ -25,6 +25,7 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     MUTED_INK,
     NEUTRAL_EDGE,
     NEUTRAL_FILL,
+    add_significance_bracket,
     nice_axis,
 )
 
@@ -2021,3 +2022,107 @@ __all__ += [
     "plot_flow_time_pooled",
     "plot_property_vs_rank_pooled",
 ]
+
+
+def plot_matched_budget_contrast(
+    contrast: pd.DataFrame,
+    *,
+    conditions: Sequence[str] = ("worst_cell", *CONDITION_ORDER),
+    dense_value: float | None = None,
+    figsize: tuple[float, float] = (9.2, 2.6),
+):
+    """Within-heavy vs. cross-heavy fit at every matched budget, one panel per condition.
+
+    Each budget is a pair of points joined by a line: the within-heavy configuration's mean
+    on the left, the cross-heavy configuration's on the right. A downward slope is cross
+    rank costing more fit than within rank at the same total parameter count. Only budgets
+    the Holm correction leaves significant within their panel carry a bracket, matching the
+    chapter's convention of marking significance rather than every comparison.
+    """
+    panel_titles = {"worst_cell": "worst region × condition"}
+    fig, axes = plt.subplots(1, len(conditions), figsize=figsize, sharey=True)
+    axes = np.atleast_1d(axes)
+    for ax, condition in zip(axes, conditions):
+        block = contrast[contrast["condition"] == condition].sort_values("budget").reset_index(drop=True)
+        if block.empty:
+            ax.set_visible(False)
+            continue
+        x = np.arange(len(block))
+        for xi, row in zip(x, block.itertuples()):
+            ax.plot([xi - 0.15, xi + 0.15], [row.within_heavy_mean, row.cross_heavy_mean],
+                    color=MUTED_INK, linewidth=1.0, zorder=2)
+        ax.scatter(x - 0.15, block["within_heavy_mean"], s=30, color=REPORTED_COLOR, zorder=3,
+                   label="within-heavy")
+        ax.scatter(x + 0.15, block["cross_heavy_mean"], s=30, color=CORRECTED_COLOR, zorder=3,
+                   label="cross-heavy")
+        if dense_value is not None:
+            ax.axhline(dense_value, color=MUTED_INK, linewidth=0.8, linestyle=":", zorder=1)
+        for xi, row in zip(x, block.itertuples()):
+            if bool(row.significant):
+                top = max(row.within_heavy_mean, row.cross_heavy_mean)
+                add_significance_bracket(ax, xi - 0.15, xi + 0.15, top + 0.003, "*", fontsize=7.5)
+        ax.set_xticks(x)
+        ax.set_xticklabels(block["budget"])
+        ax.set_xlabel("matched budget")
+        ax.set_title(panel_titles.get(condition, CONDITION_SHORT_LABELS.get(condition, condition)), fontsize=8)
+        nice_axis(ax)
+    axes[0].set_ylabel("$R^2$ / ceiling")
+    axes[-1].legend(frameon=False, fontsize=6.5, loc="lower left")
+    fig.tight_layout()
+    return fig
+
+
+def plot_matched_budget_band_contrast(
+    contrast: pd.DataFrame,
+    *,
+    conditions: Sequence[str] = CONDITION_ORDER,
+    bands: Sequence[str] = ("0-5 Hz", "5-10 Hz", "10-20 Hz", "20-50 Hz"),
+    figsize: tuple[float, float] = (9.4, 6.4),
+):
+    """Within-heavy vs. cross-heavy residual fraction per band, one row per condition.
+
+    Same slope convention as :func:`plot_matched_budget_contrast`, but higher is worse here
+    -- residual fraction is the share of that band's target power the fit fails to
+    reproduce, so the axis starts at zero. A slope that only appears for interactive face is
+    the fast-structure failure already documented in the dense model (``fixation_mrnn_target_loss``),
+    now asked whether a cross bottleneck widens it more than an equal-sized within bottleneck.
+    """
+    fig, axes = plt.subplots(len(conditions), len(bands), figsize=figsize, sharex=False, sharey="row")
+    axes = np.atleast_2d(axes)
+    for row_idx, condition in enumerate(conditions):
+        for col_idx, band in enumerate(bands):
+            ax = axes[row_idx, col_idx]
+            block = (contrast[(contrast["condition"] == condition) & (contrast["band"] == band)]
+                     .sort_values("budget").reset_index(drop=True))
+            if block.empty:
+                ax.set_visible(False)
+                continue
+            x = np.arange(len(block))
+            for xi, row in zip(x, block.itertuples()):
+                ax.plot([xi - 0.15, xi + 0.15], [row.within_heavy_mean, row.cross_heavy_mean],
+                        color=MUTED_INK, linewidth=1.0, zorder=2)
+            ax.scatter(x - 0.15, block["within_heavy_mean"], s=20, color=REPORTED_COLOR, zorder=3)
+            ax.scatter(x + 0.15, block["cross_heavy_mean"], s=20, color=CORRECTED_COLOR, zorder=3)
+            for xi, row in zip(x, block.itertuples()):
+                if bool(row.significant):
+                    top = max(row.within_heavy_mean, row.cross_heavy_mean)
+                    add_significance_bracket(ax, xi - 0.15, xi + 0.15, top + 0.012, "*", fontsize=6.0)
+            ax.set_xticks(x)
+            ax.set_xticklabels(block["budget"], fontsize=6.5)
+            ax.set_ylim(bottom=0)
+            nice_axis(ax)
+            if row_idx == 0:
+                ax.set_title(band, fontsize=8)
+            if col_idx == 0:
+                ax.set_ylabel(CONDITION_SHORT_LABELS.get(condition, condition), fontsize=7.5)
+    fig.supxlabel("matched budget", fontsize=8)
+    handles = [
+        plt.Line2D([0], [0], marker="o", color=REPORTED_COLOR, linestyle="", label="within-heavy"),
+        plt.Line2D([0], [0], marker="o", color=CORRECTED_COLOR, linestyle="", label="cross-heavy"),
+    ]
+    fig.legend(handles=handles, loc="upper right", frameon=False, fontsize=7)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    return fig
+
+
+__all__ += ["plot_matched_budget_band_contrast", "plot_matched_budget_contrast"]

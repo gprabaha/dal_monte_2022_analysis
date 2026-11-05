@@ -1403,6 +1403,49 @@ def band_resolved_recovery(
     return pd.DataFrame(rows)
 
 
+def band_resolved_recovery_by_condition(
+    run_dir: str | Path,
+    *,
+    bin_size_s: float = 0.01,
+    bands: Sequence[tuple[str, float, float]] = RECOVERY_BANDS,
+    device: str = "cpu",
+) -> pd.DataFrame:
+    """:func:`band_resolved_recovery`, kept split by condition instead of pooled over it.
+
+    ``band_resolved_recovery`` sums the spectrum over the condition axis before dividing,
+    so a band recovered well in two conditions and poorly in a third reads as "recovered
+    reasonably". This computes the same residual-over-target band power per condition, which
+    is what a claim about interactive face specifically, rather than fixation PSTHs in
+    general, needs.
+    """
+    replay = replay_fixation_mrnn_run(Path(run_dir), device=device)
+    conditions = list(replay["condition_order"])
+    frequencies = None
+    rows: list[dict[str, object]] = []
+    for region, target in _target_by_region(replay).items():
+        predicted = replay["output_by_region"][region].detach().cpu().numpy().astype(float)
+        for index, condition in enumerate(conditions):
+            target_c = target[index]
+            residual_c = target_c - predicted[index]
+            centred = target_c - target_c.mean(axis=0, keepdims=True)
+            spectrum_target = (np.abs(np.fft.rfft(centred, axis=0)) ** 2).sum(axis=1)
+            spectrum_residual = (np.abs(np.fft.rfft(residual_c, axis=0)) ** 2).sum(axis=1)
+            if frequencies is None:
+                frequencies = np.fft.rfftfreq(target_c.shape[0], d=float(bin_size_s))
+            for name, low, high in bands:
+                keep = (frequencies >= low) & (frequencies < high)
+                total = float(spectrum_target[keep].sum())
+                rows.append({
+                    "seed": Path(run_dir).name.replace("seed=", ""),
+                    "region": region,
+                    "condition": str(condition),
+                    "band": name,
+                    "target_power": total,
+                    "residual_fraction": float(spectrum_residual[keep].sum() / total) if total > 0 else np.nan,
+                })
+    return pd.DataFrame(rows)
+
+
 def self_vs_cross_band_recovery(
     recovery: pd.DataFrame, *, self_rung: int = 0, cross_rung: int = 3,
 ) -> pd.DataFrame:
@@ -1421,7 +1464,7 @@ def self_vs_cross_band_recovery(
     return block.groupby(["arm", "seed", "band"])["residual_fraction"].mean().reset_index()
 
 
-__all__ += ["self_vs_cross_band_recovery"]
+__all__ += ["band_resolved_recovery_by_condition", "self_vs_cross_band_recovery"]
 
 
 def rank_grid_variants(
@@ -1677,3 +1720,184 @@ def flow_temporal_summary(decomposed: pd.DataFrame) -> pd.DataFrame:
 
 
 __all__ += ["flow_temporal_summary"]
+
+
+# --------------------------------------------------------------------------------------
+# Matched-budget within vs. cross contrast
+# --------------------------------------------------------------------------------------
+#
+# Holding one side dense while the other is bottlenecked (the grid's own marginals, above)
+# cannot be made parameter-matched in the regime that matters. With every region the same
+# width h=40, a within-region block costs 2*r_w*h and a cross-region block 2*r_c*h, and
+# with 4 regions there are 4 within blocks against 12 ordered cross blocks, so the two
+# totals are 320*r_w and 960*r_c on this dataset -- cross costs exactly (n_regions - 1)
+# times as much per unit rank as within, for any h. Dense within is 4*h*h = 6400 parameters,
+# dense cross is 12*h*h = 19200: matching "cross bottlenecked, within dense" (6400 + 960 c)
+# against "within bottlenecked, cross dense" (320 w + 19200) requires 960 c = 320 w + 12800,
+# i.e. c >= 14 for any w >= 1 -- the cross side would have to be barely constrained (14/40
+# of full rank) to match even a severely bottlenecked within side. There is no matched pair
+# in the regime where both sides are actually squeezed.
+#
+# The functions below instead bottleneck both sides (no dense arm at all) and match cells
+# by total budget w + (n_regions - 1) * c, which is proportional to total recurrent weight
+# count. Two cells at the same budget spend it differently -- more on within vs. more on
+# cross -- which is the comparison the chapter actually wants.
+
+
+def matched_budget_groups(ranks: Sequence[int], *, n_regions: int = 4) -> pd.DataFrame:
+    """Every non-dense ``(r_w, r_c)`` grid cell, grouped by total recurrent-weight budget.
+
+    ``budget`` is ``r_w + (n_regions - 1) * r_c``; cells sharing a budget spend the same
+    total number of recurrent weights differently. ``cross_budget_fraction`` is the share
+    of that budget spent on the cross-region side -- 0 is all within, 1 is all cross --
+    distinct from :func:`flow_temporal_summary`'s ``cross_fraction``, which is a measured
+    drive share rather than a parameter share. Budgets reached by only one cell are
+    dropped: there is nothing to compare them against.
+    """
+    rows = [
+        {
+            "label": f"w{r_w}_c{r_c}",
+            "rank_within": int(r_w),
+            "rank_cross": int(r_c),
+            "budget": int(r_w) + (int(n_regions) - 1) * int(r_c),
+        }
+        for r_w in ranks for r_c in ranks
+    ]
+    table = pd.DataFrame(rows)
+    table["cross_budget_fraction"] = (int(n_regions) - 1) * table["rank_cross"] / table["budget"]
+    counts = table.groupby("budget")["label"].transform("nunique")
+    return table[counts >= 2].sort_values(["budget", "cross_budget_fraction"]).reset_index(drop=True)
+
+
+def matched_budget_extremes(groups: pd.DataFrame) -> pd.DataFrame:
+    """Within each matched budget, the most within-heavy cell paired with the most cross-heavy.
+
+    The largest within-vs-cross contrast the budget allows. A budget reached by more than
+    two cells has interior points too (worth plotting, e.g. the three-way matches at
+    budget 13 and 16 on the current grid) but they are not part of the paired contrast,
+    which needs exactly two arms per budget.
+    """
+    rows = []
+    for budget, block in groups.groupby("budget"):
+        low = block.loc[block["cross_budget_fraction"].idxmin()]
+        high = block.loc[block["cross_budget_fraction"].idxmax()]
+        if low["label"] == high["label"]:
+            continue
+        rows.append({
+            "budget": int(budget),
+            "within_heavy_label": str(low["label"]),
+            "within_heavy_rank_within": int(low["rank_within"]),
+            "within_heavy_rank_cross": int(low["rank_cross"]),
+            "cross_heavy_label": str(high["label"]),
+            "cross_heavy_rank_within": int(high["rank_within"]),
+            "cross_heavy_rank_cross": int(high["rank_cross"]),
+        })
+    return pd.DataFrame(rows).sort_values("budget").reset_index(drop=True)
+
+
+def matched_budget_fit_contrast(fit: pd.DataFrame, extremes: pd.DataFrame) -> pd.DataFrame:
+    """Paired within-heavy vs. cross-heavy fit at matched budget, worst cell and per condition.
+
+    ``fit`` is :func:`fixation_mrnn_sweep.score_variant_fit`'s output. Every grid cell
+    shares the same seed list (:func:`fixation_mrnn_protocol.protocol_seeds`), so the two
+    arms of a budget are compared seed-for-seed rather than as two independent samples --
+    a paired test, not Welch's. ``p_holm`` corrects within each condition panel (including
+    the pooled ``worst_cell`` panel) across the budgets tested in it, matching the chapter's
+    convention of one correction per panel.
+    """
+    from dal_monte_2022_analysis.core.stats.correction import adjust_pvalues
+    from dal_monte_2022_analysis.core.stats.tests import paired_ttest
+
+    per_condition = fit.groupby(["label", "seed", "condition"])["r2_vs_ceiling"].mean().reset_index()
+    worst_cell = per_condition.groupby(["label", "seed"])["r2_vs_ceiling"].min().reset_index()
+    worst_cell["condition"] = "worst_cell"
+    long = pd.concat([per_condition, worst_cell], ignore_index=True)
+
+    rows = []
+    for _, arm in extremes.iterrows():
+        within = long[long["label"] == arm["within_heavy_label"]]
+        cross = long[long["label"] == arm["cross_heavy_label"]]
+        merged = within.merge(cross, on=["seed", "condition"], suffixes=("_within", "_cross"))
+        for condition, block in merged.groupby("condition"):
+            if len(block) < 2:
+                continue
+            t_stat, p_value = paired_ttest(
+                block["r2_vs_ceiling_cross"].to_numpy(), block["r2_vs_ceiling_within"].to_numpy())
+            rows.append({
+                "budget": int(arm["budget"]),
+                "condition": str(condition),
+                "within_heavy_label": arm["within_heavy_label"],
+                "cross_heavy_label": arm["cross_heavy_label"],
+                "n_seeds": int(len(block)),
+                "within_heavy_mean": float(block["r2_vs_ceiling_within"].mean()),
+                "cross_heavy_mean": float(block["r2_vs_ceiling_cross"].mean()),
+                "cross_minus_within": float((block["r2_vs_ceiling_cross"] - block["r2_vs_ceiling_within"]).mean()),
+                "t_stat": float(t_stat),
+                "p_value": float(p_value),
+            })
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    table["p_holm"] = np.nan
+    for _, idx in table.groupby("condition").groups.items():
+        table.loc[idx, "p_holm"] = adjust_pvalues(table.loc[idx, "p_value"].to_numpy(), "holm")
+    table["significant"] = table["p_holm"] < 0.05
+    return table
+
+
+def matched_budget_band_contrast(band_by_condition: pd.DataFrame, extremes: pd.DataFrame) -> pd.DataFrame:
+    """Paired within-heavy vs. cross-heavy residual fraction per band and condition, at matched budget.
+
+    ``band_by_condition`` is :func:`band_resolved_recovery_by_condition`'s output
+    concatenated across cells with a ``label`` column attached (as the ladder notebook does
+    for :func:`band_resolved_recovery`), regions pooled by mean per seed before the paired
+    contrast -- the same pooling :func:`self_vs_cross_band_recovery` uses. ``p_holm``
+    corrects within each condition panel across every (budget, band) cell tested in it.
+    """
+    from dal_monte_2022_analysis.core.stats.correction import adjust_pvalues
+    from dal_monte_2022_analysis.core.stats.tests import paired_ttest
+
+    per_seed = (
+        band_by_condition.groupby(["label", "seed", "condition", "band"])["residual_fraction"]
+        .mean().reset_index()
+    )
+    rows = []
+    for _, arm in extremes.iterrows():
+        within = per_seed[per_seed["label"] == arm["within_heavy_label"]]
+        cross = per_seed[per_seed["label"] == arm["cross_heavy_label"]]
+        merged = within.merge(cross, on=["seed", "condition", "band"], suffixes=("_within", "_cross"))
+        for (condition, band), block in merged.groupby(["condition", "band"]):
+            if len(block) < 2:
+                continue
+            t_stat, p_value = paired_ttest(
+                block["residual_fraction_cross"].to_numpy(), block["residual_fraction_within"].to_numpy())
+            rows.append({
+                "budget": int(arm["budget"]),
+                "condition": str(condition),
+                "band": str(band),
+                "within_heavy_label": arm["within_heavy_label"],
+                "cross_heavy_label": arm["cross_heavy_label"],
+                "n_seeds": int(len(block)),
+                "within_heavy_mean": float(block["residual_fraction_within"].mean()),
+                "cross_heavy_mean": float(block["residual_fraction_cross"].mean()),
+                "cross_minus_within": float(
+                    (block["residual_fraction_cross"] - block["residual_fraction_within"]).mean()),
+                "t_stat": float(t_stat),
+                "p_value": float(p_value),
+            })
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    table["p_holm"] = np.nan
+    for _, idx in table.groupby("condition").groups.items():
+        table.loc[idx, "p_holm"] = adjust_pvalues(table.loc[idx, "p_value"].to_numpy(), "holm")
+    table["significant"] = table["p_holm"] < 0.05
+    return table
+
+
+__all__ += [
+    "matched_budget_band_contrast",
+    "matched_budget_extremes",
+    "matched_budget_fit_contrast",
+    "matched_budget_groups",
+]
