@@ -2024,105 +2024,186 @@ __all__ += [
 ]
 
 
-def plot_matched_budget_contrast(
+#: Neutral colour for a panel that pools over fixation type rather than showing one --
+#: ``worst_cell`` and ``all_conditions`` are not a fixation type, so they do not borrow one
+#: of the three condition colours.
+_POOLED_PANEL_COLOR = "#6e6e6e"
+_ARM_HATCH = {"within-heavy": "", "cross-heavy": "////"}
+
+
+def _violin_arm_pair(ax, within_values: np.ndarray, cross_values: np.ndarray, x: float, *, color: str,
+                     width: float = 0.34, gap: float = 0.19, median_halfwidth: float = 0.14) -> float:
+    """Two violins (within-heavy at ``x - gap``, cross-heavy at ``x + gap``) in one colour.
+
+    Cross-heavy is hatched rather than a different colour or alpha -- colour is already
+    carrying the condition, so arm needs its own channel (the project's existing
+    ``CONDITION_HATCHES`` reasoning, applied here to arm instead of condition). Returns the
+    larger of the two samples' maxima, so the caller can finalise every panel's y-limit in
+    one pass after every panel is drawn, rather than per violin.
+    """
+    local_max = 0.0
+    for values, offset, arm in ((within_values, -gap, "within-heavy"), (cross_values, gap, "cross-heavy")):
+        values = np.asarray(values, dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            continue
+        parts = ax.violinplot([values], positions=[x + offset], widths=width, showextrema=False, showmedians=False)
+        for body in parts["bodies"]:
+            body.set_facecolor(color)
+            body.set_edgecolor(INK)
+            body.set_linewidth(0.7)
+            body.set_alpha(0.88)
+            if _ARM_HATCH[arm]:
+                body.set_hatch(_ARM_HATCH[arm])
+        median = float(np.median(values))
+        ax.plot([x + offset - median_halfwidth, x + offset + median_halfwidth], [median, median],
+                color=INK, linewidth=1.3, solid_capstyle="butt", zorder=5)
+        local_max = max(local_max, float(np.max(values)))
+    return local_max
+
+
+def _arm_legend_handles():
+    from matplotlib.patches import Patch
+
+    return [
+        Patch(facecolor="white", edgecolor=INK, linewidth=0.8, label="within-heavy"),
+        Patch(facecolor="white", edgecolor=INK, linewidth=0.8, hatch=_ARM_HATCH["cross-heavy"], label="cross-heavy"),
+    ]
+
+
+def plot_drive_rank_contrast(
+    long: pd.DataFrame,
     contrast: pd.DataFrame,
     *,
-    conditions: Sequence[str] = ("worst_cell", *CONDITION_ORDER),
+    conditions: Sequence[str] = ("worst_cell", "all_conditions", *CONDITION_ORDER),
     dense_value: float | None = None,
-    figsize: tuple[float, float] = (9.2, 2.6),
+    figsize: tuple[float, float] = (12.5, 2.8),
 ):
-    """Within-heavy vs. cross-heavy fit at every matched budget, one panel per condition.
+    """Within-heavy vs. cross-heavy fit at every matched drive rank, as violins, one panel per condition.
 
-    Each budget is a pair of points joined by a line: the within-heavy configuration's mean
-    on the left, the cross-heavy configuration's on the right. A downward slope is cross
-    rank costing more fit than within rank at the same total parameter count. Only budgets
-    the Holm correction leaves significant within their panel carry a bracket, matching the
-    chapter's convention of marking significance rather than every comparison.
+    ``long`` (:func:`fixation_mrnn_audit.matched_drive_rank_fit_long`) supplies the violins --
+    seeds x regions per (drive rank, condition, arm); ``contrast``
+    (:func:`fixation_mrnn_audit.matched_drive_rank_fit_contrast`) supplies the Holm-corrected
+    significance brackets, which are paired by seed only. The three fixation-type panels use
+    that condition's standard colour; ``worst_cell`` (the minimax objective's own quantity)
+    and ``all_conditions`` (the mean over fixation types this chapter often reports beside the
+    per-condition breakdown) are not one fixation type and stay neutral. Axis limits and
+    brackets are finalised only after every panel is drawn, not per panel, so sharing a
+    y-axis cannot let a later panel silently rescale an earlier one.
     """
-    panel_titles = {"worst_cell": "worst region × condition"}
+    panel_titles = {"worst_cell": "worst region × condition", "all_conditions": "mean over conditions"}
     fig, axes = plt.subplots(1, len(conditions), figsize=figsize, sharey=True)
     axes = np.atleast_1d(axes)
+
+    panels = []
     for ax, condition in zip(axes, conditions):
-        block = contrast[contrast["condition"] == condition].sort_values("budget").reset_index(drop=True)
+        block = long[long["condition"] == condition]
         if block.empty:
             ax.set_visible(False)
             continue
-        x = np.arange(len(block))
-        for xi, row in zip(x, block.itertuples()):
-            ax.plot([xi - 0.15, xi + 0.15], [row.within_heavy_mean, row.cross_heavy_mean],
-                    color=MUTED_INK, linewidth=1.0, zorder=2)
-        ax.scatter(x - 0.15, block["within_heavy_mean"], s=30, color=REPORTED_COLOR, zorder=3,
-                   label="within-heavy")
-        ax.scatter(x + 0.15, block["cross_heavy_mean"], s=30, color=CORRECTED_COLOR, zorder=3,
-                   label="cross-heavy")
+        ranks = sorted(block["drive_rank"].unique())
+        color = CONDITION_COLORS.get(condition, _POOLED_PANEL_COLOR)
+        local_max = 0.0
+        for xi, drive_rank in enumerate(ranks):
+            cell = block[block["drive_rank"] == drive_rank]
+            within_values = cell[cell["arm"] == "within-heavy"]["r2_vs_ceiling"].to_numpy()
+            cross_values = cell[cell["arm"] == "cross-heavy"]["r2_vs_ceiling"].to_numpy()
+            local_max = max(local_max, _violin_arm_pair(ax, within_values, cross_values, xi, color=color))
         if dense_value is not None:
             ax.axhline(dense_value, color=MUTED_INK, linewidth=0.8, linestyle=":", zorder=1)
-        for xi, row in zip(x, block.itertuples()):
-            if bool(row.significant):
-                top = max(row.within_heavy_mean, row.cross_heavy_mean)
-                add_significance_bracket(ax, xi - 0.15, xi + 0.15, top + 0.003, "*", fontsize=7.5)
-        ax.set_xticks(x)
-        ax.set_xticklabels(block["budget"])
-        ax.set_xlabel("matched budget")
+        ax.set_xticks(range(len(ranks)))
+        ax.set_xticklabels(ranks)
+        ax.set_xlabel("total bottleneck dimension\n($r_w+3r_c$)", fontsize=7)
         ax.set_title(panel_titles.get(condition, CONDITION_SHORT_LABELS.get(condition, condition)), fontsize=8)
         nice_axis(ax)
+        panels.append((ax, condition, ranks, local_max))
+
+    y_max = max((m for *_, m in panels), default=1.0)
+    step = max(y_max * 0.045, 0.01)
+    for ax, condition, ranks, local_max in panels:
+        ax.set_ylim(top=max(y_max, local_max) + step * 2.4)
+        for xi, drive_rank in enumerate(ranks):
+            row = contrast[(contrast["condition"] == condition) & (contrast["drive_rank"] == drive_rank)]
+            if row.empty or not bool(row.iloc[0]["significant"]):
+                continue
+            top = max(
+                float(long[(long["condition"] == condition) & (long["drive_rank"] == drive_rank)]["r2_vs_ceiling"].max()),
+                0.0,
+            )
+            add_significance_bracket(ax, xi - 0.19, xi + 0.19, top + step * 0.6, str(row.iloc[0]["stars"]), fontsize=7.0)
     axes[0].set_ylabel("$R^2$ / ceiling")
-    axes[-1].legend(frameon=False, fontsize=6.5, loc="lower left")
+    axes[-1].legend(handles=_arm_legend_handles(), frameon=False, fontsize=6.5, loc="lower left")
     fig.tight_layout()
     return fig
 
 
-def plot_matched_budget_band_contrast(
+def plot_drive_rank_band_contrast(
+    long: pd.DataFrame,
     contrast: pd.DataFrame,
     *,
     conditions: Sequence[str] = CONDITION_ORDER,
     bands: Sequence[str] = ("0-5 Hz", "5-10 Hz", "10-20 Hz", "20-50 Hz"),
-    figsize: tuple[float, float] = (9.4, 6.4),
+    figsize: tuple[float, float] = (12.0, 6.6),
 ):
-    """Within-heavy vs. cross-heavy residual fraction per band, one row per condition.
+    """Within-heavy vs. cross-heavy residual fraction per band, as violins, one row per condition.
 
-    Same slope convention as :func:`plot_matched_budget_contrast`, but higher is worse here
-    -- residual fraction is the share of that band's target power the fit fails to
-    reproduce, so the axis starts at zero. A slope that only appears for interactive face is
-    the fast-structure failure already documented in the dense model (``fixation_mrnn_target_loss``),
-    now asked whether a cross bottleneck widens it more than an equal-sized within bottleneck.
+    Rows share the condition's standard colour; arm is hatched as in
+    :func:`plot_drive_rank_contrast`. Residual fraction is the share of that band's target
+    power the fit fails to reproduce, so higher is worse and each axis starts at zero -- but
+    bands differ by an order of magnitude in scale (slow bands are reproduced far better than
+    fast ones), so the y-axis is shared down each **column** (one band, three conditions)
+    rather than across the whole figure, and -- as in :func:`plot_drive_rank_contrast` -- is
+    set once after every panel in that column is drawn, not per panel: setting it per panel
+    under a shared axis let the last-drawn panel's scale silently win for the whole column,
+    which was the distorted axis in the previous version of this figure.
     """
-    fig, axes = plt.subplots(len(conditions), len(bands), figsize=figsize, sharex=False, sharey="row")
+    fig, axes = plt.subplots(len(conditions), len(bands), figsize=figsize, sharex=False, sharey=False)
     axes = np.atleast_2d(axes)
+    column_max = [0.0] * len(bands)
+    panels = []
     for row_idx, condition in enumerate(conditions):
+        color = CONDITION_COLORS.get(condition, _POOLED_PANEL_COLOR)
         for col_idx, band in enumerate(bands):
             ax = axes[row_idx, col_idx]
-            block = (contrast[(contrast["condition"] == condition) & (contrast["band"] == band)]
-                     .sort_values("budget").reset_index(drop=True))
+            block = long[(long["condition"] == condition) & (long["band"] == band)]
             if block.empty:
                 ax.set_visible(False)
                 continue
-            x = np.arange(len(block))
-            for xi, row in zip(x, block.itertuples()):
-                ax.plot([xi - 0.15, xi + 0.15], [row.within_heavy_mean, row.cross_heavy_mean],
-                        color=MUTED_INK, linewidth=1.0, zorder=2)
-            ax.scatter(x - 0.15, block["within_heavy_mean"], s=20, color=REPORTED_COLOR, zorder=3)
-            ax.scatter(x + 0.15, block["cross_heavy_mean"], s=20, color=CORRECTED_COLOR, zorder=3)
-            for xi, row in zip(x, block.itertuples()):
-                if bool(row.significant):
-                    top = max(row.within_heavy_mean, row.cross_heavy_mean)
-                    add_significance_bracket(ax, xi - 0.15, xi + 0.15, top + 0.012, "*", fontsize=6.0)
-            ax.set_xticks(x)
-            ax.set_xticklabels(block["budget"], fontsize=6.5)
-            ax.set_ylim(bottom=0)
-            nice_axis(ax)
+            ranks = sorted(block["drive_rank"].unique())
+            local_max = 0.0
+            for xi, drive_rank in enumerate(ranks):
+                cell = block[block["drive_rank"] == drive_rank]
+                within_values = cell[cell["arm"] == "within-heavy"]["residual_fraction"].to_numpy()
+                cross_values = cell[cell["arm"] == "cross-heavy"]["residual_fraction"].to_numpy()
+                local_max = max(local_max, _violin_arm_pair(ax, within_values, cross_values, xi, color=color,
+                                                            width=0.3, gap=0.18, median_halfwidth=0.12))
+            ax.set_xticks(range(len(ranks)))
+            ax.set_xticklabels(ranks, fontsize=6.5)
             if row_idx == 0:
                 ax.set_title(band, fontsize=8)
             if col_idx == 0:
                 ax.set_ylabel(CONDITION_SHORT_LABELS.get(condition, condition), fontsize=7.5)
-    fig.supxlabel("matched budget", fontsize=8)
-    handles = [
-        plt.Line2D([0], [0], marker="o", color=REPORTED_COLOR, linestyle="", label="within-heavy"),
-        plt.Line2D([0], [0], marker="o", color=CORRECTED_COLOR, linestyle="", label="cross-heavy"),
-    ]
-    fig.legend(handles=handles, loc="upper right", frameon=False, fontsize=7)
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+            nice_axis(ax)
+            column_max[col_idx] = max(column_max[col_idx], local_max)
+            panels.append((ax, row_idx, col_idx, condition, ranks))
+
+    for ax, row_idx, col_idx, condition, ranks in panels:
+        step = max(column_max[col_idx] * 0.08, 0.01)
+        ax.set_ylim(0, column_max[col_idx] + step * 2.8)
+        for xi, drive_rank in enumerate(ranks):
+            row = contrast[(contrast["condition"] == condition) & (contrast["band"] == bands[col_idx])
+                           & (contrast["drive_rank"] == drive_rank)]
+            if row.empty or not bool(row.iloc[0]["significant"]):
+                continue
+            cell = long[(long["condition"] == condition) & (long["band"] == bands[col_idx])
+                       & (long["drive_rank"] == drive_rank)]
+            top = float(cell["residual_fraction"].max()) if not cell.empty else 0.0
+            add_significance_bracket(ax, xi - 0.18, xi + 0.18, top + step * 0.7, str(row.iloc[0]["stars"]), fontsize=6.0)
+
+    fig.supxlabel("total bottleneck dimension ($r_w+3r_c$)", fontsize=8)
+    fig.legend(handles=_arm_legend_handles(), loc="upper right", frameon=False, fontsize=7)
+    fig.tight_layout(rect=(0, 0, 1, 0.95))
     return fig
 
 
-__all__ += ["plot_matched_budget_band_contrast", "plot_matched_budget_contrast"]
+__all__ += ["plot_drive_rank_band_contrast", "plot_drive_rank_contrast"]

@@ -1723,7 +1723,7 @@ __all__ += ["flow_temporal_summary"]
 
 
 # --------------------------------------------------------------------------------------
-# Matched-budget within vs. cross contrast
+# Matched-drive-rank within vs. cross contrast
 # --------------------------------------------------------------------------------------
 #
 # Holding one side dense while the other is bottlenecked (the grid's own marginals, above)
@@ -1739,52 +1739,54 @@ __all__ += ["flow_temporal_summary"]
 # in the regime where both sides are actually squeezed.
 #
 # The functions below instead bottleneck both sides (no dense arm at all) and match cells
-# by total budget w + (n_regions - 1) * c, which is proportional to total recurrent weight
-# count. Two cells at the same budget spend it differently -- more on within vs. more on
-# cross -- which is the comparison the chapter actually wants.
+# by total **drive rank** -- the same quantity :func:`annotate_rank_grid` already names
+# ``drive_rank``, w + (n_regions - 1) * c, the bound on a region's pre-activation rank --
+# which is proportional to total recurrent weight count. Two cells at the same drive rank
+# spend it differently -- more on within vs. more on cross -- which is the comparison the
+# chapter actually wants. Displayed to the reader as "total bottleneck dimension".
 
 
-def matched_budget_groups(ranks: Sequence[int], *, n_regions: int = 4) -> pd.DataFrame:
-    """Every non-dense ``(r_w, r_c)`` grid cell, grouped by total recurrent-weight budget.
+def matched_drive_rank_groups(ranks: Sequence[int], *, n_regions: int = 4) -> pd.DataFrame:
+    """Every non-dense ``(r_w, r_c)`` grid cell, grouped by total drive rank.
 
-    ``budget`` is ``r_w + (n_regions - 1) * r_c``; cells sharing a budget spend the same
-    total number of recurrent weights differently. ``cross_budget_fraction`` is the share
-    of that budget spent on the cross-region side -- 0 is all within, 1 is all cross --
-    distinct from :func:`flow_temporal_summary`'s ``cross_fraction``, which is a measured
-    drive share rather than a parameter share. Budgets reached by only one cell are
-    dropped: there is nothing to compare them against.
+    ``drive_rank`` is ``r_w + (n_regions - 1) * r_c`` (the same bound :func:`annotate_rank_grid`
+    computes); cells sharing it spend the same total number of recurrent weights differently.
+    ``cross_drive_fraction`` is the share spent on the cross-region side -- 0 is all within, 1
+    is all cross -- distinct from :func:`flow_temporal_summary`'s ``cross_fraction``, which is
+    a measured drive share rather than a parameter share. Drive ranks reached by only one cell
+    are dropped: there is nothing to compare them against.
     """
     rows = [
         {
             "label": f"w{r_w}_c{r_c}",
             "rank_within": int(r_w),
             "rank_cross": int(r_c),
-            "budget": int(r_w) + (int(n_regions) - 1) * int(r_c),
+            "drive_rank": int(r_w) + (int(n_regions) - 1) * int(r_c),
         }
         for r_w in ranks for r_c in ranks
     ]
     table = pd.DataFrame(rows)
-    table["cross_budget_fraction"] = (int(n_regions) - 1) * table["rank_cross"] / table["budget"]
-    counts = table.groupby("budget")["label"].transform("nunique")
-    return table[counts >= 2].sort_values(["budget", "cross_budget_fraction"]).reset_index(drop=True)
+    table["cross_drive_fraction"] = (int(n_regions) - 1) * table["rank_cross"] / table["drive_rank"]
+    counts = table.groupby("drive_rank")["label"].transform("nunique")
+    return table[counts >= 2].sort_values(["drive_rank", "cross_drive_fraction"]).reset_index(drop=True)
 
 
-def matched_budget_extremes(groups: pd.DataFrame) -> pd.DataFrame:
-    """Within each matched budget, the most within-heavy cell paired with the most cross-heavy.
+def matched_drive_rank_extremes(groups: pd.DataFrame) -> pd.DataFrame:
+    """Within each matched drive rank, the most within-heavy cell paired with the most cross-heavy.
 
-    The largest within-vs-cross contrast the budget allows. A budget reached by more than
-    two cells has interior points too (worth plotting, e.g. the three-way matches at
-    budget 13 and 16 on the current grid) but they are not part of the paired contrast,
-    which needs exactly two arms per budget.
+    The largest within-vs-cross contrast the drive rank allows. A drive rank reached by more
+    than two cells has interior points too (worth plotting, e.g. the three-way matches at
+    drive rank 13 and 16 on the current grid) but they are not part of the paired contrast,
+    which needs exactly two arms per drive rank.
     """
     rows = []
-    for budget, block in groups.groupby("budget"):
-        low = block.loc[block["cross_budget_fraction"].idxmin()]
-        high = block.loc[block["cross_budget_fraction"].idxmax()]
+    for drive_rank, block in groups.groupby("drive_rank"):
+        low = block.loc[block["cross_drive_fraction"].idxmin()]
+        high = block.loc[block["cross_drive_fraction"].idxmax()]
         if low["label"] == high["label"]:
             continue
         rows.append({
-            "budget": int(budget),
+            "drive_rank": int(drive_rank),
             "within_heavy_label": str(low["label"]),
             "within_heavy_rank_within": int(low["rank_within"]),
             "within_heavy_rank_cross": int(low["rank_cross"]),
@@ -1792,112 +1794,158 @@ def matched_budget_extremes(groups: pd.DataFrame) -> pd.DataFrame:
             "cross_heavy_rank_within": int(high["rank_within"]),
             "cross_heavy_rank_cross": int(high["rank_cross"]),
         })
-    return pd.DataFrame(rows).sort_values("budget").reset_index(drop=True)
+    return pd.DataFrame(rows).sort_values("drive_rank").reset_index(drop=True)
 
 
-def matched_budget_fit_contrast(fit: pd.DataFrame, extremes: pd.DataFrame) -> pd.DataFrame:
-    """Paired within-heavy vs. cross-heavy fit at matched budget, worst cell and per condition.
+def matched_drive_rank_fit_long(fit: pd.DataFrame, extremes: pd.DataFrame) -> pd.DataFrame:
+    """Per-seed, per-region fit at every matched drive rank, tagged by arm -- the violins' data.
 
-    ``fit`` is :func:`fixation_mrnn_sweep.score_variant_fit`'s output. Every grid cell
-    shares the same seed list (:func:`fixation_mrnn_protocol.protocol_seeds`), so the two
-    arms of a budget are compared seed-for-seed rather than as two independent samples --
-    a paired test, not Welch's. ``p_holm`` corrects within each condition panel (including
-    the pooled ``worst_cell`` panel) across the budgets tested in it, matching the chapter's
-    convention of one correction per panel.
+    ``fit`` is :func:`fixation_mrnn_sweep.score_variant_fit`'s output. Region is kept rather
+    than averaged out, so each (drive rank, condition, arm) violin is drawn from seeds x
+    regions points rather than five; the paired significance test in
+    :func:`matched_drive_rank_fit_contrast` still pairs by seed only, averaging over region
+    first, so the richer violin is a display choice and does not add degrees of freedom to
+    the test. Two condition rows are added beyond the three fixation types:
+    ``all_conditions`` (mean over the three per seed and region -- the averaged-over-condition
+    view this chapter often reports beside the per-condition one) and ``worst_cell`` (the
+    minimax objective's own quantity: the minimum over region x condition per seed, which
+    cannot carry a region dimension because region is one of the two axes it minimises over).
+    """
+    labels = sorted(set(extremes["within_heavy_label"]) | set(extremes["cross_heavy_label"]))
+    block = fit[fit["label"].isin(labels)][["label", "seed", "region", "condition", "r2_vs_ceiling"]].copy()
+
+    all_conditions = (
+        block.groupby(["label", "seed", "region"])["r2_vs_ceiling"].mean().reset_index()
+        .assign(condition="all_conditions")
+    )
+    worst_cell = (
+        block.groupby(["label", "seed"])["r2_vs_ceiling"].min().reset_index()
+        .assign(condition="worst_cell", region="(pooled)")
+    )
+    long = pd.concat([block, all_conditions, worst_cell], ignore_index=True)
+
+    frames = []
+    for _, arm in extremes.iterrows():
+        for label, tag in ((arm["within_heavy_label"], "within-heavy"), (arm["cross_heavy_label"], "cross-heavy")):
+            tagged = long[long["label"] == label].copy()
+            tagged["drive_rank"] = int(arm["drive_rank"])
+            tagged["arm"] = tag
+            frames.append(tagged)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def matched_drive_rank_fit_contrast(long: pd.DataFrame) -> pd.DataFrame:
+    """Paired within-heavy vs. cross-heavy fit at matched drive rank -- the stats behind the violins.
+
+    ``long`` is :func:`matched_drive_rank_fit_long`'s output. Averaged over region first (one
+    value per label x seed x condition; ``worst_cell`` already has none), because every grid
+    cell shares the same seed list (:func:`fixation_mrnn_protocol.protocol_seeds`) and the
+    comparison is paired by seed, not region. ``p_holm`` corrects within each condition panel
+    across the drive ranks tested in it; ``stars`` follows the chapter's convention of marking
+    only what survives it.
     """
     from dal_monte_2022_analysis.core.stats.correction import adjust_pvalues
+    from dal_monte_2022_analysis.core.stats.proportions import significance_stars
     from dal_monte_2022_analysis.core.stats.tests import paired_ttest
 
-    per_condition = fit.groupby(["label", "seed", "condition"])["r2_vs_ceiling"].mean().reset_index()
-    worst_cell = per_condition.groupby(["label", "seed"])["r2_vs_ceiling"].min().reset_index()
-    worst_cell["condition"] = "worst_cell"
-    long = pd.concat([per_condition, worst_cell], ignore_index=True)
-
+    per_seed = long.groupby(["drive_rank", "arm", "condition", "seed"])["r2_vs_ceiling"].mean().reset_index()
     rows = []
-    for _, arm in extremes.iterrows():
-        within = long[long["label"] == arm["within_heavy_label"]]
-        cross = long[long["label"] == arm["cross_heavy_label"]]
-        merged = within.merge(cross, on=["seed", "condition"], suffixes=("_within", "_cross"))
-        for condition, block in merged.groupby("condition"):
-            if len(block) < 2:
-                continue
-            t_stat, p_value = paired_ttest(
-                block["r2_vs_ceiling_cross"].to_numpy(), block["r2_vs_ceiling_within"].to_numpy())
-            rows.append({
-                "budget": int(arm["budget"]),
-                "condition": str(condition),
-                "within_heavy_label": arm["within_heavy_label"],
-                "cross_heavy_label": arm["cross_heavy_label"],
-                "n_seeds": int(len(block)),
-                "within_heavy_mean": float(block["r2_vs_ceiling_within"].mean()),
-                "cross_heavy_mean": float(block["r2_vs_ceiling_cross"].mean()),
-                "cross_minus_within": float((block["r2_vs_ceiling_cross"] - block["r2_vs_ceiling_within"]).mean()),
-                "t_stat": float(t_stat),
-                "p_value": float(p_value),
-            })
+    for (drive_rank, condition), block in per_seed.groupby(["drive_rank", "condition"]):
+        wide = block.pivot(index="seed", columns="arm", values="r2_vs_ceiling").dropna()
+        if len(wide) < 2 or "within-heavy" not in wide or "cross-heavy" not in wide:
+            continue
+        t_stat, p_value = paired_ttest(wide["cross-heavy"].to_numpy(), wide["within-heavy"].to_numpy())
+        rows.append({
+            "drive_rank": int(drive_rank),
+            "condition": str(condition),
+            "n_seeds": int(len(wide)),
+            "within_heavy_mean": float(wide["within-heavy"].mean()),
+            "cross_heavy_mean": float(wide["cross-heavy"].mean()),
+            "cross_minus_within": float((wide["cross-heavy"] - wide["within-heavy"]).mean()),
+            "t_stat": float(t_stat),
+            "p_value": float(p_value),
+        })
     table = pd.DataFrame(rows)
     if table.empty:
         return table
     table["p_holm"] = np.nan
     for _, idx in table.groupby("condition").groups.items():
         table.loc[idx, "p_holm"] = adjust_pvalues(table.loc[idx, "p_value"].to_numpy(), "holm")
-    table["significant"] = table["p_holm"] < 0.05
+    table["stars"] = table["p_holm"].map(significance_stars)
+    table["significant"] = table["stars"] != "n.s."
     return table
 
 
-def matched_budget_band_contrast(band_by_condition: pd.DataFrame, extremes: pd.DataFrame) -> pd.DataFrame:
-    """Paired within-heavy vs. cross-heavy residual fraction per band and condition, at matched budget.
+def matched_drive_rank_band_long(band_by_condition: pd.DataFrame, extremes: pd.DataFrame) -> pd.DataFrame:
+    """Per-seed, per-region band recovery at every matched drive rank, tagged by arm.
 
-    ``band_by_condition`` is :func:`band_resolved_recovery_by_condition`'s output
-    concatenated across cells with a ``label`` column attached (as the ladder notebook does
-    for :func:`band_resolved_recovery`), regions pooled by mean per seed before the paired
-    contrast -- the same pooling :func:`self_vs_cross_band_recovery` uses. ``p_holm``
-    corrects within each condition panel across every (budget, band) cell tested in it.
+    ``band_by_condition`` is :func:`band_resolved_recovery_by_condition`'s output concatenated
+    across cells with a ``label`` column attached, as the ladder notebook does for
+    :func:`band_resolved_recovery`. No ``all_conditions`` row: recovery is read per fixation
+    type specifically, following :func:`band_resolved_recovery_by_condition`'s own reasoning.
+    """
+    labels = sorted(set(extremes["within_heavy_label"]) | set(extremes["cross_heavy_label"]))
+    block = band_by_condition[band_by_condition["label"].isin(labels)][
+        ["label", "seed", "region", "condition", "band", "residual_fraction"]
+    ].copy()
+    frames = []
+    for _, arm in extremes.iterrows():
+        for label, tag in ((arm["within_heavy_label"], "within-heavy"), (arm["cross_heavy_label"], "cross-heavy")):
+            tagged = block[block["label"] == label].copy()
+            tagged["drive_rank"] = int(arm["drive_rank"])
+            tagged["arm"] = tag
+            frames.append(tagged)
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+
+def matched_drive_rank_band_contrast(long: pd.DataFrame) -> pd.DataFrame:
+    """Paired within-heavy vs. cross-heavy residual fraction per band and condition, at matched drive rank.
+
+    ``long`` is :func:`matched_drive_rank_band_long`'s output; see
+    :func:`matched_drive_rank_fit_contrast` for the region-averaging and correction convention,
+    applied here per (drive rank, condition, band) panel.
     """
     from dal_monte_2022_analysis.core.stats.correction import adjust_pvalues
+    from dal_monte_2022_analysis.core.stats.proportions import significance_stars
     from dal_monte_2022_analysis.core.stats.tests import paired_ttest
 
     per_seed = (
-        band_by_condition.groupby(["label", "seed", "condition", "band"])["residual_fraction"]
+        long.groupby(["drive_rank", "arm", "condition", "band", "seed"])["residual_fraction"]
         .mean().reset_index()
     )
     rows = []
-    for _, arm in extremes.iterrows():
-        within = per_seed[per_seed["label"] == arm["within_heavy_label"]]
-        cross = per_seed[per_seed["label"] == arm["cross_heavy_label"]]
-        merged = within.merge(cross, on=["seed", "condition", "band"], suffixes=("_within", "_cross"))
-        for (condition, band), block in merged.groupby(["condition", "band"]):
-            if len(block) < 2:
-                continue
-            t_stat, p_value = paired_ttest(
-                block["residual_fraction_cross"].to_numpy(), block["residual_fraction_within"].to_numpy())
-            rows.append({
-                "budget": int(arm["budget"]),
-                "condition": str(condition),
-                "band": str(band),
-                "within_heavy_label": arm["within_heavy_label"],
-                "cross_heavy_label": arm["cross_heavy_label"],
-                "n_seeds": int(len(block)),
-                "within_heavy_mean": float(block["residual_fraction_within"].mean()),
-                "cross_heavy_mean": float(block["residual_fraction_cross"].mean()),
-                "cross_minus_within": float(
-                    (block["residual_fraction_cross"] - block["residual_fraction_within"]).mean()),
-                "t_stat": float(t_stat),
-                "p_value": float(p_value),
-            })
+    for (drive_rank, condition, band), block in per_seed.groupby(["drive_rank", "condition", "band"]):
+        wide = block.pivot(index="seed", columns="arm", values="residual_fraction").dropna()
+        if len(wide) < 2 or "within-heavy" not in wide or "cross-heavy" not in wide:
+            continue
+        t_stat, p_value = paired_ttest(wide["cross-heavy"].to_numpy(), wide["within-heavy"].to_numpy())
+        rows.append({
+            "drive_rank": int(drive_rank),
+            "condition": str(condition),
+            "band": str(band),
+            "n_seeds": int(len(wide)),
+            "within_heavy_mean": float(wide["within-heavy"].mean()),
+            "cross_heavy_mean": float(wide["cross-heavy"].mean()),
+            "cross_minus_within": float((wide["cross-heavy"] - wide["within-heavy"]).mean()),
+            "t_stat": float(t_stat),
+            "p_value": float(p_value),
+        })
     table = pd.DataFrame(rows)
     if table.empty:
         return table
     table["p_holm"] = np.nan
     for _, idx in table.groupby("condition").groups.items():
         table.loc[idx, "p_holm"] = adjust_pvalues(table.loc[idx, "p_value"].to_numpy(), "holm")
-    table["significant"] = table["p_holm"] < 0.05
+    table["stars"] = table["p_holm"].map(significance_stars)
+    table["significant"] = table["stars"] != "n.s."
     return table
 
 
 __all__ += [
-    "matched_budget_band_contrast",
-    "matched_budget_extremes",
-    "matched_budget_fit_contrast",
-    "matched_budget_groups",
+    "matched_drive_rank_band_contrast",
+    "matched_drive_rank_band_long",
+    "matched_drive_rank_extremes",
+    "matched_drive_rank_fit_contrast",
+    "matched_drive_rank_fit_long",
+    "matched_drive_rank_groups",
 ]

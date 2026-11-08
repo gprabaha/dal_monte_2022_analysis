@@ -1,4 +1,4 @@
-"""Author the matched-budget within-vs-cross bottleneck notebook (task 02c of the final series).
+"""Author the matched-drive-rank within-vs-cross bottleneck notebook (task 02c of the final series).
 
     conda run -n gaze_processing python notebooks/mrnn_chapter/_build_02c_within_vs_cross_bottleneck.py
 """
@@ -18,21 +18,22 @@ HEADER = r"""# 02c · Does a cross-regional bottleneck cost more than a within-r
 *Follows task 02's rank grid. Answers one question task 02's own marginals cannot: not
 "which rank binds first" -- three cross blocks to one within block means cross always
 binds first by counting alone -- but whether cross-region rank is a more valuable place to
-spend a fixed weight budget than within-region rank.*
+spend a fixed weight count than within-region rank.*
 
 **Why this is not task 02's dense-side marginals.** Section 1 below works the arithmetic:
 holding one side fully dense and squeezing only the other cannot be made parameter-matched
 in the regime that matters, so this task bottlenecks *both* sides and matches cells by
-total weight budget instead. Section 2 builds that matched grid; Section 3 is the only
-place anything new gets trained, gated the same way task 02 gates it; Sections 4-6 are the
-comparison, read against the noise ceiling, per fixation type, and per frequency band.
+**total bottleneck dimension** (what the grid already calls ``drive_rank``, $r_w+3r_c$)
+instead. Section 2 builds that matched grid; Section 3 is the only place anything new gets
+trained, gated the same way task 02 gates it; Sections 4-6 are the comparison, read against
+the noise ceiling, per fixation type, and per frequency band.
 
 | Section | |
 |---|---|
 | 1 | The parameter-counting problem with a dense side |
-| 2 | Matching both sides: the budget grid |
+| 2 | Matching both sides: the total-bottleneck-dimension grid |
 | 3 | Run state and submission (off by default) |
-| 4 | Fit at matched budget: worst cell and per condition |
+| 4 | Fit at matched total bottleneck dimension: worst cell and per condition |
 | 5 | Which fixation type costs the most |
 | 6 | Which frequency band costs the most |
 | 7 | Reading the result |
@@ -189,34 +190,35 @@ display(r_c_grid.round(2))
 '''
 
 
-S2_TEXT = r"""## 2. Matching both sides: the budget grid
+S2_TEXT = r"""## 2. Matching both sides: the total-bottleneck-dimension grid
 
 No dense arm. Every configuration bottlenecks within at $r_w$ and cross at $r_c$; its
-**budget** is $r_w + 3\,r_c$, proportional to its total recurrent-weight count (the fixed
-$320$-per-unit scale cancels in any comparison). Two configurations sharing a budget spend
-it differently -- more on within, more on cross -- which is the matched comparison this
-task runs. `cross_budget_fraction` is the share of the budget spent cross-region: 0 is all
-within, 1 is all cross.
+**total bottleneck dimension** is $r_w + 3\,r_c$ -- the same quantity task 02's own
+marginals plot calls ``drive_rank``, the bound on a region's pre-activation rank -- and is
+proportional to its total recurrent-weight count (the fixed $320$-per-unit scale cancels in
+any comparison). Two configurations sharing it spend it differently -- more on within, more
+on cross -- which is the matched comparison this task runs. `cross_drive_fraction` is the
+share spent cross-region: 0 is all within, 1 is all cross.
 
 Task 02's grid used $r\in\{1,2,3,5,10\}$; adding **$r=4$** closes enough of the gap to
 match every configuration already on disk against a genuine opposite-heavy partner at the
-same budget, without a wide new rank sweep. Budgets reached by three configurations (13 and
-16, below) also show the interior point for context, though the paired contrast in Sections
-4-6 only ever uses the two extremes -- the largest within-vs-cross contrast the budget
-allows.
+same total bottleneck dimension, without a wide new rank sweep. Dimensions reached by three
+configurations (13 and 16, below) also show the interior point for context, though the
+paired contrast in Sections 4-6 only ever uses the two extremes -- the largest
+within-vs-cross contrast that total allows.
 """
 
 S2_CODE = r'''
-groups = audit.matched_budget_groups(EXTENDED_RANKS, n_regions=N_REGIONS)
-extremes = audit.matched_budget_extremes(groups)
+groups = audit.matched_drive_rank_groups(EXTENDED_RANKS, n_regions=N_REGIONS)
+extremes = audit.matched_drive_rank_extremes(groups)
 
 existing_labels = {f"w{w}_c{c}" for w in ORIGINAL_RANKS for c in ORIGINAL_RANKS}
 groups["already_trained"] = groups["label"].isin(existing_labels)
-display(Markdown(f"**{len(groups)} matched configurations across {groups['budget'].nunique()} "
-                 f"budgets** ({int(groups['already_trained'].sum())} already on disk from task "
-                 f"02, {int((~groups['already_trained']).sum())} new at rank 4)."))
-display(groups[["budget", "label", "rank_within", "rank_cross", "cross_budget_fraction", "already_trained"]]
-       .sort_values(["budget", "cross_budget_fraction"]))
+display(Markdown(f"**{len(groups)} matched configurations across {groups['drive_rank'].nunique()} "
+                 f"total-bottleneck-dimension levels** ({int(groups['already_trained'].sum())} already "
+                 f"on disk from task 02, {int((~groups['already_trained']).sum())} new at rank 4)."))
+display(groups[["drive_rank", "label", "rank_within", "rank_cross", "cross_drive_fraction", "already_trained"]]
+       .sort_values(["drive_rank", "cross_drive_fraction"]))
 
 display(Markdown("**The paired extremes used in Sections 4-6:**"))
 display(extremes)
@@ -279,12 +281,16 @@ else:
 '''
 
 
-S4_TEXT = r"""## 4. Fit at matched budget: worst cell and per condition
+S4_TEXT = r"""## 4. Fit at matched total bottleneck dimension: worst cell and per condition
 
 All configurations in Section 2's grid, trained or not, so the panels below fill in as
-Section 3's runs complete. `worst_cell` is the minimum region x condition $R^2$/ceiling per
-seed -- the quantity the minimax objective actually optimised; the three condition panels
-are its breakdown by fixation type, pooled over region.
+Section 3's runs complete. Each violin is within-heavy or cross-heavy at one total
+bottleneck dimension, drawn from every seed x region point (``worst_cell`` only has seeds,
+since it is already the minimum over region x condition); brackets mark the total-bottleneck
+dimensions the Holm correction leaves significant, paired by seed. `worst_cell` is the
+minimax objective's own quantity; `all_conditions` is the mean over fixation types this
+chapter often reports beside the per-condition breakdown; the three condition panels use
+that fixation type's standard colour, with cross-heavy hatched.
 """
 
 S4_CODE = r'''
@@ -294,10 +300,11 @@ done = all_inventory[all_inventory["complete"]]
 display(Markdown(f"**{int(done.shape[0])}** of **{all_inventory.shape[0]}** extended-grid runs complete."))
 
 if done.empty:
-    fit = fit_contrast = None
+    fit = fit_long = fit_contrast = None
 else:
     fit = cached("extended_grid_fit", lambda: sweep.score_variant_fit(done, ceiling_by_region, ceiling_by_cell=ceiling_by_cell))
-    fit_contrast = audit.matched_budget_fit_contrast(fit, extremes)
+    fit_long = audit.matched_drive_rank_fit_long(fit, extremes)
+    fit_contrast = audit.matched_drive_rank_fit_contrast(fit_long)
     display(fit_contrast.round(4))
 
     full_dirs = audit.seed_run_dirs(LADDER_ROOT / "full")
@@ -308,7 +315,7 @@ else:
         full_fit = sweep.score_variant_fit(full_inv, ceiling_by_region, ceiling_by_cell=ceiling_by_cell)
         dense_value = float(full_fit.groupby("seed")["r2_vs_ceiling"].min().mean())
 
-    show(aviz.plot_matched_budget_contrast(fit_contrast, dense_value=dense_value), "fig01_matched_budget_contrast")
+    show(aviz.plot_drive_rank_contrast(fit_long, fit_contrast, dense_value=dense_value), "fig01_drive_rank_contrast")
 '''
 
 
@@ -322,12 +329,10 @@ for the dense model itself.
 
 S5_CODE = r'''
 if fit_contrast is not None and not fit_contrast.empty:
-    by_condition = (fit_contrast[fit_contrast["condition"] != "worst_cell"]
-                    .groupby("condition")[["cross_minus_within"]].mean()
+    named_conditions = fit_contrast[~fit_contrast["condition"].isin(["worst_cell", "all_conditions"])]
+    by_condition = (named_conditions.groupby("condition")[["cross_minus_within"]].mean()
                     .rename(columns={"cross_minus_within": "mean cross-within gap"}))
-    by_condition["n_significant_budgets"] = (
-        fit_contrast[fit_contrast["condition"] != "worst_cell"]
-        .groupby("condition")["significant"].sum())
+    by_condition["n_significant_dimensions"] = named_conditions.groupby("condition")["significant"].sum()
     display(by_condition.round(4))
 '''
 
@@ -335,30 +340,34 @@ if fit_contrast is not None and not fit_contrast.empty:
 S6_TEXT = r"""## 6. Which frequency band costs the most
 
 Per-condition, per-band residual fraction (target power the fit fails to reproduce),
-contrasted the same way: within-heavy vs. cross-heavy at matched budget. Bands follow the
-ladder's own split (Nyquist 50 Hz at 10 ms bins); `band_resolved_recovery_by_condition` is
-the per-condition counterpart of the function the ladder notebook already uses pooled over
-condition.
+contrasted the same way: within-heavy vs. cross-heavy violins at matched total bottleneck
+dimension, one row per fixation type in its standard colour, one column per band. Bands
+follow the ladder's own split (Nyquist 50 Hz at 10 ms bins); `band_resolved_recovery_by_condition`
+is the per-condition counterpart of the function the ladder notebook already uses pooled over
+condition. Each band column has its own y-scale (bands differ by an order of magnitude in
+how well they are reproduced), fixed once every panel in that column is drawn.
 """
 
 S6_CODE = r'''
 if done.empty:
-    band_contrast = None
+    band_long = band_contrast = None
 else:
     band_by_condition = cached("band_recovery_by_condition", lambda: pd.concat(
         [audit.band_resolved_recovery_by_condition(r.run_dir).assign(label=r.label) for r in done.itertuples()],
         ignore_index=True))
-    band_contrast = audit.matched_budget_band_contrast(band_by_condition, extremes)
+    band_long = audit.matched_drive_rank_band_long(band_by_condition, extremes)
+    band_contrast = audit.matched_drive_rank_band_contrast(band_long)
     display(band_contrast.round(4))
-    show(aviz.plot_matched_budget_band_contrast(band_contrast), "fig02_matched_budget_band_contrast")
+    show(aviz.plot_drive_rank_band_contrast(band_long, band_contrast), "fig02_drive_rank_band_contrast")
 '''
 
 
 S7 = r"""## 7. Reading the result
 
-**The headline comparison.** Section 4's `worst_cell` panel, read budget by budget: a
-downward slope from within-heavy to cross-heavy is cross rank costing more fit than within
-rank at the same parameter count; Holm-significant budgets are marked.
+**The headline comparison.** Section 4's `worst_cell` panel, read dimension by dimension: a
+cross-heavy violin sitting below its within-heavy partner is cross rank costing more fit
+than within rank at the same total bottleneck dimension; Holm-significant dimensions are
+marked.
 
 **Which fixation type carries it.** Section 5. If the gap concentrates in interactive face,
 it is the same failure the dense model already shows (`fixation_mrnn_target_loss.py`:
@@ -366,12 +375,13 @@ roughly half the target energy, most of the residual) made worse by a cross bott
 specifically, not a new finding about fixation type in general.
 
 **Which frequency band carries it.** Section 6. The prediction, following the dense model's
-own band recovery, is that the gap -- if there is one -- sits in 10-20 Hz and climbs with
-budget, not in the slow 0-5 Hz band every configuration already reproduces.
+own band recovery, is that the gap -- if there is one -- sits in 10-20 Hz and grows with the
+total bottleneck dimension, not in the slow 0-5 Hz band every configuration already
+reproduces.
 
-**If more budgets would sharpen the claim.** Section 2/3's `new_labels` is driven entirely
-by `EXTENDED_RANKS`; adding ranks 6-9 the same way extends the budget ladder with no change
-to Sections 4-6, which read whatever :func:`matched_budget_groups` finds.
+**If more dimensions would sharpen the claim.** Section 2/3's `new_labels` is driven entirely
+by `EXTENDED_RANKS`; adding ranks 6-9 the same way extends the ladder with no change to
+Sections 4-6, which read whatever :func:`matched_drive_rank_groups` finds.
 """
 
 
