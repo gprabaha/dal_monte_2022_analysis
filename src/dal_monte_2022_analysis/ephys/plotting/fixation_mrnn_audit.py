@@ -2035,15 +2035,19 @@ _ARM_HATCH = {"within-heavy": "", "cross-heavy": "////"}
 
 
 def _violin_arm_pair(ax, within_values: np.ndarray, cross_values: np.ndarray, x: float, *, color: str,
-                     width: float = 0.34, gap: float = 0.19, median_halfwidth: float = 0.14) -> float:
+                     width: float = 0.34, gap: float = 0.19, median_halfwidth: float = 0.14,
+                     show_points: bool = True, seed: int = 0) -> float:
     """Two violins (within-heavy at ``x - gap``, cross-heavy at ``x + gap``) in one colour.
 
     Cross-heavy is hatched rather than a different colour or alpha -- colour is already
     carrying the condition, so arm needs its own channel (the project's existing
-    ``CONDITION_HATCHES`` reasoning, applied here to arm instead of condition). Returns the
-    larger of the two samples' maxima, so the caller can finalise every panel's y-limit in
-    one pass after every panel is drawn, rather than per violin.
+    ``CONDITION_HATCHES`` reasoning, applied here to arm instead of condition). Every value
+    is also drawn as a small jittered dot (``draw_bars``/``draw_boxes``'s "every fit a dot"
+    convention) unless ``show_points`` is false. Returns the larger of the two samples'
+    maxima, so the caller can finalise every panel's y-limit in one pass after every panel is
+    drawn, rather than per violin.
     """
+    rng = np.random.default_rng(seed)
     local_max = 0.0
     for values, offset, arm in ((within_values, -gap, "within-heavy"), (cross_values, gap, "cross-heavy")):
         values = np.asarray(values, dtype=float)
@@ -2061,6 +2065,10 @@ def _violin_arm_pair(ax, within_values: np.ndarray, cross_values: np.ndarray, x:
         median = float(np.median(values))
         ax.plot([x + offset - median_halfwidth, x + offset + median_halfwidth], [median, median],
                 color=INK, linewidth=1.3, solid_capstyle="butt", zorder=5)
+        if show_points:
+            jitter = rng.uniform(-width * 0.22, width * 0.22, values.size)
+            point_size = 5.0 if values.size <= 60 else 5.0 * np.sqrt(60 / values.size)
+            ax.scatter(x + offset + jitter, values, s=point_size, color=INK, alpha=0.3, lw=0, zorder=3.5)
         local_max = max(local_max, float(np.max(values)))
     return local_max
 
@@ -2142,43 +2150,64 @@ def plot_pooled_violin_contrast(
 __all__ += ["plot_drive_rank_band_contrast", "plot_drive_rank_contrast"]
 
 
-def _draw_bar_group(
+def _draw_gap_group(
     ax,
-    table: pd.DataFrame,
+    gap_long: pd.DataFrame,
+    summary: pd.DataFrame,
     *,
     x: str,
     x_order: Sequence[str],
     colors: Mapping[str, str],
-    value_col: str,
-    se_col: str,
     x_labels: Mapping[str, str],
-    bar_width: float,
+    width: float = 0.6,
     pairwise: pd.DataFrame | None = None,
+    seed: int = 0,
 ) -> tuple[float, float]:
-    """One axes of single (ungrouped) bars: capless SEM, a star where the bar beats zero, and
-    optional brackets between bars where ``pairwise`` (``condition_a``/``condition_b``/
-    ``significant``/``stars`` columns, e.g. :func:`fixation_mrnn_audit.matched_drive_rank_condition_contrast`)
-    says the two categories differ from each other. Returns ``(top, bottom)`` so a caller
-    drawing several of these axes can finalise one shared y-limit afterwards.
+    """One axes of single violins -- the per-replicate gap distribution, every value a dot
+    -- a zero reference line, a star where ``summary`` says the category's gap beats zero,
+    and optional brackets between categories from ``pairwise`` (``condition_a``/
+    ``condition_b``/``significant``/``stars`` columns, e.g.
+    :func:`fixation_mrnn_audit.matched_drive_rank_condition_contrast`). A journal that will
+    not accept a bar and an error bar will accept this: the full distribution the paired
+    test was computed from, not just its mean. Returns ``(top, bottom)`` so a caller drawing
+    several of these axes can finalise one shared y-limit afterwards.
     """
-    xs = [c for c in x_order if c in set(table[x])]
+    rng = np.random.default_rng(seed)
+    xs = [c for c in x_order if c in set(gap_long[x])]
     positions = np.arange(len(xs))
-    values = [float(table.loc[table[x] == c, value_col].iloc[0]) for c in xs]
-    errors = [float(table.loc[table[x] == c, se_col].iloc[0]) if se_col in table.columns else 0.0 for c in xs]
-    bar_colors = [colors.get(c, NEUTRAL_FILL) for c in xs]
-    ax.bar(positions, values, width=bar_width, color=bar_colors, edgecolor=INK, linewidth=0.8, zorder=2)
-    ax.errorbar(positions, values, yerr=errors, fmt="none", ecolor=INK, elinewidth=1.1, capsize=0, zorder=3)
-    ax.axhline(0.0, color=INK, linewidth=0.9, zorder=1)
+    tops: list[float] = []
+    bottoms: list[float] = []
+    for xi, c in zip(positions, xs):
+        values = gap_long.loc[gap_long[x] == c, "gap"].to_numpy(dtype=float)
+        values = values[np.isfinite(values)]
+        if values.size == 0:
+            tops.append(0.0)
+            bottoms.append(0.0)
+            continue
+        color = colors.get(c, NEUTRAL_FILL)
+        parts = ax.violinplot([values], positions=[xi], widths=width, showextrema=False, showmedians=False)
+        for body in parts["bodies"]:
+            body.set_facecolor(color)
+            body.set_edgecolor(INK)
+            body.set_linewidth(0.7)
+            body.set_alpha(0.82)
+        median = float(np.median(values))
+        ax.plot([xi - width * 0.32, xi + width * 0.32], [median, median], color=INK, linewidth=1.3,
+                solid_capstyle="butt", zorder=5)
+        jitter = rng.uniform(-width * 0.22, width * 0.22, values.size)
+        point_size = 5.0 if values.size <= 60 else 5.0 * np.sqrt(60 / values.size)
+        ax.scatter(xi + jitter, values, s=point_size, color=INK, alpha=0.3, lw=0, zorder=4)
+        tops.append(float(values.max()))
+        bottoms.append(float(values.min()))
 
-    top = max((v + e for v, e in zip(values, errors)), default=0.01)
-    bottom = min((v - e for v, e in zip(values, errors)), default=0.0)
-    scale = 0.08 * max(abs(top), abs(bottom), 0.01)
-    for xi, c, value, error in zip(positions, xs, values, errors):
-        row = table.loc[table[x] == c].iloc[0]
-        if bool(row.get("significant", False)):
-            va = "bottom" if value >= 0 else "top"
-            y = value + error + scale if value >= 0 else value - error - scale
-            ax.text(xi, y, "*", ha="center", va=va, fontsize=10, color=INK, zorder=4)
+    ax.axhline(0.0, color=INK, linewidth=0.9, zorder=1)
+    top = max(tops, default=0.01)
+    bottom = min(bottoms, default=0.0)
+    scale = 0.08 * max(abs(top), abs(bottom), 1e-6)
+    for xi, c, local_top in zip(positions, xs, tops):
+        row = summary.loc[summary[x] == c]
+        if not row.empty and bool(row.iloc[0].get("significant", False)):
+            ax.text(xi, local_top + scale, "*", ha="center", va="bottom", fontsize=10, color=INK, zorder=6)
 
     if pairwise is not None and not pairwise.empty:
         comparisons = []
@@ -2195,88 +2224,89 @@ def _draw_bar_group(
     return top, bottom
 
 
-def plot_gap_bars(
-    table: pd.DataFrame,
+def plot_gap_violins(
+    gap_long: pd.DataFrame,
+    summary: pd.DataFrame,
     *,
     x: str,
     x_order: Sequence[str],
     colors: Mapping[str, str] | None = None,
-    value_col: str = "cross_advantage",
-    se_col: str = "se",
     x_labels: Mapping[str, str] | None = None,
     pairwise: pd.DataFrame | None = None,
     ylabel: str = "cross-heavy advantage\n($R^2$ / ceiling)",
-    bar_width: float = 0.5,
-    figsize: tuple[float, float] = (5.0, 3.0),
+    width: float = 0.6,
+    figsize: tuple[float, float] = (5.0, 3.2),
 ):
-    """The cross-heavy advantage as bars, pooled over total bottleneck dimension, one axes.
+    """The per-replicate cross-heavy advantage as violins (every value a dot), one axes.
 
-    A capless SEM error bar and a star where the paired test beats its Holm correction
-    (:func:`fixation_mrnn_audit.matched_drive_rank_fit_pooled` and its band counterpart); an
-    optional bracket between two bars where ``pairwise`` -- the fixation-type-vs-fixation-type
-    test, :func:`fixation_mrnn_audit.matched_drive_rank_condition_contrast` -- finds them
-    different from *each other*, not just from zero. Zero is a solid reference line, not an
-    axis endpoint: this plots a difference, so which side a bar falls on is the finding.
+    ``gap_long`` (e.g. :func:`fixation_mrnn_audit.matched_drive_rank_fit_gap_long`) is one row
+    per (total bottleneck dimension, seed) -- the distribution a bar-and-error-bar summary
+    would otherwise hide. ``summary`` (its pooled-test counterpart) supplies the star where
+    the paired test clears its Holm correction; ``pairwise`` an optional bracket between two
+    categories that differ from *each other*
+    (:func:`fixation_mrnn_audit.matched_drive_rank_condition_contrast`), not just from zero.
+    Zero is a solid reference line, not an axis endpoint: this plots a difference, so which
+    side a violin falls on is the finding.
     """
     if colors is None:
         colors = {**CONDITION_COLORS, "all_conditions": _POOLED_PANEL_COLOR}
     fig, ax = plt.subplots(figsize=figsize)
-    _draw_bar_group(ax, table, x=x, x_order=x_order, colors=colors, value_col=value_col, se_col=se_col,
-                    x_labels=dict(x_labels or {}), bar_width=bar_width, pairwise=pairwise)
+    _draw_gap_group(ax, gap_long, summary, x=x, x_order=x_order, colors=colors,
+                    x_labels=dict(x_labels or {}), width=width, pairwise=pairwise)
     ax.set_ylabel(ylabel)
     fig.tight_layout()
     return fig
 
 
-def plot_gap_bars_by_panel(
-    table: pd.DataFrame,
+def plot_gap_violins_by_panel(
+    gap_long: pd.DataFrame,
+    summary: pd.DataFrame,
     *,
     panel_col: str,
     panel_order: Sequence[str],
     x: str,
     x_order: Sequence[str],
     colors: Mapping[str, str] | None = None,
-    value_col: str = "cross_advantage",
-    se_col: str = "se",
     x_labels: Mapping[str, str] | None = None,
     panel_labels: Mapping[str, str] | None = None,
     pairwise: pd.DataFrame | None = None,
     color_by: str = "x",
     ylabel: str = "cross-heavy advantage\n($R^2$ / ceiling)",
-    bar_width: float = 0.5,
+    width: float = 0.6,
     figsize: tuple[float, float] | None = None,
 ):
-    """:func:`plot_gap_bars`, one subplot per ``panel_col`` value, sharing one y-limit.
+    """:func:`plot_gap_violins`, one subplot per ``panel_col`` value, sharing one y-limit.
 
-    ``pairwise`` (optional) carries its own ``panel_col`` column, e.g.
-    :func:`fixation_mrnn_audit.matched_drive_rank_condition_contrast_by_region`'s ``region``
-    -- each subplot draws only the comparisons for its own panel. The y-limit is finalised
-    after every subplot is drawn, not per subplot, so a shared axis cannot let the
-    last-drawn panel silently resize the others. ``color_by="x"`` (default) colours each bar
-    by its own ``x`` category, e.g. fixation type on the x-axis within a region panel;
-    ``color_by="panel"`` instead gives every bar in a panel that panel's colour, e.g. one
-    fixation type per panel with regions on the x-axis.
+    ``summary`` and ``pairwise`` carry their own ``panel_col`` column (e.g.
+    :func:`fixation_mrnn_audit.matched_drive_rank_fit_by_region`'s ``region``) -- each
+    subplot reads only its own panel's rows. The y-limit is finalised after every subplot is
+    drawn, not per subplot, so a shared axis cannot let the last-drawn panel silently resize
+    the others. ``color_by="x"`` (default) colours each violin by its own ``x`` category,
+    e.g. fixation type on the x-axis within a region panel; ``color_by="panel"`` instead
+    gives every violin in a panel that panel's colour, e.g. one fixation type per panel with
+    regions on the x-axis.
     """
     labels = dict(x_labels or {})
     panel_labels = dict(panel_labels or {})
     if colors is None:
         colors = {**CONDITION_COLORS, "all_conditions": _POOLED_PANEL_COLOR}
-    panels = [p for p in panel_order if p in set(table[panel_col])]
-    figsize = figsize or (2.4 * len(panels) + 1.0, 3.0)
+    panels = [p for p in panel_order if p in set(gap_long[panel_col])]
+    figsize = figsize or (2.4 * len(panels) + 1.0, 3.2)
     fig, axes = plt.subplots(1, len(panels), figsize=figsize, sharey=True)
     axes = np.atleast_1d(axes)
 
     bounds = []
     for ax, panel in zip(axes, panels):
-        block = table[table[panel_col] == panel]
+        block = gap_long[gap_long[panel_col] == panel]
+        summary_block = summary[summary[panel_col] == panel] if panel_col in summary.columns else summary
         panel_pairwise = None
         if pairwise is not None and not pairwise.empty and panel_col in pairwise.columns:
             panel_pairwise = pairwise[pairwise[panel_col] == panel]
         elif pairwise is not None:
             panel_pairwise = pairwise
         panel_colors = colors if color_by == "x" else {c: colors.get(panel, NEUTRAL_FILL) for c in x_order}
-        top, bottom = _draw_bar_group(ax, block, x=x, x_order=x_order, colors=panel_colors, value_col=value_col,
-                                      se_col=se_col, x_labels=labels, bar_width=bar_width, pairwise=panel_pairwise)
+        top, bottom = _draw_gap_group(ax, block, summary_block, x=x, x_order=x_order, colors=panel_colors,
+                                      x_labels=labels, width=width, pairwise=panel_pairwise)
         title = panel_labels.get(panel) or CONDITION_SHORT_LABELS.get(panel) or REGION_LABELS.get(panel, str(panel))
         ax.set_title(title, fontsize=8.5)
         bounds.append((ax, top, bottom))
@@ -2330,7 +2360,7 @@ def plot_drive_rank_trend(
 
 __all__ += [
     "plot_drive_rank_trend",
-    "plot_gap_bars",
-    "plot_gap_bars_by_panel",
+    "plot_gap_violins",
+    "plot_gap_violins_by_panel",
     "plot_pooled_violin_contrast",
 ]

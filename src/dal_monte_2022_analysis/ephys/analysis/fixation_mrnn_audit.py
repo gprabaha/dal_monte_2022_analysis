@@ -1926,6 +1926,41 @@ __all__ += [
 # cost more confusion than it is worth.
 
 
+def matched_drive_rank_fit_gap_long(long: pd.DataFrame) -> pd.DataFrame:
+    """Per (condition, drive_rank, seed): the cross-heavy minus within-heavy fit, region pooled.
+
+    The per-replicate paired differences every pooled fit test and violin figure in this
+    module is built from -- a bare bar-and-error-bar summary of these hides exactly the
+    question a reviewer would ask (is this forty-five-point distribution actually shifted
+    off zero, or is the mean carried by a few outliers), so the figures plot this directly.
+    """
+    per_seed = long.groupby(["drive_rank", "arm", "condition", "seed"])["r2_vs_ceiling"].mean().reset_index()
+    wide = per_seed.pivot_table(index=["condition", "drive_rank", "seed"], columns="arm",
+                                values="r2_vs_ceiling").dropna()
+    return (wide["cross-heavy"] - wide["within-heavy"]).rename("gap").reset_index()
+
+
+def matched_drive_rank_fit_gap_by_region_long(long: pd.DataFrame) -> pd.DataFrame:
+    """:func:`matched_drive_rank_fit_gap_long`, kept split by region instead of pooled over it."""
+    wide = long.pivot_table(index=["region", "condition", "drive_rank", "seed"], columns="arm",
+                            values="r2_vs_ceiling", aggfunc="mean").dropna()
+    return (wide["cross-heavy"] - wide["within-heavy"]).rename("gap").reset_index()
+
+
+def matched_drive_rank_band_gap_long(long: pd.DataFrame) -> pd.DataFrame:
+    """Per (condition, band, drive_rank, seed): the cross-heavy band-recovery gap, region pooled.
+
+    ``within-heavy minus cross-heavy`` residual fraction, matching
+    :func:`matched_drive_rank_band_pooled`'s sign convention so a positive gap means
+    cross-heavy recovered more of that band's power.
+    """
+    per_seed = (long.groupby(["drive_rank", "arm", "condition", "band", "seed"])["residual_fraction"]
+               .mean().reset_index())
+    wide = per_seed.pivot_table(index=["condition", "band", "drive_rank", "seed"], columns="arm",
+                                values="residual_fraction").dropna()
+    return (wide["within-heavy"] - wide["cross-heavy"]).rename("gap").reset_index()
+
+
 def matched_drive_rank_fit_pooled(long: pd.DataFrame) -> pd.DataFrame:
     """Paired within-heavy vs. cross-heavy fit, pooling over every total bottleneck dimension.
 
@@ -2248,9 +2283,12 @@ def matched_drive_rank_band_condition_contrast(
 
 __all__ += [
     "matched_drive_rank_band_condition_contrast",
+    "matched_drive_rank_band_gap_long",
     "matched_drive_rank_band_pooled",
     "matched_drive_rank_condition_contrast",
     "matched_drive_rank_condition_contrast_by_region",
     "matched_drive_rank_fit_by_region",
+    "matched_drive_rank_fit_gap_by_region_long",
+    "matched_drive_rank_fit_gap_long",
     "matched_drive_rank_fit_pooled",
 ]

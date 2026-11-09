@@ -338,19 +338,22 @@ else:
 
 S5_TEXT = r"""## 5. Is one bottleneck costlier, and is it costlier for one fixation type?
 
-The same pooled test as bars -- the cross-heavy advantage ($R^2$/ceiling, cross-heavy minus
-within-heavy) with its 95%-ish capless SEM, starred where it clears zero. The bracket
-between two fixation types is a *different* test: whether the size of that advantage itself
-differs between them (:func:`matched_drive_rank_condition_contrast`), still paired on (total
-bottleneck dimension, seed) since the same replicate produced both fixation types' gaps.
+The per-replicate cross-heavy advantage ($R^2$/ceiling, cross-heavy minus within-heavy) as
+violins, not a bar and an error bar -- every one of the 45 (total bottleneck dimension,
+seed) pairs is a dot, so the shape and any outliers are visible, not just the mean. Starred
+where the pooled test clears zero. The bracket between two fixation types is a *different*
+test: whether the size of that advantage itself differs between them
+(:func:`matched_drive_rank_condition_contrast`), still paired on (total bottleneck
+dimension, seed) since the same replicate produced both fixation types' gaps.
 """
 
 S5_CODE = r'''
 if fit_long is not None:
+    fit_gap_long = audit.matched_drive_rank_fit_gap_long(fit_long)
     condition_contrast = audit.matched_drive_rank_condition_contrast(fit_long)
-    show(aviz.plot_gap_bars(pooled_fit, x="condition", x_order=list(CONDITIONS),
-                            x_labels=CONDITION_LABELS, pairwise=condition_contrast),
-        "fig02_condition_gap_bars")
+    show(aviz.plot_gap_violins(fit_gap_long, pooled_fit, x="condition", x_order=list(CONDITIONS),
+                               x_labels=CONDITION_LABELS, pairwise=condition_contrast),
+        "fig02_condition_gap_violins")
 '''
 
 
@@ -359,22 +362,26 @@ S6_TEXT = r"""## 6. Does this hold in every region?
 Left: each fixation type's advantage, split by region -- is the effect uniform across
 regions, or concentrated in one. Right: the fixation-type comparison from Section 5, redone
 *within* each region, to see whether a region-level split explains where that comparison's
-significance comes from.
+significance comes from. Violins again, every (total bottleneck dimension, seed) pair a dot.
 """
 
 S6_CODE = r'''
 if fit_long is not None:
     by_region = audit.matched_drive_rank_fit_by_region(fit_long)
-    show(aviz.plot_gap_bars_by_panel(
-        by_region, panel_col="condition", panel_order=list(CONDITIONS), panel_labels=CONDITION_LABELS,
-        x="region", x_order=list(REGION_ORDER), x_labels=aviz.REGION_LABELS, color_by="panel"),
+    fit_gap_by_region = audit.matched_drive_rank_fit_gap_by_region_long(fit_long)
+    show(aviz.plot_gap_violins_by_panel(
+        fit_gap_by_region, by_region, panel_col="condition", panel_order=list(CONDITIONS),
+        panel_labels=CONDITION_LABELS, x="region", x_order=list(REGION_ORDER), x_labels=aviz.REGION_LABELS,
+        color_by="panel"),
         "fig03_region_by_condition_panel")
 
     condition_contrast_by_region = audit.matched_drive_rank_condition_contrast_by_region(fit_long)
-    named = by_region[by_region["condition"] != "all_conditions"]
-    show(aviz.plot_gap_bars_by_panel(
-        named, panel_col="region", panel_order=list(REGION_ORDER), panel_labels=aviz.REGION_LABELS,
-        x="condition", x_order=["face_interactive", "face_non_interactive", "object"],
+    named_order = ["face_interactive", "face_non_interactive", "object"]
+    named_gap = fit_gap_by_region[fit_gap_by_region["condition"] != "all_conditions"]
+    named_summary = by_region[by_region["condition"] != "all_conditions"]
+    show(aviz.plot_gap_violins_by_panel(
+        named_gap, named_summary, panel_col="region", panel_order=list(REGION_ORDER),
+        panel_labels=aviz.REGION_LABELS, x="condition", x_order=named_order,
         pairwise=condition_contrast_by_region),
         "fig04_condition_by_region_panel")
 '''
@@ -400,7 +407,8 @@ if fit_long is not None:
 
 S8_TEXT = r"""## 8. Which frequency bands carry the effect
 
-Same pooled paired test as Section 5, run per band and fixation type instead of overall:
+Same pooled paired test as Section 5, run per band and fixation type instead of overall, and
+plotted the same way -- violins of the per-replicate gap, not bars:
 ``band_resolved_recovery_by_condition`` gives the fraction of each band's target power a fit
 fails to reproduce (lower is better), and `cross_advantage` is signed so positive still
 means cross-heavy did better here too -- within-heavy's residual minus cross-heavy's, the
@@ -418,14 +426,15 @@ else:
         [audit.band_resolved_recovery_by_condition(r.run_dir).assign(label=r.label) for r in done.itertuples()],
         ignore_index=True))
     band_long = audit.matched_drive_rank_band_long(band_by_condition, extremes)
+    band_gap_long = audit.matched_drive_rank_band_gap_long(band_long)
     band_pooled = audit.matched_drive_rank_band_pooled(band_long)
     band_condition_contrast = audit.matched_drive_rank_band_condition_contrast(band_long)
-    show(aviz.plot_gap_bars_by_panel(
-        band_pooled, panel_col="band", panel_order=list(BANDS),
+    show(aviz.plot_gap_violins_by_panel(
+        band_gap_long, band_pooled, panel_col="band", panel_order=list(BANDS),
         x="condition", x_order=["face_interactive", "face_non_interactive", "object"],
         pairwise=band_condition_contrast,
         ylabel="cross-heavy advantage\n(band recovery)"),
-        "fig06_band_gap_bars_by_panel")
+        "fig06_band_gap_violins_by_panel")
 '''
 
 
