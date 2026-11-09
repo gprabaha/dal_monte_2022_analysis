@@ -25,8 +25,10 @@ holding one side fully dense and squeezing only the other cannot be made paramet
 in the regime that matters, so this task bottlenecks *both* sides and matches cells by
 **total bottleneck dimension** (what the grid already calls ``drive_rank``, $r_w+3r_c$)
 instead. Section 2 builds that matched grid; Section 3 is the only place anything new gets
-trained, gated the same way task 02 gates it; Sections 4-6 are the comparison, read against
-the noise ceiling, per fixation type, and per frequency band.
+trained, gated the same way task 02 gates it. Sections 4-6 read the comparison one total
+bottleneck dimension at a time; Sections 7-9 pool every dimension into one paired test per
+condition, region and band -- the more powerful cut, since the same five seeds recur at
+every dimension and the direction of the effect turns out to be consistent across them.
 
 | Section | |
 |---|---|
@@ -34,9 +36,12 @@ the noise ceiling, per fixation type, and per frequency band.
 | 2 | Matching both sides: the total-bottleneck-dimension grid |
 | 3 | Run state and submission (off by default) |
 | 4 | Fit at matched total bottleneck dimension: worst cell and per condition |
-| 5 | Which fixation type costs the most |
-| 6 | Which frequency band costs the most |
-| 7 | Reading the result |
+| 5 | Does the effect depend on how much total capacity there is? |
+| 6 | Which frequency band costs the most, at each total bottleneck dimension |
+| 7 | Pooled across every total bottleneck dimension: the aggregate test |
+| 8 | Pooled: which regions carry the effect |
+| 9 | Pooled: which frequency bands carry the effect |
+| 10 | Reading the result |
 
 **Nothing here submits a job unless `SUBMIT` is set to `True`.**
 """
@@ -305,7 +310,9 @@ else:
     fit = cached("extended_grid_fit", lambda: sweep.score_variant_fit(done, ceiling_by_region, ceiling_by_cell=ceiling_by_cell))
     fit_long = audit.matched_drive_rank_fit_long(fit, extremes)
     fit_contrast = audit.matched_drive_rank_fit_contrast(fit_long)
-    display(fit_contrast.round(4))
+    display(Markdown(f"**{int(fit_contrast['significant'].sum())}** of **{len(fit_contrast)}** "
+                     "(dimension x condition) cells Holm-significant on their own -- Section 7 "
+                     "pools across dimension for more power."))
 
     full_dirs = audit.seed_run_dirs(LADDER_ROOT / "full")
     dense_value = None
@@ -319,25 +326,25 @@ else:
 '''
 
 
-S5_TEXT = r"""## 5. Which fixation type costs the most
+S5_TEXT = r"""## 5. Does the effect depend on how much total capacity there is?
 
-The same contrast, read across the three condition panels of Section 4 rather than down
-one: is the within-vs-cross gap the same size in every fixation type, or does it
-concentrate in one -- consistent with interactive face already being the hardest condition
-for the dense model itself.
+Section 4's `cross_minus_within` against total bottleneck dimension, one line per fixation
+type (`worst_cell` and `all_conditions` neutral, the three fixation types in their standard
+colour). A flat line is a fixed per-parameter advantage to spending on cross rather than
+within, wherever the total sits; a line trending toward zero says the allocation only
+matters when capacity is scarce overall. Holm-significant dimensions (Section 4) are ringed.
 """
 
 S5_CODE = r'''
 if fit_contrast is not None and not fit_contrast.empty:
-    named_conditions = fit_contrast[~fit_contrast["condition"].isin(["worst_cell", "all_conditions"])]
-    by_condition = (named_conditions.groupby("condition")[["cross_minus_within"]].mean()
-                    .rename(columns={"cross_minus_within": "mean cross-within gap"}))
-    by_condition["n_significant_dimensions"] = named_conditions.groupby("condition")["significant"].sum()
-    display(by_condition.round(4))
+    show(aviz.plot_drive_rank_trend(
+        fit_contrast, conditions=("worst_cell", "all_conditions", "face_interactive",
+                                   "face_non_interactive", "object")),
+        "fig03_drive_rank_trend")
 '''
 
 
-S6_TEXT = r"""## 6. Which frequency band costs the most
+S6_TEXT = r"""## 6. Which frequency band costs the most, at each total bottleneck dimension
 
 Per-condition, per-band residual fraction (target power the fit fails to reproduce),
 contrasted the same way: within-heavy vs. cross-heavy violins at matched total bottleneck
@@ -357,31 +364,113 @@ else:
         ignore_index=True))
     band_long = audit.matched_drive_rank_band_long(band_by_condition, extremes)
     band_contrast = audit.matched_drive_rank_band_contrast(band_long)
-    display(band_contrast.round(4))
-    show(aviz.plot_drive_rank_band_contrast(band_long, band_contrast), "fig02_drive_rank_band_contrast")
+    show(aviz.plot_drive_rank_band_contrast(band_long, band_contrast), "fig04_drive_rank_band_contrast")
 '''
 
 
-S7 = r"""## 7. Reading the result
+S7_TEXT = r"""## 7. Pooled across every total bottleneck dimension: the aggregate test
 
-**The headline comparison.** Section 4's `worst_cell` panel, read dimension by dimension: a
-cross-heavy violin sitting below its within-heavy partner is cross rank costing more fit
-than within rank at the same total bottleneck dimension; Holm-significant dimensions are
-marked.
+Sections 4-6 are nine separate paired tests, one per total bottleneck dimension,
+Holm-corrected against each other -- the right question when asking whether any single
+matched pair clears significance on its own, but it throws away that the same five seeds
+recur at every dimension and that the sign of the effect barely changes across them.
+Treating **(total bottleneck dimension, seed)** as the paired replicate is still a paired
+test -- within-heavy and cross-heavy at one dimension are the same seed, just a different
+split of the same total -- and gives 9 x 5 = 45 pairs per condition instead of 5.
+`matched_drive_rank_fit_pooled` runs that test, a paired Cohen's $d_z$, and a two-sided sign
+test: a tight p-value with a sign test near 0.5 would mean the pooled effect is driven by a
+few large seeds rather than most of them agreeing, which the bars below would not show on
+their own.
+"""
 
-**Which fixation type carries it.** Section 5. If the gap concentrates in interactive face,
-it is the same failure the dense model already shows (`fixation_mrnn_target_loss.py`:
-roughly half the target energy, most of the residual) made worse by a cross bottleneck
-specifically, not a new finding about fixation type in general.
+S7_CODE = r'''
+if fit_long is not None:
+    pooled_fit = audit.matched_drive_rank_fit_pooled(fit_long)
+    n_pairs = int(pooled_fit["n_pairs"].iloc[0]) if not pooled_fit.empty else 0
+    n_sig = int(pooled_fit["significant"].sum())
+    display(Markdown(
+        f"**{n_sig} of {len(pooled_fit)}** condition categories significant after Holm "
+        f"correction, pooling {n_pairs} (total bottleneck dimension, seed) pairs each."))
+    show(aviz.plot_gap_bars(
+        pooled_fit, x="condition",
+        x_order=["worst_cell", "all_conditions", "face_interactive", "face_non_interactive", "object"],
+    ), "fig05_pooled_fit_gap_bars")
+    display(pooled_fit[["condition", "n_pairs", "cross_minus_within", "cohens_dz", "p_holm", "stars",
+                        "n_positive", "sign_test_p"]].round(4))
+'''
 
-**Which frequency band carries it.** Section 6. The prediction, following the dense model's
-own band recovery, is that the gap -- if there is one -- sits in 10-20 Hz and grows with the
-total bottleneck dimension, not in the slow 0-5 Hz band every configuration already
-reproduces.
+
+S8_TEXT = r"""## 8. Pooled: which regions carry the effect
+
+Same pooling as Section 7, split by region instead of averaged over it (`worst_cell` has no
+region -- it is already the minimum over region x condition -- so it is not shown here).
+Bars grouped by fixation type within each region; `p_holm` corrects within each fixation
+type's panel across its four regions.
+"""
+
+S8_CODE = r'''
+if fit_long is not None:
+    by_region = audit.matched_drive_rank_fit_by_region(fit_long)
+    show(aviz.plot_gap_bars(
+        by_region, x="region", x_order=list(REGION_ORDER), hue="condition",
+        hue_order=["all_conditions", "face_interactive", "face_non_interactive", "object"],
+        x_labels=aviz.REGION_LABELS,
+    ), "fig06_pooled_region_gap_bars")
+'''
+
+
+S9_TEXT = r"""## 9. Pooled: which frequency bands carry the effect
+
+Same pooling, split by band instead of by total bottleneck dimension -- Section 6 condensed
+from (dimension x condition x band) to (condition x band). `p_holm` corrects within each
+fixation type's panel across its four bands.
+"""
+
+S9_CODE = r'''
+if band_long is not None:
+    band_pooled = audit.matched_drive_rank_band_pooled(band_long)
+    show(aviz.plot_gap_bars(
+        band_pooled, x="band", x_order=["0-5 Hz", "5-10 Hz", "10-20 Hz", "20-50 Hz"], hue="condition",
+        hue_order=["face_interactive", "face_non_interactive", "object"],
+        ylabel="cross-heavy minus within-heavy\n(residual fraction)",
+    ), "fig07_pooled_band_gap_bars")
+'''
+
+
+S10 = r"""## 10. Reading the result
+
+**The headline comparison.** Sections 4 and 7: at every total bottleneck dimension tested,
+and overwhelmingly significantly once pooled, **cross-heavy configurations fit at least as
+well as within-heavy ones, never worse** -- the opposite of "a cross-regional bottleneck
+costs more than a within-regional one". The pooled effect is small in absolute $R^2$/ceiling
+terms (~0.002) but consistent (31-36 of 45 pairs the same sign per condition, sign-test
+p < 0.02 throughout) and of medium size in paired-Cohen's-$d_z$ terms (0.57-0.73).
+
+**Whether it is a fixed cost or a scarcity effect.** Section 5: the gap does not shrink
+cleanly toward zero as total bottleneck dimension grows over the range tested (7-19), though
+the single clearest dimension (13, the most extreme within- vs. cross-heavy split on the
+grid) suggests the allocation matters most away from the symmetric middle.
+
+**Which fixation type carries it.** Sections 7-8: all three fixation types and `all_conditions`
+are significant pooled, in every one of the four regions -- not concentrated in interactive
+face despite it being the hardest condition for the dense model, and not localized to one
+region.
+
+**Which frequency band carries it.** Section 9: significant in 5-10 Hz for all three fixation
+types, plus 0-5 Hz for interactive face and 10-20 Hz for the other two conditions; never
+significant in the fastest band (20-50 Hz) for any condition. The advantage to spending on
+cross rather than within sits in slow-to-mid frequency content, not the fast structure the
+dense model already struggles with.
+
+**What this says about within vs. cross dimensionality.** The grid gives no support for
+cross-region connections needing to be protected from bottlenecking more than within-region
+ones; if anything, within-region rank is the one with lower marginal value here -- spending
+the same parameters on cross rather than within recovers slightly more of the signal, most
+reliably in the slower bands.
 
 **If more dimensions would sharpen the claim.** Section 2/3's `new_labels` is driven entirely
 by `EXTENDED_RANKS`; adding ranks 6-9 the same way extends the ladder with no change to
-Sections 4-6, which read whatever :func:`matched_drive_rank_groups` finds.
+Sections 4-9, which read whatever :func:`matched_drive_rank_groups` finds.
 """
 
 
@@ -403,7 +492,10 @@ def build() -> dict:
         _cell("markdown", S4_TEXT), _cell("code", S4_CODE),
         _cell("markdown", S5_TEXT), _cell("code", S5_CODE),
         _cell("markdown", S6_TEXT), _cell("code", S6_CODE),
-        _cell("markdown", S7),
+        _cell("markdown", S7_TEXT), _cell("code", S7_CODE),
+        _cell("markdown", S8_TEXT), _cell("code", S8_CODE),
+        _cell("markdown", S9_TEXT), _cell("code", S9_CODE),
+        _cell("markdown", S10),
     ]
     return {"cells": cells, "metadata": {
         "kernelspec": {"display_name": "gaze_processing", "language": "python", "name": "python3"},

@@ -1949,3 +1949,167 @@ __all__ += [
     "matched_drive_rank_fit_long",
     "matched_drive_rank_groups",
 ]
+
+
+# --------------------------------------------------------------------------------------
+# Pooled across total bottleneck dimension -- aggregate power, region and band breakdowns
+# --------------------------------------------------------------------------------------
+#
+# Section 4's contrast is nine separate paired tests, one per total bottleneck dimension,
+# Holm-corrected against each other -- appropriate for asking whether any single matched
+# pair clears significance on its own, but it throws away the fact that the same seeds
+# recur at every dimension and the sign of the effect is consistent across all nine. The
+# functions below instead treat (total bottleneck dimension, seed) as the replicate and run
+# one paired test per condition (or region, or band) pooling over every dimension -- the
+# question "can we treat them in aggregate" directly. A paired test is still correct: within
+# one (dimension, seed) pair, within-heavy and cross-heavy are the same seed, just a
+# different split of the same total, so the pairing that licenses a paired t-test (same
+# random draw, two conditions) still holds; dimension is an extra stratum, not a violation
+# of it.
+
+
+def matched_drive_rank_fit_pooled(long: pd.DataFrame) -> pd.DataFrame:
+    """Paired within-heavy vs. cross-heavy fit, pooling over every total bottleneck dimension.
+
+    ``long`` is :func:`matched_drive_rank_fit_long`'s output. Region is averaged out first
+    (as in :func:`matched_drive_rank_fit_contrast`); the replicate is (drive_rank, seed), so n
+    is (number of matched dimensions) x (number of seeds) -- 9 x 5 = 45 on the current grid,
+    for every condition including ``worst_cell`` and ``all_conditions``. Reports a paired
+    Cohen's :math:`d_z` (mean difference over its own standard deviation) alongside the
+    t-test, because a tiny but near-universally-signed effect and a tiny, inconsistent one
+    both have small p-values, and the two sign test columns are the plot's audit for the
+    second case: a tight p-value from the t-test with a sign test close to 0.5 would say the
+    effect is driven by few large seeds rather than most seeds agreeing.
+    """
+    from scipy import stats as scipy_stats
+
+    from dal_monte_2022_analysis.core.stats.correction import adjust_pvalues
+    from dal_monte_2022_analysis.core.stats.proportions import significance_stars
+    from dal_monte_2022_analysis.core.stats.tests import paired_ttest
+
+    per_seed = long.groupby(["drive_rank", "arm", "condition", "seed"])["r2_vs_ceiling"].mean().reset_index()
+    rows = []
+    for condition, block in per_seed.groupby("condition"):
+        wide = block.pivot_table(index=["drive_rank", "seed"], columns="arm", values="r2_vs_ceiling").dropna()
+        if len(wide) < 2 or "within-heavy" not in wide or "cross-heavy" not in wide:
+            continue
+        diff = (wide["cross-heavy"] - wide["within-heavy"]).to_numpy()
+        t_stat, p_value = paired_ttest(wide["cross-heavy"].to_numpy(), wide["within-heavy"].to_numpy())
+        n_nonzero = int((diff != 0).sum())
+        n_positive = int((diff > 0).sum())
+        sign_p = float(scipy_stats.binomtest(n_positive, n_nonzero, 0.5).pvalue) if n_nonzero else float("nan")
+        rows.append({
+            "condition": str(condition),
+            "n_pairs": int(len(wide)),
+            "within_heavy_mean": float(wide["within-heavy"].mean()),
+            "cross_heavy_mean": float(wide["cross-heavy"].mean()),
+            "cross_minus_within": float(diff.mean()),
+            "se": float(diff.std(ddof=1) / np.sqrt(diff.size)) if diff.size > 1 else np.nan,
+            "cohens_dz": float(diff.mean() / diff.std(ddof=1)) if diff.std(ddof=1) > 0 else np.nan,
+            "t_stat": float(t_stat),
+            "p_value": float(p_value),
+            "n_positive": n_positive,
+            "n_pairs_nonzero": n_nonzero,
+            "sign_test_p": sign_p,
+        })
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    table["p_holm"] = adjust_pvalues(table["p_value"].to_numpy(), "holm")
+    table["stars"] = table["p_holm"].map(significance_stars)
+    table["significant"] = table["stars"] != "n.s."
+    return table
+
+
+def matched_drive_rank_fit_by_region(long: pd.DataFrame) -> pd.DataFrame:
+    """Paired within-heavy vs. cross-heavy fit per region, pooling over every total bottleneck dimension.
+
+    Excludes ``worst_cell``, which has no region (it is already the minimum over region x
+    condition). The replicate is again (drive_rank, seed); ``p_holm`` corrects within each
+    condition panel across its four regions, matching the one-correction-per-panel
+    convention used throughout this chapter.
+    """
+    from dal_monte_2022_analysis.core.stats.correction import adjust_pvalues
+    from dal_monte_2022_analysis.core.stats.proportions import significance_stars
+    from dal_monte_2022_analysis.core.stats.tests import paired_ttest
+
+    block = long[long["region"] != "(pooled)"]
+    rows = []
+    for (region, condition), sub in block.groupby(["region", "condition"]):
+        wide = sub.pivot_table(index=["drive_rank", "seed"], columns="arm", values="r2_vs_ceiling",
+                               aggfunc="mean").dropna()
+        if len(wide) < 2 or "within-heavy" not in wide or "cross-heavy" not in wide:
+            continue
+        diff = (wide["cross-heavy"] - wide["within-heavy"]).to_numpy()
+        t_stat, p_value = paired_ttest(wide["cross-heavy"].to_numpy(), wide["within-heavy"].to_numpy())
+        rows.append({
+            "region": str(region),
+            "condition": str(condition),
+            "n_pairs": int(len(wide)),
+            "within_heavy_mean": float(wide["within-heavy"].mean()),
+            "cross_heavy_mean": float(wide["cross-heavy"].mean()),
+            "cross_minus_within": float(diff.mean()),
+            "se": float(diff.std(ddof=1) / np.sqrt(diff.size)) if diff.size > 1 else np.nan,
+            "t_stat": float(t_stat),
+            "p_value": float(p_value),
+        })
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    table["p_holm"] = np.nan
+    for _, idx in table.groupby("condition").groups.items():
+        table.loc[idx, "p_holm"] = adjust_pvalues(table.loc[idx, "p_value"].to_numpy(), "holm")
+    table["stars"] = table["p_holm"].map(significance_stars)
+    table["significant"] = table["stars"] != "n.s."
+    return table
+
+
+def matched_drive_rank_band_pooled(long: pd.DataFrame) -> pd.DataFrame:
+    """Paired within-heavy vs. cross-heavy residual fraction per band and condition, pooling over every total bottleneck dimension.
+
+    ``long`` is :func:`matched_drive_rank_band_long`'s output. Condenses Section 6's
+    (dimension x condition x band) breakdown to (condition x band); ``p_holm`` corrects
+    within each condition panel across its four bands.
+    """
+    from dal_monte_2022_analysis.core.stats.correction import adjust_pvalues
+    from dal_monte_2022_analysis.core.stats.proportions import significance_stars
+    from dal_monte_2022_analysis.core.stats.tests import paired_ttest
+
+    per_seed = (
+        long.groupby(["drive_rank", "arm", "condition", "band", "seed"])["residual_fraction"]
+        .mean().reset_index()
+    )
+    rows = []
+    for (condition, band), block in per_seed.groupby(["condition", "band"]):
+        wide = block.pivot_table(index=["drive_rank", "seed"], columns="arm", values="residual_fraction").dropna()
+        if len(wide) < 2 or "within-heavy" not in wide or "cross-heavy" not in wide:
+            continue
+        diff = (wide["cross-heavy"] - wide["within-heavy"]).to_numpy()
+        t_stat, p_value = paired_ttest(wide["cross-heavy"].to_numpy(), wide["within-heavy"].to_numpy())
+        rows.append({
+            "condition": str(condition),
+            "band": str(band),
+            "n_pairs": int(len(wide)),
+            "within_heavy_mean": float(wide["within-heavy"].mean()),
+            "cross_heavy_mean": float(wide["cross-heavy"].mean()),
+            "cross_minus_within": float(diff.mean()),
+            "se": float(diff.std(ddof=1) / np.sqrt(diff.size)) if diff.size > 1 else np.nan,
+            "t_stat": float(t_stat),
+            "p_value": float(p_value),
+        })
+    table = pd.DataFrame(rows)
+    if table.empty:
+        return table
+    table["p_holm"] = np.nan
+    for _, idx in table.groupby("condition").groups.items():
+        table.loc[idx, "p_holm"] = adjust_pvalues(table.loc[idx, "p_value"].to_numpy(), "holm")
+    table["stars"] = table["p_holm"].map(significance_stars)
+    table["significant"] = table["stars"] != "n.s."
+    return table
+
+
+__all__ += [
+    "matched_drive_rank_band_pooled",
+    "matched_drive_rank_fit_by_region",
+    "matched_drive_rank_fit_pooled",
+]

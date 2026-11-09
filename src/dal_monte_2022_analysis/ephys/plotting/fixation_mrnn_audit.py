@@ -25,6 +25,8 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     MUTED_INK,
     NEUTRAL_EDGE,
     NEUTRAL_FILL,
+    REGION_LABELS,
+    REGION_ORDER,
     add_significance_bracket,
     nice_axis,
 )
@@ -2207,3 +2209,134 @@ def plot_drive_rank_band_contrast(
 
 
 __all__ += ["plot_drive_rank_band_contrast", "plot_drive_rank_contrast"]
+
+
+def plot_gap_bars(
+    table: pd.DataFrame,
+    *,
+    x: str,
+    x_order: Sequence[str],
+    hue: str | None = None,
+    hue_order: Sequence[str] | None = None,
+    colors: Mapping[str, str] | None = None,
+    value_col: str = "cross_minus_within",
+    se_col: str = "se",
+    x_labels: Mapping[str, str] | None = None,
+    ylabel: str = "cross-heavy minus within-heavy\n($R^2$ / ceiling)",
+    bar_width: float = 0.3,
+    figsize: tuple[float, float] = (7.0, 3.0),
+):
+    """The cross-heavy-minus-within-heavy gap as bars, pooled over total bottleneck dimension.
+
+    One bar per ``x`` category (ungrouped), or grouped by ``hue`` within each ``x`` category
+    -- e.g. one bar per region, grouped by fixation type. A capless SEM error bar and a star
+    where the paired test clears its Holm correction (:func:`fixation_mrnn_audit.matched_drive_rank_fit_pooled`
+    and its region/band counterparts). Zero is a solid reference line, not an axis endpoint:
+    this plots a *difference*, so which side of zero a bar falls on is the finding, not how
+    far it sits from an edge.
+    """
+    labels = dict(x_labels or {})
+    if colors is None:
+        colors = {**CONDITION_COLORS, "worst_cell": _POOLED_PANEL_COLOR, "all_conditions": _POOLED_PANEL_COLOR}
+    fig, ax = plt.subplots(figsize=figsize)
+    xs = [c for c in x_order if c in set(table[x])]
+    positions = np.arange(len(xs))
+    all_values: list[float] = []
+
+    if hue is None:
+        values = [float(table.loc[table[x] == c, value_col].iloc[0]) for c in xs]
+        errors = [float(table.loc[table[x] == c, se_col].iloc[0]) if se_col in table.columns else 0.0 for c in xs]
+        bar_colors = [(colors or {}).get(c, NEUTRAL_FILL) for c in xs]
+        ax.bar(positions, values, width=bar_width, color=bar_colors, edgecolor=INK, linewidth=0.8, zorder=2)
+        ax.errorbar(positions, values, yerr=errors, fmt="none", ecolor=INK, elinewidth=1.1, capsize=0, zorder=3)
+        all_values.extend(values)
+        scale = 0.07 * max((abs(v) for v in values), default=0.01)
+        for xi, c, value, error in zip(positions, xs, values, errors):
+            row = table.loc[table[x] == c].iloc[0]
+            if bool(row.get("significant", False)):
+                va = "bottom" if value >= 0 else "top"
+                y = value + error + scale if value >= 0 else value - error - scale
+                ax.text(xi, y, "*", ha="center", va=va, fontsize=10, color=INK, zorder=4)
+    else:
+        hues = [h for h in (hue_order or sorted(set(table[hue]))) if h in set(table[hue])]
+        n_hue = max(len(hues), 1)
+        for hi, h in enumerate(hues):
+            offset = (hi - (n_hue - 1) / 2) * bar_width
+            values, errors, sig = [], [], []
+            for c in xs:
+                row = table[(table[x] == c) & (table[hue] == h)]
+                if row.empty:
+                    values.append(np.nan); errors.append(0.0); sig.append(False)
+                else:
+                    values.append(float(row[value_col].iloc[0]))
+                    errors.append(float(row[se_col].iloc[0]) if se_col in row.columns else 0.0)
+                    sig.append(bool(row.iloc[0].get("significant", False)))
+            color = (colors or {}).get(h, NEUTRAL_FILL)
+            ax.bar(positions + offset, values, width=bar_width, color=color, edgecolor=INK, linewidth=0.7, zorder=2)
+            ax.errorbar(positions + offset, values, yerr=errors, fmt="none", ecolor=INK, elinewidth=1.0,
+                       capsize=0, zorder=3)
+            all_values.extend(v for v in values if np.isfinite(v))
+        scale = 0.07 * max((abs(v) for v in all_values), default=0.01)
+        for hi, h in enumerate(hues):
+            offset = (hi - (n_hue - 1) / 2) * bar_width
+            for xi, c in zip(positions, xs):
+                row = table[(table[x] == c) & (table[hue] == h)]
+                if row.empty or not bool(row.iloc[0].get("significant", False)):
+                    continue
+                value = float(row[value_col].iloc[0])
+                error = float(row[se_col].iloc[0]) if se_col in row.columns else 0.0
+                va = "bottom" if value >= 0 else "top"
+                y = value + error + scale if value >= 0 else value - error - scale
+                ax.text(xi + offset, y, "*", ha="center", va=va, fontsize=9, color=INK, zorder=4)
+        handles = [
+            plt.Rectangle((0, 0), 1, 1, facecolor=(colors or {}).get(h, NEUTRAL_FILL), edgecolor=INK,
+                          linewidth=0.7, label=CONDITION_SHORT_LABELS.get(h, labels.get(h, h)))
+            for h in hues
+        ]
+        ax.legend(handles=handles, frameon=False, fontsize=6.5, loc="best")
+
+    ax.axhline(0.0, color=INK, linewidth=0.9, zorder=1)
+    ax.set_xticks(positions)
+    ax.set_xticklabels([labels.get(c, CONDITION_SHORT_LABELS.get(c, c.replace("_", " "))) for c in xs])
+    ax.set_ylabel(ylabel)
+    nice_axis(ax)
+    fig.tight_layout()
+    return fig
+
+
+def plot_drive_rank_trend(
+    contrast: pd.DataFrame,
+    *,
+    conditions: Sequence[str] = CONDITION_ORDER,
+    figsize: tuple[float, float] = (5.2, 3.4),
+):
+    """The cross-minus-within gap against total bottleneck dimension, one line per fixation type.
+
+    Answers whether the effect is a fixed advantage to spending on cross rather than within,
+    or shrinks as both arms get more total capacity: a flat line is the former, a line
+    trending toward zero says the allocation only matters when capacity is scarce overall.
+    Dimensions where :func:`fixation_mrnn_audit.matched_drive_rank_fit_contrast` found a
+    Holm-significant gap are ringed.
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.axhline(0.0, color=INK, linewidth=0.9, zorder=1)
+    for condition in conditions:
+        block = contrast[contrast["condition"] == condition].sort_values("drive_rank")
+        if block.empty:
+            continue
+        color = CONDITION_COLORS.get(condition, _POOLED_PANEL_COLOR)
+        ax.plot(block["drive_rank"], block["cross_minus_within"], "-o", color=color, markersize=4.5,
+               linewidth=1.4, label=CONDITION_SHORT_LABELS.get(condition, condition), zorder=3)
+        sig = block[block["significant"]]
+        if not sig.empty:
+            ax.scatter(sig["drive_rank"], sig["cross_minus_within"], s=75, facecolors="none",
+                      edgecolors=INK, linewidths=1.3, zorder=4)
+    ax.set_xlabel("total bottleneck dimension ($r_w+3r_c$)")
+    ax.set_ylabel("cross-heavy minus within-heavy\n($R^2$ / ceiling)")
+    ax.legend(frameon=False, fontsize=6.5, loc="best")
+    nice_axis(ax)
+    fig.tight_layout()
+    return fig
+
+
+__all__ += ["plot_drive_rank_trend", "plot_gap_bars"]
