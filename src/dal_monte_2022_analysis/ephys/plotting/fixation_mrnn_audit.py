@@ -28,6 +28,7 @@ from dal_monte_2022_analysis.ephys.plotting.thesis_common import (
     REGION_LABELS,
     REGION_ORDER,
     add_significance_bracket,
+    mark_contrasts,
     nice_axis,
 )
 
@@ -2073,27 +2074,27 @@ def _arm_legend_handles():
     ]
 
 
-def plot_drive_rank_contrast(
+def plot_pooled_violin_contrast(
     long: pd.DataFrame,
     contrast: pd.DataFrame,
     *,
-    conditions: Sequence[str] = ("worst_cell", "all_conditions", *CONDITION_ORDER),
+    conditions: Sequence[str] = ("all_conditions", *CONDITION_ORDER),
     dense_value: float | None = None,
-    figsize: tuple[float, float] = (12.5, 2.8),
+    value_col: str = "r2_vs_ceiling",
+    ylabel: str = "$R^2$ / ceiling",
+    figsize: tuple[float, float] = (7.6, 3.1),
 ):
-    """Within-heavy vs. cross-heavy fit at every matched drive rank, as violins, one panel per condition.
+    """Within-heavy vs. cross-heavy fit, one pooled violin pair per condition panel.
 
-    ``long`` (:func:`fixation_mrnn_audit.matched_drive_rank_fit_long`) supplies the violins --
-    seeds x regions per (drive rank, condition, arm); ``contrast``
-    (:func:`fixation_mrnn_audit.matched_drive_rank_fit_contrast`) supplies the Holm-corrected
-    significance brackets, which are paired by seed only. The three fixation-type panels use
-    that condition's standard colour; ``worst_cell`` (the minimax objective's own quantity)
-    and ``all_conditions`` (the mean over fixation types this chapter often reports beside the
-    per-condition breakdown) are not one fixation type and stay neutral. Axis limits and
-    brackets are finalised only after every panel is drawn, not per panel, so sharing a
-    y-axis cannot let a later panel silently rescale an earlier one.
+    ``long`` (:func:`fixation_mrnn_audit.matched_drive_rank_fit_long`) pooled over every
+    total bottleneck dimension, seed and region into one violin per arm; ``contrast``
+    (:func:`fixation_mrnn_audit.matched_drive_rank_fit_pooled`) supplies the Holm-corrected
+    star, paired by (drive_rank, seed). ``all_conditions`` is overall network performance
+    (the mean over fixation types) and stays neutral; the three fixation-type panels use that
+    condition's standard colour. One violin pair per panel, not nine, keeps this figure the
+    size the pooled test actually warrants -- see :func:`plot_drive_rank_trend` for the
+    per-dimension view this one deliberately does not split into.
     """
-    panel_titles = {"worst_cell": "worst region × condition", "all_conditions": "mean over conditions"}
     fig, axes = plt.subplots(1, len(conditions), figsize=figsize, sharey=True)
     axes = np.atleast_1d(axes)
 
@@ -2103,112 +2104,95 @@ def plot_drive_rank_contrast(
         if block.empty:
             ax.set_visible(False)
             continue
-        ranks = sorted(block["drive_rank"].unique())
         color = CONDITION_COLORS.get(condition, _POOLED_PANEL_COLOR)
-        local_max = 0.0
-        for xi, drive_rank in enumerate(ranks):
-            cell = block[block["drive_rank"] == drive_rank]
-            within_values = cell[cell["arm"] == "within-heavy"]["r2_vs_ceiling"].to_numpy()
-            cross_values = cell[cell["arm"] == "cross-heavy"]["r2_vs_ceiling"].to_numpy()
-            local_max = max(local_max, _violin_arm_pair(ax, within_values, cross_values, xi, color=color))
+        within_values = block[block["arm"] == "within-heavy"][value_col].to_numpy()
+        cross_values = block[block["arm"] == "cross-heavy"][value_col].to_numpy()
+        local_max = _violin_arm_pair(ax, within_values, cross_values, 0, color=color, width=0.55, gap=0.22)
+        local_min = float(min(within_values.min(), cross_values.min())) if within_values.size and cross_values.size else 0.0
         if dense_value is not None:
             ax.axhline(dense_value, color=MUTED_INK, linewidth=0.8, linestyle=":", zorder=1)
-        ax.set_xticks(range(len(ranks)))
-        ax.set_xticklabels(ranks)
-        ax.set_xlabel("total bottleneck dimension\n($r_w+3r_c$)", fontsize=7)
-        ax.set_title(panel_titles.get(condition, CONDITION_SHORT_LABELS.get(condition, condition)), fontsize=8)
+        ax.set_xticks([0])
+        ax.set_xticklabels([""])
+        ax.set_xlim(-0.6, 0.6)
+        ax.set_title(CONDITION_SHORT_LABELS.get(condition, condition.replace("_", " ")), fontsize=8.5)
         nice_axis(ax)
-        panels.append((ax, condition, ranks, local_max))
+        panels.append((ax, condition, local_max, local_min))
 
-    y_max = max((m for *_, m in panels), default=1.0)
-    step = max(y_max * 0.045, 0.01)
-    for ax, condition, ranks, local_max in panels:
-        ax.set_ylim(top=max(y_max, local_max) + step * 2.4)
-        for xi, drive_rank in enumerate(ranks):
-            row = contrast[(contrast["condition"] == condition) & (contrast["drive_rank"] == drive_rank)]
-            if row.empty or not bool(row.iloc[0]["significant"]):
-                continue
-            top = max(
-                float(long[(long["condition"] == condition) & (long["drive_rank"] == drive_rank)]["r2_vs_ceiling"].max()),
-                0.0,
-            )
-            add_significance_bracket(ax, xi - 0.19, xi + 0.19, top + step * 0.6, str(row.iloc[0]["stars"]), fontsize=7.0)
-    axes[0].set_ylabel("$R^2$ / ceiling")
+    y_max = max((m for *_, m, _ in panels), default=1.0)
+    y_min = min((m for *_, _, m in panels), default=0.0)
+    # Headroom is scaled to the data's own spread, not to y_max's absolute size -- these
+    # values cluster tightly near 1.0, where 0.045 * y_max is comparable to the entire
+    # spread of the violins themselves and was what left so much empty space above them.
+    y_range = max(y_max - y_min, 1e-6)
+    step = max(y_range * 0.12, 1e-4)
+    any_significant = bool(contrast["significant"].any()) if "significant" in contrast else False
+    headroom = step * (1.6 if any_significant else 0.5)
+    for ax, condition, local_max, local_min in panels:
+        ax.set_ylim(y_min - step * 0.3, max(y_max, local_max) + headroom)
+        row = contrast[contrast["condition"] == condition]
+        if row.empty or not bool(row.iloc[0]["significant"]):
+            continue
+        add_significance_bracket(ax, -0.22, 0.22, local_max + step * 0.5, str(row.iloc[0]["stars"]), fontsize=8.0)
+    axes[0].set_ylabel(ylabel)
     axes[-1].legend(handles=_arm_legend_handles(), frameon=False, fontsize=6.5, loc="lower left")
     fig.tight_layout()
     return fig
 
 
-def plot_drive_rank_band_contrast(
-    long: pd.DataFrame,
-    contrast: pd.DataFrame,
-    *,
-    conditions: Sequence[str] = CONDITION_ORDER,
-    bands: Sequence[str] = ("0-5 Hz", "5-10 Hz", "10-20 Hz", "20-50 Hz"),
-    figsize: tuple[float, float] = (12.0, 6.6),
-):
-    """Within-heavy vs. cross-heavy residual fraction per band, as violins, one row per condition.
-
-    Rows share the condition's standard colour; arm is hatched as in
-    :func:`plot_drive_rank_contrast`. Residual fraction is the share of that band's target
-    power the fit fails to reproduce, so higher is worse and each axis starts at zero -- but
-    bands differ by an order of magnitude in scale (slow bands are reproduced far better than
-    fast ones), so the y-axis is shared down each **column** (one band, three conditions)
-    rather than across the whole figure, and -- as in :func:`plot_drive_rank_contrast` -- is
-    set once after every panel in that column is drawn, not per panel: setting it per panel
-    under a shared axis let the last-drawn panel's scale silently win for the whole column,
-    which was the distorted axis in the previous version of this figure.
-    """
-    fig, axes = plt.subplots(len(conditions), len(bands), figsize=figsize, sharex=False, sharey=False)
-    axes = np.atleast_2d(axes)
-    column_max = [0.0] * len(bands)
-    panels = []
-    for row_idx, condition in enumerate(conditions):
-        color = CONDITION_COLORS.get(condition, _POOLED_PANEL_COLOR)
-        for col_idx, band in enumerate(bands):
-            ax = axes[row_idx, col_idx]
-            block = long[(long["condition"] == condition) & (long["band"] == band)]
-            if block.empty:
-                ax.set_visible(False)
-                continue
-            ranks = sorted(block["drive_rank"].unique())
-            local_max = 0.0
-            for xi, drive_rank in enumerate(ranks):
-                cell = block[block["drive_rank"] == drive_rank]
-                within_values = cell[cell["arm"] == "within-heavy"]["residual_fraction"].to_numpy()
-                cross_values = cell[cell["arm"] == "cross-heavy"]["residual_fraction"].to_numpy()
-                local_max = max(local_max, _violin_arm_pair(ax, within_values, cross_values, xi, color=color,
-                                                            width=0.3, gap=0.18, median_halfwidth=0.12))
-            ax.set_xticks(range(len(ranks)))
-            ax.set_xticklabels(ranks, fontsize=6.5)
-            if row_idx == 0:
-                ax.set_title(band, fontsize=8)
-            if col_idx == 0:
-                ax.set_ylabel(CONDITION_SHORT_LABELS.get(condition, condition), fontsize=7.5)
-            nice_axis(ax)
-            column_max[col_idx] = max(column_max[col_idx], local_max)
-            panels.append((ax, row_idx, col_idx, condition, ranks))
-
-    for ax, row_idx, col_idx, condition, ranks in panels:
-        step = max(column_max[col_idx] * 0.08, 0.01)
-        ax.set_ylim(0, column_max[col_idx] + step * 2.8)
-        for xi, drive_rank in enumerate(ranks):
-            row = contrast[(contrast["condition"] == condition) & (contrast["band"] == bands[col_idx])
-                           & (contrast["drive_rank"] == drive_rank)]
-            if row.empty or not bool(row.iloc[0]["significant"]):
-                continue
-            cell = long[(long["condition"] == condition) & (long["band"] == bands[col_idx])
-                       & (long["drive_rank"] == drive_rank)]
-            top = float(cell["residual_fraction"].max()) if not cell.empty else 0.0
-            add_significance_bracket(ax, xi - 0.18, xi + 0.18, top + step * 0.7, str(row.iloc[0]["stars"]), fontsize=6.0)
-
-    fig.supxlabel("total bottleneck dimension ($r_w+3r_c$)", fontsize=8)
-    fig.legend(handles=_arm_legend_handles(), loc="upper right", frameon=False, fontsize=7)
-    fig.tight_layout(rect=(0, 0, 1, 0.95))
-    return fig
-
-
 __all__ += ["plot_drive_rank_band_contrast", "plot_drive_rank_contrast"]
+
+
+def _draw_bar_group(
+    ax,
+    table: pd.DataFrame,
+    *,
+    x: str,
+    x_order: Sequence[str],
+    colors: Mapping[str, str],
+    value_col: str,
+    se_col: str,
+    x_labels: Mapping[str, str],
+    bar_width: float,
+    pairwise: pd.DataFrame | None = None,
+) -> tuple[float, float]:
+    """One axes of single (ungrouped) bars: capless SEM, a star where the bar beats zero, and
+    optional brackets between bars where ``pairwise`` (``condition_a``/``condition_b``/
+    ``significant``/``stars`` columns, e.g. :func:`fixation_mrnn_audit.matched_drive_rank_condition_contrast`)
+    says the two categories differ from each other. Returns ``(top, bottom)`` so a caller
+    drawing several of these axes can finalise one shared y-limit afterwards.
+    """
+    xs = [c for c in x_order if c in set(table[x])]
+    positions = np.arange(len(xs))
+    values = [float(table.loc[table[x] == c, value_col].iloc[0]) for c in xs]
+    errors = [float(table.loc[table[x] == c, se_col].iloc[0]) if se_col in table.columns else 0.0 for c in xs]
+    bar_colors = [colors.get(c, NEUTRAL_FILL) for c in xs]
+    ax.bar(positions, values, width=bar_width, color=bar_colors, edgecolor=INK, linewidth=0.8, zorder=2)
+    ax.errorbar(positions, values, yerr=errors, fmt="none", ecolor=INK, elinewidth=1.1, capsize=0, zorder=3)
+    ax.axhline(0.0, color=INK, linewidth=0.9, zorder=1)
+
+    top = max((v + e for v, e in zip(values, errors)), default=0.01)
+    bottom = min((v - e for v, e in zip(values, errors)), default=0.0)
+    scale = 0.08 * max(abs(top), abs(bottom), 0.01)
+    for xi, c, value, error in zip(positions, xs, values, errors):
+        row = table.loc[table[x] == c].iloc[0]
+        if bool(row.get("significant", False)):
+            va = "bottom" if value >= 0 else "top"
+            y = value + error + scale if value >= 0 else value - error - scale
+            ax.text(xi, y, "*", ha="center", va=va, fontsize=10, color=INK, zorder=4)
+
+    if pairwise is not None and not pairwise.empty:
+        comparisons = []
+        for _, row in pairwise[pairwise["significant"]].iterrows():
+            if row["condition_a"] not in xs or row["condition_b"] not in xs:
+                continue
+            comparisons.append((xs.index(row["condition_a"]), xs.index(row["condition_b"]), str(row["stars"])))
+        if comparisons:
+            mark_contrasts(ax, comparisons, top=top + scale)
+
+    ax.set_xticks(positions)
+    ax.set_xticklabels([x_labels.get(c, CONDITION_SHORT_LABELS.get(c, c.replace("_", " "))) for c in xs])
+    nice_axis(ax)
+    return top, bottom
 
 
 def plot_gap_bars(
@@ -2216,90 +2200,93 @@ def plot_gap_bars(
     *,
     x: str,
     x_order: Sequence[str],
-    hue: str | None = None,
-    hue_order: Sequence[str] | None = None,
     colors: Mapping[str, str] | None = None,
-    value_col: str = "cross_minus_within",
+    value_col: str = "cross_advantage",
     se_col: str = "se",
     x_labels: Mapping[str, str] | None = None,
-    ylabel: str = "cross-heavy minus within-heavy\n($R^2$ / ceiling)",
-    bar_width: float = 0.3,
-    figsize: tuple[float, float] = (7.0, 3.0),
+    pairwise: pd.DataFrame | None = None,
+    ylabel: str = "cross-heavy advantage\n($R^2$ / ceiling)",
+    bar_width: float = 0.5,
+    figsize: tuple[float, float] = (5.0, 3.0),
 ):
-    """The cross-heavy-minus-within-heavy gap as bars, pooled over total bottleneck dimension.
+    """The cross-heavy advantage as bars, pooled over total bottleneck dimension, one axes.
 
-    One bar per ``x`` category (ungrouped), or grouped by ``hue`` within each ``x`` category
-    -- e.g. one bar per region, grouped by fixation type. A capless SEM error bar and a star
-    where the paired test clears its Holm correction (:func:`fixation_mrnn_audit.matched_drive_rank_fit_pooled`
-    and its region/band counterparts). Zero is a solid reference line, not an axis endpoint:
-    this plots a *difference*, so which side of zero a bar falls on is the finding, not how
-    far it sits from an edge.
+    A capless SEM error bar and a star where the paired test beats its Holm correction
+    (:func:`fixation_mrnn_audit.matched_drive_rank_fit_pooled` and its band counterpart); an
+    optional bracket between two bars where ``pairwise`` -- the fixation-type-vs-fixation-type
+    test, :func:`fixation_mrnn_audit.matched_drive_rank_condition_contrast` -- finds them
+    different from *each other*, not just from zero. Zero is a solid reference line, not an
+    axis endpoint: this plots a difference, so which side a bar falls on is the finding.
+    """
+    if colors is None:
+        colors = {**CONDITION_COLORS, "all_conditions": _POOLED_PANEL_COLOR}
+    fig, ax = plt.subplots(figsize=figsize)
+    _draw_bar_group(ax, table, x=x, x_order=x_order, colors=colors, value_col=value_col, se_col=se_col,
+                    x_labels=dict(x_labels or {}), bar_width=bar_width, pairwise=pairwise)
+    ax.set_ylabel(ylabel)
+    fig.tight_layout()
+    return fig
+
+
+def plot_gap_bars_by_panel(
+    table: pd.DataFrame,
+    *,
+    panel_col: str,
+    panel_order: Sequence[str],
+    x: str,
+    x_order: Sequence[str],
+    colors: Mapping[str, str] | None = None,
+    value_col: str = "cross_advantage",
+    se_col: str = "se",
+    x_labels: Mapping[str, str] | None = None,
+    panel_labels: Mapping[str, str] | None = None,
+    pairwise: pd.DataFrame | None = None,
+    color_by: str = "x",
+    ylabel: str = "cross-heavy advantage\n($R^2$ / ceiling)",
+    bar_width: float = 0.5,
+    figsize: tuple[float, float] | None = None,
+):
+    """:func:`plot_gap_bars`, one subplot per ``panel_col`` value, sharing one y-limit.
+
+    ``pairwise`` (optional) carries its own ``panel_col`` column, e.g.
+    :func:`fixation_mrnn_audit.matched_drive_rank_condition_contrast_by_region`'s ``region``
+    -- each subplot draws only the comparisons for its own panel. The y-limit is finalised
+    after every subplot is drawn, not per subplot, so a shared axis cannot let the
+    last-drawn panel silently resize the others. ``color_by="x"`` (default) colours each bar
+    by its own ``x`` category, e.g. fixation type on the x-axis within a region panel;
+    ``color_by="panel"`` instead gives every bar in a panel that panel's colour, e.g. one
+    fixation type per panel with regions on the x-axis.
     """
     labels = dict(x_labels or {})
+    panel_labels = dict(panel_labels or {})
     if colors is None:
-        colors = {**CONDITION_COLORS, "worst_cell": _POOLED_PANEL_COLOR, "all_conditions": _POOLED_PANEL_COLOR}
-    fig, ax = plt.subplots(figsize=figsize)
-    xs = [c for c in x_order if c in set(table[x])]
-    positions = np.arange(len(xs))
-    all_values: list[float] = []
+        colors = {**CONDITION_COLORS, "all_conditions": _POOLED_PANEL_COLOR}
+    panels = [p for p in panel_order if p in set(table[panel_col])]
+    figsize = figsize or (2.4 * len(panels) + 1.0, 3.0)
+    fig, axes = plt.subplots(1, len(panels), figsize=figsize, sharey=True)
+    axes = np.atleast_1d(axes)
 
-    if hue is None:
-        values = [float(table.loc[table[x] == c, value_col].iloc[0]) for c in xs]
-        errors = [float(table.loc[table[x] == c, se_col].iloc[0]) if se_col in table.columns else 0.0 for c in xs]
-        bar_colors = [(colors or {}).get(c, NEUTRAL_FILL) for c in xs]
-        ax.bar(positions, values, width=bar_width, color=bar_colors, edgecolor=INK, linewidth=0.8, zorder=2)
-        ax.errorbar(positions, values, yerr=errors, fmt="none", ecolor=INK, elinewidth=1.1, capsize=0, zorder=3)
-        all_values.extend(values)
-        scale = 0.07 * max((abs(v) for v in values), default=0.01)
-        for xi, c, value, error in zip(positions, xs, values, errors):
-            row = table.loc[table[x] == c].iloc[0]
-            if bool(row.get("significant", False)):
-                va = "bottom" if value >= 0 else "top"
-                y = value + error + scale if value >= 0 else value - error - scale
-                ax.text(xi, y, "*", ha="center", va=va, fontsize=10, color=INK, zorder=4)
-    else:
-        hues = [h for h in (hue_order or sorted(set(table[hue]))) if h in set(table[hue])]
-        n_hue = max(len(hues), 1)
-        for hi, h in enumerate(hues):
-            offset = (hi - (n_hue - 1) / 2) * bar_width
-            values, errors, sig = [], [], []
-            for c in xs:
-                row = table[(table[x] == c) & (table[hue] == h)]
-                if row.empty:
-                    values.append(np.nan); errors.append(0.0); sig.append(False)
-                else:
-                    values.append(float(row[value_col].iloc[0]))
-                    errors.append(float(row[se_col].iloc[0]) if se_col in row.columns else 0.0)
-                    sig.append(bool(row.iloc[0].get("significant", False)))
-            color = (colors or {}).get(h, NEUTRAL_FILL)
-            ax.bar(positions + offset, values, width=bar_width, color=color, edgecolor=INK, linewidth=0.7, zorder=2)
-            ax.errorbar(positions + offset, values, yerr=errors, fmt="none", ecolor=INK, elinewidth=1.0,
-                       capsize=0, zorder=3)
-            all_values.extend(v for v in values if np.isfinite(v))
-        scale = 0.07 * max((abs(v) for v in all_values), default=0.01)
-        for hi, h in enumerate(hues):
-            offset = (hi - (n_hue - 1) / 2) * bar_width
-            for xi, c in zip(positions, xs):
-                row = table[(table[x] == c) & (table[hue] == h)]
-                if row.empty or not bool(row.iloc[0].get("significant", False)):
-                    continue
-                value = float(row[value_col].iloc[0])
-                error = float(row[se_col].iloc[0]) if se_col in row.columns else 0.0
-                va = "bottom" if value >= 0 else "top"
-                y = value + error + scale if value >= 0 else value - error - scale
-                ax.text(xi + offset, y, "*", ha="center", va=va, fontsize=9, color=INK, zorder=4)
-        handles = [
-            plt.Rectangle((0, 0), 1, 1, facecolor=(colors or {}).get(h, NEUTRAL_FILL), edgecolor=INK,
-                          linewidth=0.7, label=CONDITION_SHORT_LABELS.get(h, labels.get(h, h)))
-            for h in hues
-        ]
-        ax.legend(handles=handles, frameon=False, fontsize=6.5, loc="best")
+    bounds = []
+    for ax, panel in zip(axes, panels):
+        block = table[table[panel_col] == panel]
+        panel_pairwise = None
+        if pairwise is not None and not pairwise.empty and panel_col in pairwise.columns:
+            panel_pairwise = pairwise[pairwise[panel_col] == panel]
+        elif pairwise is not None:
+            panel_pairwise = pairwise
+        panel_colors = colors if color_by == "x" else {c: colors.get(panel, NEUTRAL_FILL) for c in x_order}
+        top, bottom = _draw_bar_group(ax, block, x=x, x_order=x_order, colors=panel_colors, value_col=value_col,
+                                      se_col=se_col, x_labels=labels, bar_width=bar_width, pairwise=panel_pairwise)
+        title = panel_labels.get(panel) or CONDITION_SHORT_LABELS.get(panel) or REGION_LABELS.get(panel, str(panel))
+        ax.set_title(title, fontsize=8.5)
+        bounds.append((ax, top, bottom))
 
-    ax.axhline(0.0, color=INK, linewidth=0.9, zorder=1)
-    ax.set_xticks(positions)
-    ax.set_xticklabels([labels.get(c, CONDITION_SHORT_LABELS.get(c, c.replace("_", " "))) for c in xs])
-    ax.set_ylabel(ylabel)
-    nice_axis(ax)
+    top = max((t for _, t, _ in bounds), default=0.01)
+    bottom = min((b for _, _, b in bounds), default=0.0)
+    headroom = 0.14 * max(abs(top), abs(bottom), 0.01)
+    for ax, *_ in bounds:
+        ax.set_ylim(bottom - headroom, top + headroom)
+    axes[0].set_ylabel(ylabel)
     fig.tight_layout()
     return fig
 
@@ -2307,16 +2294,18 @@ def plot_gap_bars(
 def plot_drive_rank_trend(
     contrast: pd.DataFrame,
     *,
-    conditions: Sequence[str] = CONDITION_ORDER,
+    conditions: Sequence[str] = ("all_conditions", *CONDITION_ORDER),
     figsize: tuple[float, float] = (5.2, 3.4),
 ):
-    """The cross-minus-within gap against total bottleneck dimension, one line per fixation type.
+    """The cross-heavy advantage against total bottleneck dimension, one line per fixation type.
 
-    Answers whether the effect is a fixed advantage to spending on cross rather than within,
-    or shrinks as both arms get more total capacity: a flat line is the former, a line
-    trending toward zero says the allocation only matters when capacity is scarce overall.
-    Dimensions where :func:`fixation_mrnn_audit.matched_drive_rank_fit_contrast` found a
-    Holm-significant gap are ringed.
+    A robustness check on the pooled result (:func:`fixation_mrnn_audit.matched_drive_rank_fit_pooled`),
+    not the primary analysis: nine Holm-corrected tests of five seeds each
+    (:func:`fixation_mrnn_audit.matched_drive_rank_fit_contrast`) have far less power than
+    the one pooled test of forty-five, so the per-dimension points here are for seeing
+    whether the advantage is flat across total capacity or concentrated at one end of it, not
+    for reading significance off individual points -- the ringed ones are merely where the
+    individually-corrected test happened to clear its (much higher) bar.
     """
     fig, ax = plt.subplots(figsize=figsize)
     ax.axhline(0.0, color=INK, linewidth=0.9, zorder=1)
@@ -2325,18 +2314,23 @@ def plot_drive_rank_trend(
         if block.empty:
             continue
         color = CONDITION_COLORS.get(condition, _POOLED_PANEL_COLOR)
-        ax.plot(block["drive_rank"], block["cross_minus_within"], "-o", color=color, markersize=4.5,
-               linewidth=1.4, label=CONDITION_SHORT_LABELS.get(condition, condition), zorder=3)
+        ax.plot(block["drive_rank"], block["cross_advantage"], "-o", color=color, markersize=4.5,
+               linewidth=1.4, label=CONDITION_SHORT_LABELS.get(condition, condition.replace("_", " ")), zorder=3)
         sig = block[block["significant"]]
         if not sig.empty:
-            ax.scatter(sig["drive_rank"], sig["cross_minus_within"], s=75, facecolors="none",
+            ax.scatter(sig["drive_rank"], sig["cross_advantage"], s=75, facecolors="none",
                       edgecolors=INK, linewidths=1.3, zorder=4)
     ax.set_xlabel("total bottleneck dimension ($r_w+3r_c$)")
-    ax.set_ylabel("cross-heavy minus within-heavy\n($R^2$ / ceiling)")
+    ax.set_ylabel("cross-heavy advantage\n($R^2$ / ceiling)")
     ax.legend(frameon=False, fontsize=6.5, loc="best")
     nice_axis(ax)
     fig.tight_layout()
     return fig
 
 
-__all__ += ["plot_drive_rank_trend", "plot_gap_bars"]
+__all__ += [
+    "plot_drive_rank_trend",
+    "plot_gap_bars",
+    "plot_gap_bars_by_panel",
+    "plot_pooled_violin_contrast",
+]
