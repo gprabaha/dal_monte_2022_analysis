@@ -404,7 +404,10 @@ Same pooled paired test as Section 5, run per band and fixation type instead of 
 ``band_resolved_recovery_by_condition`` gives the fraction of each band's target power a fit
 fails to reproduce (lower is better), and `cross_advantage` is signed so positive still
 means cross-heavy did better here too -- within-heavy's residual minus cross-heavy's, the
-flip the fit tables do not need since $R^2$ is already higher-is-better.
+flip the fit tables do not need since $R^2$ is already higher-is-better. The bracket within
+a band's panel is the same fixation-type-vs-fixation-type test as Section 5-6's, run
+separately in each band: is the cross-heavy advantage itself bigger for one fixation type
+than another *in this band specifically*, not just overall.
 """
 
 S8_CODE = r'''
@@ -416,9 +419,11 @@ else:
         ignore_index=True))
     band_long = audit.matched_drive_rank_band_long(band_by_condition, extremes)
     band_pooled = audit.matched_drive_rank_band_pooled(band_long)
+    band_condition_contrast = audit.matched_drive_rank_band_condition_contrast(band_long)
     show(aviz.plot_gap_bars_by_panel(
         band_pooled, panel_col="band", panel_order=list(BANDS),
         x="condition", x_order=["face_interactive", "face_non_interactive", "object"],
+        pairwise=band_condition_contrast,
         ylabel="cross-heavy advantage\n(band recovery)"),
         "fig06_band_gap_bars_by_panel")
 '''

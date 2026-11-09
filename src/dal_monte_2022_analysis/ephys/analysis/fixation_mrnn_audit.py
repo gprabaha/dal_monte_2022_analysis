@@ -2185,7 +2185,69 @@ def matched_drive_rank_condition_contrast_by_region(
     return table
 
 
+def matched_drive_rank_band_condition_contrast(
+    long: pd.DataFrame, *, conditions: Sequence[str] = ("face_interactive", "face_non_interactive", "object"),
+) -> pd.DataFrame:
+    """:func:`matched_drive_rank_condition_contrast`'s question, asked per frequency band.
+
+    ``long`` is :func:`matched_drive_rank_band_long`'s output. For each (drive_rank, seed,
+    band), the gap is within-heavy minus cross-heavy residual fraction, averaged over
+    region -- ``within_heavy minus cross_heavy`` rather than the other way around, matching
+    :func:`matched_drive_rank_band_pooled`'s sign convention so a positive gap still means
+    cross-heavy did better. Two fixation types' gaps at the same (drive_rank, seed, band)
+    came from the same network fits, so the comparison between them is paired, not Welch's.
+    ``p_holm`` corrects within each band's own panel, across its pairwise comparisons, not
+    across bands -- each band is asking its own version of "does one fixation type's
+    cross-heavy advantage differ from another's here".
+    """
+    from itertools import combinations
+
+    from dal_monte_2022_analysis.core.stats.correction import adjust_pvalues
+    from dal_monte_2022_analysis.core.stats.proportions import significance_stars
+    from dal_monte_2022_analysis.core.stats.tests import paired_ttest
+
+    tables = []
+    for band, band_block in long.groupby("band"):
+        per_seed = (band_block.groupby(["drive_rank", "arm", "condition", "seed"])["residual_fraction"]
+                   .mean().reset_index())
+        gaps: dict[str, pd.Series] = {}
+        for condition in conditions:
+            wide = (per_seed[per_seed["condition"] == condition]
+                   .pivot_table(index=["drive_rank", "seed"], columns="arm", values="residual_fraction").dropna())
+            if "within-heavy" in wide and "cross-heavy" in wide:
+                gaps[condition] = wide["within-heavy"] - wide["cross-heavy"]
+
+        rows = []
+        for a, b in combinations([c for c in conditions if c in gaps], 2):
+            gap_a, gap_b = gaps[a].align(gaps[b], join="inner")
+            if len(gap_a) < 2:
+                continue
+            t_stat, p_value = paired_ttest(gap_a.to_numpy(), gap_b.to_numpy())
+            rows.append({
+                "band": str(band),
+                "condition_a": a,
+                "condition_b": b,
+                "n_pairs": int(len(gap_a)),
+                "gap_a_mean": float(gap_a.mean()),
+                "gap_b_mean": float(gap_b.mean()),
+                "gap_difference": float((gap_a - gap_b).mean()),
+                "se": float((gap_a - gap_b).std(ddof=1) / np.sqrt(len(gap_a))) if len(gap_a) > 1 else np.nan,
+                "t_stat": float(t_stat),
+                "p_value": float(p_value),
+            })
+        if rows:
+            sub = pd.DataFrame(rows)
+            sub["p_holm"] = adjust_pvalues(sub["p_value"].to_numpy(), "holm")
+            tables.append(sub)
+    table = pd.concat(tables, ignore_index=True) if tables else pd.DataFrame()
+    if not table.empty:
+        table["stars"] = table["p_holm"].map(significance_stars)
+        table["significant"] = table["stars"] != "n.s."
+    return table
+
+
 __all__ += [
+    "matched_drive_rank_band_condition_contrast",
     "matched_drive_rank_band_pooled",
     "matched_drive_rank_condition_contrast",
     "matched_drive_rank_condition_contrast_by_region",
